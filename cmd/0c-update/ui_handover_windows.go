@@ -158,3 +158,6 @@ func waitProcessExit(p uiProcess, wait time.Duration) bool {
 	ev, err := windows.WaitForSingleObject(h, uint32(wait/time.Millisecond))
 	return err == nil && ev == windows.WAIT_OBJECT_0
 }
+
+// shellPendingAfterInstall：TSF DLL 留在執行中的應用程式裡，外殼要重新登入才全面載入。
+func shellPendingAfterInstall() bool { return true }

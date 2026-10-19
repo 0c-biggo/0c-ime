@@ -84,6 +84,9 @@
   };
   // 與 internal/autoupdate 的 OldShellDetail 相同：重新登入後系統仍開著更新前留下的舊版輸入法（#98）。
   const OLD_SHELL = '已安裝，但系統仍開著更新前留下的舊版輸入法；登出再登入後改用新版';
+  // 與 internal/autoupdate 的 ShellRetiringDetail 相同：macOS 新版已裝好，舊的輸入法程式等停手後結束（#170）。
+  const SHELL_RETIRING = '已安裝，停止打字後自動換成新版，不必登出';
+  const SHELL_RETIRING_HELP = '新版已安裝。舊版的輸入法程式還在使用中，停止打字一下就會自動換成新版，不必登出。';
   const OLD_SHELL_HELP = '新版已安裝，但系統仍開著更新前留下的舊版輸入法。請先儲存工作，登出再登入一次就會改用新版；如果之後仍看到這則訊息，請到「問題排解」匯出狀態摘要回報。';
   const VALUE = { neural: '神經選字', statistical: '統計引擎', off: '關閉', select: '僅供選字', auto: '自動修正（實驗）', vertical: '直排', grid: '多排', before: '游標前方', after: '游標後方', standard: '標準', eten: '倚天 41 鍵' };
   const ERROR = {
@@ -114,6 +117,7 @@
     if (update.stage === 'pending' && update.target) {
       if (update.target.kind !== 'shell') return { text: '正在確認新版引擎是否可用。', tone: 'warn' };
       if (update.blocked?.detail === OLD_SHELL) return { text: update.target.version + ' 已安裝，仍在使用舊版輸入法。', tone: 'warn' };
+      if (update.blocked?.detail === SHELL_RETIRING) return { text: update.target.version + ' 已安裝，停止打字後自動換成新版。', tone: 'warn' };
       return { text: update.target.version + ' 等待重新登入後生效。', tone: 'warn' };
     }
     switch (update.state) {
@@ -215,7 +219,9 @@
       if (!result.ok) toast(errorText(result.error), result.error?.code === 'in_progress' ? 'warn' : 'error');
       else if (result.update?.blocked && result.update.stage !== 'pending' && !(kind === 'download' && result.update.stage === 'prepared')) toast(result.update.blocked.detail || '更新尚未完成，請再試一次。', 'warn');
       else if (kind === 'download') toast(result.update?.operation ? operationText(result.update.operation) : result.update?.stage === 'pending' ? updateSummary(result.update).text : '下載完成，可按「立即安裝」。', 'ok');
-      else toast(result.update?.stage === 'pending' ? '請先儲存工作，登出再登入以完成更新。' : '更新作業已完成。', 'ok');
+      else toast(result.update?.stage === 'pending'
+        ? (result.update.blocked?.detail === SHELL_RETIRING ? SHELL_RETIRING_HELP : '請先儲存工作，登出再登入以完成更新。')
+        : '更新作業已完成。', 'ok');
     } catch (error) {
       toast(String(error), 'error');
     } finally {
@@ -300,6 +306,8 @@
     const oldShell = engine.pendingDetail === OLD_SHELL;
     if (oldShell) {
       root.append(h('div', { class: 'notice' }, h('p', {}, OLD_SHELL_HELP)));
+    } else if (engine.retiring) {
+      root.append(h('div', { class: 'notice' }, h('p', {}, SHELL_RETIRING_HELP)));
     } else if (engine.shellPending || engine.runningOld) {
       root.append(h('div', { class: 'notice' },
         h('p', {}, deferredInstall ? '套件已下載，等待重新登入時安裝。' : '新版已安裝；目前執行的輸入法仍未全部切換。'),
@@ -418,7 +426,8 @@
       h('p', {}, summary.text),
       view.target && !op ? h('p', {}, view.stage === 'pending' && view.target.kind === 'shell'
         ? (blocked?.detail === '登出再登入時自動完成安裝' ? '套件已下載，儲存工作後登出再登入，會完成安裝。'
-          : blocked?.detail === OLD_SHELL ? OLD_SHELL_HELP : '新版已安裝；請儲存工作後登出再登入，讓應用程式載入新版輸入法。')
+          : blocked?.detail === OLD_SHELL ? OLD_SHELL_HELP : blocked?.detail === SHELL_RETIRING ? SHELL_RETIRING_HELP
+          : '新版已安裝；請儲存工作後登出再登入，讓應用程式載入新版輸入法。')
         : view.stage === 'pending' ? '正在確認新版引擎是否可用。' : (STAGE[view.stage] || ('進度：' + view.stage)) + '。') : null,
       blocked && !op && view.stage !== 'pending' && !(view.stage === 'found' && ['needs_relogin', 'needs_consent'].includes(blocked.reason))
         ? h('p', {}, blocked.detail || BLOCKED[blocked.reason] || '更新暫時受阻。') : null));

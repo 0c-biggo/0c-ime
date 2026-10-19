@@ -33,7 +33,7 @@ func dialEngine(timeout time.Duration) (net.Conn, error) {
 	return nil, err
 }
 
-// macOS 的引擎與字典在 App 內，外殼明確指定 -data，因此一律整個 App 更新（下次登入全面生效）。
+// macOS 的引擎與字典在 App 內，外殼明確指定 -data，因此一律整個 App 更新（安裝後結束舊的輸入法程式，#170）。
 func coreLayout() (autoupdate.CoreLayout, bool) { return autoupdate.CoreLayout{}, false }
 
 // macOS 的 0c-update 隨 App 整個更新，沒有另一份 PATH 上的副本。
@@ -50,13 +50,7 @@ var (
 
 func conditions() autoupdate.Conditions {
 	var c autoupdate.Conditions
-	if out, err := exec.Command("ioreg", "-c", "IOHIDSystem", "-d", "4").Output(); err == nil {
-		if m := hidIdle.FindSubmatch(out); m != nil {
-			if ns, err := strconv.ParseInt(string(m[1]), 10, 64); err == nil {
-				c.Idle, c.IdleKnown = time.Duration(ns), true
-			}
-		}
-	}
+	c.Idle, c.IdleKnown = hidIdleTime()
 	if out, err := exec.Command("pmset", "-g", "batt").Output(); err == nil {
 		c.Charging = bytes.Contains(out, []byte("AC Power"))
 		if m := battPct.FindSubmatch(out); m != nil {

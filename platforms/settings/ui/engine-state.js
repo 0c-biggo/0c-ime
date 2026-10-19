@@ -14,13 +14,17 @@ window.ZcEngineState = function (status, platform) {
   // 核心更新只換引擎：舊引擎在組字結束、安全時機交接，任何平台都不用登出。
   // 完整安裝（外殼）後還在跑舊引擎時，Windows／macOS 要重新登入才會全部換成新版。
   const coreSwitch = !!(status && status.engine);
-  const relogin = shellPending || (runningOld && !coreSwitch && /^(windows|macos)\//.test(platform || ''));
+  // macOS 安裝時已請舊的輸入法程式結束（#170）：還沒結束的是使用者正在打字，停手後自動換新，不必登出。
+  // 與 internal/autoupdate 的 ShellRetiringDetail 相同。
+  const retiring = shellPending && !!blocked && blocked.detail === '已安裝，停止打字後自動換成新版，不必登出';
+  const relogin = !retiring && (shellPending || (runningOld && !coreSwitch && /^(windows|macos)\//.test(platform || '')));
   return {
     expected,
     running: runtime.version || '',
     shellPending,
     pendingDetail: shellPending && blocked ? blocked.detail || '' : '',
     runningOld,
+    retiring,
     relogin,
   };
 };

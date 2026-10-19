@@ -30,6 +30,7 @@ type fakePlatform struct {
 	notices     []string
 	actions     []string
 	calls       []string
+	installHook func() // InstallShell 成功時改變平台狀態（例如安裝器交接了引擎）
 }
 
 func (f *fakePlatform) Installed() (string, error) { return f.installed, nil }
@@ -79,6 +80,9 @@ func (f *fakePlatform) StartEngine(context.Context) error {
 }
 func (f *fakePlatform) InstallShell(context.Context, string) (bool, error) {
 	f.calls = append(f.calls, "shell")
+	if f.shellErr == nil && f.installHook != nil {
+		f.installHook()
+	}
 	return f.shellPend, f.shellErr
 }
 func (f *fakePlatform) Conditions() Conditions { return f.cond }
