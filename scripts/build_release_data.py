@@ -2,7 +2,8 @@
 """由原始碼樹或固定 Git 提交與已校驗的大型輸入重建公開系統字典。
 
 0c-compile 以公開來源檢查編譯詞庫、詞頻與詞對統計，0c-english 產生英文子包；
-產物使用格式 2 及跨提交前文權重。此為維護者更新字典的工具，須以 --bigram-dir 提供符合 lock 的外部統計檔；一般建置直接使用 assets/data/。
+產物使用格式 2 及跨提交前文權重，須通過 0c-cli 冒煙與單字排序閘門（0c-single-gate）才產生輸出。
+此為維護者更新字典的工具，須以 --bigram-dir 提供符合 lock 的外部統計檔；一般建置直接使用 assets/data/。
 資料 manifest 變更後，模型仍須重新確認系統字典配對，見 models/README.md。
 """
 import argparse
@@ -96,7 +97,7 @@ def main():
         env = dict(os.environ, GOWORK="off", GOFLAGS="-mod=readonly", GOTOOLCHAIN="local")
         with open(work / "build.log", "wb") as log:
             try:
-                for tool in ("0c-compile", "0c-english", "0c-cli"):
+                for tool in ("0c-compile", "0c-english", "0c-cli", "0c-single-gate"):
                     run([a.go, "build", "-trimpath", "-o", work / tool, "./cmd/" + tool], log, cwd=src, env=env)
                 base = work / "base"
                 run([work / "0c-compile", "-data", src / "data", "-out", base, *compile_args], log, cwd=src)
@@ -109,6 +110,10 @@ def main():
                 manifest["runtime"] = RUNTIME
                 (mixed / "manifest.json").write_bytes(json_bytes(manifest))
                 run([work / "0c-cli", "-data", mixed], log, cwd=src, stdin=subprocess.DEVNULL)
+                # 單字排序閘門（#172）：非常用字不得在常見前文下排到詞頻高 10 倍的同音常用字前面；
+                # 出現不在核可名單的字就停止，人工確認後以 0c-single-gate -write 更新名單。
+                run([work / "0c-single-gate", "-data", mixed, "-source", src / "data",
+                     "-approved", src / "data/curation/single-gate.tsv"], log, cwd=src)
                 if a.models:
                     from pair_models import export
                     export(src, mixed, a.models.resolve(), work / "mix/models")
