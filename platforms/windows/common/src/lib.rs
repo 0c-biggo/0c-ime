@@ -105,6 +105,18 @@ pub struct UiCandidate {
     /// 低調附註（模糊音近音為「近音 ㄓ」）；沒有附註、或舊 DLL 沒送時為空字串。
     #[serde(default)]
     pub note: String,
+    /// 鍵標（#112）：核心給的選字鍵（1、q、;）；Some("") 不畫（英文模式的補字候選）。
+    /// 舊 DLL 沒送時為 None：依位置畫 1–0（見 candidate_key）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+}
+
+/// 第 index 項候選的鍵標（#112）：DLL 送來的選字鍵；舊 DLL 沒送時依位置 1–9、0（第 10 項按 0 選，不是「10」）。
+pub fn candidate_key(index: usize, c: &UiCandidate) -> String {
+    match &c.key {
+        Some(key) => key.clone(),
+        None => ((index + 1) % 10).to_string(),
+    }
 }
 
 /// DLL 送給 0c-ui 的呈現訊息：畫什麼、畫在哪。不含文件文字，不含組字以外的內容。
@@ -166,18 +178,21 @@ pub fn header_lines(m: &UiMessage) -> Vec<&str> {
         .collect()
 }
 
-/// 提示列的高度：提示用一般字級（比補全提示與標題的小字大），列高跟著放大。
+/// 提示列的高度：提示、讀音提示與補全提示用一般字級（比標題的小字大），列高跟著放大。
 /// 繪製與命中測試都用這個值，兩者的位置才會一致。
 pub fn notice_row(small_row: i32) -> i32 {
     small_row * 7 / 5
 }
 
-/// 這一列是不是用一般字級畫（提示、讀音提示），其他列（補全提示、標題）是小字。
+/// 這一列是不是用一般字級畫（提示、讀音提示、補全提示），標題是小字。
+/// 補全提示（Tab 接受）跟候選同字級，小字看不清楚（#118）。
 pub fn large_heading(m: &UiMessage, heading: &str) -> bool {
-    !m.notice.is_empty() && heading == m.notice || !m.reading.is_empty() && heading == m.reading
+    !m.notice.is_empty() && heading == m.notice
+        || !m.reading.is_empty() && heading == m.reading
+        || !m.suggestion.is_empty() && heading == m.suggestion
 }
 
-/// 候選之前所有列的總高度（提示與讀音提示每列 notice_row，其他每列 small_row）。
+/// 候選之前所有列的總高度（提示、讀音提示與補全提示每列 notice_row，標題 small_row）。
 pub fn header_height(m: &UiMessage, small_row: i32) -> i32 {
     header_lines(m)
         .iter()
@@ -288,10 +303,12 @@ mod tests {
     fn candidate_note_is_optional_for_older_senders() {
         let old: UiCandidate = serde_json::from_str(r#"{"id":1,"text":"知"}"#).unwrap();
         assert_eq!(old.note, "", "舊 DLL 不送 note 時仍可解析");
+        assert_eq!(old.key, None, "舊 DLL 不送 key");
         let now = UiCandidate {
             id: 2,
             text: "知".into(),
             note: "近音 ㄓ".into(),
+            key: Some("q".into()),
         };
         let back: UiCandidate =
             serde_json::from_str(&serde_json::to_string(&now).unwrap()).unwrap();
@@ -316,12 +333,13 @@ mod tests {
             ],
             ..Default::default()
         };
-        for y in [0, 7, 8, 27, 84, 100] {
+        // 補全提示一般字級一列 28（#118）：第一個候選從 8 + 28 開始。
+        for y in [0, 7, 8, 35, 92, 100] {
             assert_eq!(hit_candidate(&m, y, 8, 28, 20), None);
         }
-        assert_eq!(hit_candidate(&m, 28, 8, 28, 20), Some(8));
-        assert_eq!(hit_candidate(&m, 55, 8, 28, 20), Some(8));
-        assert_eq!(hit_candidate(&m, 56, 8, 28, 20), Some(42));
+        assert_eq!(hit_candidate(&m, 36, 8, 28, 20), Some(8));
+        assert_eq!(hit_candidate(&m, 63, 8, 28, 20), Some(8));
+        assert_eq!(hit_candidate(&m, 64, 8, 28, 20), Some(42));
     }
 
     #[test]
@@ -356,11 +374,12 @@ mod tests {
         assert_eq!(hit_candidate(&m, 36, 8, 28, 20), Some(5));
         let cells = candidate_cells(&m, 300, 8, 28, 20);
         assert_eq!(cells[0].top, 36);
-        // 補全提示照常在提示之後；提示收起後標題回來。
+        // 補全提示照常在提示之後，也是一般字級（#118）；提示收起後標題回來。
         let with_hint = UiMessage { suggestion: "補全".into(), ..m.clone() };
         assert_eq!(header_lines(&with_hint), vec![m.notice.as_str(), "補全"]);
-        assert_eq!(header_height(&with_hint, 20), 48);
-        assert_eq!(hit_candidate(&with_hint, 56, 8, 28, 20), Some(5));
+        assert_eq!(header_height(&with_hint, 20), 56);
+        assert_eq!(hit_candidate(&with_hint, 63, 8, 28, 20), None);
+        assert_eq!(hit_candidate(&with_hint, 64, 8, 28, 20), Some(5));
         let later = UiMessage { notice: String::new(), ..m.clone() };
         assert_eq!(header_lines(&later), vec!["標題"]);
         assert_eq!(hit_candidate(&later, 28, 8, 28, 20), Some(5));
@@ -388,7 +407,7 @@ mod tests {
                 ],
                 ..Default::default()
             };
-            let first = if suggestion.is_empty() { 28 } else { 48 };
+            let first = if suggestion.is_empty() { 28 } else { 56 }; // 補全提示一般字級一列 28（#118）
             for y in 0..first {
                 assert_eq!(hit_candidate(&m, y, 8, 28, 20), None);
             }
@@ -418,7 +437,7 @@ mod tests {
         // 提示優先，讀音提示在補全提示之前。
         let both = UiMessage { notice: "已加入詞庫：世傑".into(), suggestion: "補全".into(), ..m.clone() };
         assert_eq!(header_lines(&both), vec!["已加入詞庫：世傑", "ㄉㄢ", "補全"]);
-        assert_eq!(header_height(&both, 20), 28 + 28 + 20);
+        assert_eq!(header_height(&both, 20), 28 + 28 + 28);
         let back: UiMessage = serde_json::from_str(&serde_json::to_string(&m).unwrap()).unwrap();
         assert_eq!(back, m);
     }

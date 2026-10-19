@@ -409,6 +409,19 @@ if window_up; then
   check "切回標準排列，保留混打原值與未知設定" layout_value standard
   sleep 2
   import -window root "$OUT/eten-back-to-standard.png"
+  # 鍵盤排列的下一個是選字鍵（一組單選，預設 1234567890，#112）：↓ 選 1234qweras，再 ↓ 選 asdfghjkl;，按兩次 ↑ 改回。
+  xdotool key Tab Down
+  sleep 3
+  check "選字鍵可保存 1234qweras，保留未知設定" bash -c "grep -q '\"selection_keys\": \"1234qweras\"' '$(settings_of eten)' && grep -q '\"future\"' '$(settings_of eten)'"
+  import -window root "$OUT/selection-keys-qwer.png"
+  xdotool key Down
+  sleep 3
+  check "選字鍵可保存 asdfghjkl;" grep -q '"selection_keys": "asdfghjkl;"' "$(settings_of eten)"
+  xdotool key Up
+  sleep 3
+  xdotool key Up
+  sleep 3
+  check "選字鍵可改回 1234567890" grep -q '"selection_keys": "1234567890"' "$(settings_of eten)"
 else bad "eten/input 視窗沒有出現"; cat /tmp/app-eten-input.log; fi
 stop_app
 

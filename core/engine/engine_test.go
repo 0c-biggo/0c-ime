@@ -110,6 +110,18 @@ func TestOpenSessionCarriesSimplified(t *testing.T) {
 	}
 }
 
+// #112：使用者選的選字鍵帶到之後開的每個 session；預設空字串（1234567890）。
+func TestOpenSessionCarriesSelectionKeys(t *testing.T) {
+	e := testEngine()
+	if e.Session(e.OpenSession()).SelectionKeys != "" {
+		t.Fatal("預設 1234567890")
+	}
+	e.SelectionKeys = "1234qweras"
+	if e.Session(e.OpenSession()).SelectionKeys != "1234qweras" {
+		t.Fatal("session 沒有帶到選字鍵")
+	}
+}
+
 // 以位元組協定走一遍：近音候選的附註出現在 JSON 快照裡；原音候選沒有 note 欄位。
 func TestFuzzyNoteSurvivesTheByteProtocol(t *testing.T) {
 	e := testEngine()

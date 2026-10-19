@@ -78,6 +78,7 @@ func listSettings(w io.Writer, r settings.Report, path string) {
 	fmt.Fprintf(w, "candidate-layout=%s（選字排列）\nemoji-shortcut=%s（表情自選快捷鍵）\n", s.CandidateLayout, s.EmojiShortcut)
 	fmt.Fprintf(w, "emoji-equals-first=%s（將 = 放在 Emoji 第一項）\n", onOff(s.EmojiEqualsFirst))
 	fmt.Fprintf(w, "output-simplified=%s（輸出簡體字：組字和候選仍是繁體，送出時轉成簡體）\n", onOff(s.OutputSimplified))
+	fmt.Fprintf(w, "selection-keys=%s（選字鍵：1234567890、1234qweras 或 asdfghjkl;；換成字母時數字仍照位置選字）\n", s.SelectionKeys)
 	fmt.Fprintf(w, "keyboard-layout=%s（鍵盤排列：standard 標準；eten 倚天 41 鍵，這時不提供 Emoji 選單與中英混打）\n", s.KeyboardLayout)
 	fuzzyConfig := s.FuzzyConfig()
 	for _, p := range fuzzy.Pairs() {

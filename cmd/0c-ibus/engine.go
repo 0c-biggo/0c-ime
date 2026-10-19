@@ -448,7 +448,7 @@ func (e *engine) render(snap snapshot) {
 			}
 			items = append(items, text)
 			ids = append(ids, it.ID)
-			labels = append(labels, strconv.Itoa((i+1)%10))
+			labels = append(labels, candidateLabel(it, i, snap.english()))
 		}
 		highlight = snap.Candidates.Highlight
 	}
@@ -456,6 +456,19 @@ func (e *engine) render(snap snapshot) {
 	e.setAux(aux)
 	e.setTable(items, labels, highlight)
 	e.updateMode(snap.english())
+}
+
+// candidateLabel 是候選第 i 項的鍵標（#112）：核心給的選字鍵（1、q、;）；舊核心沒有時依位置 1–0。
+// 英文模式只有自動補字候選（按 Tab 接受、數字是文字），不畫鍵標；給空白而不是空字串，
+// 因為 GNOME Shell 的候選窗遇到空字串會改畫預設的 1–0。
+func candidateLabel(it proto.CandidateItem, i int, english bool) string {
+	switch {
+	case it.Key != "":
+		return it.Key
+	case english:
+		return " "
+	}
+	return strconv.Itoa((i + 1) % 10)
 }
 
 func (e *engine) modeProperty() property {

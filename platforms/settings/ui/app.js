@@ -372,7 +372,8 @@
     const equalsFirst = items.find((item) => item.key === 'emoji-equals-first');
     const keyboard = items.find((item) => item.key === 'keyboard-layout');
     const output = items.find((item) => item.key === 'output-simplified');
-    const rest = items.filter((item) => !item.key.startsWith('fuzzy-') && item.key !== 'keyboard-layout' &&
+    const selectionKeys = items.find((item) => item.key === 'selection-keys'); // #112：跟鍵盤排列放在同一張卡
+    const rest = items.filter((item) => !item.key.startsWith('fuzzy-') && item.key !== 'keyboard-layout' && item.key !== 'selection-keys' &&
       item.key !== 'output-simplified' && (!emoji || item.key !== 'emoji-equals-first'));
     const rows = rest.map((item) => {
       const parent = itemRow(item, locked ||
@@ -398,8 +399,9 @@
     }
     // 送出的文字怎麼轉換（#118 簡體字）跟選字無關，獨立一張卡。
     if (output) root.append(h('h2', {}, '輸出設定'), h('div', { class: 'card' }, itemRow(output, locked)));
-    // 鍵盤排列放在最後一張卡：前面各項的鍵盤（Tab）順序不變。
-    if (keyboard) root.append(h('h2', {}, '鍵盤'), h('div', { class: 'card' }, itemRow(keyboard, locked)));
+    // 鍵盤排列與選字鍵放在最後一張卡：前面各項的鍵盤（Tab）順序不變。
+    const keys = [keyboard, selectionKeys].filter(Boolean);
+    if (keys.length) root.append(h('h2', {}, '鍵盤'), h('div', { class: 'card' }, ...keys.map((item) => itemRow(item, locked))));
     if ((settings.file.notes || []).length) {
       root.append(h('h2', {}, '注意'), h('div', { class: 'notice' }, ...settings.file.notes.map((note) => h('p', {}, note))));
     }
