@@ -2384,6 +2384,15 @@ Successfully verified: 0c-update.exe
         result = subprocess.run([node, "--check", str(app)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_settings_ui_engine_state(self):
+        # 總覽「輸入法仍未全部切換」的判斷：核心更新後不誤報、外殼等重新登入時要提示（0.2.1 候選版冒煙）。
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("沒有 node")
+        test = Path(__file__).resolve().parents[1] / "platforms/settings/test/engine_state_test.js"
+        result = subprocess.run([node, "--test", str(test)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -197,6 +197,61 @@ import -window root "$OUT/live-second-instance.png"
 stop_app
 unset HOME
 
+# ---- 總覽的「輸入法仍未全部切換」（0.2.1 候選版冒煙）：真引擎回報 ENGINE_VERSION ----
+# 核心更新只換引擎、外殼收據不變，不該提示；核心已切換但舊引擎還在跑、外殼等重新登入時要提示。
+# 判斷本身由 test/engine_state_test.js 逐平台斷言，這裡核對真的 0c-update 給畫面的欄位並截圖。
+pkill -x 0c-server 2>/dev/null; sleep 0.5
+start_engine() { # 場景 → 背景執行真引擎；設定 ENGINE_PID
+  rm -f "$XDG_RUNTIME_DIR/0c/0c.sock"
+  HOME=$(home_of "$1") "$SERVER_BIN" -data "$DATA" -user "$(base_of "$1")/user.json" -socket "$XDG_RUNTIME_DIR/0c/0c.sock" -legacy-socket "" >"/tmp/server-$1.log" 2>&1 &
+  ENGINE_PID=$!
+  for _ in $(seq 50); do [ -S "$XDG_RUNTIME_DIR/0c/0c.sock" ] && break; sleep 0.2; done
+}
+stop_engine() { kill "$ENGINE_PID" 2>/dev/null; wait "$ENGINE_PID" 2>/dev/null; }
+receipt() { printf '{"version":"%s","active":true}\n' "$2" > "$(base_of "$1")/install-receipt.json"; }
+core_pointer() { # 場景 版本 → 核心版本目錄與 engine.json（相容核心更新寫的指標）
+  local dir="versions/$2-c-aaaaaaaaaaaa" b
+  b=$(base_of "$1")
+  mkdir -p "$b/$dir/data"; echo '{}' > "$b/$dir/data/manifest.json"; install -m 0755 "$SERVER_BIN" "$b/$dir/0c-server"
+  printf '{"schema":1,"directory":"%s","version":"%s"}\n' "$dir" "$2" > "$b/engine.json"
+}
+status_is() { # 場景 收據 指標 執行中 → 核對 status -json 給畫面的三個版本
+  run_update "$1" status -json | python3 -c "import json,sys; d=json.load(sys.stdin); sys.exit(0 if (d['installed'],d['engine'],d['runtime'].get('version'))==tuple(sys.argv[1:]) else 1)" "$2" "$3" "$4"
+}
+done_at=',"last_check":"2026-10-18T08:00:00Z","last_success":"2026-10-18T08:00:00Z","next_check":"2026-10-18T14:00:00Z"'
+hash64=$(printf 'a%.0s' $(seq 64))
+
+new_home coreupdated   # 0.2.0 外殼＋相容核心更新到 ENGINE_VERSION，新引擎已在跑：不提示
+receipt coreupdated 0.2.0; core_pointer coreupdated "$ENGINE_VERSION"; state_json coreupdated idle "$done_at"
+start_engine coreupdated
+check "核心更新後：收據 0.2.0、指標與執行中的引擎都是 $ENGINE_VERSION" status_is coreupdated 0.2.0 "$ENGINE_VERSION" "$ENGINE_VERSION"
+shoot coreupdated overview
+shoot coreupdated update
+stop_engine
+
+new_home corepending   # 指標已切到 0.2.9，舊引擎（ENGINE_VERSION）還在組字：提示等引擎重新啟動，不叫人登出
+receipt corepending 0.2.0; core_pointer corepending 0.2.9
+state_json corepending pending "$done_at"',"target":{"version":"0.2.9","kind":"core","sha256":"'$hash64'","size":1},"switched":true,"blocked":{"reason":"engine_busy","detail":"仍在組字","since":"2026-10-18T08:00:00Z"}'
+start_engine corepending
+check "核心待交接：指標 0.2.9、執行中仍是 $ENGINE_VERSION" status_is corepending 0.2.0 0.2.9 "$ENGINE_VERSION"
+shoot corepending overview
+stop_engine
+
+new_home shellpending  # 外殼更新已安裝、等重新登入，引擎還是舊版：提示登出再登入
+receipt shellpending 0.2.9
+state_json shellpending pending "$done_at"',"target":{"version":"0.2.9","kind":"shell","sha256":"'$hash64'","size":1},"blocked":{"reason":"needs_relogin","detail":"已安裝，重新登入後生效","since":"2026-10-18T08:00:00Z"}'
+start_engine shellpending
+check "外殼等重新登入：收據 0.2.9、沒有指標、執行中是 $ENGINE_VERSION" status_is shellpending 0.2.9 "" "$ENGINE_VERSION"
+shoot shellpending overview
+stop_engine
+
+new_home switched      # 完整安裝 ENGINE_VERSION、引擎也是：不提示
+receipt switched "$ENGINE_VERSION"; state_json switched idle "$done_at"
+start_engine switched
+check "全部已切換：收據與執行中的引擎都是 $ENGINE_VERSION" status_is switched "$ENGINE_VERSION" "" "$ENGINE_VERSION"
+shoot switched overview
+stop_engine
+
 # ---- 一列模糊音總開關與 Emoji 開關，真的 UI → 多鍵原子保存 ----
 new_home toggles
 printf '{"schema":1,"future":{"x":1}}\n' > "$(base_of toggles)/settings.json"

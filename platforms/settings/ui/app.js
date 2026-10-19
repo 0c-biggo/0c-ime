@@ -286,7 +286,9 @@
     if (problem(root)) return;
     const status = state.status;
     const settings = state.settings;
-    root.append(h('p', { class: 'lead' }, '已安裝版本 ' + (status.installed || '（尚無版本收據）')));
+    // 版本、是否仍在跑舊版的判斷在 engine-state.js：核心更新後以引擎指標為準，不只看外殼的收據。
+    const engine = window.ZcEngineState(status, state.info?.platform);
+    root.append(h('p', { class: 'lead' }, '已安裝版本 ' + (engine.expected || '（尚無版本收據）')));
     root.append(...fileNotices(settings));
     if (settings.pending_restart) {
       root.append(h('div', { class: 'notice' },
@@ -294,19 +296,15 @@
         h('div', { class: 'actions' }, h('button', { type: 'button', class: 'secondary', onclick: () => show('input') }, '查看輸入設定'))));
     }
     const runtime = status.runtime || {};
-    const shellPending = status.update?.stage === 'pending' && status.update?.target?.kind === 'shell';
-    const pendingDetail = shellPending ? (status.update?.blocked || status.blocked)?.detail : '';
-    const deferredInstall = pendingDetail === '登出再登入時自動完成安裝';
-    const oldShell = pendingDetail === OLD_SHELL;
-    const runningOld = runtime.state === 'running' && runtime.version && status.installed && runtime.version !== status.installed;
+    const deferredInstall = engine.pendingDetail === '登出再登入時自動完成安裝';
+    const oldShell = engine.pendingDetail === OLD_SHELL;
     if (oldShell) {
       root.append(h('div', { class: 'notice' }, h('p', {}, OLD_SHELL_HELP)));
-    } else if (shellPending || runningOld) {
-      const relogin = shellPending || /^(windows|macos)\//.test(state.info?.platform || '');
+    } else if (engine.shellPending || engine.runningOld) {
       root.append(h('div', { class: 'notice' },
         h('p', {}, deferredInstall ? '套件已下載，等待重新登入時安裝。' : '新版已安裝；目前執行的輸入法仍未全部切換。'),
-        runningOld ? h('p', {}, '已安裝 ' + status.installed + '，目前輸入引擎使用 ' + runtime.version + '。') : null,
-        h('p', {}, relogin ? '請先儲存工作，登出再登入，讓所有應用程式載入新版輸入法。' : '請先完成組字，等待輸入引擎重新啟動以載入新版。')));
+        engine.runningOld ? h('p', {}, '已安裝 ' + engine.expected + '，目前輸入引擎使用 ' + engine.running + '。') : null,
+        h('p', {}, engine.relogin ? '請先儲存工作，登出再登入，讓所有應用程式載入新版輸入法。' : '請先完成組字，等待輸入引擎重新啟動以載入新版。')));
     }
     const rows = [
       row(labelBlock('目前執行的輸入引擎'), h('div', { class: 'value' }, (ENGINE[runtime.state] || '未知') + (runtime.version ? '（' + runtime.version + '）' : ''))),
@@ -412,7 +410,7 @@
     const op = view.operation;
     const blocked = view.blocked || status.blocked;
     const summary = updateSummary(view);
-    root.append(h('p', { class: 'lead' }, '目前版本 ' + (status.installed || '未知')));
+    root.append(h('p', { class: 'lead' }, '目前版本 ' + (window.ZcEngineState(status, state.info?.platform).expected || '未知')));
     root.append(h('div', { class: 'notice' + (summary.tone === 'warn' ? '' : ' info') },
       h('p', {}, summary.text),
       view.target && !op ? h('p', {}, view.stage === 'pending' && view.target.kind === 'shell'
