@@ -289,17 +289,24 @@ impl UiClient {
         if !message.show && !self.shown {
             return;
         }
-        if !self.connect() {
-            return;
-        }
         let Some(bytes) = frame(message) else { return };
-        let Some(h) = self.handle else { return };
-        if write_all(h, &bytes, SEND_TIMEOUT_MS) {
-            self.shown = message.show;
-        } else {
+        // 0c-ui 升級交接時結束（或當掉）後，手上的連線寫入會失敗：要顯示的訊息重連一次再送，
+        // 這一鍵的候選窗不會因此不見；新的 0c-ui 由 connect 依安裝收據啟動。隱藏訊息不必為它啟動 0c-ui。
+        for retry in [false, true] {
+            if !self.connect() {
+                return;
+            }
+            let Some(h) = self.handle else { return };
+            if write_all(h, &bytes, SEND_TIMEOUT_MS) {
+                self.shown = message.show;
+                return;
+            }
             zlog!("ui: 寫入失敗，斷線");
             self.close();
             self.shown = false;
+            if retry || !message.show {
+                return;
+            }
         }
     }
 

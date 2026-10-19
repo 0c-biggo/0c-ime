@@ -509,6 +509,8 @@ func autoCommand(action string, args []string) (resultErr error) {
 	// #120：0.2.0 起引擎常駐，引擎沒在跑就叫起來。以暫時性 service 啟動只要幾十毫秒、不等它載入，
 	// 登入單元也做，引擎在登入當下就起來，不必等 timer 第一次喚起（OnStartupSec=5min）。
 	ensureEngineService(base)
+	// Windows：背景完整更新由舊的穩定更新器安裝，它不會請舊版的 0c-ui 結束；新版的穩定副本每次喚起時補上。
+	handOverUI(uiWaitAuto)
 	if *login {
 		return nil
 	}

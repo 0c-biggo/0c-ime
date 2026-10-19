@@ -423,6 +423,8 @@ func ensureEngine() error {
 	if err != nil || version == "" {
 		return err
 	}
+	// 登入工作也在安裝、回復交接引擎之後由提權的安裝程式叫起：以使用者權限順便請舊版的候選窗程式換新。
+	defer handOverUI(uiWaitTask)
 	if c, err := dialEngine(time.Second); err == nil {
 		c.Close()
 		return nil

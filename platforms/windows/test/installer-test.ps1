@@ -19,7 +19,7 @@ $locked=$false;$snapshotTaken=$false
 $initialUI=@(Get-Process 0c-ui -ErrorAction SilentlyContinue|Select-Object -ExpandProperty Id)
 function HashOrAbsent([string]$p){if(Test-Path $p){return (Get-FileHash $p).Hash};return 'absent'}
 
-$report=[ordered]@{passed=$false;schedule=$false;sha256=(Get-FileHash $Setup).Hash;upgrade=$false;uninstall=$false;restored=$false;user_preserved=$false;receipt_restored=$false;error=''}
+$report=[ordered]@{passed=$false;schedule=$false;sha256=(Get-FileHash $Setup).Hash;upgrade=$false;ui_retired=$false;uninstall=$false;restored=$false;user_preserved=$false;receipt_restored=$false;error=''}
 function Run([string]$exe,[string]$arguments){$p=Start-Process $exe -ArgumentList $arguments -PassThru;$handle=$p.Handle;$p.WaitForExit();if($p.ExitCode -ne 0){throw "installer process exited $($p.ExitCode)"}}
 $task='0c-Installer-'+[guid]::NewGuid().ToString('N')
 try {
@@ -42,6 +42,17 @@ try {
  $baselineVersion=(Get-ItemProperty $arp).DisplayVersion
  $report.baseline_version=$baselineVersion
  $baselineDirectory=(Get-Content "$base\install-receipt.json" -Raw|ConvertFrom-Json).directory
+ # 升級要讓基準版的候選窗程式結束（#159 的全螢幕檢查在 0c-ui，舊的留著要重新登入才生效）：
+ # 像 DLL 一樣在 console 工作階段以一般權限啟動基準版的 0c-ui，升級後確認它已結束。
+ $baselineUIPath=[IO.Path]::GetFullPath((Join-Path (Join-Path $base $baselineDirectory) '0c-ui.exe'))
+ $uiTask='0c-InstallerUI-'+[guid]::NewGuid().ToString('N')
+ Register-ScheduledTask -TaskName $uiTask -Action (New-ScheduledTaskAction -Execute cmd.exe -Argument ('/c start "" "'+$baselineUIPath+'"')) -Principal (New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited) | Out-Null
+ Start-ScheduledTask $uiTask
+ $deadline=(Get-Date).AddSeconds(15)
+ while(-not(Get-Process 0c-ui -ErrorAction SilentlyContinue|Where-Object {$_.Path -eq $baselineUIPath}) -and (Get-Date) -lt $deadline){Start-Sleep -Milliseconds 200}
+ Unregister-ScheduledTask $uiTask -Confirm:$false
+ $baselineUI=@(Get-Process 0c-ui -ErrorAction SilentlyContinue|Where-Object {$_.Path -eq $baselineUIPath})
+ if($baselineUI.Count -ne 1){throw 'baseline 0c-ui did not start in the console session'}
  $args='-NoProfile -STA -ExecutionPolicy Bypass -File "'+$PSScriptRoot+'\setup-gui-test.ps1" -Setup "'+$Setup+'" -ResultDir "'+$result+'"'
  $action=New-ScheduledTaskAction -Execute powershell.exe -Argument $args
  $principal=New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
@@ -61,6 +72,8 @@ try {
  if(-not(Test-Path "$base\bin\0c-update.exe")){throw 'upgrade did not install the stable updater'}
  $report.schedule=$true
  $report.upgrade=$true
+ if(-not $baselineUI[0].WaitForExit(15000)){throw 'upgrade left the baseline 0c-ui running'}
+ $report.ui_retired=$true
  Run ($app.UninstallString.Trim('"')) '/S'
  $deadline=(Get-Date).AddSeconds(15)
  while((Test-Path $arp) -and (Get-Date) -lt $deadline){Start-Sleep -Milliseconds 200}
