@@ -24,6 +24,7 @@ const (
 // 修飾鍵（IBusModifierType）。
 const (
 	maskShift   = 1 << 0
+	maskLock    = 1 << 1 // Caps Lock
 	maskControl = 1 << 2
 	maskMod1    = 1 << 3 // Alt
 	maskMod4    = 1 << 6

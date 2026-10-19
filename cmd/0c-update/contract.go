@@ -174,6 +174,12 @@ func runningValues(info map[string]string) map[string]string {
 	case "false":
 		out["output-simplified"] = "off"
 	}
+	switch info["ctrl_punctuation"] {
+	case "true":
+		out["ctrl-punctuation"] = "on"
+	case "false":
+		out["ctrl-punctuation"] = "off"
+	}
 	switch info["space_selects"] {
 	case "true":
 		out["space-selects"] = "on"
@@ -264,7 +270,7 @@ type setOptions struct {
 	repair bool // 設定檔壞掉時改名保留，從預設值重新開始
 }
 
-const setUsage = "用法：0c-update set selection neural|statistical、set punctuation on|off、set document-context on|off、set mixed-input on|off、set english-autocomplete on|off、set left-shift on|off、set esc-clear on|off、set space-selects on|off、set candidate-cursor before|after、set advance-after-select on|off、set output-simplified on|off、set keyboard-layout standard|eten、set fuzzy-z-zh|fuzzy-c-ch|fuzzy-s-sh|fuzzy-en-eng off|select|auto [鍵 值 ...] [-apply] [-notify] [-json] [-repair]"
+const setUsage = "用法：0c-update set selection neural|statistical、set punctuation on|off、set document-context on|off、set mixed-input on|off、set english-autocomplete on|off、set left-shift on|off、set esc-clear on|off、set space-selects on|off、set candidate-cursor before|after、set advance-after-select on|off、set output-simplified on|off、set ctrl-punctuation on|off、set keyboard-layout standard|eten、set fuzzy-z-zh|fuzzy-c-ch|fuzzy-s-sh|fuzzy-en-eng off|select|auto [鍵 值 ...] [-apply] [-notify] [-json] [-repair]"
 
 func parseSetArgs(args []string) (setOptions, error) {
 	var o setOptions

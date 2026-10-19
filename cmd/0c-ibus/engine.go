@@ -109,6 +109,31 @@ func toKey(keyval, state uint32) string {
 	return ""
 }
 
+// foldCaps：中文模式不理 Caps Lock（#168，同常見注音輸入法與 ibus-chewing 的 self_key_sym_fix），字母換回沒開 Caps Lock 時的
+// 大小寫：沒按 Shift 是小寫注音鍵，Shift＋字母照舊是大寫。英文模式不呼叫，照 Caps Lock 打大寫。
+func foldCaps(keyval, state uint32) uint32 {
+	if state&maskLock == 0 || !(keyval >= 'a' && keyval <= 'z' || keyval >= 'A' && keyval <= 'Z') {
+		return keyval
+	}
+	if state&maskShift != 0 {
+		return keyval &^ 0x20
+	}
+	return keyval | 0x20
+}
+
+// ctrlPunctKey：只按著 Ctrl（可以加 Shift，沒有 Alt／Super 等）的 , . ' ; ? ! 換成協定的 Ctrl＋標點鍵名（#168）。
+// keyval 是已經套用 Shift 的字元（Ctrl+Shift+/ 是 question），其他鍵回傳空字串。
+func ctrlPunctKey(keyval, state uint32) string {
+	if state&maskControl == 0 || state&(modifiedMask&^maskControl) != 0 {
+		return ""
+	}
+	switch keyval {
+	case ',', '.', '\'', ';', '?', '!':
+		return proto.CtrlPrefix + string(rune(keyval))
+	}
+	return ""
+}
+
 // isModifierKey：Shift／Ctrl／Alt／Super 等修飾鍵本身（X keysym Shift_L…Hyper_R、ISO_Level3／5_Shift、Mode_switch）。
 func isModifierKey(keyval uint32) bool {
 	return keyval >= 0xffe1 && keyval <= 0xffee || keyval == 0xfe03 || keyval == 0xfe11 || keyval == 0xff7e
@@ -248,6 +273,19 @@ func (e *engine) processKey(keyval, keycode, state uint32) bool {
 	}
 	if release {
 		return false
+	}
+	if !e.session.english {
+		keyval = foldCaps(keyval, state)
+		// Ctrl＋標點打全形（#168）：只在中文模式、引擎回報 ctrl_punctuation（認得鍵名而且設定開著）時送；
+		// 引擎沒處理（設定剛關掉、模式不同步）就照下面的一般快捷鍵先送出組字再交給應用程式。
+		if k := ctrlPunctKey(keyval, state); k != "" && e.session.ctrlPunct() {
+			e.syncContext()
+			snap := e.session.key(k)
+			if snap.ok && snap.Handled {
+				e.render(snap)
+				return true
+			}
+		}
 	}
 	key := toKey(keyval, state)
 	// 按著 Shift 的 ←→、Delete、Backspace：引擎回報支援時送 0.2.0 的新鍵名（#123）。

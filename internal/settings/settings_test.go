@@ -409,7 +409,7 @@ func TestCorruptFileIsReportedAndCanBeQuarantined(t *testing.T) {
 func TestItemsListEveryKeyWithCurrentValue(t *testing.T) {
 	s := Default()
 	items := s.Items()
-	if len(items) != 18+len(fuzzy.Pairs()) || items[0].Key != "selection" {
+	if len(items) != 19+len(fuzzy.Pairs()) || items[0].Key != "selection" {
 		t.Fatalf("項目數量或順序不對：%+v", items)
 	}
 	for _, it := range items {

@@ -740,7 +740,7 @@ func statusMap(base, installed string, dial autoupdate.Dialer) map[string]any {
 		for _, p := range fuzzy.Pairs() {
 			fuzzyModes[p.ID()] = st.FuzzyConfig().Mode(p).String()
 		}
-		out["settings"] = map[string]any{"selection": st.Selection, "punctuation": st.Punctuation, "document_context": st.DocumentContext, "mixed_input": st.MixedInput, "english_autocomplete": st.EnglishAutocomplete, "left_shift": st.LeftShift, "esc_clear": st.EscClear, "space_selects": st.SpaceSelects, "advance_after_select": st.AdvanceAfterSelect, "output_simplified": st.OutputSimplified, "keyboard_layout": st.KeyboardLayout, "fuzzy": fuzzyModes}
+		out["settings"] = map[string]any{"selection": st.Selection, "punctuation": st.Punctuation, "document_context": st.DocumentContext, "mixed_input": st.MixedInput, "english_autocomplete": st.EnglishAutocomplete, "left_shift": st.LeftShift, "esc_clear": st.EscClear, "space_selects": st.SpaceSelects, "advance_after_select": st.AdvanceAfterSelect, "output_simplified": st.OutputSimplified, "ctrl_punctuation": st.CtrlPunctuation, "keyboard_layout": st.KeyboardLayout, "fuzzy": fuzzyModes}
 	}
 	return out
 }

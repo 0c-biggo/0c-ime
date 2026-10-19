@@ -571,6 +571,29 @@ int main(int argc, char **argv) {
         s.key("Escape");
     }
     {
+        // #168：ctrl_punctuation 來自 open 回覆；預設開，Ctrl+, 在中文模式插進組字區。設定關閉後重啟引擎，
+        // 重開的 session 讀到 false，外殼照舊把 Ctrl＋標點交給應用程式；引擎收到也回未處理。
+        (void)!system((std::string("pkill -f '0c-server -socket ") + argv[1] + "'").c_str());
+        usleep(300 * 1000);
+        std::ofstream(home + "/settings.json") << R"({})";
+        zuin::Session s(client, nullptr);
+        s.handle({{"type", "cancel"}}); // 斷線要等下一個請求才發現：先重連到重啟的引擎
+        CHECK(s.ctrlPunct(), "預設應回報 ctrl_punctuation");
+        auto snap = s.key("Ctrl+,");
+        CHECK(snap.handled && snap.text() == "，", "Ctrl+, 應插進組字區：%d %s", snap.handled, snap.text().c_str());
+        snap = s.key("Enter");
+        CHECK(snap.commit == "，", "Enter 送出全形逗號：%s", snap.commit.c_str());
+        (void)!system((std::string("pkill -f '0c-server -socket ") + argv[1] + "'").c_str());
+        usleep(300 * 1000);
+        std::ofstream(home + "/settings.json") << R"({"ctrl_punctuation":false})";
+        s.handle({{"type", "cancel"}});
+        CHECK(!s.ctrlPunct(), "設定關閉後重開的 session 不應回報 ctrl_punctuation");
+        CHECK(!s.key("Ctrl+.").handled, "設定關閉時引擎不處理 Ctrl+.");
+        (void)!system((std::string("pkill -f '0c-server -socket ") + argv[1] + "'").c_str());
+        usleep(300 * 1000);
+        std::ofstream(home + "/settings.json") << R"({})";
+    }
+    {
         // #117：預設（右 Shift）時 health 回報右 Shift 切換、左 Shift 不切換。
         zuin::Session s(client, nullptr);
         auto keys = s.shiftKeys();

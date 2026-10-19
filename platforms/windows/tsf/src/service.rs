@@ -144,6 +144,16 @@ impl State {
         self.session.vocab_keys() && !self.session.english()
     }
 
+    /// 這一鍵是不是要交給引擎的 Ctrl＋標點（#168）：中文模式、引擎可用而且回報 ctrl_punctuation（認得鍵名、設定開著）。
+    /// 先看按鍵本身，不是那六個鍵就不問引擎。TestKeyDown 與 OnKeyDown 用同一個答案；是的話不先送出組字。
+    fn ctrl_punct_key(&mut self, vk: u32, lparam: isize) -> Option<&'static str> {
+        if self.session.english() {
+            return None;
+        }
+        let key = keys::ctrl_punct(vk, lparam)?;
+        (self.session.available() && self.session.ctrl_punctuation()).then_some(key)
+    }
+
     fn tap(&mut self, side: keys::Side) -> &mut keys::ShiftTap {
         match side {
             keys::Side::Left => &mut self.left_shift,
@@ -776,7 +786,7 @@ impl TextService_Impl {
             }
             return Some(false);
         }
-        let key = keys::to_key(vk, lparam, false); // Shift+Tab 已是 BackTab；英文模式不送 #123 的新鍵名
+        let key = keys::to_key(vk, lparam, false, true); // Shift+Tab 已是 BackTab；英文模式不送 #123 的新鍵名，照 Caps Lock
         if key.as_ref().is_some_and(|k| snap.english_wants_key(k)) {
             return Some(true);
         }
@@ -802,7 +812,11 @@ impl TextService_Impl {
         if !self.state.borrow().composing {
             return;
         }
-        let protocol = keys::to_key(vk, lparam, false); // 只看轉不轉得成協定按鍵，與新鍵名無關
+        // 要交給引擎的 Ctrl＋標點插進組字區，不先送出組字（#168）。
+        if keys::modifier_down() && self.state.borrow_mut().ctrl_punct_key(vk, lparam).is_some() {
+            return;
+        }
+        let protocol = keys::to_key(vk, lparam, false, true); // 只看轉不轉得成協定按鍵，與新鍵名、大小寫無關
         if keys::commits_before_host(vk, keys::modifier_down(), protocol.as_deref()) {
             self.finish(ctx, "commit");
         }
@@ -824,6 +838,10 @@ impl TextService_Impl {
     }
 
     fn wants_key(&self, vk: u32, lparam: isize) -> bool {
+        // Ctrl＋標點（#168）：中文模式而且引擎回報 ctrl_punctuation 時吃，組字中或沒在組字都一樣；核心插進組字區。
+        if keys::modifier_down() && self.state.borrow_mut().ctrl_punct_key(vk, lparam).is_some() {
+            return true;
+        }
         if keys::modifier_down() || keys::is_modifier(vk) {
             return false;
         }
@@ -840,7 +858,7 @@ impl TextService_Impl {
         if st.composing {
             let english = st.session.english();
             let vocab = st.vocab_keys();
-            return keys::composing_wants(english, keys::to_key(vk, lparam, vocab).as_deref());
+            return keys::composing_wants(english, keys::to_key(vk, lparam, vocab, english).as_deref());
         }
         if st.session.english() {
             return false;
@@ -849,7 +867,7 @@ impl TextService_Impl {
         if keys::named(vk).is_some() || keys::is_keypad(vk) {
             return false;
         }
-        keys::printable(vk, lparam)
+        keys::printable(vk, lparam, false) // 中文模式不理 Caps Lock（#168）
             .map(|key| {
                 // 鍵盤排列只影響少數幾個鍵（#83）；其他鍵不多查一次引擎。
                 let layout = if keys::layout_dependent(&key) && st.session.eten_layout() {
@@ -1114,8 +1132,20 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
                 zdebug!("OnKeyDown vk={} wants=false", vk);
                 return Ok(false.into());
             }
-            let vocab = self.state.borrow().vocab_keys();
-            let Some(key) = keys::to_key(vk, lparam.0, vocab) else {
+            let (vocab, english) = {
+                let st = self.state.borrow();
+                (st.vocab_keys(), st.session.english())
+            };
+            // Ctrl＋標點（#168）與 wants_key 同一個判斷；其他鍵照舊，中文模式不理 Caps Lock。
+            let ctrl = if keys::modifier_down() {
+                self.state.borrow_mut().ctrl_punct_key(vk, lparam.0)
+            } else {
+                None
+            };
+            let Some(key) = ctrl
+                .map(str::to_string)
+                .or_else(|| keys::to_key(vk, lparam.0, vocab, english))
+            else {
                 return Ok(false.into());
             };
             self.confirm_document_context(pic.as_ref());

@@ -223,6 +223,14 @@ impl Session {
             .is_some_and(|reply| reply["ok"] == true && reply["info"]["tone_mark_keys"] == "true")
     }
 
+    /// 引擎是否認得 Ctrl＋標點的鍵名而且設定開著（health 的 ctrl_punctuation，#168）。只在按下那六個鍵時查詢，
+    /// 設定套用（引擎重啟）後立即生效；引擎不可用或舊版引擎沒有這一項時為 false，照舊交給應用程式。
+    pub fn ctrl_punctuation(&mut self) -> bool {
+        self.client
+            .call(&json!({"op": "health"}))
+            .is_some_and(|reply| reply["ok"] == true && reply["info"]["ctrl_punctuation"] == "true")
+    }
+
     /// 引擎目前載入的鍵盤排列是否為倚天 41 鍵（#83）。只在答案依排列而不同的鍵（keys::layout_dependent）查詢；
     /// 引擎不可用或舊版引擎沒有這一項時為標準排列。
     pub fn eten_layout(&mut self) -> bool {

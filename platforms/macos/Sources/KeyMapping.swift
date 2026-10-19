@@ -30,6 +30,26 @@ enum KeyMapping {
         return characters
     }
 
+    /// Ctrl＋標點（#168）：只按著 Control（可以加 Shift，沒有 Command／Option）的 , . ' ; 與 ⇧/ ⇧1 對應的協定鍵名。
+    /// 用鍵碼判斷：輸入法啟用時鍵盤固定是美式排列（overrideKeyboard），Control 會改變 characters。
+    /// 要不要送由呼叫端決定（注音模式、引擎回報 ctrl_punctuation）。
+    static func ctrlPunct(code: UInt16, modifiers: NSEvent.ModifierFlags) -> String? {
+        guard modifiers.contains(.control), modifiers.intersection([.command, .option]).isEmpty else { return nil }
+        let shift = modifiers.contains(.shift)
+        switch (code, shift) {
+        case (43, false): return "Ctrl+,"
+        case (47, false): return "Ctrl+."
+        case (39, false): return "Ctrl+'"
+        case (41, false): return "Ctrl+;"
+        case (44, true): return "Ctrl+?"
+        case (18, true): return "Ctrl+!"
+        default: return nil
+        }
+    }
+
+    /// Ctrl＋標點打出的全形標點：引擎冷啟動時排隊，重送後引擎沒處理（設定剛關掉）就補送這個字給 App。
+    static let ctrlPunctText: [String: String] = ["Ctrl+,": "，", "Ctrl+.": "。", "Ctrl+'": "、", "Ctrl+;": "；", "Ctrl+?": "？", "Ctrl+!": "！"]
+
     /// 引擎沒處理這個鍵時要原樣補送給 App 的文字。只有單一可見字元才有；Enter、Backspace、方向鍵等
     /// 具名鍵沒有文字——把鍵名當文字送出，App 會收到 "Enter"、"Backspace" 這幾個英文字母。
     static func text(for key: String) -> String? {

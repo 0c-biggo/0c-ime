@@ -381,6 +381,17 @@ func run() throws {
     for flags: NSEvent.ModifierFlags in [.command, .control, .option, [.capsLock, .command]] {
         check(KeyMapping.key(code: 0, characters: "a", modifiers: flags) == nil, "shortcut passes through")
     }
+    // #168：Control＋標點的鍵名；Command／Option、少了或多了 Shift 都不是。
+    for (code, flags, want) in [(UInt16(43), NSEvent.ModifierFlags.control, "Ctrl+,"), (47, .control, "Ctrl+."), (39, .control, "Ctrl+'"),
+                                (41, .control, "Ctrl+;"), (44, [.control, .shift], "Ctrl+?"), (18, [.control, .shift], "Ctrl+!"),
+                                (43, [.control, .capsLock], "Ctrl+,")] {
+        check(KeyMapping.ctrlPunct(code: code, modifiers: flags) == want, "ctrl punct \(want)")
+        check(KeyMapping.ctrlPunctText[want] != nil, "ctrl punct text \(want)")
+    }
+    for (code, flags) in [(UInt16(43), NSEvent.ModifierFlags.command), (43, []), (43, [.control, .option]), (43, [.control, .command]),
+                          (43, [.control, .shift]), (44, .control), (18, .control), (33, .control), (0, .control)] {
+        check(KeyMapping.ctrlPunct(code: code, modifiers: flags) == nil, "not ctrl punct: \(code) \(flags.rawValue)")
+    }
     check(KeyMapping.key(code: 117, characters: "\u{F728}", modifiers: []) == "Delete", "forward delete maps to core grapheme editing")
     check(KeyMapping.key(code: 0, characters: "😀", modifiers: []) == nil, "non-ASCII passes through")
     // 數字鍵盤不是注音鍵（#75）：與主鍵盤的 1（keyCode 18）分開；補送給 App 的是字元本身。
@@ -530,6 +541,11 @@ func vocabKeyChecks(directory: URL, session: EngineSession, key: (String) throws
     try FileManager.default.removeItem(at: directory.appendingPathComponent("vocab.json"))
     _ = try key(" ") // 重新 open，從 info 取得 vocab_keys
     check(session.vocabKeys, "open reply carries vocab_keys=true even with the retired preview_0_2=false")
+    // #168：設定檔沒有 ctrl_punctuation 時預設開；Ctrl+, 沒在組字也插進組字區，Esc 清掉。
+    check(session.ctrlPunct, "open reply carries ctrl_punctuation=true by default")
+    let comma = try key("Ctrl+,")
+    check(comma.handled && comma.text == "，", "Ctrl+, types a full-width comma: \(comma.text)")
+    check(try key("Escape").text.isEmpty, "Escape clears the comma")
     let shiftLeft = KeyMapping.key(code: 123, characters: nil, modifiers: [.shift, .function, .numericPad], vocabKeys: session.vocabKeys)
     check(shiftLeft == "ShiftLeft", "Shift+Left maps to ShiftLeft once the engine supports it")
     // 沒在組字：引擎交還，App 照常選取文字。
