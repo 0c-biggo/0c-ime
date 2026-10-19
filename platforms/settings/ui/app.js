@@ -5,7 +5,7 @@
 
   const tauri = window.__TAURI__;
   const invoke = (command, args) => tauri.core.invoke(command, args);
-  const PAGES = ['overview', 'input', 'vocab', 'update', 'troubleshoot', 'about'];
+  const PAGES = ['overview', 'input', 'output', 'vocab', 'update', 'troubleshoot', 'about'];
 
   const state = {
     info: null, status: null, settings: null, error: null,
@@ -371,7 +371,6 @@
     const emoji = items.find((item) => item.key === 'emoji-shortcut');
     const equalsFirst = items.find((item) => item.key === 'emoji-equals-first');
     const keyboard = items.find((item) => item.key === 'keyboard-layout');
-    const output = items.find((item) => item.key === 'output-simplified');
     const ctrlPunct = items.find((item) => item.key === 'ctrl-punctuation'); // #168：鍵盤卡片最後
     const selectionKeys = items.find((item) => item.key === 'selection-keys'); // #112：跟鍵盤排列放在同一張卡
     const rest = items.filter((item) => !item.key.startsWith('fuzzy-') && item.key !== 'keyboard-layout' && item.key !== 'selection-keys' && item.key !== 'ctrl-punctuation' &&
@@ -398,8 +397,6 @@
           onclick: () => changePairs(fuzzy.map((item) => [item.key, enabled ? 'off' : 'select'])),
         }))));
     }
-    // 送出的文字怎麼轉換（#118 簡體字）跟選字無關，獨立一張卡。
-    if (output) root.append(h('h2', {}, '輸出設定'), h('div', { class: 'card' }, itemRow(output, locked)));
     // 鍵盤排列、選字鍵與 Ctrl＋標點（#168）放在最後一張卡：前面各項的鍵盤（Tab）順序不變。
     const keys = [keyboard, selectionKeys, ctrlPunct].filter(Boolean);
     if (keys.length) root.append(h('h2', {}, '鍵盤'), h('div', { class: 'card' }, ...keys.map((item) => itemRow(item, locked))));
@@ -497,7 +494,17 @@
     vocab.render(root);
   }
 
-  const RENDER = { overview, input, vocab: vocabPage, update, troubleshoot, about };
+  // 輸出設定：送出的文字怎麼轉換（#118 簡體字），跟打字、選字分開，左側獨立一頁。
+  function output(root) {
+    root.append(h('h1', {}, '輸出設定'), h('p', { class: 'lead' }, '決定送到應用程式的文字；組字和候選照常顯示繁體。改動會立即儲存，並在沒有組字時讓輸入法套用。'));
+    if (problem(root)) return;
+    const settings = state.settings;
+    root.append(...fileNotices(settings));
+    const items = (settings.items || []).filter((item) => item.key === 'output-simplified');
+    if (items.length) root.append(h('div', { class: 'card' }, ...items.map((item) => itemRow(item, settings.file.read_only))));
+  }
+
+  const RENDER = { overview, input, output, vocab: vocabPage, update, troubleshoot, about };
 
   function render() {
     const focused = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.focus : null;

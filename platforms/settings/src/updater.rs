@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 /// 可以指定開啟的頁面；與 internal/settingsapp 的白名單一致（vocab 是 0.2.0 的「我的詞彙」，
 /// features.vocab 不為 true（舊版 0c-update）時畫面改開總覽）。
-pub const PAGES: [&str; 6] = ["overview", "input", "update", "troubleshoot", "about", "vocab"];
+pub const PAGES: [&str; 7] = ["overview", "input", "update", "troubleshoot", "about", "vocab", "output"];
 
 /// 取出命令列的 `--page X`；不認得的頁面開總覽。
 pub fn page_from_args(args: &[String]) -> &'static str {
