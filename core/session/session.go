@@ -114,6 +114,7 @@ type Session struct {
 	mixedOrigins          map[int]mixedOrigin // literal positions: independently typed vs system-assisted
 	pendingToneKey        *toneKeyPending     // 上一鍵是單獨的聲調鍵：緊接著的空白換成聲調符號（#135）
 	toneMarkKeys          map[int]string      // 聲調鍵打出的聲調符號位置 → 原按鍵，↓ 可選回數字（#135）
+	retypeLiteral         bool                // 上一鍵剛把沒有字的音節原樣留下：緊接著的同類介音／韻母是在改它（#85）
 	// DocumentContextOff 由宿主依使用者設定：外殼送來的前文確認一律忽略，不以前文選字。
 	DocumentContextOff bool
 	// SpaceInsertsSpace 由宿主依使用者設定（關閉「空白鍵選字」）：注音打完後空白插入半形空白、↓ 選字，
@@ -234,6 +235,7 @@ func (s *Session) Handle(r proto.Request) proto.Snapshot {
 	}
 	if r.Type != proto.Key && r.Type != proto.Context && r.Type != proto.Display {
 		s.pendingToneKey = nil // 按鍵由 key 自己取出；其他操作之後的空白不再換成聲調符號（#135）
+		s.retypeLiteral = false
 	}
 	_, keypad := proto.KeypadChar(r.Key)
 	s.allowRerank = r.Type == proto.Symbol || r.Type == proto.Backspace || r.Type == proto.Key && (len([]rune(r.Key)) == 1 || keypad || r.Key == proto.KeyBackspace)
@@ -381,6 +383,8 @@ func (s *Session) key(k string) (handled bool, commit string) {
 	}
 	toneKey := s.pendingToneKey // 只對緊接著的這一鍵有效（#135）
 	s.pendingToneKey = nil
+	retype := s.retypeLiteral // 同上，只有緊接著的這一鍵能改剛留下的錯音節（#85）
+	s.retypeLiteral = false
 	// 數字鍵盤永遠不是注音鍵（#75）：英文模式與候選選號同主鍵盤數字；沒在組字交還應用程式；
 	// 組字中以半形插在游標處，未打完的注音保留成符號（同 Shift＋字母）。
 	if c, ok := proto.KeypadChar(k); ok {
@@ -613,6 +617,9 @@ func (s *Session) key(k string) (handled bool, commit string) {
 		}
 	}
 	if sym, ok := s.layout.Symbol(runes[0]); ok {
+		if retype && s.retypeSyllableLiteral(sym) {
+			return true, ""
+		}
 		if s.symbol(sym) {
 			return true, ""
 		}
@@ -663,6 +670,7 @@ func (s *Session) symbol(sym rune) bool {
 			} else {
 				s.restoreSyllables(saved)
 				s.insertSyllableLiteral(before, done)
+				s.retypeLiteral = true // 多半是打錯：緊接著的同類介音／韻母改這個讀音（#85）
 			}
 		} else if decodable && len(s.path) > 0 && !s.completeDecodable() {
 			// 只能當某個更長的詞的開頭、自己沒有字的音節（ㄟ 只有「工口」的 ㄟ ㄌㄨㄛˊ，#107）：

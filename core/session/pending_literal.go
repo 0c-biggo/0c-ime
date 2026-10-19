@@ -85,6 +85,46 @@ func (s *Session) insertSyllableLiteral(comp zhuyin.Composer, syl zhuyin.Syllabl
 	s.pendingLiterals = append(s.pendingLiterals, p)
 }
 
+// retypeSyllableLiteral 處理緊接在「沒有字、由聲調鍵完成而原樣留下」的音節之後的注音鍵（#85）：
+// 打 ㄍㄨㄜˊ 才發現沒有字，接著打 ㄛ 是要把 ㄜ 改成 ㄛ，不是要在後面開新的音節。這一鍵若取代
+// 該音節已有的同類介音或韻母、而且改完的讀音在某個聲調有字，就把音節收回注音暫存（不帶聲調），
+// 等使用者重新按聲調，同按聲調之前直接改注音。聲母不取代、原本沒有的介音／韻母不補：刻意留下的
+// 原樣注音（ㄏㄟˊ、ㄅ）後面最常接的是新的字（ㄏㄟˊ你、ㄏㄟˊ我、ㄉ一），不能被吃掉。
+func (s *Session) retypeSyllableLiteral(sym rune) bool {
+	cl := zhuyin.ClassOf(sym)
+	if cl != zhuyin.Medial && cl != zhuyin.Final || !s.comp.Empty() || s.cursor == 0 {
+		return false
+	}
+	p, ok := s.syllableLiteralAt(s.cursor - 1)
+	if !ok || p.prefix || p.end()+p.mark() != s.cursor {
+		return false
+	}
+	if old := p.composer.Slot(cl); old == 0 || old == sym {
+		return false
+	}
+	comp := p.composer
+	comp.Add(sym)
+	base := zhuyin.Syllable(comp.String())
+	readable := false
+	for tone := 1; tone <= 5 && !readable; tone++ {
+		readable = len(s.model.Source().Exact([]zhuyin.Syllable{base.WithTone(tone)})) > 0
+	}
+	if !readable {
+		return false
+	}
+	for i := range s.pendingLiterals {
+		if s.pendingLiterals[i].start == p.start {
+			s.pendingLiterals = append(s.pendingLiterals[:i:i], s.pendingLiterals[i+1:]...)
+			break
+		}
+	}
+	for s.cursor > p.start {
+		s.eraseBeforeCursor()
+	}
+	s.comp = comp
+	return true
+}
+
 // syllableState 是插入音節前的組字狀態，插入後解不出來時整個還原。
 type syllableState struct {
 	syls            []zhuyin.Syllable
