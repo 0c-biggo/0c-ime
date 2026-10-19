@@ -28,6 +28,10 @@ final class LingxiInputController: IMKInputController {
     private let queued = RequestQueue()
     private var retry: Timer?
 
+    // 更新交接（#170，Retire.swift）：任一個輸入控制器還在組字時，收到 SIGTERM 也先不結束。
+    private static let live = NSHashTable<LingxiInputController>.weakObjects()
+    static func anyComposing() -> Bool { live.allObjects.contains { $0.snapshot?.composing == true || !$0.queued.isEmpty } }
+
     // Retain InputMethodKit's default mouse handling: clicking outside marked
     // text commits it. System shortcuts switch input sources (no Shift hook).
     override func recognizedEvents(_ sender: Any!) -> Int {
@@ -100,6 +104,8 @@ final class LingxiInputController: IMKInputController {
 
     override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
         guard let event, let client = sender as? IMKTextInput else { return false }
+        RetireMonitor.shared.noteKey()
+        Self.live.add(self)
         guard !bypassSecureInput(client) else { return false }
         if event.type == .flagsChanged { return handleFlags(event, client: client) }
         guard event.type == .keyDown else { return false }

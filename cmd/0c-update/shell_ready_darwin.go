@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -53,16 +54,21 @@ func macBootTime() time.Time {
 	return time.Unix(tv.Unix())
 }
 
-// ShellReady 在跨過登入邊界（重新登入或重新開機）後，確認沒有仍在執行的舊外殼。還沒有 App 用到輸入法、
-// 外殼與引擎都沒在跑時也算生效：之後載入的就是新安裝的 App，不能一直要求重新登入（#98）。
-// 執行中的是備份裡的舊副本或換掉前的舊執行檔時回 ErrOldShellLoaded，並把該副本從 LaunchServices 取消登記。
+// ShellReady 確認沒有仍在執行的舊外殼。還沒有 App 用到輸入法、外殼與引擎都沒在跑時也算生效：之後載入的就是
+// 新安裝的 App，不能一直要求重新登入（#98）。安裝與排程喚起時已請舊的輸入法程式在停手後結束（#170），同一個登入
+// 工作階段裡也能核對；安裝時記下要重新登入（輸入來源還沒登記、簽章改變要按允許）的才要跨過登入邊界。
+// 跨過登入邊界後執行中的是備份裡的舊副本或換掉前的舊執行檔時回 ErrOldShellLoaded；同一個工作階段裡是還沒結束的
+// 舊程式，回 ErrShellRetiring。兩種都把該副本從 LaunchServices 取消登記。
 func (p *system) ShellReady(ctx context.Context, version string) (bool, error) {
 	asid, _ := macAquaSession(ctx) // 取不到時為 0，由開機時間判斷；兩者都無法判斷時 macShellBoundary 回報
-	ready, err := macShellBoundary(receiptPath(), version, asid, macBootTime())
-	if !ready || err != nil {
+	crossed, err := macShellBoundary(receiptPath(), version, asid, macBootTime())
+	if err != nil && !errors.Is(err, errNoLoginBoundary) {
 		return false, err
 	}
-	// 新的登入工作階段：先確保備份裡的舊 App 不會再被系統開啟（dev.58 以前的更新器不會取消登記）。
+	if relogin := macReloginRequired(basePath()); !crossed && relogin {
+		return false, err
+	}
+	// 先確保備份裡的舊 App 不會再被系統開啟（dev.58 以前的更新器不會取消登記）。
 	forgetBackupApps()
 	executable := filepath.Join(installedApp(), "Contents/MacOS/0c")
 	info, err := os.Stat(executable)
@@ -86,6 +92,9 @@ func (p *system) ShellReady(ctx context.Context, version string) (bool, error) {
 	}
 	if len(stale) > 0 {
 		forgetStaleShells(stale)
+		if !crossed {
+			return false, fmt.Errorf("%w：%s", autoupdate.ErrShellRetiring, strings.Join(stale, "、"))
+		}
 		return false, fmt.Errorf("%w：%s", autoupdate.ErrOldShellLoaded, strings.Join(stale, "、"))
 	}
 	return true, nil

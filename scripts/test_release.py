@@ -1331,6 +1331,13 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn('\\"$HOME/Library/Application Support/0c/bin/0c-update\\" rollback', text)
         self.assertIn("<title>靈犀注音 0.2.0</title>", text)
 
+    def test_macos_pkg_pages_do_not_ask_upgraders_to_log_out(self):
+        # #170：安裝時已結束舊的輸入法程式，升級不必登出；第一次安裝找不到輸入來源時才請使用者重新登入。
+        self.assertIn("不必登出", package_macos_pkg.WELCOME)
+        self.assertIn("從舊版升級時不必登出", package_macos_pkg.CONCLUSION)
+        self.assertNotIn("登出再登入後全面生效", package_macos_pkg.CONCLUSION)
+        self.assertIn("登出目前帳號再重新登入", package_macos_pkg.CONCLUSION)
+
     def test_macos_bundle_version_increases_with_every_release(self):
         # 舊版一律寫 1；新版號必須都比 1 新，且依 semver 順序遞增，LaunchServices 才會選最新的 App（#77）。
         order = ["0.1.0-alpha.1", "0.1.0-beta.2", "0.1.0-dev.58", "0.1.0-dev.58.1", "0.1.0-dev.59", "0.1.0-rc.1",

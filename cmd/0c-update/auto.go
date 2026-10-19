@@ -150,7 +150,9 @@ func (p *system) InstallShell(ctx context.Context, archive string) (bool, error)
 		return false, err
 	}
 	afterInstall()
-	return true, nil // 外殼在重新登入後才全面載入
+	// Windows 的外殼在重新登入後才全面載入；macOS 安裝時已請舊的輸入法程式結束（#170），只有要重新登入的情況才回 pending，
+	// 其餘由協調器接著以 ShellReady 核對。
+	return shellPendingAfterInstall(), nil
 }
 
 func (p *system) ReloadsShell() bool { return reloadableShell() }

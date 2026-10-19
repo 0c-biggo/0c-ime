@@ -561,6 +561,57 @@ func Load(path string) (Settings, error) {
 	return r.Settings, err
 }
 
+// KeepToggleKey 在設定檔沒有記下中英切換鍵時寫入 value，回報是否寫入（#167：升級前的平台預設和現在不同，
+// 升級的人保留原本的行為）。已有 toggle_key、舊版的 left_shift=true（已推出 both）、來自較新版本或無法解析的檔案都不動；
+// 寫過一次之後檔案就有 toggle_key，使用者之後自己改的值不會被蓋回去。
+// 只加這一個欄位：其他欄位與未知欄位逐字保留，不把其餘的預設值寫成使用者的選擇；缺檔時只寫 schema 與 toggle_key。
+func KeepToggleKey(path, value string) (bool, error) {
+	if !slices.Contains([]string{ToggleRight, ToggleBoth, ToggleLeft, ToggleNone}, value) {
+		return false, &SetError{Code: CodeInvalidValue, Msg: "不認得的切換鍵：" + value}
+	}
+	b, missing, err := readFile(path)
+	if err != nil {
+		return false, err
+	}
+	if missing && legacyPath(path) != "" {
+		if _, oldMissing, _ := readFile(legacyPath(path)); !oldMissing {
+			return false, nil // 讀的是舊路徑的設定：不在新路徑另寫一份把它蓋掉
+		}
+	}
+	entry, _ := json.Marshal(value)
+	var out []byte
+	if missing {
+		out = []byte(fmt.Sprintf("{\n  \"schema\": %d,\n  \"toggle_key\": %s\n}\n", SchemaVersion, entry))
+	} else {
+		var members map[string]json.RawMessage
+		if err = json.Unmarshal(b, &members); err != nil || members == nil {
+			return false, fmt.Errorf("%s：%w", path, ErrCorrupt)
+		}
+		var s Settings
+		if err = json.Unmarshal(b, &s); err != nil {
+			return false, fmt.Errorf("%s：%w：%v", path, ErrCorrupt, err)
+		}
+		if _, ok := members["toggle_key"]; ok || s.readOnly || s.LeftShift {
+			return false, nil
+		}
+		body := bytes.TrimRight(b, " \t\r\n")
+		if len(body) == 0 || body[len(body)-1] != '}' {
+			return false, fmt.Errorf("%s：%w", path, ErrCorrupt)
+		}
+		sep := ","
+		if len(members) == 0 {
+			sep = ""
+		}
+		out = append(append([]byte{}, body[:len(body)-1]...), []byte(sep+"\n  \"toggle_key\": "+string(entry)+"\n}\n")...)
+		// 逐字插入前一個成員之後：前面是空白或換行時照樣是合法 JSON，寫入前再核對一次。
+		var check map[string]json.RawMessage
+		if json.Unmarshal(out, &check) != nil || len(check) != len(members)+1 {
+			return false, fmt.Errorf("%s：%w", path, ErrCorrupt)
+		}
+	}
+	return true, writeAtomic(path, out)
+}
+
 // Save 先寫暫存檔再改名，中斷時保留原設定。讀到的未知欄位與讀不懂的值原樣寫回；
 // 來自較新版本的檔案回傳 ErrReadOnly，不覆寫。
 func Save(path string, s Settings) error {
@@ -571,7 +622,11 @@ func Save(path string, s Settings) error {
 	if err != nil {
 		return err
 	}
-	if err = os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	return writeAtomic(path, append(b, '\n'))
+}
+
+func writeAtomic(path string, b []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	f, err := os.CreateTemp(filepath.Dir(path), ".settings-")
@@ -579,7 +634,7 @@ func Save(path string, s Settings) error {
 		return err
 	}
 	defer os.Remove(f.Name())
-	if _, err = f.Write(append(b, '\n')); err != nil {
+	if _, err = f.Write(b); err != nil {
 		f.Close()
 		return err
 	}
