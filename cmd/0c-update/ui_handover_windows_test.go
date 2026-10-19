@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"testing"
 	"time"
@@ -50,6 +51,8 @@ func TestUIWindowHelper(t *testing.T) {
 	if mode == "" {
 		t.Skip("只在 ui_handover 測試啟動的子行程裡執行")
 	}
+	// 視窗的訊息佇列屬於建立它的執行緒：goroutine 換了執行緒，GetMessageW 就收不到 WM_CLOSE（.14 上 20 次約失敗 4 次）。
+	runtime.LockOSThread()
 	class, _ := windows.UTF16PtrFromString(uiWindowClass)
 	proc := syscall.NewCallback(func(hwnd, msg, wp, lp uintptr) uintptr {
 		if msg == 0x0002 { // WM_DESTROY
