@@ -86,7 +86,10 @@ type Settings struct {
 	// SelectionKeys 是候選窗的選字鍵（#112）：1234567890（預設，檔案沒有這個欄位時也是）、1234qweras 或 asdfghjkl;。
 	// 換成字母鍵時數字 1–0 仍照位置選字。
 	SelectionKeys string `json:"selection_keys"`
-	Fuzzy         Fuzzy  `json:"fuzzy,omitzero"`
+	// CtrlPunctuation：中文模式按 Ctrl＋, . ' ; 與 Ctrl＋Shift＋/ 1 打全形標點（#168）。預設 true；
+	// 想保留程式快速鍵（VS Code 的 Ctrl＋, 等）時關閉，這些鍵照舊交給應用程式。
+	CtrlPunctuation bool  `json:"ctrl_punctuation"`
+	Fuzzy           Fuzzy `json:"fuzzy,omitzero"`
 	// 0.2.0 開發期間的內部開關 preview_0_2（#128）已拿掉：自訂詞彙、加詞按鍵、「我的片語」、本機 API 等
 	// 入口 0.2.0 起所有人都有。舊檔裡的 preview_0_2 不論值為何都忽略，存檔時移除（retiredKeys）。
 
@@ -225,7 +228,7 @@ func (s Settings) FuzzyConfig() fuzzy.Config {
 }
 
 func Default() Settings {
-	return Settings{Selection: Neural, Punctuation: false, DocumentContext: true, CandidateCursor: defaultCandidateCursor(runtime.GOOS), CandidateLayout: "vertical", EmojiShortcut: "equals", EmojiEqualsFirst: true, EscClear: true, SpaceSelects: true, KeyboardLayout: LayoutStandard, SelectionKeys: SelectDigits,
+	return Settings{Selection: Neural, Punctuation: false, DocumentContext: true, CandidateCursor: defaultCandidateCursor(runtime.GOOS), CandidateLayout: "vertical", EmojiShortcut: "equals", EmojiEqualsFirst: true, EscClear: true, SpaceSelects: true, KeyboardLayout: LayoutStandard, SelectionKeys: SelectDigits, CtrlPunctuation: true,
 		ToggleKey: defaultToggleKey(runtime.GOOS), ModeMemory: defaultModeMemory(runtime.GOOS), StartMode: StartZhuyin}
 }
 
@@ -318,7 +321,7 @@ func (s *Settings) UnmarshalJSON(b []byte) error {
 	for _, field := range []struct {
 		key string
 		dst *bool
-	}{{"punctuation", &s.Punctuation}, {"document_context", &s.DocumentContext}, {"mixed_input", &s.MixedInput}, {"english_autocomplete", &s.EnglishAutocomplete}, {"left_shift", &s.LeftShift}, {"esc_clear", &s.EscClear}, {"space_selects", &s.SpaceSelects}, {"advance_after_select", &s.AdvanceAfterSelect}, {"emoji_equals_first", &s.EmojiEqualsFirst}, {"output_simplified", &s.OutputSimplified}} {
+	}{{"punctuation", &s.Punctuation}, {"document_context", &s.DocumentContext}, {"mixed_input", &s.MixedInput}, {"english_autocomplete", &s.EnglishAutocomplete}, {"left_shift", &s.LeftShift}, {"esc_clear", &s.EscClear}, {"space_selects", &s.SpaceSelects}, {"advance_after_select", &s.AdvanceAfterSelect}, {"emoji_equals_first", &s.EmojiEqualsFirst}, {"output_simplified", &s.OutputSimplified}, {"ctrl_punctuation", &s.CtrlPunctuation}} {
 		if raw, ok := take(field.key); ok {
 			var v bool
 			if json.Unmarshal(raw, &v) == nil {
@@ -419,7 +422,7 @@ func (s Settings) MarshalJSON() ([]byte, error) {
 	for _, field := range []struct {
 		key   string
 		value any
-	}{{"selection", s.Selection}, {"punctuation", s.Punctuation}, {"document_context", s.DocumentContext}, {"mixed_input", s.MixedInput}, {"english_autocomplete", s.EnglishAutocomplete}, {"left_shift", s.LeftShift}, {"esc_clear", s.EscClear}, {"space_selects", s.SpaceSelects}, {"candidate_cursor", s.CandidateCursor}, {"advance_after_select", s.AdvanceAfterSelect}, {"candidate_layout", s.CandidateLayout}, {"emoji_shortcut", s.EmojiShortcut}, {"emoji_equals_first", s.EmojiEqualsFirst}, {"keyboard_layout", s.KeyboardLayout}, {"selection_keys", s.SelectionKeys}, {"toggle_key", s.ToggleKey}, {"mode_memory", s.ModeMemory}, {"start_mode", s.StartMode}, {"output_simplified", s.OutputSimplified}} {
+	}{{"selection", s.Selection}, {"punctuation", s.Punctuation}, {"document_context", s.DocumentContext}, {"mixed_input", s.MixedInput}, {"english_autocomplete", s.EnglishAutocomplete}, {"left_shift", s.LeftShift}, {"esc_clear", s.EscClear}, {"space_selects", s.SpaceSelects}, {"candidate_cursor", s.CandidateCursor}, {"advance_after_select", s.AdvanceAfterSelect}, {"candidate_layout", s.CandidateLayout}, {"emoji_shortcut", s.EmojiShortcut}, {"emoji_equals_first", s.EmojiEqualsFirst}, {"keyboard_layout", s.KeyboardLayout}, {"selection_keys", s.SelectionKeys}, {"toggle_key", s.ToggleKey}, {"mode_memory", s.ModeMemory}, {"start_mode", s.StartMode}, {"output_simplified", s.OutputSimplified}, {"ctrl_punctuation", s.CtrlPunctuation}} {
 		if err := typed(field.key, field.value); err != nil {
 			return nil, err
 		}
@@ -471,7 +474,7 @@ func (s Settings) notes() []string {
 	if s.extra != "" {
 		_ = json.Unmarshal([]byte(s.extra), &kept)
 	}
-	for _, key := range []string{"selection", "punctuation", "document_context", "mixed_input", "english_autocomplete", "left_shift", "esc_clear", "space_selects", "candidate_cursor", "advance_after_select", "candidate_layout", "emoji_shortcut", "emoji_equals_first", "keyboard_layout", "selection_keys", "toggle_key", "mode_memory", "start_mode", "output_simplified"} {
+	for _, key := range []string{"selection", "punctuation", "document_context", "mixed_input", "english_autocomplete", "left_shift", "esc_clear", "space_selects", "candidate_cursor", "advance_after_select", "candidate_layout", "emoji_shortcut", "emoji_equals_first", "keyboard_layout", "selection_keys", "toggle_key", "mode_memory", "start_mode", "output_simplified", "ctrl_punctuation"} {
 		if raw, ok := kept[key]; ok {
 			out = append(out, fmt.Sprintf("%s：本版不認得 %s，暫用預設值，存檔時保留原值", strings.ReplaceAll(key, "_", "-"), raw))
 			delete(kept, key)
@@ -680,6 +683,8 @@ func specs() []spec {
 			func(s Settings) string { return s.KeyboardLayout }},
 		{"selection-keys", "選字鍵", "候選窗用哪一排鍵選第 1 到第 10 個字；換成字母鍵時，數字鍵仍可照位置選字", SelectDigits, []string{SelectDigits, SelectQwer, SelectHome},
 			func(s Settings) string { return s.SelectionKeys }},
+		{"ctrl-punctuation", "Ctrl＋標點打全形", ctrlPunctuationDescription(runtime.GOOS), "on", []string{"on", "off"},
+			func(s Settings) string { return onOff(s.CtrlPunctuation) }},
 	}
 	for _, p := range fuzzy.Pairs() {
 		out = append(out, spec{"fuzzy-" + p.ID(), "模糊音 " + p.Symbols(), "把近音的字也列進候選，原音仍排在前面；「自動修正」（實驗）會在上下文明顯支持近音時另外自動改字", DefaultFuzzy, []string{"off", "select", "auto"},
@@ -695,6 +700,21 @@ func toggleKeyDescription(goos string) string {
 		d += "。也可以按 Ctrl＋空白鍵"
 	} else if goos == "darwin" {
 		d += "。Mac 預設不用 Shift，使用系統的輸入來源切換；想用 Shift 可在這裡開啟"
+	}
+	return d
+}
+
+// ctrlPunctuationDescription：說明會占用哪些程式快速鍵、可以關掉（#168）。Mac 是 Control 鍵（⌃），程式快速鍵多用 ⌘，
+// 撞到的少，不舉 VS Code 的例子。
+func ctrlPunctuationDescription(goos string) string {
+	if goos == "darwin" {
+		return "注音模式按 ⌃, 打「，」、⌃. 打「。」、⌃' 打「、」、⌃; 打「；」、⌃⇧/ 打「？」、⌃⇧1 打「！」，沒在打字時也可以。" +
+			"注音模式時這幾個鍵不再交給 App，要保留時可以關掉；英文模式不受影響"
+	}
+	d := "注音模式按 Ctrl＋, 打「，」、Ctrl＋. 打「。」、Ctrl＋' 打「、」、Ctrl＋; 打「；」、Ctrl＋Shift＋/ 打「？」、Ctrl＋Shift＋1 打「！」，沒在打字時也可以。" +
+		"會占用程式的這幾個快速鍵（例如 VS Code 的 Ctrl＋, 開設定、Ctrl＋. 快速修正），要保留時可以關掉；英文模式不受影響"
+	if goos == "linux" {
+		d += "。Fcitx5 的剪貼簿開著時，Ctrl＋; 照舊叫出剪貼簿"
 	}
 	return d
 }
@@ -868,6 +888,9 @@ func (s *Settings) Set(key, value string) error {
 	case "output-simplified":
 		s.OutputSimplified = value == "on"
 		s.forget("output_simplified")
+	case "ctrl-punctuation":
+		s.CtrlPunctuation = value == "on"
+		s.forget("ctrl_punctuation")
 	case "mixed-input":
 		s.MixedInput = value == "on"
 		s.forget("mixed_input")

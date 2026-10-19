@@ -131,6 +131,9 @@ type Session struct {
 	// SelectionKeys 由宿主依使用者設定（#112）：候選窗每一頁第 1–10 項的選字鍵，例如 1234qweras。
 	// 空字串或不合用的值為 1234567890。數字 1–0 不論設定都照位置選字。
 	SelectionKeys string
+	// CtrlPunct 由宿主依「Ctrl＋標點打全形」設定（#168，預設開）：中文模式的 Ctrl＋, . ' ; 與 Ctrl＋Shift＋/ 1
+	// 打全形標點，跟一般標點一樣插進組字區。零值時這些鍵回 handled=false，外殼照一般快捷鍵交給應用程式。
+	CtrlPunct bool
 	// Preview02 打開時處理 0.2.0 的按鍵（組字中加詞、反悔鍵、「我的片語」，#128）；0.2.0 起宿主一律打開。
 	// 零值時這些按鍵照舊回 handled=false 交還應用程式，行為與沒有此功能時相同（測試用它確認這一點）。
 	Preview02    bool
@@ -410,6 +413,9 @@ func (s *Session) key(k string) (handled bool, commit string) {
 			return true, ""
 		}
 	}
+	if p, ok := proto.CtrlPunct(k); ok {
+		return s.ctrlPunct(p), ""
+	}
 	if s.english && s.EnglishAutocomplete {
 		if handled, commit, active := s.englishKey(k); active {
 			return handled, commit
@@ -649,6 +655,22 @@ func (s *Session) key(k string) (handled bool, commit string) {
 		return true, ""
 	}
 	return false, ""
+}
+
+// ctrlPunct 處理 Ctrl＋標點（#168）：設定關閉或英文模式時不處理，外殼照一般快捷鍵先送出組字再交給應用程式。
+// 中文模式跟一般標點（Shift＋, 等）走同一條路：未打完的注音留成符號，標點插在游標處、留在組字區，沒在組字時也一樣。
+// 中英混打打到一半的英文先定案（Shift＋, 在原樣英文後是半形 <，Ctrl＋, 一律是全形）。候選開啟時同其他按鍵吃掉不動作。
+func (s *Session) ctrlPunct(p string) bool {
+	if !s.CtrlPunct || s.english {
+		return false
+	}
+	if s.cand != nil {
+		return true
+	}
+	s.flushMixed()
+	s.insertPendingLiteral()
+	s.insertLiteral(p)
+	return true
 }
 
 func (s *Session) symbol(sym rune) bool {

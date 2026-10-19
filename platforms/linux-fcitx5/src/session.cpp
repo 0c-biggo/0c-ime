@@ -148,6 +148,12 @@ bool Session::vocabKeys() {
     return value != serverInfo_.end() && value->is_string() && value->get<std::string>() == "true";
 }
 
+bool Session::ctrlPunct() {
+    if (!client_.connect() || !ensureOpen()) { return false; }
+    auto value = serverInfo_.find("ctrl_punctuation");
+    return value != serverInfo_.end() && value->is_string() && value->get<std::string>() == "true";
+}
+
 bool Session::ensureOpen() {
     if (id_ != 0 && gen_ == client_.generation()) {
         return true;

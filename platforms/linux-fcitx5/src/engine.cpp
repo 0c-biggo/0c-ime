@@ -237,7 +237,30 @@ public:
             return;
         }
         if (event.isRelease()) { return; }
-        std::string key = toKey(event.key());
+        fcitx::Key typed = event.key();
+        if (!session.english()) {
+            // 中文模式不理 Caps Lock（#168）：字母換回沒開 Caps Lock 時的大小寫。英文模式照 Caps Lock 打大寫。
+            auto raw = event.rawKey().states();
+            auto folded = zuin::foldCaps(typed.sym(), raw.test(fcitx::KeyState::CapsLock), raw.test(fcitx::KeyState::Shift));
+            if (folded != static_cast<uint32_t>(typed.sym())) { typed = fcitx::Key(static_cast<fcitx::KeySym>(folded), typed.states()); }
+            // Ctrl＋標點打全形（#168）：只在中文模式、引擎回報 ctrl_punctuation（認得鍵名而且設定開著）時送；
+            // 引擎沒處理（設定剛關掉、模式不同步）就照下面的一般快捷鍵先送出組字再交給應用程式。
+            auto ctrlKey = zuin::ctrlPunctKey(fcitx::Key::keySymToUnicode(typed.sym()), typed.states().test(fcitx::KeyState::Ctrl),
+                typed.states().testAny(fcitx::KeyStates{fcitx::KeyState::Alt, fcitx::KeyState::Super, fcitx::KeyState::Hyper}));
+            // Ctrl+; 是 Fcitx5 剪貼簿外掛的預設熱鍵。剪貼簿在輸入法之後（PostInputMethod）才看這個鍵，輸入法吃掉就叫不出剪貼簿，
+            // 所以剪貼簿外掛載入時照舊放行，不搶走使用者原本就有的功能（#168）。
+            if (ctrlKey == "Ctrl+;" && instance_->addonManager().addon("clipboard")) { ctrlKey.clear(); }
+            if (!ctrlKey.empty() && session.ctrlPunct()) {
+                syncContext(ic);
+                zuin::Snapshot snap = session.key(ctrlKey);
+                if (snap.ok && snap.handled) {
+                    render(ic, snap);
+                    event.filterAndAccept();
+                    return;
+                }
+            }
+        }
+        std::string key = toKey(typed);
         if (key.empty()) {
             session.bypassed();
             std::string boundary;

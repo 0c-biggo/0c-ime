@@ -128,6 +128,8 @@ func main() {
 	eng.EscKeepComposition = !config.EscClear
 	eng.SpaceInsertsSpace = !config.SpaceSelects
 	eng.AdvanceAfterSelect = config.AdvanceAfterSelect
+	eng.CtrlPunct = config.CtrlPunctuation // #168
+
 	if config.OutputSimplified { // #118：字典編在執行檔裡，只有開啟時才解析
 		if conv, err := simplified.TW2S(); err != nil {
 			lg.Printf("簡體字典無法載入，照樣送出繁體：%v", err)
@@ -322,7 +324,10 @@ func main() {
 		// #123：外殼據此決定要不要把組字中的 Shift＋←／→、候選窗的 Shift＋Delete／⌫ 送給引擎。
 		"vocab_keys": fmt.Sprint(eng.Preview02 && vocabDisabled == ""),
 		// #135：沒在組字時的聲調鍵要交給核心（單按＋空白是聲調符號）；Windows 外殼在 TestKeyDown 依此決定。
-		"tone_mark_keys": fmt.Sprint(eng.ToneMarkKeys())}
+		"tone_mark_keys": fmt.Sprint(eng.ToneMarkKeys()),
+		// #168：引擎認得 Ctrl＋標點的鍵名而且設定開著；外殼只在這一項是 true、又在中文模式時送那六個鍵，
+		// 舊引擎沒有這一項，外殼照舊交給應用程式。
+		"ctrl_punctuation": fmt.Sprint(eng.CtrlPunct)}
 	srv.Info["english_words"] = fmt.Sprint(eng.English.Len())
 	srv.Info["english_pack"] = eng.EnglishPack
 	if eng.EnglishPack == "" {

@@ -110,6 +110,9 @@ public:
     // 引擎剛重啟、還沒有任何請求時沿用舊值：舊值 false 只是這一鍵照原本的鍵送；舊值 true 送到新引擎，
     // 開關關閉時它把新鍵名當原本的鍵處理。引擎不可用或舊版引擎沒有這一項時為 false。
     bool vocabKeys();
+    // 引擎是否認得 Ctrl＋標點的鍵名而且設定開著（open 回覆的 ctrl_punctuation，#168）；快取方式同 vocabKeys。
+    // 舊引擎沒有這一項時為 false，Ctrl＋標點照舊交給應用程式。
+    bool ctrlPunct();
     bool englishPending() const { return englishPending_; }
     void setPrivate(bool value);
     void traceEvent(const std::string &event, nlohmann::json detail = {});

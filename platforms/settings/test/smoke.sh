@@ -422,6 +422,11 @@ if window_up; then
   xdotool key Up
   sleep 3
   check "選字鍵可改回 1234567890" grep -q '"selection_keys": "1234567890"' "$(settings_of eten)"
+  # 鍵盤排列之後是「Ctrl＋標點打全形」（#168），預設開啟；空白鍵關閉。
+  xdotool key Tab space
+  sleep 3
+  check "Ctrl＋標點開關可關閉" grep -q '"ctrl_punctuation": false' "$(settings_of eten)"
+  import -window root "$OUT/ctrl-punctuation-off.png"
 else bad "eten/input 視窗沒有出現"; cat /tmp/app-eten-input.log; fi
 stop_app
 

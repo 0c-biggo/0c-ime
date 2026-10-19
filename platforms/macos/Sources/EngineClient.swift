@@ -179,6 +179,10 @@ final class EngineSession {
     // 不為按鍵另外查詢；設定套用會重啟引擎，下一次 open 就拿到新值。舊引擎沒有這個欄位，視為 false。
     private static var vocabKeysSetting = false
     var vocabKeys: Bool { Self.vocabKeysSetting }
+    // 引擎是否認得 Ctrl＋標點的鍵名而且設定開著（#168，info 的 ctrl_punctuation）；更新方式同 vocabKeys。
+    // 舊引擎沒有這個欄位，視為 false，Ctrl＋標點照舊交給 App。
+    private static var ctrlPunctSetting = false
+    var ctrlPunct: Bool { Self.ctrlPunctSetting }
     // 這個行程是否已從引擎拿到過上面的設定（open 或 health 的回覆）。
     private static var settingsKnown = false
 
@@ -189,6 +193,7 @@ final class EngineSession {
         rightShiftSetting = toggle.right
         shiftTapLimitSetting = toggle.tapLimit
         vocabKeysSetting = info["vocab_keys"] == "true"
+        ctrlPunctSetting = info["ctrl_punctuation"] == "true"
         settingsKnown = true
     }
 

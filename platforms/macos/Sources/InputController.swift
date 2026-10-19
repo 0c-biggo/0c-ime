@@ -107,6 +107,15 @@ final class LingxiInputController: IMKInputController {
         leftShift.otherKey()
         toggleArmed = false // 交還 App 的快捷鍵與未對應的按鍵也算切換之後的操作
         syncCaps(event.modifierFlags.contains(.capsLock), client: client, showHint: false)
+        // Ctrl＋標點打全形（#168）：注音模式、引擎回報 ctrl_punctuation 時交給引擎插進組字區，沒在組字時也一樣。
+        // 引擎沒處理（設定剛關掉、模式不同步）就照下面的一般快捷鍵先送出組字再交給 App。
+        if let ctrl = KeyMapping.ctrlPunct(code: event.keyCode, modifiers: event.modifierFlags),
+           session.ctrlPunct, !capsMode, snapshot?.mode != "english" {
+            confirmDocumentContext(client)
+            if send(Request(type: "key", key: ctrl), to: client, characters: KeyMapping.ctrlPunctText[ctrl]) { return true }
+            if !flushQueuedEnglish(to: client) { commitComposition(sender) }
+            return false
+        }
         guard let key = KeyMapping.key(code: event.keyCode, characters: event.characters,
                                        modifiers: event.modifierFlags, vocabKeys: session.vocabKeys) else {
             if !flushQueuedEnglish(to: client) { commitComposition(sender) }
