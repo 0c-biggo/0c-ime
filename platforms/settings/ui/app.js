@@ -371,8 +371,9 @@
     const emoji = items.find((item) => item.key === 'emoji-shortcut');
     const equalsFirst = items.find((item) => item.key === 'emoji-equals-first');
     const keyboard = items.find((item) => item.key === 'keyboard-layout');
+    const output = items.find((item) => item.key === 'output-simplified');
     const rest = items.filter((item) => !item.key.startsWith('fuzzy-') && item.key !== 'keyboard-layout' &&
-      (!emoji || item.key !== 'emoji-equals-first'));
+      item.key !== 'output-simplified' && (!emoji || item.key !== 'emoji-equals-first'));
     const rows = rest.map((item) => {
       const parent = itemRow(item, locked ||
         (item.key === 'emoji-shortcut' && state.busy.has('emoji-equals-first')));
@@ -395,6 +396,8 @@
           onclick: () => changePairs(fuzzy.map((item) => [item.key, enabled ? 'off' : 'select'])),
         }))));
     }
+    // 送出的文字怎麼轉換（#118 簡體字）跟選字無關，獨立一張卡。
+    if (output) root.append(h('h2', {}, '輸出設定'), h('div', { class: 'card' }, itemRow(output, locked)));
     // 鍵盤排列放在最後一張卡：前面各項的鍵盤（Tab）順序不變。
     if (keyboard) root.append(h('h2', {}, '鍵盤'), h('div', { class: 'card' }, itemRow(keyboard, locked)));
     if ((settings.file.notes || []).length) {
