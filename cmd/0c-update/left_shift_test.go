@@ -26,7 +26,7 @@ func TestToggleKeySettingContractReportsPendingAndUnknownRuntime(t *testing.T) {
 	}
 	for _, it := range settings.Default().Items() {
 		if it.Key == "toggle-key" {
-			if it.Value != "right" || it.Default != "right" || it.ValueLabels["both"] != "左右 Shift" {
+			if it.Value != settings.Default().ToggleKey || it.Default != settings.Default().ToggleKey || it.ValueLabels["both"] != "左右 Shift" {
 				t.Fatalf("UI contract: %+v", it)
 			}
 			return

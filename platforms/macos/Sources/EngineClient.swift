@@ -168,9 +168,9 @@ final class EngineSession {
     var isOpen: Bool { id != nil }
 
     // 引擎最近一次回報的中英切換鍵設定（#117：toggle-key 右／左右／左／不用 Shift），所有欄位共用。
-    // 引擎閒置結束後冷啟動中問不到時沿用它；從沒問到過時右 Shift 切換、左 Shift 照系統原本的用途。
+    // 引擎閒置結束後冷啟動中問不到時沿用它；從沒問到過時左右 Shift 都不切換，和 macOS 的預設相同。
     private static var leftShiftSetting = false
-    private static var rightShiftSetting = true
+    private static var rightShiftSetting = false
     // 單按時限（info 的 shift_tap_ms）；沒給時 0.3 秒。
     private static var shiftTapLimitSetting = RightShiftTap.defaultLimit
     var shiftTapLimit: TimeInterval { Self.shiftTapLimitSetting }

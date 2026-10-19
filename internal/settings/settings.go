@@ -63,8 +63,8 @@ type Settings struct {
 	MixedInput          bool   `json:"mixed_input"`
 	EnglishAutocomplete bool   `json:"english_autocomplete"`
 	LeftShift           bool   `json:"left_shift"` // 舊欄位：ToggleKey 含左 Shift。讀新檔時由 ToggleKey 推出，存檔時一併寫回給舊版讀
-	// ToggleKey 是單按哪個 Shift 切換注音／英文（#117）：right（預設）、both、left、none。檔案沒有這個欄位時
-	// 依舊欄位 left_shift 推出（true 為 both）。Shift 加字母一律打大寫，不算切換。
+	// ToggleKey 是單按哪個 Shift 切換注音／英文（#117）：right、both、left、none。macOS 預設 none，其他平台 right。
+	// 檔案沒有這個欄位時沿用平台預設；舊欄位 left_shift=true 保留為 both。Shift 加字母一律打大寫，不算切換。
 	ToggleKey string `json:"toggle_key"`
 	// ModeMemory 是切換視窗或輸入框後的中英模式（#115）：native 照平台原本的做法（Windows 每個程式各自記住、
 	// Linux 回到注音），shared 全部共用同一個模式（macOS 的預設，同系統輸入方式全域共用）。
@@ -221,7 +221,7 @@ func (s Settings) FuzzyConfig() fuzzy.Config {
 
 func Default() Settings {
 	return Settings{Selection: Neural, Punctuation: false, DocumentContext: true, CandidateCursor: defaultCandidateCursor(runtime.GOOS), CandidateLayout: "vertical", EmojiShortcut: "equals", EmojiEqualsFirst: true, EscClear: true, SpaceSelects: true, KeyboardLayout: LayoutStandard,
-		ToggleKey: ToggleRight, ModeMemory: defaultModeMemory(runtime.GOOS), StartMode: StartZhuyin}
+		ToggleKey: defaultToggleKey(runtime.GOOS), ModeMemory: defaultModeMemory(runtime.GOOS), StartMode: StartZhuyin}
 }
 
 // 中英切換鍵（#117）。
@@ -231,6 +231,14 @@ const (
 	ToggleLeft  = "left"
 	ToggleNone  = "none"
 )
+
+// macOS 預設沿用系統的輸入來源切換，避免誤觸 Shift 後留在英文模式；想用 Shift 的使用者可在設定開啟。
+func defaultToggleKey(goos string) string {
+	if goos == "darwin" {
+		return ToggleNone
+	}
+	return ToggleRight
+}
 
 // 切換視窗後的中英模式（#115）。
 const (
@@ -631,11 +639,11 @@ func specs() []spec {
 			func(s Settings) string { return onOff(s.Punctuation) }},
 		{"document-context", "依前文選字", "依自己剛提交的文字選字", "on", []string{"on", "off"},
 			func(s Settings) string { return onOff(s.DocumentContext) }},
-		{"mixed-input", "中英混打（試用）", "直接在注音中打英文；提供英文補全與拼字修正，由你確認接受。開啟時空白鍵輸入空白，按 ↓ 選字；數字拼得成注音時，按 Enter 留數字。開不開都能單按 Shift 切換到英文模式", "off", []string{"on", "off"},
+		{"mixed-input", "中英混打（試用）", "直接在注音中打英文；提供英文補全與拼字修正，由你確認接受。開啟時空白鍵輸入空白，按 ↓ 選字；數字拼得成注音時，按 Enter 留數字。若已啟用 Shift 中英切換，混打開或關都能單按 Shift 切到英文", "off", []string{"on", "off"},
 			func(s Settings) string { return onOff(s.MixedInput) }},
 		{"english-autocomplete", "英文模式自動補字", "單按 Shift 切換到英文模式後，輸入至少兩個字母時顯示補全候選，三個字母起也提供拼字修正；按 Tab 補全或修正拼字、Esc 關閉。與中英混打分開設定，空白與 Enter 保留原操作", "off", []string{"on", "off"},
 			func(s Settings) string { return onOff(s.EnglishAutocomplete) }},
-		{"toggle-key", "中英切換鍵", toggleKeyDescription(runtime.GOOS), ToggleRight, []string{ToggleRight, ToggleBoth, ToggleLeft, ToggleNone},
+		{"toggle-key", "中英切換鍵", toggleKeyDescription(runtime.GOOS), Default().ToggleKey, []string{ToggleRight, ToggleBoth, ToggleLeft, ToggleNone},
 			func(s Settings) string { return s.ToggleKey }},
 		{"start-mode", "開始時的中英模式", startModeDescription(runtime.GOOS), StartZhuyin, []string{StartZhuyin, StartEnglish},
 			func(s Settings) string { return s.StartMode }},
@@ -666,6 +674,8 @@ func toggleKeyDescription(goos string) string {
 	d := "單按哪個 Shift 切換注音／英文；按住 Shift 超過 0.3 秒、或 Shift 加字母（打大寫）不算切換。沒用來切換的 Shift 照系統原本的用途"
 	if goos == "windows" {
 		d += "。也可以按 Ctrl＋空白鍵"
+	} else if goos == "darwin" {
+		d += "。Mac 預設不用 Shift，使用系統的輸入來源切換；想用 Shift 可在這裡開啟"
 	}
 	return d
 }

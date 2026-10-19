@@ -2,6 +2,7 @@ package settings
 
 import (
 	"encoding/json"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -14,8 +15,8 @@ func TestToggleKeyMigrationAndCompat(t *testing.T) {
 		t.Fatalf("舊檔：%+v", s)
 	}
 	json.Unmarshal([]byte(`{}`), &s)
-	if s.ToggleKey != ToggleRight || s.LeftShift {
-		t.Fatalf("預設右 Shift：%+v", s)
+	if s.ToggleKey != Default().ToggleKey || s.LeftShift {
+		t.Fatalf("缺漏欄位沿用平台預設：%+v", s)
 	}
 	json.Unmarshal([]byte(`{"toggle_key":"left","left_shift":false}`), &s)
 	if s.ToggleKey != ToggleLeft || !s.LeftShift || s.TogglesRight() {
@@ -27,6 +28,7 @@ func TestToggleKeyMigrationAndCompat(t *testing.T) {
 	}
 	// 舊鍵 left-shift 只改左 Shift。
 	s = Default()
+	s.Set("toggle-key", "right")
 	s.Set("left-shift", "on")
 	if s.ToggleKey != ToggleBoth {
 		t.Fatal(s.ToggleKey)
@@ -38,6 +40,44 @@ func TestToggleKeyMigrationAndCompat(t *testing.T) {
 	}
 	if err := s.Set("toggle-key", "ctrl"); err == nil {
 		t.Fatal("不認得的值")
+	}
+}
+
+func TestToggleKeyDefaultAndSavedChoices(t *testing.T) {
+	want := ToggleRight
+	if runtime.GOOS == "darwin" {
+		want = ToggleNone
+	}
+	for _, body := range []string{`{}`, `{"left_shift":false}`, `{"mixed_input":true}`} {
+		var s Settings
+		if err := json.Unmarshal([]byte(body), &s); err != nil {
+			t.Fatal(err)
+		}
+		if s.ToggleKey != want || s.TogglesRight() != (want == ToggleRight) || s.TogglesLeft() {
+			t.Fatalf("缺少切換鍵設定時使用平台預設：%s → %+v", body, s)
+		}
+	}
+	for _, value := range []string{ToggleRight, ToggleBoth, ToggleLeft, ToggleNone} {
+		var s Settings
+		if err := json.Unmarshal([]byte(`{"toggle_key":"`+value+`"}`), &s); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Set("selection", Statistical); err != nil {
+			t.Fatal(err)
+		}
+		data, err := json.Marshal(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var back Settings
+		if err := json.Unmarshal(data, &back); err != nil || back.ToggleKey != value {
+			t.Fatalf("更改其他設定後保留已儲存的切換鍵：%s → %+v %v", data, back, err)
+		}
+	}
+	for _, item := range Default().Items() {
+		if item.Key == "toggle-key" && (item.Default != want || item.Value != want) {
+			t.Fatalf("設定程式的預設與目前值應一致：%+v", item)
+		}
 	}
 }
 
