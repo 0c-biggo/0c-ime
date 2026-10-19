@@ -115,6 +115,15 @@ python3 platforms/linux-fcitx5/test/desktop_test.py --bundle <解壓套件目錄
 
 檢查全新設定安裝、GTK 中文提交／取消／候選／Tab／右 Shift／密碼欄位、預設關閉 trace，以及更新、回復、解除安裝保留詞庫。這是現有系統函式庫上的 X11／GTK 驗收，不代表其他發行版、Wayland 或 ARM64 已驗證。
 
+切換中英的 Shift 按下與放開都必須交還應用程式（#165：GNOME Wayland 上 VS Code 經 GNOME Shell 的 IBus 介面收鍵，放開被吃掉就以為 Shift 沒放開）。不需要套件，在拋棄式容器裡用建好的 `lib0c.so` 驗：
+
+```sh
+docker run --rm -v "$PWD":/w:ro <有 fcitx5 與 python3-gi 的映像> dbus-run-session -- \
+  sh /w/platforms/linux-fcitx5/test/shift_release_test.sh <lib0c.so> <0c-server> /w/testdata/toy
+```
+
+它在私有 session bus 起 Fcitx5（只開 DBus 與 IBus 介面）與 0c-server，從 Fcitx5 的 InputContext1 與 IBus portal 兩個入口單按左右 Shift，確認按下、放開都回 false 而且注／英確實切換。不要在日常桌面的 session bus 上執行。
+
 ### Ubuntu 26.04／GNOME 50 的 GTK 設定
 
 這個組合的原生 GTK Wayland → GNOME IBus 路徑，在開工作列選單時會先重設組字，可能丟失未提交的文字。使用 Fcitx GTK 模組與 Kimpanel；本外殼已處理前端失焦時的提交，避免重複輸出。GTK 模組設定只用於 GNOME，不套用到 Plasma 的原生 Wayland 配置。

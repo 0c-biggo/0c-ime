@@ -239,7 +239,12 @@ func (e *engine) processKey(keyval, keycode, state uint32) bool {
 		if keyval == keyShiftL {
 			enabled = k.left
 		}
-		return enabled && held.within(k.tap) && e.toggleMode()
+		if enabled && held.within(k.tap) {
+			e.toggleMode()
+		}
+		// 切換了也不吃掉放開（同 ibus-chewing、RIME、Fcitx5 的 AltTriggerKeys）：GNOME Wayland 下 VS Code 等
+		// Chromium／Electron 經 GNOME Shell 收鍵，只看按鍵事件，收到按下卻收不到放開就以為 Shift 一直按著（#165）。
+		return false
 	}
 	if release {
 		return false
@@ -283,15 +288,13 @@ func (e *engine) processKey(keyval, keycode, state uint32) bool {
 	return snap.Handled
 }
 
-func (e *engine) toggleMode() bool {
+// toggleMode 切換注／英；引擎不可用時不切換。
+func (e *engine) toggleMode() {
 	e.context.clear()
 	e.syncContext()
-	snap := e.session.toggle()
-	if !snap.ok {
-		return false
+	if snap := e.session.toggle(); snap.ok {
+		e.render(snap)
 	}
-	e.render(snap)
-	return true
 }
 
 // selectCandidate 是滑鼠點選；index 是目前這一頁的位置。

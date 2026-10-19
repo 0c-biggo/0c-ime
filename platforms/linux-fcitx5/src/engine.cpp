@@ -230,7 +230,10 @@ public:
                 auto keys = session.shiftKeys();
                 toggle = keys.right && s->rightShift.within(keys.tapMs);
             }
-            if (toggle && toggleMode(ic)) { event.filterAndAccept(); }
+            // 切換鍵的按下與放開都交給應用程式，切換了也不吃掉放開（同 Fcitx5 的 AltTriggerKeys、RIME、ibus-chewing）：
+            // GNOME Wayland 經 IBus 介面收鍵的 Chromium／Electron（VS Code）只看按鍵事件，收到按下卻收不到放開，
+            // 會以為 Shift 一直按著，之後的 ↑ 變成 Shift＋↑（#165）。
+            if (toggle) { toggleMode(ic); }
             return;
         }
         if (event.isRelease()) { return; }
@@ -354,22 +357,21 @@ private:
         return event.key().states().testAny(fcitx::KeyStates{fcitx::KeyState::Ctrl, fcitx::KeyState::Alt, fcitx::KeyState::Super});
     }
 
-    // 切換注／英：保留已組好的字，切到英文時清掉未打完的注音（#90）；回傳引擎是否處理。
-    bool toggleMode(fcitx::InputContext *ic) {
+    // 切換注／英：保留已組好的字，切到英文時清掉未打完的注音（#90）。引擎不可用時不切換。
+    void toggleMode(fcitx::InputContext *ic) {
         auto *s = state(ic);
         s->context.clear(); syncContext(ic);
         auto snap = s->session.toggle();
-        if (!snap.ok) { return false; }
+        if (!snap.ok) { return; }
         render(ic, snap);
         s->shownEnglish = s->session.english();
         ic->updateUserInterface(fcitx::UserInterfaceComponent::StatusArea);
         // 內部模式切換不會觸發框架的輸入法切換提示，需主動顯示。
         instance_->showInputMethodInformation(ic);
-        return true;
     }
 
     // 設定開啟「左 Shift 切換中英」時，左 Shift 單按與右 Shift 相同。按下與放開都 filter：不給 Fcitx5 的
-    // AltTriggerKeys 與輸入法，但照樣送給應用程式，Shift 加字母仍是大寫；只有切換成功的放開會被吃掉。
+    // AltTriggerKeys 與輸入法，但照樣送給應用程式，Shift 加字母仍是大寫；切換成功的放開也照樣送出（#165）。
     void leftShiftKey(fcitx::KeyEvent &event) {
         auto *ic = event.inputContext();
         if (instance_->inputMethodEngine(ic) != this) { return; }
@@ -396,7 +398,9 @@ private:
         s->leftShiftOwned = false;
         s->session.traceEvent("shift_release", {{"side", "left"}});
         // 按住超過門檻（預設 0.3 秒）不算切換；放開照樣不給 Fcitx5，按下時已經接手了（#117）。
-        if (toggle && s->leftShift.within(s->leftShiftTapMs) && toggleMode(ic)) { event.filterAndAccept(); } else { event.filter(); }
+        // 切換了也只 filter 不 accept：放開要送到應用程式，否則 GNOME Wayland 的 VS Code 會以為 Shift 沒放開（#165）。
+        if (toggle && s->leftShift.within(s->leftShiftTapMs)) { toggleMode(ic); }
+        event.filter();
     }
 
     ZuinState *state(fcitx::InputContext *ic) {
