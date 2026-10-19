@@ -1,0 +1,866 @@
+// Package settings 是使用者可切換的引擎設定；Linux 標準目錄使用 0c/settings.json，缺檔時相容 zuin/settings.json。
+// 引擎只在啟動時讀取；檔案不存在或欄位缺漏時使用預設值。
+//
+// 檔案前後相容：較新版本寫入本版不認得的欄位、已知欄位的未知值，都不會讓整份設定被拒收或重設，
+// 只有讀不懂的那個欄位退回預設；存檔時原文保留，回復到舊版再改任何設定，新版的設定也不會消失。
+// 檔案的 schema 比本版新時只讀不寫（ErrReadOnly）。
+package settings
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"sort"
+	"strings"
+	"time"
+
+	"git.biggo.com/0c/ime/core/fuzzy"
+)
+
+const (
+	Neural      = "neural"      // 神經模型依前文重排統計引擎的候選（預設）
+	Statistical = "statistical" // 只用統計引擎
+	FileName    = "settings.json"
+
+	// SchemaVersion 是本版寫入、也完全理解的檔案格式。
+	SchemaVersion = 1
+
+	LayoutStandard = "standard" // 標準（大千）注音鍵盤排列
+	LayoutETen     = "eten"     // 倚天 41 鍵（#83）
+)
+
+// 讀取結果的檔案狀態。
+const (
+	StateOK         = "ok"
+	StateMissing    = "missing"
+	StateCorrupt    = "corrupt"
+	StateUnreadable = "unreadable"
+)
+
+// SetError 的代碼，供機器可讀的輸出使用。
+const (
+	CodeUnknownKey   = "unknown_key"
+	CodeInvalidValue = "invalid_value"
+)
+
+var (
+	// ErrReadOnly：設定檔來自較新版本，本版不覆寫。
+	ErrReadOnly = errors.New("設定檔來自較新版本，本版只讀不寫")
+	// ErrCorrupt：設定檔不是可解析的 JSON 物件。
+	ErrCorrupt = errors.New("設定檔無法解析")
+)
+
+type Settings struct {
+	Selection           string `json:"selection"`
+	Punctuation         bool   `json:"punctuation"`
+	DocumentContext     bool   `json:"document_context"`
+	MixedInput          bool   `json:"mixed_input"`
+	EnglishAutocomplete bool   `json:"english_autocomplete"`
+	LeftShift           bool   `json:"left_shift"` // 舊欄位：ToggleKey 含左 Shift。讀新檔時由 ToggleKey 推出，存檔時一併寫回給舊版讀
+	// ToggleKey 是單按哪個 Shift 切換注音／英文（#117）：right（預設）、both、left、none。檔案沒有這個欄位時
+	// 依舊欄位 left_shift 推出（true 為 both）。Shift 加字母一律打大寫，不算切換。
+	ToggleKey string `json:"toggle_key"`
+	// ModeMemory 是切換視窗或輸入框後的中英模式（#115）：native 照平台原本的做法（Windows 每個程式各自記住、
+	// Linux 回到注音），shared 全部共用同一個模式（macOS 的預設，同系統輸入方式全域共用）。
+	ModeMemory string `json:"mode_memory"`
+	// StartMode 是開始時的中英模式（#160）：zhuyin（預設，檔案沒有這個欄位時也是）或 english。沒有記住的模式時
+	// 從它開始：Windows 每個新開的程式、macOS／Linux 每次換到輸入框（mode_memory=native），或登入後
+	// 第一個模式（mode_memory=shared）。
+	StartMode          string `json:"start_mode"`
+	EscClear           bool   `json:"esc_clear"`            // 按 Esc 清除整段組字（多數注音輸入法的預設）；false 時只清未打完的注音
+	SpaceSelects       bool   `json:"space_selects"`        // 注音打完後空白開候選（預設）；false 時空白輸入空格、↓ 選字（#107、#110）
+	AdvanceAfterSelect bool   `json:"advance_after_select"` // 從候選窗選字後游標移到所選詞後面；預設 false 游標留在原處（#133）
+	CandidateCursor    string `json:"candidate_cursor"`
+	CandidateLayout    string `json:"candidate_layout"`
+	EmojiShortcut      string `json:"emoji_shortcut"`
+	EmojiEqualsFirst   bool   `json:"emoji_equals_first"`
+	KeyboardLayout     string `json:"keyboard_layout"` // standard（預設）或 eten（倚天 41 鍵，#83）
+	Fuzzy              Fuzzy  `json:"fuzzy,omitzero"`
+	// 0.2.0 開發期間的內部開關 preview_0_2（#128）已拿掉：自訂詞彙、加詞按鍵、「我的片語」、本機 API 等
+	// 入口 0.2.0 起所有人都有。舊檔裡的 preview_0_2 不論值為何都忽略，存檔時移除（retiredKeys）。
+
+	// extra 是本版沒有解讀、但存檔要原樣寫回的成員（JSON 物件，鍵已排序）：未知欄位，
+	// 以及已知欄位中本版讀不懂的值。用原文字串保存，Settings 才能維持可比較。
+	extra string
+	// readOnly：檔案的 schema 比本版新，或不是整數，所以不覆寫。
+	readOnly bool
+}
+
+// Fuzzy 是各組模糊音的啟用方式：off、select（預設，開候選時合併近音）或 auto（另在語境明顯支持近音時自動改字）。
+// 欄位缺漏視為預設 select，關閉要明確寫 off；值不認得（包含不是字串的 JSON）時只有那一組當作 off。
+// 本版不認得的成員（較新版本新增的配對、已知配對的非字串值、型別不同的整個 fuzzy 欄位）
+// 原文保留到下次存檔：較新版本寫入的設定不被舊版沖掉，也不會讓整份設定檔被拒收。
+type Fuzzy struct {
+	ZZh   string // ㄗ／ㄓ
+	CCh   string // ㄘ／ㄔ
+	SSh   string // ㄙ／ㄕ
+	EnEng string // ㄣ／ㄥ
+
+	extra string // 其他成員的原文（JSON 物件，鍵已排序）；沒有時為空字串
+	other string // fuzzy 欄位不是物件時的原文
+}
+
+func (f *Fuzzy) field(p fuzzy.Pair) *string {
+	switch p {
+	case fuzzy.ZZh:
+		return &f.ZZh
+	case fuzzy.CCh:
+		return &f.CCh
+	case fuzzy.SSh:
+		return &f.SSh
+	}
+	return &f.EnEng
+}
+
+func (f *Fuzzy) UnmarshalJSON(b []byte) error {
+	*f = Fuzzy{}
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(b, &members); err != nil {
+		f.other = string(b) // 型別不同：視為全部關閉，原文保留
+		return nil
+	}
+	for _, p := range fuzzy.Pairs() {
+		raw, ok := members[p.ID()]
+		var value string
+		if ok && json.Unmarshal(raw, &value) == nil {
+			*f.field(p) = value
+			delete(members, p.ID())
+		}
+	}
+	if len(members) > 0 {
+		extra, err := json.Marshal(members)
+		if err != nil {
+			return err
+		}
+		f.extra = string(extra)
+	}
+	return nil
+}
+
+func (f Fuzzy) MarshalJSON() ([]byte, error) {
+	members := map[string]json.RawMessage{}
+	if f.extra != "" {
+		if err := json.Unmarshal([]byte(f.extra), &members); err != nil {
+			return nil, err
+		}
+	}
+	for _, p := range fuzzy.Pairs() {
+		if v := *f.field(p); v != "" {
+			raw, _ := json.Marshal(v)
+			members[p.ID()] = raw
+		}
+	}
+	if len(members) == 0 && f.other != "" {
+		return []byte(f.other), nil
+	}
+	return json.Marshal(members)
+}
+
+// set 修改一組配對；寫入明確的值就蓋掉先前保留的非字串原文。
+func (f *Fuzzy) set(p fuzzy.Pair, value string) {
+	*f.field(p) = value
+	f.other = ""
+	if f.extra == "" {
+		return
+	}
+	var members map[string]json.RawMessage
+	if json.Unmarshal([]byte(f.extra), &members) != nil {
+		return
+	}
+	delete(members, p.ID())
+	f.extra = ""
+	if len(members) > 0 {
+		if b, err := json.Marshal(members); err == nil {
+			f.extra = string(b)
+		}
+	}
+}
+
+// hasMember：這組配對在檔案裡有本版讀不懂的值（保留在 extra），不能當成缺漏套用預設。
+func (f Fuzzy) hasMember(p fuzzy.Pair) bool {
+	if f.extra == "" {
+		return false
+	}
+	var members map[string]json.RawMessage
+	if json.Unmarshal([]byte(f.extra), &members) != nil {
+		return false
+	}
+	_, ok := members[p.ID()]
+	return ok
+}
+
+// hasUnknown：fuzzy 欄位含本版不認得、存檔時原樣保留的內容。
+func (f Fuzzy) hasUnknown() bool { return f.extra != "" || f.other != "" }
+
+// DefaultFuzzy 是沒有設定時各組模糊音的模式。
+const DefaultFuzzy = "select"
+
+// FuzzyConfig 轉成核心使用的設定。整個 fuzzy 欄位型別不對時全部關閉。
+func (s Settings) FuzzyConfig() fuzzy.Config {
+	var c fuzzy.Config
+	if s.Fuzzy.other != "" {
+		return c
+	}
+	for _, p := range fuzzy.Pairs() {
+		value := *s.Fuzzy.field(p)
+		if value == "" && !s.Fuzzy.hasMember(p) {
+			value = DefaultFuzzy
+		}
+		if m, ok := fuzzy.ParseMode(value); ok {
+			c = c.With(p, m)
+		}
+	}
+	return c
+}
+
+func Default() Settings {
+	return Settings{Selection: Neural, Punctuation: false, DocumentContext: true, CandidateCursor: defaultCandidateCursor(runtime.GOOS), CandidateLayout: "vertical", EmojiShortcut: "equals", EmojiEqualsFirst: true, EscClear: true, SpaceSelects: true, KeyboardLayout: LayoutStandard,
+		ToggleKey: ToggleRight, ModeMemory: defaultModeMemory(runtime.GOOS), StartMode: StartZhuyin}
+}
+
+// 中英切換鍵（#117）。
+const (
+	ToggleRight = "right"
+	ToggleBoth  = "both"
+	ToggleLeft  = "left"
+	ToggleNone  = "none"
+)
+
+// 切換視窗後的中英模式（#115）。
+const (
+	ModeNative = "native"
+	ModeShared = "shared"
+)
+
+// 開始時的中英模式（#160）；值與引擎快照的 mode 相同。
+const (
+	StartZhuyin  = "zhuyin"
+	StartEnglish = "english"
+)
+
+// StartsEnglish 回報開始時是否為英文模式。
+func (s Settings) StartsEnglish() bool { return s.StartMode == StartEnglish }
+
+// defaultModeMemory：照各平台使用者的習慣：macOS 系統的輸入方式預設全域共用；
+// Windows 的注音輸入法每個程式各自記住、Linux 的框架沒有一致的習慣，維持平台原本的做法。
+func defaultModeMemory(goos string) string {
+	if goos == "darwin" {
+		return ModeShared
+	}
+	return ModeNative
+}
+
+// TogglesLeft／TogglesRight 回報單按左／右 Shift 是否切換中英。
+func (s Settings) TogglesLeft() bool  { return s.ToggleKey == ToggleBoth || s.ToggleKey == ToggleLeft }
+func (s Settings) TogglesRight() bool { return s.ToggleKey == ToggleBoth || s.ToggleKey == ToggleRight }
+
+func (s *Settings) setToggleKey(v string) {
+	s.ToggleKey = v
+	s.LeftShift = s.TogglesLeft()
+}
+
+// defaultCandidateCursor 只由宿主決定；核心不讀取作業系統。
+func defaultCandidateCursor(goos string) string {
+	if goos == "darwin" {
+		return "before"
+	}
+	return "after"
+}
+
+// UnmarshalJSON 逐欄位解讀：讀不懂的欄位退回預設，原文放進 extra 等存檔時寫回。
+func (s *Settings) UnmarshalJSON(b []byte) error {
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(b, &members); err != nil {
+		return err
+	}
+	*s = Default()
+	kept := map[string]json.RawMessage{}
+	_, hasToggle := members["toggle_key"]
+	take := func(key string) (json.RawMessage, bool) {
+		raw, ok := members[key]
+		delete(members, key)
+		return raw, ok
+	}
+	if raw, ok := take("selection"); ok {
+		var v string
+		if json.Unmarshal(raw, &v) == nil && (v == Neural || v == Statistical) {
+			s.Selection = v
+		} else {
+			kept["selection"] = raw
+		}
+	}
+	for _, field := range []struct {
+		key string
+		dst *bool
+	}{{"punctuation", &s.Punctuation}, {"document_context", &s.DocumentContext}, {"mixed_input", &s.MixedInput}, {"english_autocomplete", &s.EnglishAutocomplete}, {"left_shift", &s.LeftShift}, {"esc_clear", &s.EscClear}, {"space_selects", &s.SpaceSelects}, {"advance_after_select", &s.AdvanceAfterSelect}, {"emoji_equals_first", &s.EmojiEqualsFirst}} {
+		if raw, ok := take(field.key); ok {
+			var v bool
+			if json.Unmarshal(raw, &v) == nil {
+				*field.dst = v
+			} else {
+				kept[field.key] = raw
+			}
+		}
+	}
+	for _, key := range retiredKeys {
+		take(key) // 已拿掉的鍵：不論值為何都不保留，下次存檔就從檔案消失
+	}
+	if raw, ok := take("fuzzy"); ok {
+		if err := json.Unmarshal(raw, &s.Fuzzy); err != nil {
+			return err
+		}
+	}
+	for _, field := range []struct {
+		key    string
+		dst    *string
+		values []string
+	}{
+		{"candidate_cursor", &s.CandidateCursor, []string{"before", "after"}},
+		{"candidate_layout", &s.CandidateLayout, []string{"vertical", "grid"}},
+		{"emoji_shortcut", &s.EmojiShortcut, []string{"off", "equals"}},
+		{"keyboard_layout", &s.KeyboardLayout, []string{LayoutStandard, LayoutETen}},
+		{"toggle_key", &s.ToggleKey, []string{ToggleRight, ToggleBoth, ToggleLeft, ToggleNone}},
+		{"mode_memory", &s.ModeMemory, []string{ModeNative, ModeShared}},
+		{"start_mode", &s.StartMode, []string{StartZhuyin, StartEnglish}},
+	} {
+		if raw, ok := take(field.key); ok {
+			var value string
+			if json.Unmarshal(raw, &value) == nil && slices.Contains(field.values, value) {
+				*field.dst = value
+			} else {
+				kept[field.key] = raw
+			}
+		}
+	}
+	// 舊檔只有 left_shift：推出切換鍵。新檔以 toggle_key 為準，left_shift 跟著它（舊版寫的 left_shift 不蓋過它）。
+	if !hasToggle && s.LeftShift {
+		s.ToggleKey = ToggleBoth
+	}
+	s.LeftShift = s.TogglesLeft()
+	if raw, ok := take("schema"); ok {
+		var n int
+		if json.Unmarshal(raw, &n) != nil || n > SchemaVersion {
+			s.readOnly = true // 比本版新，或本版讀不懂的格式標記：不覆寫
+		}
+	}
+	for key, raw := range members {
+		kept[key] = raw
+	}
+	if len(kept) > 0 {
+		extra, err := json.Marshal(kept)
+		if err != nil {
+			return err
+		}
+		s.extra = string(extra)
+	}
+	return nil
+}
+
+// MarshalJSON 依固定順序寫出已知欄位，其後接保留的原文成員。
+func (s Settings) MarshalJSON() ([]byte, error) {
+	kept := map[string]json.RawMessage{}
+	if s.extra != "" {
+		if err := json.Unmarshal([]byte(s.extra), &kept); err != nil {
+			return nil, err
+		}
+	}
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	put := func(key string, raw []byte) {
+		if buf.Len() > 1 {
+			buf.WriteByte(',')
+		}
+		k, _ := json.Marshal(key)
+		buf.Write(k)
+		buf.WriteByte(':')
+		buf.Write(raw)
+	}
+	typed := func(key string, value any) error {
+		if raw, ok := kept[key]; ok { // 本版讀不懂的值：原文寫回，直到使用者明確改它
+			delete(kept, key)
+			put(key, raw)
+			return nil
+		}
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return err
+		}
+		put(key, raw)
+		return nil
+	}
+	put("schema", []byte(fmt.Sprint(SchemaVersion)))
+	for _, field := range []struct {
+		key   string
+		value any
+	}{{"selection", s.Selection}, {"punctuation", s.Punctuation}, {"document_context", s.DocumentContext}, {"mixed_input", s.MixedInput}, {"english_autocomplete", s.EnglishAutocomplete}, {"left_shift", s.LeftShift}, {"esc_clear", s.EscClear}, {"space_selects", s.SpaceSelects}, {"candidate_cursor", s.CandidateCursor}, {"advance_after_select", s.AdvanceAfterSelect}, {"candidate_layout", s.CandidateLayout}, {"emoji_shortcut", s.EmojiShortcut}, {"emoji_equals_first", s.EmojiEqualsFirst}, {"keyboard_layout", s.KeyboardLayout}, {"toggle_key", s.ToggleKey}, {"mode_memory", s.ModeMemory}, {"start_mode", s.StartMode}} {
+		if err := typed(field.key, field.value); err != nil {
+			return nil, err
+		}
+	}
+	if s.Fuzzy != (Fuzzy{}) {
+		raw, err := json.Marshal(s.Fuzzy)
+		if err != nil {
+			return nil, err
+		}
+		put("fuzzy", raw)
+	}
+	names := make([]string, 0, len(kept))
+	for key := range kept {
+		names = append(names, key)
+	}
+	sort.Strings(names)
+	for _, key := range names {
+		put(key, kept[key])
+	}
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
+}
+
+// forget 丟掉某個欄位保留的原文：使用者明確設定它之後，不再寫回舊值。
+func (s *Settings) forget(key string) {
+	if s.extra == "" {
+		return
+	}
+	var kept map[string]json.RawMessage
+	if json.Unmarshal([]byte(s.extra), &kept) != nil {
+		return
+	}
+	delete(kept, key)
+	s.extra = ""
+	if len(kept) > 0 {
+		if b, err := json.Marshal(kept); err == nil {
+			s.extra = string(b)
+		}
+	}
+}
+
+// ReadOnly 回報檔案是否來自較新版本：是的話 Save 會拒絕。
+func (s Settings) ReadOnly() bool { return s.readOnly }
+
+// notes 說明讀取時的退回與保留，給人讀（settings --json 的 notes）。
+func (s Settings) notes() []string {
+	var out []string
+	var kept map[string]json.RawMessage
+	if s.extra != "" {
+		_ = json.Unmarshal([]byte(s.extra), &kept)
+	}
+	for _, key := range []string{"selection", "punctuation", "document_context", "mixed_input", "english_autocomplete", "left_shift", "esc_clear", "space_selects", "candidate_cursor", "advance_after_select", "candidate_layout", "emoji_shortcut", "emoji_equals_first", "keyboard_layout", "toggle_key", "mode_memory", "start_mode"} {
+		if raw, ok := kept[key]; ok {
+			out = append(out, fmt.Sprintf("%s：本版不認得 %s，暫用預設值，存檔時保留原值", strings.ReplaceAll(key, "_", "-"), raw))
+			delete(kept, key)
+		}
+	}
+	if len(kept) > 0 {
+		names := make([]string, 0, len(kept))
+		for key := range kept {
+			names = append(names, key)
+		}
+		sort.Strings(names)
+		out = append(out, "含本版不認得的欄位："+strings.Join(names, "、")+"；存檔時原樣保留")
+	}
+	if s.Fuzzy.hasUnknown() {
+		out = append(out, "fuzzy：含本版不認得的成員，存檔時原樣保留")
+	}
+	if s.readOnly {
+		out = append(out, ErrReadOnly.Error())
+	}
+	return out
+}
+
+// Report 是讀取設定檔的完整結果：除了設定值，還有檔案狀態與讀取時的退回說明。
+type Report struct {
+	Path     string // 實際讀取的路徑；新舊檔都不存在時為指定的新路徑
+	Settings Settings
+	State    string   // StateOK、StateMissing、StateCorrupt、StateUnreadable
+	Schema   int      // 檔案中的 schema；沒有時為 0
+	ReadOnly bool     // 檔案來自較新版本：Save 會拒絕
+	Notes    []string // 讀不懂而退回預設、或原樣保留的欄位
+}
+
+// readFile 區分真正缺檔與已存在但目標遺失的符號連結；後者不可啟用舊檔退回。
+func readFile(path string) (b []byte, missing bool, err error) {
+	b, err = os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		_, statErr := os.Lstat(path)
+		if errors.Is(statErr, fs.ErrNotExist) {
+			return nil, true, nil
+		}
+		if statErr != nil {
+			return nil, false, statErr
+		}
+	}
+	return b, false, err
+}
+
+// Read 讀取設定。Linux 標準新路徑不存在時才讀舊路徑；兩者都不存在回傳預設值。
+// 個別欄位讀不懂只有那個欄位退回預設，不算錯誤。
+// 只有檔案讀不到或根本不是 JSON 物件才回錯誤（同時回傳預設值與對應的 State）。
+func Read(path string) (Report, error) {
+	b, missing, err := readFile(path)
+	if missing {
+		if legacy := legacyPath(path); legacy != "" {
+			old, oldMissing, oldErr := readFile(legacy)
+			if !oldMissing {
+				b, path, missing, err = old, legacy, false, oldErr
+			}
+		}
+	}
+	if missing {
+		return Report{Path: path, Settings: Default(), State: StateMissing}, nil
+	}
+	if err != nil {
+		return Report{Path: path, Settings: Default(), State: StateUnreadable}, err
+	}
+	var s Settings
+	if err = json.Unmarshal(b, &s); err != nil {
+		return Report{Path: path, Settings: Default(), State: StateCorrupt}, fmt.Errorf("%s：%w：%v", path, ErrCorrupt, err)
+	}
+	r := Report{Path: path, Settings: s, State: StateOK, ReadOnly: s.readOnly, Notes: s.notes()}
+	var head struct {
+		Schema int `json:"schema"`
+	}
+	_ = json.Unmarshal(b, &head) // schema 不是整數時保持 0；ReadOnly 已另外標記
+	r.Schema = head.Schema
+	return r, nil
+}
+
+// Load 讀取設定；檔案不存在時回傳預設值。讀不懂的個別欄位已退回預設，不算錯誤；
+// 檔案不是可解析的 JSON 物件時回傳預設值與錯誤，呼叫端應回退預設值並記錄。
+func Load(path string) (Settings, error) {
+	r, err := Read(path)
+	return r.Settings, err
+}
+
+// Save 先寫暫存檔再改名，中斷時保留原設定。讀到的未知欄位與讀不懂的值原樣寫回；
+// 來自較新版本的檔案回傳 ErrReadOnly，不覆寫。
+func Save(path string, s Settings) error {
+	if s.readOnly {
+		return ErrReadOnly
+	}
+	b, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err = os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), ".settings-")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err = f.Write(append(b, '\n')); err != nil {
+		f.Close()
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
+}
+
+// Quarantine 把無法解析的設定檔改名保留（settings.json.corrupt-時間），回傳新路徑；
+// 之後 Read 會視為檔案不存在，使用者可以從預設值重新設定而不遺失原檔。
+func Quarantine(path string, now time.Time) (string, error) {
+	dst := path + ".corrupt-" + now.UTC().Format("20060102T150405Z")
+	return dst, os.Rename(path, dst)
+}
+
+// SetError 是 Set 的錯誤：Code 供機器判斷（CodeUnknownKey、CodeInvalidValue），Msg 給人讀。
+type SetError struct {
+	Code string
+	Key  string
+	Msg  string
+}
+
+func (e *SetError) Error() string { return e.Msg }
+
+type spec struct {
+	key, label, description, def string
+	values                       []string
+	value                        func(Settings) string
+}
+
+// valueLabels 是選項的顯示名稱（Item.ValueLabels）；設定程式沒有時用自己的對照表。
+func (s Settings) valueLabels(key string) map[string]string {
+	switch key {
+	case "toggle-key":
+		return map[string]string{ToggleRight: "右 Shift", ToggleBoth: "左右 Shift", ToggleLeft: "左 Shift", ToggleNone: "不用 Shift"}
+	case "start-mode":
+		return map[string]string{StartZhuyin: "注音", StartEnglish: "英文"}
+	case "mode-memory":
+		return map[string]string{ModeNative: modeNativeLabel(runtime.GOOS, s.StartsEnglish()), ModeShared: "全部共用同一個模式"}
+	}
+	return nil
+}
+
+// disabledReason 回報某一項目前是否因其他設定而不起作用，以及給人讀的原因；空字串表示可用。
+// 中英混打與 = 開 Emoji 選單依標準排列設計，倚天 41 鍵時停用（#83）；已儲存的值不動，切回標準排列就照舊。
+func (s Settings) disabledReason(key string) string {
+	switch key {
+	case "mixed-input", "emoji-shortcut", "emoji-equals-first":
+		if s.KeyboardLayout == LayoutETen {
+			return "倚天 41 鍵時關閉"
+		}
+	}
+	return ""
+}
+
+func onOff(v bool) string {
+	if v {
+		return "on"
+	}
+	return "off"
+}
+
+func specs() []spec {
+	out := []spec{
+		{"selection", "選字方式", "神經選字會依前文重新排序候選，需要載入模型；只用統計引擎則完全依詞頻與個人詞庫，不載入模型", Neural, []string{Neural, Statistical},
+			func(s Settings) string { return s.Selection }},
+		{"punctuation", "提交時補標點（Beta）", "提交時依句意補上標點，可能漏補或錯插；預設關閉，可自行開啟試用", "off", []string{"on", "off"},
+			func(s Settings) string { return onOff(s.Punctuation) }},
+		{"document-context", "依前文選字", "依自己剛提交的文字選字", "on", []string{"on", "off"},
+			func(s Settings) string { return onOff(s.DocumentContext) }},
+		{"mixed-input", "中英混打（試用）", "直接在注音中打英文；提供英文補全與拼字修正，由你確認接受。開啟時空白鍵輸入空白，按 ↓ 選字；數字拼得成注音時，按 Enter 留數字。開不開都能單按 Shift 切換到英文模式", "off", []string{"on", "off"},
+			func(s Settings) string { return onOff(s.MixedInput) }},
+		{"english-autocomplete", "英文模式自動補字", "單按 Shift 切換到英文模式後，輸入至少兩個字母時顯示補全候選，三個字母起也提供拼字修正；按 Tab 補全或修正拼字、Esc 關閉。與中英混打分開設定，空白與 Enter 保留原操作", "off", []string{"on", "off"},
+			func(s Settings) string { return onOff(s.EnglishAutocomplete) }},
+		{"toggle-key", "中英切換鍵", toggleKeyDescription(runtime.GOOS), ToggleRight, []string{ToggleRight, ToggleBoth, ToggleLeft, ToggleNone},
+			func(s Settings) string { return s.ToggleKey }},
+		{"start-mode", "開始時的中英模式", startModeDescription(runtime.GOOS), StartZhuyin, []string{StartZhuyin, StartEnglish},
+			func(s Settings) string { return s.StartMode }},
+		{"mode-memory", "切換視窗後的中英模式", "換到別的程式或輸入框時，中英模式要不要跟著", Default().ModeMemory, []string{ModeNative, ModeShared},
+			func(s Settings) string { return s.ModeMemory }},
+		{"esc-clear", "按 Esc 清除整段組字", "關閉時 Esc 只清除還沒打完的注音，已組好的字保留", "on", []string{"on", "off"},
+			func(s Settings) string { return onOff(s.EscClear) }},
+		{"space-selects", "空白鍵選字", "關閉後，注音打完按空白會輸入空格，改用 ↓ 選字", "on", []string{"on", "off"},
+			func(s Settings) string { return onOff(s.SpaceSelects) }},
+		{"candidate-cursor", "修改字詞的位置", "按 ↓（開啟空白鍵選字、沒開中英混打時也可按空白鍵）開候選時，修改游標前方或後方的字詞；橫排時前方是左側，後方是右側。游標在句尾時後方沒有字，一律修改前方的詞", Default().CandidateCursor, []string{"before", "after"}, func(s Settings) string { return s.CandidateCursor }},
+		{"advance-after-select", "選字後游標移到下一個字", "從候選窗選好字後，游標跳到所選的詞後面，可以接著按 ↓ 改下一個字；修改游標前方字詞時往後移一個字。游標在句尾時不動", "off", []string{"on", "off"},
+			func(s Settings) string { return onOff(s.AdvanceAfterSelect) }},
+		{"candidate-layout", "選字排列", "直排，或每排五個的多排選字；Linux 原生候選窗依桌面介面呈現", "vertical", []string{"vertical", "grid"}, func(s Settings) string { return s.CandidateLayout }},
+		{"emoji-shortcut", "Emoji 選單", "在注音模式按 = 開啟選單；Tab 切換顏文字，選過的排前面", "equals", []string{"off", "equals"}, func(s Settings) string { return s.EmojiShortcut }},
+		{"emoji-equals-first", "將 = 放在第一項", "關閉後，按兩次 == 可輸入一個 =", "on", []string{"on", "off"}, func(s Settings) string { return onOff(s.EmojiEqualsFirst) }},
+		{"keyboard-layout", "鍵盤排列", "注音鍵盤排列。倚天 41 鍵的 = 是 ㄦ、' 是 ㄘ，頓號改按 \\；這時不提供 Emoji 選單與中英混打", LayoutStandard, []string{LayoutStandard, LayoutETen},
+			func(s Settings) string { return s.KeyboardLayout }},
+	}
+	for _, p := range fuzzy.Pairs() {
+		out = append(out, spec{"fuzzy-" + p.ID(), "模糊音 " + p.Symbols(), "把近音的字也列進候選，原音仍排在前面；「自動修正」（實驗）會在上下文明顯支持近音時另外自動改字", DefaultFuzzy, []string{"off", "select", "auto"},
+			func(s Settings) string { return s.FuzzyConfig().Mode(p).String() }})
+	}
+	return out
+}
+
+// toggleKeyDescription：Windows 另外提醒 Ctrl＋空白鍵。那是繁中輸入法的系統熱鍵，外殼接到就切換（#117），不受這一項影響。
+func toggleKeyDescription(goos string) string {
+	d := "單按哪個 Shift 切換注音／英文；按住 Shift 超過 0.3 秒、或 Shift 加字母（打大寫）不算切換。沒用來切換的 Shift 照系統原本的用途"
+	if goos == "windows" {
+		d += "。也可以按 Ctrl＋空白鍵"
+	}
+	return d
+}
+
+// startModeDescription：沒有記住的模式時從哪一個開始（#160）。Windows 的 native 是每個程式各自記住，所以是新開的程式；
+// macOS／Linux 的 native 是每次回到它。全部共用時只有登入後（引擎啟動時）的第一個模式。
+func startModeDescription(goos string) string {
+	d := "換到輸入框時回到這個模式"
+	if goos == "windows" {
+		d = "新開的程式從這個模式開始"
+	}
+	return d + "；切換視窗後「全部共用同一個模式」時，是登入後一開始的模式"
+}
+
+// modeNativeLabel：native 照平台原本的做法，意思依平台而不同；macOS／Linux 回到開始時的模式（#160）。
+func modeNativeLabel(goos string, english bool) string {
+	if goos == "windows" {
+		return "每個程式各自記住"
+	}
+	if english {
+		return "每次回到英文"
+	}
+	return "每次回到注音"
+}
+
+// retiredKeys 是已拿掉的設定檔欄位：讀檔時忽略，存檔時不寫回。
+var retiredKeys = []string{"preview_0_2"}
+
+// PreviewRetiredKey 是 0.2.0 開發期間的內部開關（#128）。0.2.0 起功能正式開放：set preview-0-2 on 仍然成功
+// 但不改任何東西（保留舊版呼叫相容性），off 回 CodeInvalidValue，說明已不能關閉。
+const PreviewRetiredKey = "preview-0-2"
+
+// PreviewRetiredNote 是 set preview-0-2 on 時給人讀的提示。
+const PreviewRetiredNote = "preview-0-2 已不需要設定：0.2.0 的我的詞彙、加詞按鍵、我的片語與本機 API 已正式開放"
+
+// hiddenSpecs 是可以用 Set 修改、但不列進 Items 與 Keys 的項目；設定程式看不到。
+func hiddenSpecs() []spec {
+	return []spec{
+		// 舊鍵：0.1.0-dev.63 以前的設定程式與腳本用它；改成 toggle-key。
+		{"left-shift", "左 Shift 切換中英", "舊設定，改用 toggle-key", "off", []string{"on", "off"},
+			func(s Settings) string { return onOff(s.TogglesLeft()) }},
+		{PreviewRetiredKey, "0.2.0 預覽", "已正式開放，不再需要設定", "on", []string{"on"},
+			func(Settings) string { return "on" }},
+	}
+}
+
+func lookup(key string) (spec, bool) {
+	for _, sp := range append(specs(), hiddenSpecs()...) {
+		if sp.key == key {
+			return sp, true
+		}
+	}
+	return spec{}, false
+}
+
+// Keys 列出可用 Set 修改的項目與允許值，供命令列說明使用。
+func Keys() map[string]string {
+	keys := map[string]string{}
+	for _, sp := range specs() {
+		keys[sp.key] = strings.Join(sp.values, "|")
+	}
+	return keys
+}
+
+// Item 描述一個可修改的設定及其目前的值，是 settings --json 契約的一項。
+type Item struct {
+	Key         string   `json:"key"`
+	Type        string   `json:"type"` // 目前都是 choice：從 Values 擇一
+	Values      []string `json:"values"`
+	Default     string   `json:"default"`
+	Value       string   `json:"value"` // 設定檔中的值（讀不懂的值顯示為預設值）
+	Label       string   `json:"label"`
+	Description string   `json:"description"`
+	// Disabled：這一項目前因其他設定而不起作用（例如倚天 41 鍵時的中英混打），介面顯示為不能改，
+	// 旁邊顯示 DisabledReason。Value 仍是設定檔中的值，條件解除後照舊生效。舊版介面忽略這兩個欄位。
+	Disabled       bool   `json:"disabled,omitempty"`
+	DisabledReason string `json:"disabled_reason,omitempty"`
+	// ValueLabels 是選項的顯示名稱（例如 native 在 Windows 是「每個程式各自記住」）；舊版介面忽略，照自己的對照表。
+	ValueLabels map[string]string `json:"value_labels,omitempty"`
+}
+
+// Items 依固定順序列出所有可修改的設定。
+func (s Settings) Items() []Item {
+	list := specs()
+	out := make([]Item, 0, len(list))
+	for _, sp := range list {
+		reason := s.disabledReason(sp.key)
+		out = append(out, Item{Key: sp.key, Type: "choice", Values: sp.values, Default: sp.def, Value: sp.value(s), Label: sp.label, Description: sp.description,
+			Disabled: reason != "", DisabledReason: reason, ValueLabels: s.valueLabels(sp.key)})
+	}
+	return out
+}
+
+// Value 回傳某個設定目前的值（命令列的寫法）。
+func (s Settings) Value(key string) (string, bool) {
+	sp, ok := lookup(key)
+	if !ok {
+		return "", false
+	}
+	return sp.value(s), true
+}
+
+// Set 依命令列的鍵與值修改設定；錯誤為 *SetError。明確設定某個欄位會丟掉先前為它保留的原文。
+func (s *Settings) Set(key, value string) error {
+	sp, ok := lookup(key)
+	if !ok {
+		names := make([]string, 0, len(specs()))
+		for _, other := range specs() {
+			names = append(names, other.key)
+		}
+		sort.Strings(names)
+		return &SetError{Code: CodeUnknownKey, Key: key, Msg: fmt.Sprintf("未知的設定 %q；可用：%s", key, strings.Join(names, "、"))}
+	}
+	valid := false
+	for _, v := range sp.values {
+		valid = valid || v == value
+	}
+	if !valid && key == PreviewRetiredKey {
+		return &SetError{Code: CodeInvalidValue, Key: key, Msg: "0.2.0 的我的詞彙、加詞按鍵、我的片語與本機 API 已正式開放，preview-0-2 不能再關閉；" +
+			"不想讓 AI 助手連線，在設定程式關閉「讓 AI 幫你加詞」或執行 0c-update api disable（預設就是關閉）"}
+	}
+	if !valid {
+		return &SetError{Code: CodeInvalidValue, Key: key, Msg: fmt.Sprintf("%s 只接受 %s", key, strings.Join(sp.values, " 或 "))}
+	}
+	switch key {
+	case "selection":
+		s.Selection = value
+		s.forget("selection")
+	case "punctuation":
+		s.Punctuation = value == "on"
+		s.forget("punctuation")
+	case "document-context":
+		s.DocumentContext = value == "on"
+		s.forget("document_context")
+	case "english-autocomplete":
+		s.EnglishAutocomplete = value == "on"
+		s.forget("english_autocomplete")
+	case "left-shift": // 舊鍵：左 Shift 開關，右 Shift 維持原狀
+		right := s.TogglesRight()
+		switch {
+		case value == "on" && right:
+			s.setToggleKey(ToggleBoth)
+		case value == "on":
+			s.setToggleKey(ToggleLeft)
+		case right:
+			s.setToggleKey(ToggleRight)
+		default:
+			s.setToggleKey(ToggleNone)
+		}
+		s.forget("left_shift")
+		s.forget("toggle_key")
+	case "toggle-key":
+		s.setToggleKey(value)
+		s.forget("toggle_key")
+		s.forget("left_shift")
+	case "mode-memory":
+		s.ModeMemory = value
+		s.forget("mode_memory")
+	case "start-mode":
+		s.StartMode = value
+		s.forget("start_mode")
+	case "esc-clear":
+		s.EscClear = value == "on"
+		s.forget("esc_clear")
+	case "space-selects":
+		s.SpaceSelects = value == "on"
+		s.forget("space_selects")
+	case "advance-after-select":
+		s.AdvanceAfterSelect = value == "on"
+		s.forget("advance_after_select")
+	case "mixed-input":
+		s.MixedInput = value == "on"
+		s.forget("mixed_input")
+	case "candidate-cursor":
+		s.CandidateCursor = value
+		s.forget("candidate_cursor")
+	case "candidate-layout":
+		s.CandidateLayout = value
+		s.forget("candidate_layout")
+	case "emoji-shortcut":
+		s.EmojiShortcut = value
+		s.forget("emoji_shortcut")
+	case "emoji-equals-first":
+		s.EmojiEqualsFirst = value == "on"
+		s.forget("emoji_equals_first")
+	case "keyboard-layout":
+		s.KeyboardLayout = value
+		s.forget("keyboard_layout")
+	case PreviewRetiredKey: // 已正式開放：不改任何東西
+	default:
+		p, _ := fuzzy.ParsePair(strings.TrimPrefix(key, "fuzzy-"))
+		if value == DefaultFuzzy {
+			value = "" // 回到預設：不在設定檔留下欄位；off 要明確寫入
+		}
+		s.Fuzzy.set(p, value)
+	}
+	return nil
+}

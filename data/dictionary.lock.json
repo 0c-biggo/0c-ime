@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "files": {
+    "NOTICE.txt": {
+      "size": 122388,
+      "sha256": "432e3b8034c5d676a5943ceaa48cf6d9d7657096a6b4e19ac410f894dfeb4281"
+    },
+    "english/NOTICE.txt": {
+      "size": 5365,
+      "sha256": "7ba52a087290ab270a73486f24b0385a5c80aa22ccf285ef70cea6a31afbe621"
+    },
+    "english/manifest.json": {
+      "size": 1316,
+      "sha256": "83427160c73b81c4f17185c87b974bc159f115881c1aa22b6d5fa3c0060c060a"
+    },
+    "english/words.bin": {
+      "size": 1522028,
+      "sha256": "aa03049852110645bce87b5a7bcb9a383a1b0748e59465827148adb534701782"
+    },
+    "lexicon.bin": {
+      "size": 8791438,
+      "sha256": "eb88389648db65db079f20346007b0a90fed393fafc64d8840ffbef6579b7889"
+    },
+    "lm.bin": {
+      "size": 52766129,
+      "sha256": "18728c873b29e582eef5e0110ac882f8e85e7145475fd657c3d6fabd2f64ef01"
+    },
+    "manifest.json": {
+      "size": 7111,
+      "sha256": "36eecfadc7f2ab9758146560f5b0ba5f9a639d8f9e4ef35423f40de3bddec07b"
+    },
+    "report.txt": {
+      "size": 2134,
+      "sha256": "d3639a50005c92947348e71f107b9396c88318fb45da9266741b39aedf6e398b"
+    }
+  }
+}

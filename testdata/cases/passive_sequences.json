@@ -1,0 +1,30 @@
+[
+  {
+    "id": "passive-single-word-does-not-break-longer-word",
+    "steps": [
+      {"reading": "ㄑㄧㄝ", "want": "切"},
+      {"request": {"type": "commit"}, "want": "切"},
+      {"reading": "ㄑㄧㄝ ㄖㄨˋ", "want": "切入"},
+      {"request": {"type": "backspace"}, "want": "切"},
+      {"reading": "ㄖㄨˋ", "want": "切入"},
+      {"reading": "ㄧ ㄍㄜ˙ ㄏㄡˋ ㄊㄞˊ", "want": "切入一個後台"}
+    ]
+  },
+  {
+    "id": "passive-word-pair-does-not-break-longer-word",
+    "steps": [
+      {"reading": "ㄎㄜˇ ㄧˇ ㄑㄧㄝ", "want": "可以切"},
+      {"request": {"type": "commit"}, "want": "可以切"},
+      {"reading": "ㄎㄜˇ ㄧˇ ㄑㄧㄝ ㄖㄨˋ", "want": "可以切入"}
+    ]
+  },
+  {
+    "id": "explicit-choice-can-still-request-split-word",
+    "steps": [
+      {"reading": "ㄑㄧㄝ ㄖㄨˋ", "want": "切入"},
+      {"select": {"at": 1, "text": "肉"}, "want": "切肉"},
+      {"request": {"type": "commit"}, "want": "切肉"},
+      {"reading": "ㄑㄧㄝ ㄖㄨˋ", "want": "切肉"}
+    ]
+  }
+]

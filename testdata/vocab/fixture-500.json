@@ -1,0 +1,3508 @@
+{
+ "format": 1,
+ "version": 1,
+ "words": [
+  {
+   "word": "翁宏豪",
+   "readings": [
+    "ㄨㄥ ㄏㄨㄥˊ ㄏㄠˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "柯建翔",
+   "readings": [
+    "ㄎㄜ ㄐㄧㄢˋ ㄒㄧㄤˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "杜辰筑",
+   "readings": [
+    "ㄉㄨˋ ㄔㄣˊ ㄓㄨˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "余詩浩",
+   "readings": [
+    "ㄩˊ ㄕ ㄏㄠˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "何婷翰",
+   "readings": [
+    "ㄏㄜˊ ㄊㄧㄥˊ ㄏㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "許婷詩",
+   "readings": [
+    "ㄒㄩˇ ㄊㄧㄥˊ ㄕ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "簡惠傑",
+   "readings": [
+    "ㄐㄧㄢˇ ㄏㄨㄟˋ ㄐㄧㄝˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "丁心凱",
+   "readings": [
+    "ㄉㄧㄥ ㄒㄧㄣ ㄎㄞˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "丁瑜昱",
+   "readings": [
+    "ㄉㄧㄥ ㄩˊ ㄩˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "侯晴翔",
+   "readings": [
+    "ㄏㄡˊ ㄑㄧㄥˊ ㄒㄧㄤˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "戴芳心",
+   "readings": [
+    "ㄉㄞˋ ㄈㄤ ㄒㄧㄣ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "謝偉宸",
+   "readings": [
+    "ㄒㄧㄝˋ ㄨㄟˇ ㄔㄣˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "林慧明",
+   "readings": [
+    "ㄌㄧㄣˊ ㄏㄨㄟˋ ㄇㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "詹宥宏",
+   "readings": [
+    "ㄓㄢ ㄧㄡˋ ㄏㄨㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "莊瑋穎",
+   "readings": [
+    "ㄓㄨㄤ ㄨㄟˇ ㄧㄥˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "江瑜宥",
+   "readings": [
+    "ㄐㄧㄤ ㄩˊ ㄧㄡˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "丁萱柏",
+   "readings": [
+    "ㄉㄧㄥ ㄒㄩㄢ ㄅㄛˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "范豪哲",
+   "readings": [
+    "ㄈㄢˋ ㄏㄠˊ ㄓㄜˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "鍾子家",
+   "readings": [
+    "ㄓㄨㄥ ㄗˇ ㄐㄧㄚ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "洪文嘉",
+   "readings": [
+    "ㄏㄨㄥˊ ㄨㄣˊ ㄐㄧㄚ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "簡彥辰",
+   "readings": [
+    "ㄐㄧㄢˇ ㄧㄢˋ ㄔㄣˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "余慧美",
+   "readings": [
+    "ㄩˊ ㄏㄨㄟˋ ㄇㄟˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "鄭明慧",
+   "readings": [
+    "ㄓㄥˋ ㄇㄧㄥˊ ㄏㄨㄟˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "游雅雅",
+   "readings": [
+    "ㄧㄡˊ ㄧㄚˇ ㄧㄚˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "柯品淑",
+   "readings": [
+    "ㄎㄜ ㄆㄧㄣˇ ㄕㄨˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "彭宇哲",
+   "readings": [
+    "ㄆㄥˊ ㄩˇ ㄓㄜˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "彭嘉筑",
+   "readings": [
+    "ㄆㄥˊ ㄐㄧㄚ ㄓㄨˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "游偉明",
+   "readings": [
+    "ㄧㄡˊ ㄨㄟˇ ㄇㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "詹庭瑋",
+   "readings": [
+    "ㄓㄢ ㄊㄧㄥˊ ㄨㄟˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "魏芳宸",
+   "readings": [
+    "ㄨㄟˋ ㄈㄤ ㄔㄣˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "蕭宸維",
+   "readings": [
+    "ㄒㄧㄠ ㄔㄣˊ ㄨㄟˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "邱惠佳",
+   "readings": [
+    "ㄑㄧㄡ ㄏㄨㄟˋ ㄐㄧㄚ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "趙慧哲",
+   "readings": [
+    "ㄓㄠˋ ㄏㄨㄟˋ ㄓㄜˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "許昱品",
+   "readings": [
+    "ㄒㄩˇ ㄩˋ ㄆㄧㄣˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "丁瑜婷",
+   "readings": [
+    "ㄉㄧㄥ ㄩˊ ㄊㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "許維子",
+   "readings": [
+    "ㄒㄩˇ ㄨㄟˊ ㄗˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "顏涵雅",
+   "readings": [
+    "ㄧㄢˊ ㄏㄢˊ ㄧㄚˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "鄧昱宏",
+   "readings": [
+    "ㄉㄥˋ ㄩˋ ㄏㄨㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "高穎美",
+   "readings": [
+    "ㄍㄠ ㄧㄥˇ ㄇㄟˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "李昱翔",
+   "readings": [
+    "ㄌㄧˇ ㄩˋ ㄒㄧㄤˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "范慧宥",
+   "readings": [
+    "ㄈㄢˋ ㄏㄨㄟˋ ㄧㄡˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "莊慧俊",
+   "readings": [
+    "ㄓㄨㄤ ㄏㄨㄟˋ ㄐㄩㄣˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "盧凱宥",
+   "readings": [
+    "ㄌㄨˊ ㄎㄞˇ ㄧㄡˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "陳美安",
+   "readings": [
+    "ㄔㄣˊ ㄇㄟˇ ㄢ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "邱志恩",
+   "readings": [
+    "ㄑㄧㄡ ㄓˋ ㄣ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "盧凱涵",
+   "readings": [
+    "ㄌㄨˊ ㄎㄞˇ ㄏㄢˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "柯志書",
+   "readings": [
+    "ㄎㄜ ㄓˋ ㄕㄨ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "宋庭雅",
+   "readings": [
+    "ㄙㄨㄥˋ ㄊㄧㄥˊ ㄧㄚˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "陳冠惠",
+   "readings": [
+    "ㄔㄣˊ ㄍㄨㄢˋ ㄏㄨㄟˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "蔡子安",
+   "readings": [
+    "ㄘㄞˋ ㄗˇ ㄢ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "胡惠慧",
+   "readings": [
+    "ㄏㄨˊ ㄏㄨㄟˋ ㄏㄨㄟˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "謝穎穎",
+   "readings": [
+    "ㄒㄧㄝˋ ㄧㄥˇ ㄧㄥˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "廖穎豪",
+   "readings": [
+    "ㄌㄧㄠˋ ㄧㄥˇ ㄏㄠˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "林筑柏",
+   "readings": [
+    "ㄌㄧㄣˊ ㄓㄨˊ ㄅㄛˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "呂俊婷",
+   "readings": [
+    "ㄌㄩˇ ㄐㄩㄣˋ ㄊㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "潘凱晴",
+   "readings": [
+    "ㄆㄢ ㄎㄞˇ ㄑㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "廖穎慧",
+   "readings": [
+    "ㄌㄧㄠˋ ㄧㄥˇ ㄏㄨㄟˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "胡惠建",
+   "readings": [
+    "ㄏㄨˊ ㄏㄨㄟˋ ㄐㄧㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "許恩宸",
+   "readings": [
+    "ㄒㄩˇ ㄣ ㄔㄣˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "潘鈺涵",
+   "readings": [
+    "ㄆㄢ ㄩˋ ㄏㄢˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "許婷妤",
+   "readings": [
+    "ㄒㄩˇ ㄊㄧㄥˊ ㄩˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "胡家宇",
+   "readings": [
+    "ㄏㄨˊ ㄐㄧㄚ ㄩˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "傅浩翰",
+   "readings": [
+    "ㄈㄨˋ ㄏㄠˋ ㄏㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "林柏琪",
+   "readings": [
+    "ㄌㄧㄣˊ ㄅㄛˊ ㄑㄧˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "楊凱心",
+   "readings": [
+    "ㄧㄤˊ ㄎㄞˇ ㄒㄧㄣ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "何佳芳",
+   "readings": [
+    "ㄏㄜˊ ㄐㄧㄚ ㄈㄤ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "周心建",
+   "readings": [
+    "ㄓㄡ ㄒㄧㄣ ㄐㄧㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "吳志昱",
+   "readings": [
+    "ㄨˊ ㄓˋ ㄩˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "林琪品",
+   "readings": [
+    "ㄌㄧㄣˊ ㄑㄧˊ ㄆㄧㄣˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "吳詩宇",
+   "readings": [
+    "ㄨˊ ㄕ ㄩˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "方瑋昱",
+   "readings": [
+    "ㄈㄤ ㄨㄟˇ ㄩˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "梁明婷",
+   "readings": [
+    "ㄌㄧㄤˊ ㄇㄧㄥˊ ㄊㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "廖品恩",
+   "readings": [
+    "ㄌㄧㄠˋ ㄆㄧㄣˇ ㄣ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "梁芳筑",
+   "readings": [
+    "ㄌㄧㄤˊ ㄈㄤ ㄓㄨˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "趙俊欣",
+   "readings": [
+    "ㄓㄠˋ ㄐㄩㄣˋ ㄒㄧㄣ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "朱維怡",
+   "readings": [
+    "ㄓㄨ ㄨㄟˊ ㄧˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "簡宏嘉",
+   "readings": [
+    "ㄐㄧㄢˇ ㄏㄨㄥˊ ㄐㄧㄚ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "邱昱傑",
+   "readings": [
+    "ㄑㄧㄡ ㄩˋ ㄐㄧㄝˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "鄧翰美",
+   "readings": [
+    "ㄉㄥˋ ㄏㄢˋ ㄇㄟˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "盧佳婷",
+   "readings": [
+    "ㄌㄨˊ ㄐㄧㄚ ㄊㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "游書志",
+   "readings": [
+    "ㄧㄡˊ ㄕㄨ ㄓˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "趙心芳",
+   "readings": [
+    "ㄓㄠˋ ㄒㄧㄣ ㄈㄤ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "林俊文",
+   "readings": [
+    "ㄌㄧㄣˊ ㄐㄩㄣˋ ㄨㄣˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "許詩宇",
+   "readings": [
+    "ㄒㄩˇ ㄕ ㄩˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "趙淑明",
+   "readings": [
+    "ㄓㄠˋ ㄕㄨˊ ㄇㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "鄧慧雅",
+   "readings": [
+    "ㄉㄥˋ ㄏㄨㄟˋ ㄧㄚˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "胡建傑",
+   "readings": [
+    "ㄏㄨˊ ㄐㄧㄢˋ ㄐㄧㄝˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "簡明俊",
+   "readings": [
+    "ㄐㄧㄢˇ ㄇㄧㄥˊ ㄐㄩㄣˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "朱恩思",
+   "readings": [
+    "ㄓㄨ ㄣ ㄙ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "鄧建雅",
+   "readings": [
+    "ㄉㄥˋ ㄐㄧㄢˋ ㄧㄚˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "徐明筑",
+   "readings": [
+    "ㄒㄩˊ ㄇㄧㄥˊ ㄓㄨˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "傅昱宸",
+   "readings": [
+    "ㄈㄨˋ ㄩˋ ㄔㄣˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "賴明建",
+   "readings": [
+    "ㄌㄞˋ ㄇㄧㄥˊ ㄐㄧㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "洪惠建",
+   "readings": [
+    "ㄏㄨㄥˊ ㄏㄨㄟˋ ㄐㄧㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "余凱君",
+   "readings": [
+    "ㄩˊ ㄎㄞˇ ㄐㄩㄣ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "傅翰志",
+   "readings": [
+    "ㄈㄨˋ ㄏㄢˋ ㄓˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "鄧心書",
+   "readings": [
+    "ㄉㄥˋ ㄒㄧㄣ ㄕㄨ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "施鈺俊",
+   "readings": [
+    "ㄕ ㄩˋ ㄐㄩㄣˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "鍾豪欣",
+   "readings": [
+    "ㄓㄨㄥ ㄏㄠˊ ㄒㄧㄣ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "趙昱心",
+   "readings": [
+    "ㄓㄠˋ ㄩˋ ㄒㄧㄣ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "吳鈺宸",
+   "readings": [
+    "ㄨˊ ㄩˋ ㄔㄣˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "江浩豪",
+   "readings": [
+    "ㄐㄧㄤ ㄏㄠˋ ㄏㄠˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "黃翰彥",
+   "readings": [
+    "ㄏㄨㄤˊ ㄏㄢˋ ㄧㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "徐冠凱",
+   "readings": [
+    "ㄒㄩˊ ㄍㄨㄢˋ ㄎㄞˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "潘思承",
+   "readings": [
+    "ㄆㄢ ㄙ ㄔㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "范思昱",
+   "readings": [
+    "ㄈㄢˋ ㄙ ㄩˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "蔡萱翰",
+   "readings": [
+    "ㄘㄞˋ ㄒㄩㄢ ㄏㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "郭俊君",
+   "readings": [
+    "ㄍㄨㄛ ㄐㄩㄣˋ ㄐㄩㄣ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "劉書淑",
+   "readings": [
+    "ㄌㄧㄡˊ ㄕㄨ ㄕㄨˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "杜建君",
+   "readings": [
+    "ㄉㄨˋ ㄐㄧㄢˋ ㄐㄩㄣ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "高恩慧",
+   "readings": [
+    "ㄍㄠ ㄣ ㄏㄨㄟˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "范俊安",
+   "readings": [
+    "ㄈㄢˋ ㄐㄩㄣˋ ㄢ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "謝嘉思",
+   "readings": [
+    "ㄒㄧㄝˋ ㄐㄧㄚ ㄙ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "高庭雅",
+   "readings": [
+    "ㄍㄠ ㄊㄧㄥˊ ㄧㄚˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "侯嘉萱",
+   "readings": [
+    "ㄏㄡˊ ㄐㄧㄚ ㄒㄩㄢ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "彭晴冠",
+   "readings": [
+    "ㄆㄥˊ ㄑㄧㄥˊ ㄍㄨㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "杜瑋明",
+   "readings": [
+    "ㄉㄨˋ ㄨㄟˇ ㄇㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "潘哲冠",
+   "readings": [
+    "ㄆㄢ ㄓㄜˊ ㄍㄨㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "王宏文",
+   "readings": [
+    "ㄨㄤˊ ㄏㄨㄥˊ ㄨㄣˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "施冠翔",
+   "readings": [
+    "ㄕ ㄍㄨㄢˋ ㄒㄧㄤˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "杜美俊",
+   "readings": [
+    "ㄉㄨˋ ㄇㄟˇ ㄐㄩㄣˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "魏書昱",
+   "readings": [
+    "ㄨㄟˋ ㄕㄨ ㄩˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "柯宇彥",
+   "readings": [
+    "ㄎㄜ ㄩˇ ㄧㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "何柏俊",
+   "readings": [
+    "ㄏㄜˊ ㄅㄛˊ ㄐㄩㄣˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "詹宥宇",
+   "readings": [
+    "ㄓㄢ ㄧㄡˋ ㄩˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "楊柏慧",
+   "readings": [
+    "ㄧㄤˊ ㄅㄛˊ ㄏㄨㄟˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "余凱美",
+   "readings": [
+    "ㄩˊ ㄎㄞˇ ㄇㄟˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "謝君涵",
+   "readings": [
+    "ㄒㄧㄝˋ ㄐㄩㄣ ㄏㄢˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "賴偉豪",
+   "readings": [
+    "ㄌㄞˋ ㄨㄟˇ ㄏㄠˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "蔡志哲",
+   "readings": [
+    "ㄘㄞˋ ㄓˋ ㄓㄜˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "謝佳冠",
+   "readings": [
+    "ㄒㄧㄝˋ ㄐㄧㄚ ㄍㄨㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "施佳承",
+   "readings": [
+    "ㄕ ㄐㄧㄚ ㄔㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "沈萱美",
+   "readings": [
+    "ㄔㄣˊ ㄒㄩㄢ ㄇㄟˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "簡雅文",
+   "readings": [
+    "ㄐㄧㄢˇ ㄧㄚˇ ㄨㄣˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "葉婷詩",
+   "readings": [
+    "ㄧㄝˋ ㄊㄧㄥˊ ㄕ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "趙翰翔",
+   "readings": [
+    "ㄓㄠˋ ㄏㄢˋ ㄒㄧㄤˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "江婷美",
+   "readings": [
+    "ㄐㄧㄤ ㄊㄧㄥˊ ㄇㄟˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "杜惠宥",
+   "readings": [
+    "ㄉㄨˋ ㄏㄨㄟˋ ㄧㄡˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "洪承家",
+   "readings": [
+    "ㄏㄨㄥˊ ㄔㄥˊ ㄐㄧㄚ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "方品欣",
+   "readings": [
+    "ㄈㄤ ㄆㄧㄣˇ ㄒㄧㄣ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "薛嘉文",
+   "readings": [
+    "ㄒㄩㄝ ㄐㄧㄚ ㄨㄣˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "戴明婷",
+   "readings": [
+    "ㄉㄞˋ ㄇㄧㄥˊ ㄊㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "許瑋俊",
+   "readings": [
+    "ㄒㄩˇ ㄨㄟˇ ㄐㄩㄣˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "鍾書鈺",
+   "readings": [
+    "ㄓㄨㄥ ㄕㄨ ㄩˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "傅庭筑",
+   "readings": [
+    "ㄈㄨˋ ㄊㄧㄥˊ ㄓㄨˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "胡柏芳",
+   "readings": [
+    "ㄏㄨˊ ㄅㄛˊ ㄈㄤ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "柯宸雅",
+   "readings": [
+    "ㄎㄜ ㄔㄣˊ ㄧㄚˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "趙哲安",
+   "readings": [
+    "ㄓㄠˋ ㄓㄜˊ ㄢ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "游建心",
+   "readings": [
+    "ㄧㄡˊ ㄐㄧㄢˋ ㄒㄧㄣ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "施思豪",
+   "readings": [
+    "ㄕ ㄙ ㄏㄠˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "孫維彥",
+   "readings": [
+    "ㄙㄨㄣ ㄨㄟˊ ㄧㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "鄭翔明",
+   "readings": [
+    "ㄓㄥˋ ㄒㄧㄤˊ ㄇㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "侯欣涵",
+   "readings": [
+    "ㄏㄡˊ ㄒㄧㄣ ㄏㄢˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "謝彥志",
+   "readings": [
+    "ㄒㄧㄝˋ ㄧㄢˋ ㄓˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "孫彥筑",
+   "readings": [
+    "ㄙㄨㄣ ㄧㄢˋ ㄓㄨˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "丁芳書",
+   "readings": [
+    "ㄉㄧㄥ ㄈㄤ ㄕㄨ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "何豪思",
+   "readings": [
+    "ㄏㄜˊ ㄏㄠˊ ㄙ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "彭廷思",
+   "readings": [
+    "ㄆㄥˊ ㄊㄧㄥˊ ㄙ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "梁翔俊",
+   "readings": [
+    "ㄌㄧㄤˊ ㄒㄧㄤˊ ㄐㄩㄣˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "宋哲宏",
+   "readings": [
+    "ㄙㄨㄥˋ ㄓㄜˊ ㄏㄨㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "王琪俊",
+   "readings": [
+    "ㄨㄤˊ ㄑㄧˊ ㄐㄩㄣˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "蘇家琪",
+   "readings": [
+    "ㄙㄨ ㄐㄧㄚ ㄑㄧˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "郭維承",
+   "readings": [
+    "ㄍㄨㄛ ㄨㄟˊ ㄔㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "楊怡思",
+   "readings": [
+    "ㄧㄤˊ ㄧˊ ㄙ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "施柏子",
+   "readings": [
+    "ㄕ ㄅㄛˊ ㄗˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "梁琪建",
+   "readings": [
+    "ㄌㄧㄤˊ ㄑㄧˊ ㄐㄧㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "鄧恩彥",
+   "readings": [
+    "ㄉㄥˋ ㄣ ㄧㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "方恩家",
+   "readings": [
+    "ㄈㄤ ㄣ ㄐㄧㄚ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "張宏凱",
+   "readings": [
+    "ㄓㄤ ㄏㄨㄥˊ ㄎㄞˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "呂瑜傑",
+   "readings": [
+    "ㄌㄩˇ ㄩˊ ㄐㄧㄝˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "丁志彥",
+   "readings": [
+    "ㄉㄧㄥ ㄓˋ ㄧㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "謝穎維",
+   "readings": [
+    "ㄒㄧㄝˋ ㄧㄥˇ ㄨㄟˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "黃明婷",
+   "readings": [
+    "ㄏㄨㄤˊ ㄇㄧㄥˊ ㄊㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "柯恩建",
+   "readings": [
+    "ㄎㄜ ㄣ ㄐㄧㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "鄧琪俊",
+   "readings": [
+    "ㄉㄥˋ ㄑㄧˊ ㄐㄩㄣˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "江慧嘉",
+   "readings": [
+    "ㄐㄧㄤ ㄏㄨㄟˋ ㄐㄧㄚ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "陳妤建",
+   "readings": [
+    "ㄔㄣˊ ㄩˊ ㄐㄧㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "宋哲宥",
+   "readings": [
+    "ㄙㄨㄥˋ ㄓㄜˊ ㄧㄡˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "蕭子宸",
+   "readings": [
+    "ㄒㄧㄠ ㄗˇ ㄔㄣˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "葉文翔",
+   "readings": [
+    "ㄧㄝˋ ㄨㄣˊ ㄒㄧㄤˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "林怡浩",
+   "readings": [
+    "ㄌㄧㄣˊ ㄧˊ ㄏㄠˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "傅恩浩",
+   "readings": [
+    "ㄈㄨˋ ㄣ ㄏㄠˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "薛萱思",
+   "readings": [
+    "ㄒㄩㄝ ㄒㄩㄢ ㄙ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "李婷承",
+   "readings": [
+    "ㄌㄧˇ ㄊㄧㄥˊ ㄔㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "詹慧辰",
+   "readings": [
+    "ㄓㄢ ㄏㄨㄟˋ ㄔㄣˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "蔡承偉",
+   "readings": [
+    "ㄘㄞˋ ㄔㄥˊ ㄨㄟˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "劉慧美",
+   "readings": [
+    "ㄌㄧㄡˊ ㄏㄨㄟˋ ㄇㄟˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "顏瑜昱",
+   "readings": [
+    "ㄧㄢˊ ㄩˊ ㄩˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "潘欣柏",
+   "readings": [
+    "ㄆㄢ ㄒㄧㄣ ㄅㄛˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "蔡品涵",
+   "readings": [
+    "ㄘㄞˋ ㄆㄧㄣˇ ㄏㄢˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "卓宸嘉",
+   "readings": [
+    "ㄓㄨㄛˊ ㄔㄣˊ ㄐㄧㄚ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "胡傑偉",
+   "readings": [
+    "ㄏㄨˊ ㄐㄧㄝˊ ㄨㄟˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "方佳俊",
+   "readings": [
+    "ㄈㄤ ㄐㄧㄚ ㄐㄩㄣˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "趙庭詩",
+   "readings": [
+    "ㄓㄠˋ ㄊㄧㄥˊ ㄕ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "范惠翰",
+   "readings": [
+    "ㄈㄢˋ ㄏㄨㄟˋ ㄏㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "張雅雅",
+   "readings": [
+    "ㄓㄤ ㄧㄚˇ ㄧㄚˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "翁建彥",
+   "readings": [
+    "ㄨㄥ ㄐㄧㄢˋ ㄧㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "鍾傑家",
+   "readings": [
+    "ㄓㄨㄥ ㄐㄧㄝˊ ㄐㄧㄚ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "羅欣慧",
+   "readings": [
+    "ㄌㄨㄛˊ ㄒㄧㄣ ㄏㄨㄟˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "廖廷晴",
+   "readings": [
+    "ㄌㄧㄠˋ ㄊㄧㄥˊ ㄑㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "徐翔恩",
+   "readings": [
+    "ㄒㄩˊ ㄒㄧㄤˊ ㄣ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "林宥安",
+   "readings": [
+    "ㄌㄧㄣˊ ㄧㄡˋ ㄢ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "蕭俊文",
+   "readings": [
+    "ㄒㄧㄠ ㄐㄩㄣˋ ㄨㄣˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "郭庭慧",
+   "readings": [
+    "ㄍㄨㄛ ㄊㄧㄥˊ ㄏㄨㄟˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "薛穎怡",
+   "readings": [
+    "ㄒㄩㄝ ㄧㄥˇ ㄧˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "趙鈺維",
+   "readings": [
+    "ㄓㄠˋ ㄩˋ ㄨㄟˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "胡文維",
+   "readings": [
+    "ㄏㄨˊ ㄨㄣˊ ㄨㄟˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "蕭明傑",
+   "readings": [
+    "ㄒㄧㄠ ㄇㄧㄥˊ ㄐㄧㄝˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "宋哲凱",
+   "readings": [
+    "ㄙㄨㄥˋ ㄓㄜˊ ㄎㄞˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "呂昱廷",
+   "readings": [
+    "ㄌㄩˇ ㄩˋ ㄊㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "魏芳惠",
+   "readings": [
+    "ㄨㄟˋ ㄈㄤ ㄏㄨㄟˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "柯詩宸",
+   "readings": [
+    "ㄎㄜ ㄕ ㄔㄣˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "沈宇惠",
+   "readings": [
+    "ㄔㄣˊ ㄩˇ ㄏㄨㄟˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "李品書",
+   "readings": [
+    "ㄌㄧˇ ㄆㄧㄣˇ ㄕㄨ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "葉涵琪",
+   "readings": [
+    "ㄧㄝˋ ㄏㄢˊ ㄑㄧˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "黃品君",
+   "readings": [
+    "ㄏㄨㄤˊ ㄆㄧㄣˇ ㄐㄩㄣ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "詹鈺宸",
+   "readings": [
+    "ㄓㄢ ㄩˋ ㄔㄣˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "王琪廷",
+   "readings": [
+    "ㄨㄤˊ ㄑㄧˊ ㄊㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "卓廷書",
+   "readings": [
+    "ㄓㄨㄛˊ ㄊㄧㄥˊ ㄕㄨ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "江涵涵",
+   "readings": [
+    "ㄐㄧㄤ ㄏㄢˊ ㄏㄢˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "江書妤",
+   "readings": [
+    "ㄐㄧㄤ ㄕㄨ ㄩˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "施志宥",
+   "readings": [
+    "ㄕ ㄓˋ ㄧㄡˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "卓淑欣",
+   "readings": [
+    "ㄓㄨㄛˊ ㄕㄨˊ ㄒㄧㄣ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "賴昱心",
+   "readings": [
+    "ㄌㄞˋ ㄩˋ ㄒㄧㄣ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "薛宇婷",
+   "readings": [
+    "ㄒㄩㄝ ㄩˇ ㄊㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "邱子瑜",
+   "readings": [
+    "ㄑㄧㄡ ㄗˇ ㄩˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "周君心",
+   "readings": [
+    "ㄓㄡ ㄐㄩㄣ ㄒㄧㄣ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "蔡宸承",
+   "readings": [
+    "ㄘㄞˋ ㄔㄣˊ ㄔㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "翁思怡",
+   "readings": [
+    "ㄨㄥ ㄙ ㄧˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "葉建庭",
+   "readings": [
+    "ㄧㄝˋ ㄐㄧㄢˋ ㄊㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "郭品萱",
+   "readings": [
+    "ㄍㄨㄛ ㄆㄧㄣˇ ㄒㄩㄢ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "蕭柏萱",
+   "readings": [
+    "ㄒㄧㄠ ㄅㄛˊ ㄒㄩㄢ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "沈涵淑",
+   "readings": [
+    "ㄔㄣˊ ㄏㄢˊ ㄕㄨˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "薛凱鈺",
+   "readings": [
+    "ㄒㄩㄝ ㄎㄞˇ ㄩˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "邱安建",
+   "readings": [
+    "ㄑㄧㄡ ㄢ ㄐㄧㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "葉昱昱",
+   "readings": [
+    "ㄧㄝˋ ㄩˋ ㄩˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "張品佳",
+   "readings": [
+    "ㄓㄤ ㄆㄧㄣˇ ㄐㄧㄚ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "楊凱宥",
+   "readings": [
+    "ㄧㄤˊ ㄎㄞˇ ㄧㄡˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "周偉昱",
+   "readings": [
+    "ㄓㄡ ㄨㄟˇ ㄩˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "江佳宥",
+   "readings": [
+    "ㄐㄧㄤ ㄐㄧㄚ ㄧㄡˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "許安傑",
+   "readings": [
+    "ㄒㄩˇ ㄢ ㄐㄧㄝˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "徐俊傑",
+   "readings": [
+    "ㄒㄩˊ ㄐㄩㄣˋ ㄐㄧㄝˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "吳偉辰",
+   "readings": [
+    "ㄨˊ ㄨㄟˇ ㄔㄣˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "施宥凱",
+   "readings": [
+    "ㄕ ㄧㄡˋ ㄎㄞˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "張偉宸",
+   "readings": [
+    "ㄓㄤ ㄨㄟˇ ㄔㄣˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "呂詩惠",
+   "readings": [
+    "ㄌㄩˇ ㄕ ㄏㄨㄟˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "翁思萱",
+   "readings": [
+    "ㄨㄥ ㄙ ㄒㄩㄢ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "梁辰晴",
+   "readings": [
+    "ㄌㄧㄤˊ ㄔㄣˊ ㄑㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "傅彥昱",
+   "readings": [
+    "ㄈㄨˋ ㄧㄢˋ ㄩˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "蕭維鈺",
+   "readings": [
+    "ㄒㄧㄠ ㄨㄟˊ ㄩˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "施怡婷",
+   "readings": [
+    "ㄕ ㄧˊ ㄊㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "林宇晴",
+   "readings": [
+    "ㄌㄧㄣˊ ㄩˇ ㄑㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "侯宏宇",
+   "readings": [
+    "ㄏㄡˊ ㄏㄨㄥˊ ㄩˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "郭穎浩",
+   "readings": [
+    "ㄍㄨㄛ ㄧㄥˇ ㄏㄠˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "徐豪家",
+   "readings": [
+    "ㄒㄩˊ ㄏㄠˊ ㄐㄧㄚ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "宋惠涵",
+   "readings": [
+    "ㄙㄨㄥˋ ㄏㄨㄟˋ ㄏㄢˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "徐翔維",
+   "readings": [
+    "ㄒㄩˊ ㄒㄧㄤˊ ㄨㄟˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "李佳妤",
+   "readings": [
+    "ㄌㄧˇ ㄐㄧㄚ ㄩˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "黃怡傑",
+   "readings": [
+    "ㄏㄨㄤˊ ㄧˊ ㄐㄧㄝˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "侯辰宏",
+   "readings": [
+    "ㄏㄡˊ ㄔㄣˊ ㄏㄨㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "顏安維",
+   "readings": [
+    "ㄧㄢˊ ㄢ ㄨㄟˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "江淑柏",
+   "readings": [
+    "ㄐㄧㄤ ㄕㄨˊ ㄅㄛˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "杜惠偉",
+   "readings": [
+    "ㄉㄨˋ ㄏㄨㄟˋ ㄨㄟˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "潘宥俊",
+   "readings": [
+    "ㄆㄢ ㄧㄡˋ ㄐㄩㄣˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "楊嘉美",
+   "readings": [
+    "ㄧㄤˊ ㄐㄧㄚ ㄇㄟˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "洪瑋哲",
+   "readings": [
+    "ㄏㄨㄥˊ ㄨㄟˇ ㄓㄜˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "孫偉哲",
+   "readings": [
+    "ㄙㄨㄣ ㄨㄟˇ ㄓㄜˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "游萱心",
+   "readings": [
+    "ㄧㄡˊ ㄒㄩㄢ ㄒㄧㄣ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "呂子宇",
+   "readings": [
+    "ㄌㄩˇ ㄗˇ ㄩˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "薛鈺文",
+   "readings": [
+    "ㄒㄩㄝ ㄩˋ ㄨㄣˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "徐翰凱",
+   "readings": [
+    "ㄒㄩˊ ㄏㄢˋ ㄎㄞˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "王琪芳",
+   "readings": [
+    "ㄨㄤˊ ㄑㄧˊ ㄈㄤ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "梁昱傑",
+   "readings": [
+    "ㄌㄧㄤˊ ㄩˋ ㄐㄧㄝˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "蘇琪怡",
+   "readings": [
+    "ㄙㄨ ㄑㄧˊ ㄧˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "鄧詩宏",
+   "readings": [
+    "ㄉㄥˋ ㄕ ㄏㄨㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "彭廷宏",
+   "readings": [
+    "ㄆㄥˊ ㄊㄧㄥˊ ㄏㄨㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "潘佳文",
+   "readings": [
+    "ㄆㄢ ㄐㄧㄚ ㄨㄣˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "卓凱柏",
+   "readings": [
+    "ㄓㄨㄛˊ ㄎㄞˇ ㄅㄛˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "魏嘉萱",
+   "readings": [
+    "ㄨㄟˋ ㄐㄧㄚ ㄒㄩㄢ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "徐傑宏",
+   "readings": [
+    "ㄒㄩˊ ㄐㄧㄝˊ ㄏㄨㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "周哲惠",
+   "readings": [
+    "ㄓㄡ ㄓㄜˊ ㄏㄨㄟˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "蕭豪君",
+   "readings": [
+    "ㄒㄧㄠ ㄏㄠˊ ㄐㄩㄣ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "高宇芳",
+   "readings": [
+    "ㄍㄠ ㄩˇ ㄈㄤ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "鄭萱宇",
+   "readings": [
+    "ㄓㄥˋ ㄒㄩㄢ ㄩˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "周翰嘉",
+   "readings": [
+    "ㄓㄡ ㄏㄢˋ ㄐㄧㄚ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "翁鈺宇",
+   "readings": [
+    "ㄨㄥ ㄩˋ ㄩˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "顏淑建",
+   "readings": [
+    "ㄧㄢˊ ㄕㄨˊ ㄐㄧㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "莊庭俊",
+   "readings": [
+    "ㄓㄨㄤ ㄊㄧㄥˊ ㄐㄩㄣˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "潘雅鈺",
+   "readings": [
+    "ㄆㄢ ㄧㄚˇ ㄩˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "黃昱彥",
+   "readings": [
+    "ㄏㄨㄤˊ ㄩˋ ㄧㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "顏穎宏",
+   "readings": [
+    "ㄧㄢˊ ㄧㄥˇ ㄏㄨㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "張怡宇",
+   "readings": [
+    "ㄓㄤ ㄧˊ ㄩˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "李建芳",
+   "readings": [
+    "ㄌㄧˇ ㄐㄧㄢˋ ㄈㄤ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "翁雅家",
+   "readings": [
+    "ㄨㄥ ㄧㄚˇ ㄐㄧㄚ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "張承彥",
+   "readings": [
+    "ㄓㄤ ㄔㄥˊ ㄧㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "楊琪思",
+   "readings": [
+    "ㄧㄤˊ ㄑㄧˊ ㄙ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "楊宏筑",
+   "readings": [
+    "ㄧㄤˊ ㄏㄨㄥˊ ㄓㄨˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "徐涵庭",
+   "readings": [
+    "ㄒㄩˊ ㄏㄢˊ ㄊㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "彭欣芳",
+   "readings": [
+    "ㄆㄥˊ ㄒㄧㄣ ㄈㄤ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "宋偉浩",
+   "readings": [
+    "ㄙㄨㄥˋ ㄨㄟˇ ㄏㄠˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "楊君浩",
+   "readings": [
+    "ㄧㄤˊ ㄐㄩㄣ ㄏㄠˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "彭凱翔",
+   "readings": [
+    "ㄆㄥˊ ㄎㄞˇ ㄒㄧㄤˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "鄧晴欣",
+   "readings": [
+    "ㄉㄥˋ ㄑㄧㄥˊ ㄒㄧㄣ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "許俊君",
+   "readings": [
+    "ㄒㄩˇ ㄐㄩㄣˋ ㄐㄩㄣ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "杜書涵",
+   "readings": [
+    "ㄉㄨˋ ㄕㄨ ㄏㄢˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "翁安芳",
+   "readings": [
+    "ㄨㄥ ㄢ ㄈㄤ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "方維哲",
+   "readings": [
+    "ㄈㄤ ㄨㄟˊ ㄓㄜˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "劉宥宥",
+   "readings": [
+    "ㄌㄧㄡˊ ㄧㄡˋ ㄧㄡˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "柯妤冠",
+   "readings": [
+    "ㄎㄜ ㄩˊ ㄍㄨㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "柯偉美",
+   "readings": [
+    "ㄎㄜ ㄨㄟˇ ㄇㄟˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "何欣傑",
+   "readings": [
+    "ㄏㄜˊ ㄒㄧㄣ ㄐㄧㄝˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "傅維凱",
+   "readings": [
+    "ㄈㄨˋ ㄨㄟˊ ㄎㄞˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "羅俊彥",
+   "readings": [
+    "ㄌㄨㄛˊ ㄐㄩㄣˋ ㄧㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "高傑芳",
+   "readings": [
+    "ㄍㄠ ㄐㄧㄝˊ ㄈㄤ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "吳安浩",
+   "readings": [
+    "ㄨˊ ㄢ ㄏㄠˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "孫婷辰",
+   "readings": [
+    "ㄙㄨㄣ ㄊㄧㄥˊ ㄔㄣˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "莊承君",
+   "readings": [
+    "ㄓㄨㄤ ㄔㄥˊ ㄐㄩㄣ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "詹恩哲",
+   "readings": [
+    "ㄓㄢ ㄣ ㄓㄜˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "游怡志",
+   "readings": [
+    "ㄧㄡˊ ㄧˊ ㄓˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "葉萱哲",
+   "readings": [
+    "ㄧㄝˋ ㄒㄩㄢ ㄓㄜˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "盧家維",
+   "readings": [
+    "ㄌㄨˊ ㄐㄧㄚ ㄨㄟˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "戴家妤",
+   "readings": [
+    "ㄉㄞˋ ㄐㄧㄚ ㄩˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "陳欣子",
+   "readings": [
+    "ㄔㄣˊ ㄒㄧㄣ ㄗˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "孫家豪",
+   "readings": [
+    "ㄙㄨㄣ ㄐㄧㄚ ㄏㄠˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "洪宏安",
+   "readings": [
+    "ㄏㄨㄥˊ ㄏㄨㄥˊ ㄢ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "謝翰翔",
+   "readings": [
+    "ㄒㄧㄝˋ ㄏㄢˋ ㄒㄧㄤˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "王萱萱",
+   "readings": [
+    "ㄨㄤˊ ㄒㄩㄢ ㄒㄩㄢ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "蕭婷瑋",
+   "readings": [
+    "ㄒㄧㄠ ㄊㄧㄥˊ ㄨㄟˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "侯宇嘉",
+   "readings": [
+    "ㄏㄡˊ ㄩˇ ㄐㄧㄚ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "傅恩欣",
+   "readings": [
+    "ㄈㄨˋ ㄣ ㄒㄧㄣ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "呂宸文",
+   "readings": [
+    "ㄌㄩˇ ㄔㄣˊ ㄨㄣˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "呂彥書",
+   "readings": [
+    "ㄌㄩˇ ㄧㄢˋ ㄕㄨ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "侯宏彥",
+   "readings": [
+    "ㄏㄡˊ ㄏㄨㄥˊ ㄧㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "徐建偉",
+   "readings": [
+    "ㄒㄩˊ ㄐㄧㄢˋ ㄨㄟˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "簡安書",
+   "readings": [
+    "ㄐㄧㄢˇ ㄢ ㄕㄨ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "方宏惠",
+   "readings": [
+    "ㄈㄤ ㄏㄨㄥˊ ㄏㄨㄟˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "林哲明",
+   "readings": [
+    "ㄌㄧㄣˊ ㄓㄜˊ ㄇㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "卓淑恩",
+   "readings": [
+    "ㄓㄨㄛˊ ㄕㄨˊ ㄣ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "呂昱宇",
+   "readings": [
+    "ㄌㄩˇ ㄩˋ ㄩˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "何宇文",
+   "readings": [
+    "ㄏㄜˊ ㄩˇ ㄨㄣˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "賴豪冠",
+   "readings": [
+    "ㄌㄞˋ ㄏㄠˊ ㄍㄨㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "彭惠冠",
+   "readings": [
+    "ㄆㄥˊ ㄏㄨㄟˋ ㄍㄨㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "蘇家維",
+   "readings": [
+    "ㄙㄨ ㄐㄧㄚ ㄨㄟˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "盧明昱",
+   "readings": [
+    "ㄌㄨˊ ㄇㄧㄥˊ ㄩˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "范浩怡",
+   "readings": [
+    "ㄈㄢˋ ㄏㄠˋ ㄧˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "柯恩俊",
+   "readings": [
+    "ㄎㄜ ㄣ ㄐㄩㄣˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "洪承詩",
+   "readings": [
+    "ㄏㄨㄥˊ ㄔㄥˊ ㄕ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "洪庭晴",
+   "readings": [
+    "ㄏㄨㄥˊ ㄊㄧㄥˊ ㄑㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "周佳宇",
+   "readings": [
+    "ㄓㄡ ㄐㄧㄚ ㄩˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "戴明凱",
+   "readings": [
+    "ㄉㄞˋ ㄇㄧㄥˊ ㄎㄞˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "孫翰晴",
+   "readings": [
+    "ㄙㄨㄣ ㄏㄢˋ ㄑㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "簡彥涵",
+   "readings": [
+    "ㄐㄧㄢˇ ㄧㄢˋ ㄏㄢˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "丁哲芳",
+   "readings": [
+    "ㄉㄧㄥ ㄓㄜˊ ㄈㄤ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "彭偉芳",
+   "readings": [
+    "ㄆㄥˊ ㄨㄟˇ ㄈㄤ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "張芳萱",
+   "readings": [
+    "ㄓㄤ ㄈㄤ ㄒㄩㄢ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "陳宸詩",
+   "readings": [
+    "ㄔㄣˊ ㄔㄣˊ ㄕ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "翁浩佳",
+   "readings": [
+    "ㄨㄥ ㄏㄠˋ ㄐㄧㄚ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "卓子君",
+   "readings": [
+    "ㄓㄨㄛˊ ㄗˇ ㄐㄩㄣ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "彭芳宥",
+   "readings": [
+    "ㄆㄥˊ ㄈㄤ ㄧㄡˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "蔡瑋晴",
+   "readings": [
+    "ㄘㄞˋ ㄨㄟˇ ㄑㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "顏偉鈺",
+   "readings": [
+    "ㄧㄢˊ ㄨㄟˇ ㄩˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "余志淑",
+   "readings": [
+    "ㄩˊ ㄓˋ ㄕㄨˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "葉欣維",
+   "readings": [
+    "ㄧㄝˋ ㄒㄧㄣ ㄨㄟˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "葉家凱",
+   "readings": [
+    "ㄧㄝˋ ㄐㄧㄚ ㄎㄞˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "卓廷宏",
+   "readings": [
+    "ㄓㄨㄛˊ ㄊㄧㄥˊ ㄏㄨㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "梁廷瑜",
+   "readings": [
+    "ㄌㄧㄤˊ ㄊㄧㄥˊ ㄩˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "洪嘉豪",
+   "readings": [
+    "ㄏㄨㄥˊ ㄐㄧㄚ ㄏㄠˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "楊宥俊",
+   "readings": [
+    "ㄧㄤˊ ㄧㄡˋ ㄐㄩㄣˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "邱涵瑋",
+   "readings": [
+    "ㄑㄧㄡ ㄏㄢˊ ㄨㄟˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "吳維筑",
+   "readings": [
+    "ㄨˊ ㄨㄟˊ ㄓㄨˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "方翔涵",
+   "readings": [
+    "ㄈㄤ ㄒㄧㄤˊ ㄏㄢˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "吳彥家",
+   "readings": [
+    "ㄨˊ ㄧㄢˋ ㄐㄧㄚ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "陳偉書",
+   "readings": [
+    "ㄔㄣˊ ㄨㄟˇ ㄕㄨ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "卓庭琪",
+   "readings": [
+    "ㄓㄨㄛˊ ㄊㄧㄥˊ ㄑㄧˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "柯維冠",
+   "readings": [
+    "ㄎㄜ ㄨㄟˊ ㄍㄨㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "范冠翔",
+   "readings": [
+    "ㄈㄢˋ ㄍㄨㄢˋ ㄒㄧㄤˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "邱廷宥",
+   "readings": [
+    "ㄑㄧㄡ ㄊㄧㄥˊ ㄧㄡˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "郭君筑",
+   "readings": [
+    "ㄍㄨㄛ ㄐㄩㄣ ㄓㄨˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "戴宇晴",
+   "readings": [
+    "ㄉㄞˋ ㄩˇ ㄑㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "吳偉宏",
+   "readings": [
+    "ㄨˊ ㄨㄟˇ ㄏㄨㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "羅思庭",
+   "readings": [
+    "ㄌㄨㄛˊ ㄙ ㄊㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "吳宥明",
+   "readings": [
+    "ㄨˊ ㄧㄡˋ ㄇㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "游惠琪",
+   "readings": [
+    "ㄧㄡˊ ㄏㄨㄟˋ ㄑㄧˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "廖書承",
+   "readings": [
+    "ㄌㄧㄠˋ ㄕㄨ ㄔㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "何柏浩",
+   "readings": [
+    "ㄏㄜˊ ㄅㄛˊ ㄏㄠˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "羅安偉",
+   "readings": [
+    "ㄌㄨㄛˊ ㄢ ㄨㄟˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "沈君豪",
+   "readings": [
+    "ㄔㄣˊ ㄐㄩㄣ ㄏㄠˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "謝瑜心",
+   "readings": [
+    "ㄒㄧㄝˋ ㄩˊ ㄒㄧㄣ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "詹翰冠",
+   "readings": [
+    "ㄓㄢ ㄏㄢˋ ㄍㄨㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "卓維婷",
+   "readings": [
+    "ㄓㄨㄛˊ ㄨㄟˊ ㄊㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "陳欣俊",
+   "readings": [
+    "ㄔㄣˊ ㄒㄧㄣ ㄐㄩㄣˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "邱穎文",
+   "readings": [
+    "ㄑㄧㄡ ㄧㄥˇ ㄨㄣˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "羅宸品",
+   "readings": [
+    "ㄌㄨㄛˊ ㄔㄣˊ ㄆㄧㄣˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "廖翰慧",
+   "readings": [
+    "ㄌㄧㄠˋ ㄏㄢˋ ㄏㄨㄟˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "高鈺品",
+   "readings": [
+    "ㄍㄠ ㄩˋ ㄆㄧㄣˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "杜淑庭",
+   "readings": [
+    "ㄉㄨˋ ㄕㄨˊ ㄊㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "胡穎筑",
+   "readings": [
+    "ㄏㄨˊ ㄧㄥˇ ㄓㄨˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "翁明廷",
+   "readings": [
+    "ㄨㄥ ㄇㄧㄥˊ ㄊㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "謝庭佳",
+   "readings": [
+    "ㄒㄧㄝˋ ㄊㄧㄥˊ ㄐㄧㄚ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "蕭宸文",
+   "readings": [
+    "ㄒㄧㄠ ㄔㄣˊ ㄨㄣˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "張簡柏萱",
+   "readings": [
+    "ㄓㄤ ㄐㄧㄢˇ ㄅㄛˊ ㄒㄩㄢ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "諸葛廷宸",
+   "readings": [
+    "ㄓㄨ ㄍㄜˊ ㄊㄧㄥˊ ㄔㄣˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "上官宸凱",
+   "readings": [
+    "ㄕㄤˋ ㄍㄨㄢ ㄔㄣˊ ㄎㄞˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "歐陽妤翰",
+   "readings": [
+    "ㄡ ㄧㄤˊ ㄩˊ ㄏㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "范姜俊詩",
+   "readings": [
+    "ㄈㄢˋ ㄐㄧㄤ ㄐㄩㄣˋ ㄕ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "司馬宇俊",
+   "readings": [
+    "ㄙ ㄇㄚˇ ㄩˇ ㄐㄩㄣˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "諸葛筑翔",
+   "readings": [
+    "ㄓㄨ ㄍㄜˊ ㄓㄨˊ ㄒㄧㄤˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "諸葛書建",
+   "readings": [
+    "ㄓㄨ ㄍㄜˊ ㄕㄨ ㄐㄧㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "上官晴晴",
+   "readings": [
+    "ㄕㄤˋ ㄍㄨㄢ ㄑㄧㄥˊ ㄑㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "司馬宥惠",
+   "readings": [
+    "ㄙ ㄇㄚˇ ㄧㄡˋ ㄏㄨㄟˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "司馬欣安",
+   "readings": [
+    "ㄙ ㄇㄚˇ ㄒㄧㄣ ㄢ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "諸葛瑜宇",
+   "readings": [
+    "ㄓㄨ ㄍㄜˊ ㄩˊ ㄩˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "司馬承恩",
+   "readings": [
+    "ㄙ ㄇㄚˇ ㄔㄥˊ ㄣ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "諸葛志冠",
+   "readings": [
+    "ㄓㄨ ㄍㄜˊ ㄓˋ ㄍㄨㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "司馬家傑",
+   "readings": [
+    "ㄙ ㄇㄚˇ ㄐㄧㄚ ㄐㄧㄝˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "范姜詩浩",
+   "readings": [
+    "ㄈㄢˋ ㄐㄧㄤ ㄕ ㄏㄠˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "范姜維柏",
+   "readings": [
+    "ㄈㄢˋ ㄐㄧㄤ ㄨㄟˊ ㄅㄛˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "歐陽鈺嘉",
+   "readings": [
+    "ㄡ ㄧㄤˊ ㄩˋ ㄐㄧㄚ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "張簡凱冠",
+   "readings": [
+    "ㄓㄤ ㄐㄧㄢˇ ㄎㄞˇ ㄍㄨㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "歐陽思安",
+   "readings": [
+    "ㄡ ㄧㄤˊ ㄙ ㄢ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "司馬辰萱",
+   "readings": [
+    "ㄙ ㄇㄚˇ ㄔㄣˊ ㄒㄩㄢ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "范姜翔瑜",
+   "readings": [
+    "ㄈㄢˋ ㄐㄧㄤ ㄒㄧㄤˊ ㄩˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "上官傑雅",
+   "readings": [
+    "ㄕㄤˋ ㄍㄨㄢ ㄐㄧㄝˊ ㄧㄚˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "諸葛庭昱",
+   "readings": [
+    "ㄓㄨ ㄍㄜˊ ㄊㄧㄥˊ ㄩˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "上官志凱",
+   "readings": [
+    "ㄕㄤˋ ㄍㄨㄢ ㄓˋ ㄎㄞˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "歐陽詩恩",
+   "readings": [
+    "ㄡ ㄧㄤˊ ㄕ ㄣ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "司馬芳佳",
+   "readings": [
+    "ㄙ ㄇㄚˇ ㄈㄤ ㄐㄧㄚ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "歐陽涵昱",
+   "readings": [
+    "ㄡ ㄧㄤˊ ㄏㄢˊ ㄩˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "諸葛安欣",
+   "readings": [
+    "ㄓㄨ ㄍㄜˊ ㄢ ㄒㄧㄣ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "諸葛昱婷",
+   "readings": [
+    "ㄓㄨ ㄍㄜˊ ㄩˋ ㄊㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "晶圓代工",
+   "readings": [
+    "ㄐㄧㄥ ㄩㄢˊ ㄉㄞˋ ㄍㄨㄥ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "光阻劑",
+   "readings": [
+    "ㄍㄨㄤ ㄗㄨˇ ㄐㄧˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "微服務架構",
+   "readings": [
+    "ㄨㄟˊ ㄈㄨˊ ㄨˋ ㄐㄧㄚˋ ㄍㄡˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "容器編排",
+   "readings": [
+    "ㄖㄨㄥˊ ㄑㄧˋ ㄅㄧㄢ ㄆㄞˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "量子位元",
+   "readings": [
+    "ㄌㄧㄤˋ ㄗˇ ㄨㄟˋ ㄩㄢˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "生成式模型",
+   "readings": [
+    "ㄕㄥ ㄔㄥˊ ㄕˋ ㄇㄛˊ ㄒㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "向量資料庫",
+   "readings": [
+    "ㄒㄧㄤˋ ㄌㄧㄤˋ ㄗ ㄌㄧㄠˋ ㄎㄨˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "冷鏈物流",
+   "readings": [
+    "ㄌㄥˇ ㄌㄧㄢˋ ㄨˋ ㄌㄧㄡˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "碳權交易",
+   "readings": [
+    "ㄊㄢˋ ㄑㄩㄢˊ ㄐㄧㄠ ㄧˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "長期照顧",
+   "readings": [
+    "ㄔㄤˊ ㄑㄧˊ ㄓㄠˋ ㄍㄨˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "異質整合",
+   "readings": [
+    "ㄧˋ ㄓˊ ㄓㄥˇ ㄏㄜˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "先進封裝",
+   "readings": [
+    "ㄒㄧㄢ ㄐㄧㄣˋ ㄈㄥ ㄓㄨㄤ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "邊緣運算",
+   "readings": [
+    "ㄅㄧㄢ ㄩㄢˊ ㄩㄣˋ ㄙㄨㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "零信任架構",
+   "readings": [
+    "ㄌㄧㄥˊ ㄒㄧㄣˋ ㄖㄣˋ ㄐㄧㄚˋ ㄍㄡˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "數位孿生",
+   "readings": [
+    "ㄕㄨˋ ㄨㄟˋ ㄌㄨㄢˊ ㄕㄥ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "碳足跡盤查",
+   "readings": [
+    "ㄊㄢˋ ㄗㄨˊ ㄐㄧˋ ㄆㄢˊ ㄔㄚˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "低軌衛星",
+   "readings": [
+    "ㄉㄧ ㄍㄨㄟˇ ㄨㄟˋ ㄒㄧㄥ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "固態電池",
+   "readings": [
+    "ㄍㄨˋ ㄊㄞˋ ㄉㄧㄢˋ ㄔˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "氫能載具",
+   "readings": [
+    "ㄑㄧㄥ ㄋㄥˊ ㄗㄞˇ ㄐㄩˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "智慧電網",
+   "readings": [
+    "ㄓˋ ㄏㄨㄟˋ ㄉㄧㄢˋ ㄨㄤˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "去識別化",
+   "readings": [
+    "ㄑㄩˋ ㄕˋ ㄅㄧㄝˊ ㄏㄨㄚˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "聯邦學習",
+   "readings": [
+    "ㄌㄧㄢˊ ㄅㄤ ㄒㄩㄝˊ ㄒㄧˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "提示工程",
+   "readings": [
+    "ㄊㄧˊ ㄕˋ ㄍㄨㄥ ㄔㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "檢索增強生成",
+   "readings": [
+    "ㄐㄧㄢˇ ㄙㄨㄛˇ ㄗㄥ ㄑㄧㄤˊ ㄕㄥ ㄔㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "多模態模型",
+   "readings": [
+    "ㄉㄨㄛ ㄇㄛˊ ㄊㄞˋ ㄇㄛˊ ㄒㄧㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "強化學習",
+   "readings": [
+    "ㄑㄧㄤˊ ㄏㄨㄚˋ ㄒㄩㄝˊ ㄒㄧˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "知識圖譜",
+   "readings": [
+    "ㄓ ㄕˋ ㄊㄨˊ ㄆㄨˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "圖神經網路",
+   "readings": [
+    "ㄊㄨˊ ㄕㄣˊ ㄐㄧㄥ ㄨㄤˇ ㄌㄨˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "自動駕駛",
+   "readings": [
+    "ㄗˋ ㄉㄨㄥˋ ㄐㄧㄚˋ ㄕˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "光達感測",
+   "readings": [
+    "ㄍㄨㄤ ㄉㄚˊ ㄍㄢˇ ㄘㄜˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "毫米波雷達",
+   "readings": [
+    "ㄏㄠˊ ㄇㄧˇ ㄅㄛ ㄌㄟˊ ㄉㄚˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "車聯網",
+   "readings": [
+    "ㄔㄜ ㄌㄧㄢˊ ㄨㄤˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "供應鏈韌性",
+   "readings": [
+    "ㄍㄨㄥ ㄧㄥˋ ㄌㄧㄢˋ ㄖㄣˋ ㄒㄧㄥˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "淨零排放",
+   "readings": [
+    "ㄐㄧㄥˋ ㄌㄧㄥˊ ㄆㄞˊ ㄈㄤˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "綠色金融",
+   "readings": [
+    "ㄌㄩˋ ㄙㄜˋ ㄐㄧㄣ ㄖㄨㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "永續報告書",
+   "readings": [
+    "ㄩㄥˇ ㄒㄩˋ ㄅㄠˋ ㄍㄠˋ ㄕㄨ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "循環經濟",
+   "readings": [
+    "ㄒㄩㄣˊ ㄏㄨㄢˊ ㄐㄧㄥ ㄐㄧˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "再生能源憑證",
+   "readings": [
+    "ㄗㄞˋ ㄕㄥ ㄋㄥˊ ㄩㄢˊ ㄆㄧㄥˊ ㄓㄥˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "儲能系統",
+   "readings": [
+    "ㄔㄨˇ ㄋㄥˊ ㄒㄧˋ ㄊㄨㄥˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "離岸風電",
+   "readings": [
+    "ㄌㄧˊ ㄢˋ ㄈㄥ ㄉㄧㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "地熱發電",
+   "readings": [
+    "ㄉㄧˋ ㄖㄜˋ ㄈㄚ ㄉㄧㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "生質燃料",
+   "readings": [
+    "ㄕㄥ ㄓˊ ㄖㄢˊ ㄌㄧㄠˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "碳捕捉封存",
+   "readings": [
+    "ㄊㄢˋ ㄅㄨˇ ㄓㄨㄛ ㄈㄥ ㄘㄨㄣˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "智慧製造",
+   "readings": [
+    "ㄓˋ ㄏㄨㄟˋ ㄓˋ ㄗㄠˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "工業物聯網",
+   "readings": [
+    "ㄍㄨㄥ ㄧㄝˋ ㄨˋ ㄌㄧㄢˊ ㄨㄤˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "預測性維護",
+   "readings": [
+    "ㄩˋ ㄘㄜˋ ㄒㄧㄥˋ ㄨㄟˊ ㄏㄨˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "機台稼動率",
+   "readings": [
+    "ㄐㄧ ㄊㄞˊ ㄐㄧㄚˋ ㄉㄨㄥˋ ㄌㄩˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "良率提升",
+   "readings": [
+    "ㄌㄧㄤˊ ㄌㄩˋ ㄊㄧˊ ㄕㄥ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "製程整合",
+   "readings": [
+    "ㄓˋ ㄔㄥˊ ㄓㄥˇ ㄏㄜˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "黃光微影",
+   "readings": [
+    "ㄏㄨㄤˊ ㄍㄨㄤ ㄨㄟˊ ㄧㄥˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "蝕刻製程",
+   "readings": [
+    "ㄕˊ ㄎㄜ ㄓˋ ㄔㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "化學氣相沉積",
+   "readings": [
+    "ㄏㄨㄚˋ ㄒㄩㄝˊ ㄑㄧˋ ㄒㄧㄤˋ ㄔㄣˊ ㄐㄧ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "原子層沉積",
+   "readings": [
+    "ㄩㄢˊ ㄗˇ ㄘㄥˊ ㄔㄣˊ ㄐㄧ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "離子佈植",
+   "readings": [
+    "ㄌㄧˊ ㄗˇ ㄅㄨˋ ㄓˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "晶背供電",
+   "readings": [
+    "ㄐㄧㄥ ㄅㄟˋ ㄍㄨㄥ ㄉㄧㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "環繞式閘極",
+   "readings": [
+    "ㄏㄨㄢˊ ㄖㄠˋ ㄕˋ ㄓㄚˊ ㄐㄧˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "鰭式電晶體",
+   "readings": [
+    "ㄑㄧˊ ㄕˋ ㄉㄧㄢˋ ㄐㄧㄥ ㄊㄧˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "三維堆疊",
+   "readings": [
+    "ㄙㄢ ㄨㄟˊ ㄉㄨㄟ ㄉㄧㄝˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "矽光子",
+   "readings": [
+    "ㄒㄧˋ ㄍㄨㄤ ㄗˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "共同封裝光學",
+   "readings": [
+    "ㄍㄨㄥˋ ㄊㄨㄥˊ ㄈㄥ ㄓㄨㄤ ㄍㄨㄤ ㄒㄩㄝˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "高頻寬記憶體",
+   "readings": [
+    "ㄍㄠ ㄆㄧㄣˊ ㄎㄨㄢ ㄐㄧˋ ㄧˋ ㄊㄧˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "小晶片",
+   "readings": [
+    "ㄒㄧㄠˇ ㄐㄧㄥ ㄆㄧㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "系統級封裝",
+   "readings": [
+    "ㄒㄧˋ ㄊㄨㄥˇ ㄐㄧˊ ㄈㄥ ㄓㄨㄤ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "扇出型封裝",
+   "readings": [
+    "ㄕㄢˋ ㄔㄨ ㄒㄧㄥˊ ㄈㄥ ㄓㄨㄤ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "熱點分析",
+   "readings": [
+    "ㄖㄜˋ ㄉㄧㄢˇ ㄈㄣ ㄒㄧ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "使用者旅程",
+   "readings": [
+    "ㄕˇ ㄩㄥˋ ㄓㄜˇ ㄌㄩˇ ㄔㄥˊ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "轉換漏斗",
+   "readings": [
+    "ㄓㄨㄢˇ ㄏㄨㄢˋ ㄌㄡˋ ㄉㄡˇ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "留存曲線",
+   "readings": [
+    "ㄌㄧㄡˊ ㄘㄨㄣˊ ㄑㄩ ㄒㄧㄢˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "灰度發布",
+   "readings": [
+    "ㄏㄨㄟ ㄉㄨˋ ㄈㄚ ㄅㄨˋ"
+   ],
+   "source": "manual"
+  },
+  {
+   "word": "藍綠部署",
+   "readings": [
+    "ㄌㄢˊ ㄌㄩˋ ㄅㄨˋ ㄕㄨˋ"
+   ],
+   "source": "manual"
+  }
+ ],
+ "phrases": null,
+ "batches": []
+}

@@ -1,0 +1,3 @@
+CC-CEDICT 以 Creative Commons Attribution-ShareAlike 4.0 International 授權。
+https://creativecommons.org/licenses/by-sa/4.0/
+本資料包取用其中的詞條與拼音（轉為注音），未取用釋義。

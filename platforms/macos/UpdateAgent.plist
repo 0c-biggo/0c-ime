@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.biggo.0c.update</string>
+  <key>BundleProgram</key><string>Contents/MacOS/0c-update</string>
+  <key>ProgramArguments</key>
+  <array><string>0c-update</string><string>auto</string></array>
+  <key>AssociatedBundleIdentifiers</key>
+  <array><string>com.biggo.inputmethod.0c</string></array>
+  <key>StartInterval</key><integer>@INTERVAL@</integer>
+  <key>RunAtLoad</key><true/>
+  <key>ProcessType</key><string>Background</string>
+  <key>LowPriorityIO</key><true/>
+  <key>StandardOutPath</key><string>/dev/null</string>
+  <key>StandardErrorPath</key><string>/dev/null</string>
+</dict>
+</plist>

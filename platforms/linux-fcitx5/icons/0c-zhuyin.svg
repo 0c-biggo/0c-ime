@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <title>靈犀注音：注音</title>
+  <rect x=".25" y=".25" width="15.5" height="15.5" rx="2.75" stroke="#739084" stroke-width=".5" fill="#075d53"/>
+  <g fill="none" stroke="#ffffff" transform="translate(1 1) scale(.875)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m1.5 2 2 1.5 m-2 3 2 1.5 m-2 6 2.5-4"/>
+    <path d="m9 1.25 1 1.25 M6 4.5h8 M10 4.5v9.75 M6.75 9h6.5 M5.75 14.25h8.5"/>
+  </g>
+</svg>

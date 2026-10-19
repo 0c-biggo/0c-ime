@@ -1,0 +1,13 @@
+教育部統計處學校名錄：大專校院、一般高級中等學校、國民中學、國民小學（115 學年）（moe-schools）
+提供機關：教育部統計處
+版本：2026-10-17 下載，sha256 3c261c4485feecce…、826979ec988a0a94…、860eae1b6f93b5ed…、2cf2c5c6c2ce9cad…
+資料集：
+https://data.gov.tw/dataset/6091
+https://data.gov.tw/dataset/6089
+https://data.gov.tw/dataset/6088
+https://data.gov.tw/dataset/6087
+
+此開放資料依「政府資料開放授權條款－第1版」進行公眾釋出，使用者於遵守該條款各項規定之前提下，得利用之。
+授權條款：https://data.gov.tw/license
+
+本詞庫取用名稱資料，經整理、去重及注音標註後收錄；此衍生處理由 0c 進行，不代表原提供機關推薦或核可本產品。

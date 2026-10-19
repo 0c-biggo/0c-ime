@@ -1,0 +1,257 @@
+//go:build !windows && !darwin
+
+package main
+
+import (
+	"bufio"
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"git.biggo.com/0c/ime/internal/autoupdate"
+	"github.com/godbus/dbus/v5"
+	"golang.org/x/sys/unix"
+)
+
+func TestCaptureFcitxPreservesExplicitTracePreference(t *testing.T) {
+	previous := procRoot
+	procRoot = t.TempDir()
+	t.Cleanup(func() { procRoot = previous })
+	dir := filepath.Join(procRoot, "123")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "cmdline"), []byte("fcitx5\x00-d\x00"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"1", "0", ""} {
+		env := []string{"DISPLAY=:1", "APP_TOKEN=private-test-token"}
+		want := []string{"DISPLAY=:1"}
+		if value != "" {
+			want = append(want, "ZUIN_TRACE="+value, "ZUIN_TRACE_DIR=/tmp/user trace")
+			env = append(env, want[1:]...)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "environ"), []byte(strings.Join(env, "\x00")+"\x00"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		state, err := captureFcitx(123)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(state.Env, want) {
+			t.Fatalf("紀錄偏好 %q 交接後應保留，其他環境不得保存：%v", value, state.Env)
+		}
+	}
+}
+
+func TestMappedShellRejectsOldOrDeletedMapping(t *testing.T) {
+	path := "/home/test user/.local/lib/fcitx5/lib0c.so"
+	device := unix.Mkdev(8, 1)
+	line := fmt.Sprintf("7f00-7f10 r--p 00000000 08:01 123 %s\n", path)
+	if !mappedShell([]byte(line), path, 123, device) {
+		t.Fatal("new shell mapping not recognized")
+	}
+	for _, tc := range []struct {
+		line string
+		ino  uint64
+		dev  uint64
+	}{
+		{line, 124, device}, {line, 123, unix.Mkdev(8, 2)},
+		{fmt.Sprintf("7f00-7f10 r--p 00000000 08:01 123 %s (deleted)\n", path), 123, device},
+	} {
+		if mappedShell([]byte(tc.line), path, tc.ino, tc.dev) {
+			t.Fatal("stale shell was accepted")
+		}
+	}
+}
+
+type selectionController struct {
+	mu      sync.Mutex
+	calls   []string
+	restore bool
+}
+
+func (s *selectionController) record(value string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls = append(s.calls, value)
+}
+func (s *selectionController) CurrentInputMethodGroup() (string, *dbus.Error) {
+	return "old-group", nil
+}
+func (s *selectionController) SwitchInputMethodGroup(group string) *dbus.Error {
+	s.record("group:" + group)
+	return nil
+}
+func (s *selectionController) SetCurrentIM(im string) *dbus.Error { s.record("im:" + im); return nil }
+func (s *selectionController) Status() (string, *dbus.Error) {
+	return fmt.Sprintf(`{"restore_supported":%t}`, s.restore), nil
+}
+func (s *selectionController) RestoreInputMethod(program, im string) *dbus.Error {
+	s.record("restore:" + program + ":" + im)
+	return nil
+}
+
+func TestRestoreInputSelectionWaitsForOriginalApplication(t *testing.T) {
+	if _, err := exec.LookPath("dbus-daemon"); err != nil {
+		t.Skip("requires private D-Bus")
+	}
+	daemon := exec.Command("dbus-daemon", "--session", "--nofork", "--print-address=1")
+	stdout, err := daemon.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = daemon.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { daemon.Process.Kill(); daemon.Wait() }()
+	address, err := bufio.NewReader(stdout).ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := dbus.Connect(strings.TrimSpace(address))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	client, err := dbus.Connect(strings.TrimSpace(address))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	for _, name := range []string{"org.fcitx.Fcitx5", guardName} {
+		if _, err := server.RequestName(name, dbus.NameFlagDoNotQueue); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name, program string
+		supported     bool
+		expected      string
+	}{
+		{"reconnected field", "gtk-test", true, "group:Default,im:zuin,restore:gtk-test:zuin"},
+		{"old journal", "", true, "group:Default,im:zuin"},
+		{"rollback to old shell", "gtk-test", false, "group:Default,im:zuin"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := &selectionController{restore: tc.supported}
+			if err := server.Export(fixture, "/controller", "org.fcitx.Fcitx.Controller1"); err != nil {
+				t.Fatal(err)
+			}
+			if err := server.Export(fixture, "/update", guardInterface); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			if err := restoreInputSelection(ctx, client, &shellRestart{Group: "Default", IM: "zuin", Program: tc.program}); err != nil {
+				t.Fatal(err)
+			}
+			fixture.mu.Lock()
+			actual := strings.Join(fixture.calls, ",")
+			fixture.mu.Unlock()
+			if actual != tc.expected {
+				t.Fatalf("calls %q, want %q", actual, tc.expected)
+			}
+		})
+	}
+}
+
+func TestControllerPollingDoesNotLaunchDefaultFcitx(t *testing.T) {
+	if _, err := exec.LookPath("dbus-daemon"); err != nil {
+		t.Skip("requires a private dbus-daemon")
+	}
+	dir := t.TempDir()
+	services := filepath.Join(dir, "services")
+	if err := os.Mkdir(services, 0700); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(dir, "unexpected-activation")
+	launcher := filepath.Join(dir, "default-fcitx")
+	quotedMarker := "'" + strings.ReplaceAll(marker, "'", "'\\''") + "'"
+	if err := os.WriteFile(launcher, []byte("#!/bin/sh\ntouch -- "+quotedMarker+"\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	service := "[D-BUS Service]\nName=org.fcitx.Fcitx5\nExec=" + launcher + "\n"
+	if err := os.WriteFile(filepath.Join(services, "org.fcitx.Fcitx5.service"), []byte(service), 0600); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(dir, "bus.conf")
+	xml := fmt.Sprintf(`<busconfig><type>session</type><listen>unix:tmpdir=%s</listen><auth>EXTERNAL</auth><apparmor mode="disabled"/><servicedir>%s</servicedir><policy context="default"><allow send_destination="*"/><allow receive_sender="*"/><allow own="*"/></policy></busconfig>`, dir, services)
+	if err := os.WriteFile(config, []byte(xml), 0600); err != nil {
+		t.Fatal(err)
+	}
+	daemon := exec.Command("dbus-daemon", "--config-file="+config, "--nofork", "--print-address=1")
+	stdout, err := daemon.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { daemon.Process.Kill(); daemon.Wait() }()
+	address, err := bufio.NewReader(stdout).ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := dbus.Connect(strings.TrimSpace(address))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if controller(ctx, conn, "State").Err == nil {
+		t.Fatal("missing Fcitx must not appear ready")
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("polling launched the unconfigured D-Bus activation service")
+	}
+	// Positive control: the same bus really has an activation service. An ordinary
+	// call launches it; only the updater's polling must refrain from doing so.
+	conn.Object("org.fcitx.Fcitx5", "/controller").CallWithContext(ctx, "org.fcitx.Fcitx.Controller1.State", 0)
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("activation fixture did not run: %v", err)
+	}
+}
+
+func TestOldPendingShellHasManualFinishAction(t *testing.T) {
+	s := &autoupdate.State{Stage: autoupdate.StagePending, Target: &autoupdate.Target{Kind: "shell", Version: "0.1.0-dev.40"}, Blocked: &autoupdate.Blocked{Reason: "needs_relogin"}}
+	if actionFor(s) != "finish" {
+		t.Fatal("old staged shell must be manually finishable")
+	}
+}
+
+func TestUpdaterSurvivesLegacyShellClosingOutput(t *testing.T) {
+	if os.Getenv("ZC_TEST_CLOSED_UPDATE_OUTPUT") == "1" {
+		// 舊版外殼退出後還會有安裝／恢復訊息。使用真 stdout fd 1，
+		// 覆蓋 Go 預設會以 SIGPIPE 結束程序的路徑。
+		fmt.Println("restoring Fcitx after install")
+		if err := os.WriteFile(os.Getenv("ZC_TEST_UPDATE_COMPLETED"), []byte("restored"), 0600); err != nil {
+			os.Exit(2)
+		}
+		os.Exit(0)
+	}
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader.Close()
+	defer writer.Close()
+	marker := filepath.Join(t.TempDir(), "completed")
+	child := exec.Command(os.Args[0], "-test.run=^TestUpdaterSurvivesLegacyShellClosingOutput$")
+	child.Env = append(os.Environ(), "ZC_TEST_CLOSED_UPDATE_OUTPUT=1", "ZC_TEST_UPDATE_COMPLETED="+marker)
+	child.Stdout = writer
+	if err := child.Run(); err != nil {
+		t.Fatalf("legacy output closed during handoff: %v", err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatal("updater did not finish restoring the shell")
+	}
+}

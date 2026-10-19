@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+    <key>CFBundleDevelopmentRegion</key><string>zh_TW</string>
+    <key>CFBundleDisplayName</key><string>0c</string>
+    <key>CFBundleName</key><string>靈犀注音</string>
+    <key>CFBundleExecutable</key><string>0c</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
+    <key>LSHasLocalizedDisplayName</key><true/>
+    <key>CFBundleIdentifier</key><string>com.biggo.inputmethod.0c</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>0.1.0</string>
+    <key>CFBundleVersion</key><string>1</string>
+    <key>LSMinimumSystemVersion</key><string>13.0</string>
+    <key>LSUIElement</key><true/>
+    <key>LSBackgroundOnly</key><true/>
+    <key>NSPrincipalClass</key><string>NSApplication</string>
+    <key>InputMethodConnectionName</key><string>com.biggo.inputmethod.0c_Connection</string>
+    <key>InputMethodServerControllerClass</key><string>LingxiInputController</string>
+    <key>tsInputMethodCharacterRepertoireKey</key><array><string>Hant</string></array>
+    <key>TISInputSourceID</key><string>com.biggo.inputmethod.0c</string>
+    <key>TISIntendedLanguage</key><string>zh-Hant</string>
+    <!-- #67：宣告後系統的「使用大寫鎖定鍵切換 ABC」才作用在靈犀（短按切換、按住開大寫鎖定）；小麥注音、威注音、鼠鬚管同樣宣告。放最外層，字元集維持 Hant。 -->
+    <key>TICapsLockLanguageSwitchCapable</key><true/>
+    <key>tsInputMethodIconFileKey</key><string>0c.tiff</string>
+    <key>TISIconIsTemplate</key><true/>
+    <!-- 輸入模式（#87）：系統登記、啟用與選取的是模式 com.biggo.inputmethod.0c.Bopomofo，頂層 ID 只是父項。
+         沒有模式時系統把它當成不分模式的輸入法，備忘錄等標準文字視圖從選單列切換會崩潰；模式名稱在 InfoPlist.strings。
+         預設狀態必須是 false：設成 true 時，從沒有模式的版本升級後系統只把模式「視為」已啟用，不寫入啟用清單，
+         重新登入後選單列就沒有靈犀注音（macOS 26.6.2 實測）；false 時由安裝程式明確啟用並經使用者允許後才會記錄。 -->
+    <key>ComponentInputModeDict</key><dict>
+        <key>tsInputModeListKey</key><dict>
+            <key>com.biggo.inputmethod.0c.Bopomofo</key><dict>
+                <key>TISInputSourceID</key><string>com.biggo.inputmethod.0c.Bopomofo</string>
+                <key>TISIntendedLanguage</key><string>zh-Hant</string>
+                <key>tsInputModeCharacterRepertoireKey</key><array><string>Hant</string><string>Han</string></array>
+                <key>tsInputModeScriptKey</key><string>smTradChinese</string>
+                <key>tsInputModePrimaryInScriptKey</key><true/>
+                <key>tsInputModeDefaultStateKey</key><false/>
+                <key>tsInputModeIsVisibleKey</key><true/>
+                <key>tsInputModeMenuIconFileKey</key><string>0c.tiff</string>
+                <key>tsInputModeAlternateMenuIconFileKey</key><string>0c.tiff</string>
+                <key>tsInputModePaletteIconFileKey</key><string>0c.tiff</string>
+                <key>TISIconIsTemplate</key><true/>
+            </dict>
+        </dict>
+        <key>tsVisibleInputModeOrderedArrayKey</key><array><string>com.biggo.inputmethod.0c.Bopomofo</string></array>
+    </dict>
+</dict></plist>

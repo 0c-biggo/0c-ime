@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "models": {
+    "select": {
+      "repository": "Funmula/0c-sequence-d512",
+      "revision": "df4b9f04f8aee1dd34dcb246ac2b83c4ab3d14a9",
+      "version": "d512-pf512-20260926",
+      "license": "MIT",
+      "files": {
+        "LICENSE": {
+          "sha256": "ab1525e5aba48f95223228d1fcd045820783e6b3846972fbec67970314177e4f",
+          "size": 1077
+        },
+        "README.md": {
+          "sha256": "5c4ac2d0f742b623c3bc65d02608918b720f6daf4962597aecb4aac9684d0c94",
+          "size": 6911
+        },
+        "manifest.json": {
+          "sha256": "f8d737cf44e9ff8f90e7108f1e9df4fece0cdcae254e050968fc6ef723ee1976",
+          "size": 1081
+        },
+        "model.onnx": {
+          "sha256": "71af1f0e77b2752cc71cbc04bf19c8e8f2e765662246f766e65a2822bab4e66e",
+          "size": 130723134
+        },
+        "vocab.json": {
+          "sha256": "556dffaffbf4c05211a846dcee55ef735cea68c5754f9bffcc6f9588124172b3",
+          "size": 312708
+        }
+      }
+    },
+    "punct": {
+      "repository": "Funmula/0c-punct-d512",
+      "revision": "105c2770e0b7cf4ce44a792b3b186000dd1727d9",
+      "version": "d512-e60k-20260930",
+      "license": "MIT",
+      "files": {
+        "LICENSE": {
+          "sha256": "ab1525e5aba48f95223228d1fcd045820783e6b3846972fbec67970314177e4f",
+          "size": 1077
+        },
+        "README.md": {
+          "sha256": "0402fdc8c81618f6f9d51284ec0b0bef1a5444ff8f74e25280e2436c73a12f77",
+          "size": 5596
+        },
+        "manifest.json": {
+          "sha256": "70909d272d81fe8556efb5a0e2301c872f3c6fbdb9932a6651fedd214e39527c",
+          "size": 556
+        },
+        "model.onnx": {
+          "sha256": "4db3ed40df777347d9c455da01285b01de192d4c210c5f7cd9f0646c727880d8",
+          "size": 130584075
+        },
+        "vocab.json": {
+          "sha256": "556dffaffbf4c05211a846dcee55ef735cea68c5754f9bffcc6f9588124172b3",
+          "size": 312708
+        }
+      }
+    }
+  }
+}

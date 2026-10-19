@@ -1,0 +1,583 @@
+//! 把 Windows 的按鍵事件轉成協定的 Key（與 Fcitx 5 外殼的 toKey 對應）。
+//! 排列由核心解讀：只把可見的 ASCII 交給核心；具名鍵用協定名稱；帶 Ctrl／Alt 的組合鍵一律交還應用程式。
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    GetAsyncKeyState, GetKeyState, GetKeyboardState, ToUnicode, VK_BACK, VK_CAPITAL, VK_CONTROL,
+    VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_HOME, VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LSHIFT,
+    VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR, VK_RCONTROL, VK_RETURN, VK_RIGHT, VK_RMENU, VK_RSHIFT,
+    VK_RWIN, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
+};
+
+pub fn shift_down() -> bool {
+    unsafe { GetKeyState(VK_SHIFT.0 as i32) < 0 }
+}
+
+/// 系統的輸入法開關熱鍵（Ctrl＋Space）是否按著：鍵盤開關 compartment 改變時用來分辨使用者按的熱鍵，
+/// 與 TIP 啟用、換程式時系統的重設（#117）。Ctrl 看這個執行緒的按鍵狀態（只有前景、收到按鍵的執行緒才是按著），
+/// Space 在熱鍵觸發時執行緒狀態可能還沒更新，所以也看實體按鍵狀態。
+pub fn ctrl_space_down() -> bool {
+    unsafe {
+        GetKeyState(VK_CONTROL.0 as i32) < 0
+            && (GetKeyState(VK_SPACE.0 as i32) < 0 || GetAsyncKeyState(VK_SPACE.0 as i32) < 0)
+    }
+}
+
+pub fn modifier_down() -> bool {
+    unsafe {
+        GetKeyState(VK_CONTROL.0 as i32) < 0
+            || GetKeyState(VK_MENU.0 as i32) < 0
+            || GetKeyState(VK_LWIN.0 as i32) < 0
+            || GetKeyState(VK_RWIN.0 as i32) < 0
+    }
+}
+
+pub fn is_modifier(vk: u32) -> bool {
+    let v = vk as u16;
+    [
+        VK_SHIFT,
+        VK_LSHIFT,
+        VK_RSHIFT,
+        VK_CONTROL,
+        VK_LCONTROL,
+        VK_RCONTROL,
+        VK_MENU,
+        VK_LMENU,
+        VK_RMENU,
+        VK_LWIN,
+        VK_RWIN,
+        VK_CAPITAL,
+    ]
+    .iter()
+    .any(|k| k.0 == v)
+}
+
+/// 具名鍵；不是具名鍵回傳 None。
+pub fn named(vk: u32) -> Option<&'static str> {
+    let v = vk as u16;
+    Some(match v {
+        x if x == VK_RETURN.0 => "Enter",
+        x if x == VK_ESCAPE.0 => "Escape",
+        x if x == VK_BACK.0 => "Backspace",
+        x if x == VK_DELETE.0 => "Delete",
+        x if x == VK_TAB.0 => "Tab",
+        x if x == VK_LEFT.0 => "Left",
+        x if x == VK_RIGHT.0 => "Right",
+        x if x == VK_UP.0 => "Up",
+        x if x == VK_DOWN.0 => "Down",
+        x if x == VK_PRIOR.0 => "PageUp",
+        x if x == VK_NEXT.0 => "PageDown",
+        x if x == VK_HOME.0 => "Home",
+        x if x == VK_END.0 => "End",
+        x if x == VK_SPACE.0 => " ",
+        _ => return None,
+    })
+}
+
+/// 依目前鍵盤狀態把虛擬鍵轉成字元；只接受可見 ASCII（0x21–0x7e）。
+pub fn printable(vk: u32, lparam: isize) -> Option<String> {
+    let scan = ((lparam >> 16) & 0xff) as u32;
+    let mut state = [0u8; 256];
+    unsafe {
+        if GetKeyboardState(&mut state).is_err() {
+            return None;
+        }
+        // 不讓 Ctrl／Alt 影響轉換（組合鍵已在 modifier_down 擋掉）
+        state[VK_CONTROL.0 as usize] = 0;
+        state[VK_MENU.0 as usize] = 0;
+        let mut buf = [0u16; 8];
+        // 0x4：不改變鍵盤的 dead-key 狀態（Windows 10 1607+）
+        let n = ToUnicode(vk, scan, Some(&state), &mut buf, 0x4);
+        if n != 1 {
+            return None;
+        }
+        let c = buf[0];
+        if (0x21..=0x7e).contains(&c) {
+            Some(char::from(c as u8).to_string())
+        } else {
+            None
+        }
+    }
+}
+
+/// 數字鍵盤的數字與運算鍵（VK_NUMPAD0–9、VK_MULTIPLY…VK_DIVIDE）；NumLock 關閉時系統改送方向鍵等，不在此列。
+pub fn is_keypad(vk: u32) -> bool {
+    (0x60..=0x6f).contains(&vk)
+}
+
+/// 具名鍵加上 Shift：Shift+Tab 是獨立的 BackTab（組字中核心吃掉不動作，沒在組字時交還應用程式，#106）。
+/// `vocab` 為 true（引擎回報 vocab_keys、不在英文模式）時，Shift 加上
+/// ← → Delete Backspace 送 #123 的新鍵名：組字中標示要加入詞庫的範圍、候選窗的反悔鍵。
+/// 核心保證這些鍵名在沒有對應功能時就是原本的鍵，所以外殼不必追蹤候選窗狀態；
+/// 舊引擎不認得新鍵名，`vocab` 必須來自引擎的回報。
+pub fn named_with(vk: u32, shift: bool, vocab: bool) -> Option<&'static str> {
+    match named(vk)? {
+        "Tab" if shift => Some("BackTab"),
+        n if shift && vocab => Some(vocab_key(n).unwrap_or(n)),
+        n => Some(n),
+    }
+}
+
+/// #123 的新鍵名；不是這四個鍵回傳 None。
+pub fn vocab_key(base: &str) -> Option<&'static str> {
+    Some(match base {
+        "Left" => "ShiftLeft",
+        "Right" => "ShiftRight",
+        "Delete" => "ShiftDelete",
+        "Backspace" => "ShiftBackspace",
+        _ => return None,
+    })
+}
+
+/// 新鍵名對應的原本按鍵（送給不支援的引擎前換回來）；不是新鍵名回傳 None。
+pub fn vocab_base(key: &str) -> Option<&'static str> {
+    Some(match key {
+        "ShiftLeft" => "Left",
+        "ShiftRight" => "Right",
+        "ShiftDelete" => "Delete",
+        "ShiftBackspace" => "Backspace",
+        _ => return None,
+    })
+}
+
+/// 鎖定鍵（NumLock、ScrollLock）與 IME 控制鍵（VK_KANA…VK_MODECHANGE、VK_PROCESSKEY）：組字中也直接交給宿主，不送出組字。
+pub fn is_lock_or_ime(vk: u32) -> bool {
+    matches!(vk, 0x90 | 0x91 | 0x15..=0x1f | 0xe5)
+}
+
+/// 組字中要先送出組字、再交給宿主的按鍵（#106）：Ctrl／Alt／Win 組合鍵（單按修飾鍵本身除外），
+/// 以及轉不成協定按鍵、核心不會處理的鍵（F 鍵、Insert、其他排列的非 ASCII 字元…）。
+/// `protocol` 是 `to_key` 的結果。
+pub fn commits_before_host(vk: u32, modified: bool, protocol: Option<&str>) -> bool {
+    !is_modifier(vk) && !is_lock_or_ime(vk) && (modified || protocol.is_none())
+}
+
+/// 組字中（沒有修飾鍵）TestKeyDown 是否要吃，必須和 OnKeyDown 送核心後的結果一致，否則 WPF 會讓按鍵消失。
+/// 轉得成協定按鍵的鍵核心在組字中都處理，只有英文模式的 ↓ 照舊交給宿主（核心回未處理）。
+pub fn composing_wants(english: bool, protocol: Option<&str>) -> bool {
+    match protocol {
+        None => false,
+        Some("Down") => !english,
+        Some(_) => true,
+    }
+}
+
+/// 協定的 Key；不該交給輸入法的按鍵回傳 None。數字鍵盤送 "KP" 加上產生的字元，核心不當注音鍵（#75）。
+/// `vocab` 見 [`named_with`]；只有 Shift（沒有 Ctrl／Alt／Win，組合鍵在這裡已回 None）時才換成新鍵名。
+pub fn to_key(vk: u32, lparam: isize, vocab: bool) -> Option<String> {
+    if modifier_down() || is_modifier(vk) {
+        return None;
+    }
+    if let Some(n) = named_with(vk, shift_down(), vocab) {
+        return Some(n.to_string());
+    }
+    let c = printable(vk, lparam)?;
+    Some(if is_keypad(vk) { format!("KP{c}") } else { c })
+}
+
+/// health 沒有回報 shift_tap_ms 時的單按時限（毫秒）。
+pub const DEFAULT_SHIFT_TAP_MS: u64 = 300;
+
+/// 哪一個 Shift。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Side {
+    Left,
+    Right,
+}
+
+/// 引擎載入的中英切換鍵設定（health 的 left_shift、right_shift、shift_tap_ms，#117）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ShiftConfig {
+    pub left: bool,
+    pub right: bool,
+    pub tap_ms: u64,
+}
+
+impl Default for ShiftConfig {
+    /// 引擎不可用或舊版引擎：右 Shift 切換、左 Shift 照系統原本的用途（原本的行為）。
+    fn default() -> Self {
+        ShiftConfig {
+            left: false,
+            right: true,
+            tap_ms: DEFAULT_SHIFT_TAP_MS,
+        }
+    }
+}
+
+impl ShiftConfig {
+    /// 從 health 回覆的 info 取出；沒有 right_shift 的舊引擎右 Shift 照舊切換，沒有 shift_tap_ms 用 300 毫秒。
+    pub fn from_info(info: Option<&serde_json::Value>) -> ShiftConfig {
+        let mut config = ShiftConfig::default();
+        let Some(info) = info else { return config };
+        let flag = |key: &str| info[key].as_str().map(|v| v == "true");
+        config.left = flag("left_shift").unwrap_or(false);
+        config.right = flag("right_shift").unwrap_or(true);
+        if let Some(ms) = info["shift_tap_ms"]
+            .as_str()
+            .and_then(|v| v.parse::<u64>().ok())
+        {
+            config.tap_ms = ms;
+        }
+        config
+    }
+
+    pub fn toggles(&self, side: Side) -> bool {
+        match side {
+            Side::Left => self.left,
+            Side::Right => self.right,
+        }
+    }
+}
+
+/// 單按 Shift 才切換（左右各用一個）；連續 TestKeyDown、長按重複及 Shift 組合鍵不切換，
+/// 按下到放開超過時限（shift_tap_ms）也不切換：按著 Shift 猶豫、或 Shift 配合滑鼠選取時不誤切（#117）。
+/// 時間由呼叫端傳入（毫秒，單調遞增），方便測試。
+#[derive(Default)]
+pub struct ShiftTap {
+    down: bool,
+    solo: bool,
+    since: u64,
+}
+impl ShiftTap {
+    /// target：這個按鍵是否為追蹤的那一個 Shift；now：這次按鍵的時間。
+    pub fn observe(&mut self, target: bool, repeat: bool, modified: bool, now: u64) {
+        if target {
+            if !self.down && !repeat {
+                self.down = true;
+                self.solo = !modified;
+                self.since = now;
+            }
+            if modified {
+                self.solo = false;
+            }
+        } else if self.down {
+            self.solo = false;
+        }
+    }
+    #[cfg(test)]
+    pub fn pending(&self) -> bool {
+        self.down
+    }
+    /// 現在放開是否算單按（不看時間、不改變狀態）；用來決定要不要向引擎查設定。
+    pub fn solo(&self, modified: bool) -> bool {
+        self.down && self.solo && !modified
+    }
+    /// 現在放開是否算單按，而且按下到現在沒有超過 limit 毫秒（不改變狀態）。
+    pub fn tap(&self, modified: bool, now: u64, limit: u64) -> bool {
+        self.solo(modified) && now.saturating_sub(self.since) <= limit
+    }
+    #[cfg(test)]
+    pub fn release(&mut self, modified: bool, now: u64, limit: u64) -> bool {
+        let toggle = self.tap(modified, now, limit);
+        *self = Self::default();
+        toggle
+    }
+}
+
+/// 這個按鍵是左或右 Shift；都不是回傳 None。
+pub fn shift_side(vk: u32, lparam: isize) -> Option<Side> {
+    if right_shift(vk, lparam) {
+        Some(Side::Right)
+    } else if left_shift(vk, lparam) {
+        Some(Side::Left)
+    } else {
+        None
+    }
+}
+
+/// 按鍵事件的時間（毫秒，單調遞增）。在 TestKeyDown／KeyUp 當下取，宿主忙碌時與實際按放有些落差，
+/// 但不依賴 GetMessageTime（TSF 不一定在宿主取出這個按鍵訊息時呼叫我們）。
+pub fn now_ms() -> u64 {
+    unsafe { windows::Win32::System::SystemInformation::GetTickCount64() }
+}
+
+pub fn right_shift(vk: u32, lparam: isize) -> bool {
+    vk == VK_RSHIFT.0 as u32 || (vk == VK_SHIFT.0 as u32 && ((lparam >> 16) & 0xff) == 0x36)
+}
+
+pub fn left_shift(vk: u32, lparam: isize) -> bool {
+    vk == VK_LSHIFT.0 as u32 || (vk == VK_SHIFT.0 as u32 && ((lparam >> 16) & 0xff) == 0x2a)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn right_shift_tap_and_chords() {
+        const L: u64 = DEFAULT_SHIFT_TAP_MS;
+        let mut tap = ShiftTap::default();
+        tap.observe(true, false, false, 0);
+        tap.observe(true, false, false, 10); // TestKeyDown 可重複
+        tap.observe(true, true, false, 20); // 長按
+        assert!(tap.release(false, 100, L));
+        assert!(!tap.release(false, 100, L));
+        tap.observe(true, false, false, 0);
+        tap.observe(false, false, false, 10); // Shift + 字母
+        assert!(!tap.release(false, 50, L));
+        tap.observe(true, false, true, 0); // Ctrl + Shift
+        assert!(!tap.release(false, 50, L));
+        tap.observe(true, false, false, 0);
+        assert!(!tap.release(true, 50, L));
+        assert!(right_shift(0x10, 0x36 << 16));
+        assert!(!right_shift(0x10, 0x2a << 16));
+        assert!(left_shift(0x10, 0x2a << 16) && left_shift(0xa0, 0));
+        assert!(!left_shift(0x10, 0x36 << 16) && !left_shift(0xa1, 0));
+        assert_eq!(shift_side(0xa1, 0), Some(Side::Right));
+        assert_eq!(shift_side(0x10, 0x2a << 16), Some(Side::Left));
+        assert_eq!(shift_side(0x41, 0), None);
+        tap.observe(true, false, false, 0);
+        assert!(tap.solo(false) && !tap.solo(true) && tap.solo(false));
+        assert!(tap.release(false, 10, L));
+    }
+
+    #[test]
+    fn long_shift_press_does_not_toggle() {
+        // #117：按下到放開超過時限不切換；剛好在時限內仍切換。時間從第一次按下算，長按的重複不重設。
+        const L: u64 = DEFAULT_SHIFT_TAP_MS;
+        let mut tap = ShiftTap::default();
+        tap.observe(true, false, false, 1_000);
+        assert!(tap.tap(false, 1_300, L));
+        assert!(tap.release(false, 1_300, L));
+        tap.observe(true, false, false, 1_000);
+        tap.observe(true, true, false, 1_250); // 自動重複
+        tap.observe(true, false, false, 1_290); // TestKeyDown 與 KeyDown 各一次
+        assert!(tap.solo(false), "沒有其他按鍵仍是單按，只是太久");
+        assert!(!tap.tap(false, 1_301, L));
+        assert!(!tap.release(false, 1_301, L));
+        assert!(!tap.pending(), "放開後重新判斷");
+        // 時限來自引擎：設成 500 時 0.4 秒仍切換。
+        tap.observe(true, false, false, 0);
+        assert!(tap.release(false, 400, 500));
+        // 時鐘倒退（不會發生，但不能溢位）。
+        tap.observe(true, false, false, 100);
+        assert!(tap.release(false, 50, L));
+    }
+
+    #[test]
+    fn shift_config_from_engine() {
+        use serde_json::json;
+        // 引擎不可用：右 Shift 照舊切換，左 Shift 不切。
+        assert_eq!(
+            ShiftConfig::from_info(None),
+            ShiftConfig {
+                left: false,
+                right: true,
+                tap_ms: 300
+            }
+        );
+        // 舊引擎只回報 left_shift（#65）：右 Shift 開、左 Shift 看 left_shift、時限 300。
+        let old = json!({"left_shift": "true"});
+        assert_eq!(
+            ShiftConfig::from_info(Some(&old)),
+            ShiftConfig {
+                left: true,
+                right: true,
+                tap_ms: 300
+            }
+        );
+        let older = json!({"emoji_shortcut": "equals"});
+        assert_eq!(ShiftConfig::from_info(Some(&older)), ShiftConfig::default());
+        // toggle-key 四種值（#117）。
+        for (left, right, want_left, want_right) in [
+            ("false", "true", false, true),   // right
+            ("true", "true", true, true),     // both
+            ("true", "false", true, false),   // left
+            ("false", "false", false, false), // none
+        ] {
+            let info = json!({"left_shift": left, "right_shift": right, "shift_tap_ms": "300"});
+            let c = ShiftConfig::from_info(Some(&info));
+            assert_eq!(
+                (c.left, c.right, c.tap_ms),
+                (want_left, want_right, 300),
+                "{left} {right}"
+            );
+            assert_eq!(c.toggles(Side::Left), want_left);
+            assert_eq!(c.toggles(Side::Right), want_right);
+        }
+        let custom = json!({"right_shift": "true", "shift_tap_ms": "450"});
+        assert_eq!(ShiftConfig::from_info(Some(&custom)).tap_ms, 450);
+        let bad = json!({"shift_tap_ms": "abc"});
+        assert_eq!(ShiftConfig::from_info(Some(&bad)).tap_ms, 300);
+    }
+
+    #[test]
+    fn navigation_keys() {
+        // #106：組字中由核心處理的導覽鍵都要有協定名稱，TestKeyDown 與 OnKeyDown 才會一致。
+        for (vk, shift, want) in [
+            (VK_HOME.0, false, "Home"),
+            (VK_END.0, true, "End"),
+            (VK_PRIOR.0, false, "PageUp"),
+            (VK_NEXT.0, false, "PageDown"),
+            (VK_UP.0, false, "Up"),
+            (VK_TAB.0, false, "Tab"),
+            (VK_TAB.0, true, "BackTab"),
+        ] {
+            assert_eq!(named_with(vk as u32, shift, false), Some(want), "{vk:#x}");
+        }
+        assert_eq!(named_with(0x41, true, false), None);
+    }
+
+    #[test]
+    fn vocab_key_names_need_shift_and_engine_support() {
+        // #123：引擎回報 vocab_keys 而且按著 Shift 才送新鍵名。
+        for (vk, base, name) in [
+            (VK_LEFT.0, "Left", "ShiftLeft"),
+            (VK_RIGHT.0, "Right", "ShiftRight"),
+            (VK_DELETE.0, "Delete", "ShiftDelete"),
+            (VK_BACK.0, "Backspace", "ShiftBackspace"),
+        ] {
+            let vk = vk as u32;
+            assert_eq!(named_with(vk, true, true), Some(name), "{base}");
+            assert_eq!(named_with(vk, true, false), Some(base), "開關關閉／舊引擎：Shift 不影響鍵名");
+            assert_eq!(named_with(vk, false, true), Some(base), "沒按 Shift");
+            assert_eq!(named_with(vk, false, false), Some(base));
+            assert_eq!(vocab_base(name), Some(base));
+            assert_eq!(vocab_key(base), Some(name));
+        }
+        // 其他具名鍵不變；Shift+Tab 仍是 BackTab。
+        for (vk, want) in [
+            (VK_UP.0, "Up"),
+            (VK_DOWN.0, "Down"),
+            (VK_HOME.0, "Home"),
+            (VK_END.0, "End"),
+            (VK_RETURN.0, "Enter"),
+            (VK_ESCAPE.0, "Escape"),
+            (VK_PRIOR.0, "PageUp"),
+            (VK_SPACE.0, " "),
+            (VK_TAB.0, "BackTab"),
+        ] {
+            assert_eq!(named_with(vk as u32, true, true), Some(want), "{want}");
+        }
+        assert_eq!(named_with(0x41, true, true), None);
+        for key in ["Left", "Enter", "BackTab", "a"] {
+            assert_eq!(vocab_base(key), None, "{key}");
+        }
+        // 組字中新鍵名一律交給核心（核心在組字中都回 handled），TestKeyDown 與 OnKeyDown 一致，
+        // 而且答案和原本的鍵相同：開關切換不會改變哪些鍵被吃。
+        for name in ["ShiftLeft", "ShiftRight", "ShiftDelete", "ShiftBackspace"] {
+            for english in [false, true] {
+                assert!(composing_wants(english, Some(name)), "{name}");
+                assert_eq!(
+                    composing_wants(english, Some(name)),
+                    composing_wants(english, vocab_base(name)),
+                    "{name}"
+                );
+            }
+        }
+        // Ctrl＋Shift＋← 這類組合鍵：to_key 回 None，組字中先送出組字再交給宿主（不送新鍵名）。
+        assert!(commits_before_host(VK_LEFT.0 as u32, true, None));
+    }
+
+    #[test]
+    fn host_keys_while_composing() {
+        // F5、Insert 轉不成協定按鍵：先送出組字再交給宿主，TestKeyDown 不吃。
+        for vk in [0x74u32, 0x2d] { // VK_F5、VK_INSERT
+            assert!(commits_before_host(vk, false, None), "{vk:#x}");
+            assert!(!composing_wants(false, None));
+        }
+        // Ctrl+Enter、Ctrl+V：組合鍵先送出組字。
+        assert!(commits_before_host(VK_RETURN.0 as u32, true, None));
+        assert!(commits_before_host(0x56, true, None));
+        // 單按修飾鍵、鎖定鍵與 IME 控制鍵不送出組字。
+        for vk in [VK_CONTROL.0, VK_LCONTROL.0, VK_MENU.0, VK_LWIN.0, VK_SHIFT.0, VK_CAPITAL.0] {
+            assert!(!commits_before_host(vk as u32, true, None), "{vk:#x}");
+        }
+        for vk in [0x90u32, 0x91, 0x15, 0x19, 0x1c, 0xe5] {
+            assert!(!commits_before_host(vk, false, None), "{vk:#x}");
+        }
+        // 轉得成協定按鍵的鍵由核心處理；只有英文模式的 ↓ 照舊交給宿主。
+        assert!(!commits_before_host(VK_HOME.0 as u32, false, Some("Home")));
+        for key in ["Home", "End", "Up", "PageUp", "PageDown", "Tab", "BackTab", "a", "KP1"] {
+            assert!(composing_wants(false, Some(key)) && composing_wants(true, Some(key)), "{key}");
+        }
+        assert!(composing_wants(false, Some("Down")) && !composing_wants(true, Some("Down")));
+    }
+
+    #[test]
+    fn composition_start_keys_follow_layout() {
+        // 標準排列維持原本的集合（= 由 Emoji 設定決定，不在集合裡）。
+        for key in ["a", "1", "2", "5", "8", "9", "0", ",", "'", "<", "`"] {
+            assert!(starts_composition(Layout::Standard, key), "{key}");
+        }
+        for key in ["3", "4", "6", "7", "=", "A", "@"] {
+            assert!(!starts_composition(Layout::Standard, key), "{key}");
+        }
+        // 倚天 41 鍵（#83）：7 8 9 0 = ' 是注音、\ 是頓號；1–4 是聲調、5 6 不是注音鍵，交還宿主。
+        for key in ["a", "7", "8", "9", "0", "=", "'", ";", ",", ".", "/", "-", "\\", "<", "`"] {
+            assert!(starts_composition(Layout::ETen, key), "{key}");
+        }
+        // 核心標點表的每個鍵兩種排列都要交給核心：\ 頓號（#24）、& 全形＆（#46）、^ 刪節號、_ 破折號（#118）。
+        for key in ["<", ">", "?", ":", "\"", "!", "~", "[", "]", "{", "}", "\\", "(", ")", "&", "^", "_"] {
+            assert!(starts_composition(Layout::Standard, key), "{key}");
+            assert!(starts_composition(Layout::ETen, key), "{key}");
+        }
+        for key in ["1", "2", "3", "4", "5", "6", "A", "@"] {
+            assert!(!starts_composition(Layout::ETen, key), "{key}");
+        }
+        // 聲調鍵（#135）另依設定，不在固定集合裡。
+        for key in ["3", "4", "6", "7"] {
+            assert!(tone_key(Layout::Standard, key) && !starts_composition(Layout::Standard, key), "{key}");
+        }
+        for key in ["1", "2", "3", "4"] {
+            assert!(tone_key(Layout::ETen, key) && !starts_composition(Layout::ETen, key), "{key}");
+        }
+        for key in ["1", "2", "5", " ", "a"] {
+            assert!(!tone_key(Layout::Standard, key), "{key}");
+        }
+        for key in ["5", "6", "7", " ", "a"] {
+            assert!(!tone_key(Layout::ETen, key), "{key}");
+        }
+        // 只有答案不同的鍵要查排列。
+        for c in (0x21u8..0x7f).map(|b| (b as char).to_string()) {
+            let differs = starts_composition(Layout::Standard, &c) != starts_composition(Layout::ETen, &c)
+                || tone_key(Layout::Standard, &c) != tone_key(Layout::ETen, &c);
+            assert!(!differs || layout_dependent(&c), "{c} 的答案依排列而不同，必須查排列");
+        }
+        assert!(layout_dependent("=") && !layout_dependent("a"));
+    }
+
+    #[test]
+    fn keypad_keys() {
+        for vk in [0x60, 0x61, 0x69, 0x6a, 0x6b, 0x6d, 0x6e, 0x6f] {
+            assert!(is_keypad(vk), "{vk:#x}");
+        }
+        // 主鍵盤數字、OEM 斜線與減號、NumLock 關閉時的方向鍵都不是數字鍵盤。
+        for vk in [0x30, 0x31, 0x39, 0xbd, 0xbf, 0x23, 0x25, 0x90] {
+            assert!(!is_keypad(vk), "{vk:#x}");
+        }
+    }
+}
+
+/// 引擎載入的鍵盤排列（health 的 keyboard_layout，#83）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Layout {
+    Standard,
+    ETen,
+}
+
+/// 空組字時可接受的字元，依鍵盤排列。大寫／其他 ASCII 須在 TestKeyDown
+/// 就放行；某些宿主在 Test 回報吃鍵後，會忽略 OnKeyDown 的 handled=false。聲調鍵另由 tone_key 依設定決定（#135）。
+/// 標準排列的 = 由 Emoji 設定決定（呼叫端處理）。倚天 41 鍵的 = 是 ㄦ、7 是 ㄑ，1–4 是聲調、5 6 不是注音鍵，
+/// ' 是 ㄘ（#83）。標點要跟核心的標點表（core/layout）一致，否則沒在打字時會直接交給應用程式打出半形：
+/// \ 是頓號（#24）、& 是全形＆（#46）、^ 是「……」、_ 是「——」（#118），兩種排列都一樣。
+pub fn starts_composition(layout: Layout, key: &str) -> bool {
+    let keys = match layout {
+        Layout::Standard => "`abcdefghijklmnopqrstuvwxyz125890,.;/-<>?:\"!~[]{}'\\()&^_",
+        Layout::ETen => "`abcdefghijklmnopqrstuvwxyz7890,.;/-='\\<>?:\"!~[]{}()&^_",
+    };
+    key.len() == 1 && keys.contains(key)
+}
+
+/// 聲調鍵（不含空白的一聲）：標準排列 3 4 6 7、倚天 1 2 3 4。沒在組字時要不要交給引擎依設定（#135，
+/// 見 Session::tone_mark_keys），不在 starts_composition 的固定集合裡。
+pub fn tone_key(layout: Layout, key: &str) -> bool {
+    let keys = match layout {
+        Layout::Standard => "3467",
+        Layout::ETen => "1234",
+    };
+    key.len() == 1 && keys.contains(key)
+}
+
+/// 兩種排列答案不同的鍵：只有這些鍵需要向引擎查排列，其他鍵不多一次往返。
+/// 6 是標準排列的 ˊ、倚天不是注音鍵（#135）。
+pub fn layout_dependent(key: &str) -> bool {
+    key.len() == 1 && "12567=".contains(key)
+}

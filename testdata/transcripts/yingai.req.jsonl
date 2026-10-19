@@ -1,0 +1,11 @@
+# docs/17：ㄧㄣ ㄍㄞ 自動修正為 應該，標示 corrected；故意要 因該 時對單一字選字
+{"type": "key", "key": "u"}
+{"type": "key", "key": "p"}
+{"type": "key", "key": " "}
+{"type": "key", "key": "e"}
+{"type": "key", "key": "9"}
+{"type": "key", "key": " "}
+{"type": "cursor", "to": 0}
+{"type": "candidates", "length": 1}
+{"type": "select", "index": 0}
+{"type": "commit"}

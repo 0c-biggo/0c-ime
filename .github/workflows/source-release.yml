@@ -1,0 +1,93 @@
+name: Source release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: source-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  source-release:
+    # Bootstrap the first release locally, then configure its dictionary URL.
+    if: ${{ vars.DICTIONARY_SOURCE_URL != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Test source release assembler
+        run: make test-source-release
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Prepare Go dependencies for offline rebuild
+        run: go mod download
+      - name: Reuse the pinned compiled dictionary from a published source tarball
+        env:
+          DICTIONARY_SOURCE_URL: ${{ vars.DICTIONARY_SOURCE_URL }}
+        run: |
+          if [ -z "$DICTIONARY_SOURCE_URL" ]; then
+            echo 'Set DICTIONARY_SOURCE_URL to a full source release tarball containing the pinned dictionary. Assemble the first release locally with --data-dir.' >&2
+            exit 1
+          fi
+          mkdir -p build
+          curl --fail --location --proto '=https' --proto-redir '=https' \
+            --retry 3 --output build/previous-source.tar.xz "$DICTIONARY_SOURCE_URL"
+          python3 scripts/source_release.py extract-data build/previous-source.tar.xz --out build/dictionary
+      - name: Assemble and verify source tarball
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 scripts/source_release.py build --tag "$RELEASE_TAG" --data-dir build/dictionary --out build/source-release
+          python3 scripts/source_release.py verify "build/source-release/ime-oss-${RELEASE_TAG#v}.tar.xz"
+          cd build/source-release
+          sha256sum -c SHA256SUMS
+      - name: Build the input method against the bundled dictionary before uploading
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          GOPROXY: 'off'
+          GOSUMDB: 'off'
+        run: |
+          mkdir build/extracted
+          tar -xJf "build/source-release/ime-oss-${RELEASE_TAG#v}.tar.xz" -C build/extracted
+          SOURCE_DIR="$PWD/build/extracted/ime-oss-${RELEASE_TAG#v}"
+          BUILD_DIR="$PWD/build/rebuilt"
+          mkdir "$BUILD_DIR"
+          cd "$SOURCE_DIR"
+          go build -trimpath -o "$BUILD_DIR/0c-server" ./cmd/0c-server
+          go build -trimpath -o "$BUILD_DIR/0c-cli" ./cmd/0c-cli
+          "$BUILD_DIR/0c-server" -check-data -data assets/data
+      - name: Create source-only release draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          tag = os.environ['RELEASE_TAG']
+          notes = (
+              f'請下載 `ime-oss-{tag[1:]}.tar.xz` 與 `SHA256SUMS`。\n\n'
+              '完整 tarball 包含程式碼、現成統計字典、兩個已配對模型與各自授權。'
+              '解壓後可離線建置輸入法，直接使用內附字典與模型（須備妥建置相依）。'
+              'GitHub 自動附的 Source code 壓縮檔不含現成字典與模型。\n\n'
+              '發行版整合的系統字典配對與建置相依需求，請見包內 `README.md` 的發行版整合說明。'
+              '使用者安裝包由[官網](https://0c.biggo.com)提供。\n'
+          )
+          (Path(os.environ['RUNNER_TEMP']) / 'source-release-notes.md').write_text(notes, encoding='utf-8')
+          PY
+          gh release create "$RELEASE_TAG" \
+            "build/source-release/ime-oss-${RELEASE_TAG#v}.tar.xz" \
+            build/source-release/SHA256SUMS \
+            --verify-tag --draft --title "$RELEASE_TAG" \
+            --notes-file "$RUNNER_TEMP/source-release-notes.md"

@@ -1,0 +1,37 @@
+#!/bin/sh
+# 靈犀注音（0c）一行安裝：curl -fsSL @SELF_URL@ | sh
+# 下載 0c-update 並以下方固定的 SHA-256 核對，再由它讀取已簽章的更新索引、下載並核對完整套件後安裝。
+# 全部安裝在使用者自己的目錄，不需要 sudo。原始碼：scripts/installer/install.sh.in
+set -eu
+
+FEED='@FEED@'
+CHANNEL='@CHANNEL@'
+
+fail() { printf '靈犀注音安裝失敗：%s\n' "$1" >&2; exit 1; }
+
+[ "$(id -u)" != 0 ] || fail '請以一般使用者執行，不要使用 sudo。'
+case "$(uname -s)-$(uname -m)" in
+    Linux-x86_64) URL='@URL_LINUX_AMD64@'; SUM='@SHA_LINUX_AMD64@' ;;
+    Darwin-arm64) URL='@URL_DARWIN_ARM64@'; SUM='@SHA_DARWIN_ARM64@' ;;
+    *) fail "目前不支援 $(uname -s) $(uname -m)。" ;;
+esac
+[ -n "$URL" ] || fail "這一版尚未提供 $(uname -s) $(uname -m) 套件。"
+
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT INT TERM
+BIN="$TMP/0c-update"
+if command -v curl >/dev/null 2>&1; then
+    curl -fsSL --proto '=https' --tlsv1.2 @CURL_EXTRA@-o "$BIN" "$URL" || fail '無法下載安裝工具，請確認網路連線。'
+elif command -v wget >/dev/null 2>&1; then
+    wget -q --https-only @WGET_EXTRA@-O "$BIN" "$URL" || fail '無法下載安裝工具，請確認網路連線。'
+else
+    fail '需要 curl 或 wget。'
+fi
+if command -v sha256sum >/dev/null 2>&1; then
+    GOT=$(sha256sum "$BIN" | cut -d' ' -f1)
+else
+    GOT=$(shasum -a 256 "$BIN" | cut -d' ' -f1)
+fi
+[ "$GOT" = "$SUM" ] || fail '安裝工具的 SHA-256 不符，已停止。'
+chmod 700 "$BIN"
+"$BIN" install -online -feed "$FEED" -channel "$CHANNEL" </dev/null

@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = ["common", "tsf", "ui"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+
+[profile.release]
+# 必須是 unwind：每個 COM 入口以 catch_unwind 攔 panic，攔到就回錯誤碼，不能終止宿主應用程式（docs/19）。
+panic = "unwind"
+opt-level = "s"
+lto = true
+codegen-units = 1
+debug = "line-tables-only"
+
+[profile.dev]
+panic = "unwind"

@@ -1,0 +1,5 @@
+/* Finder、系統設定的背景項目與通知顯示的 App 名稱；不依檔名 0c.app（#25）。 */
+"CFBundleDisplayName" = "靈犀注音";
+"CFBundleName" = "靈犀注音";
+/* 輸入來源選單與「新增輸入方式」顯示的模式名稱，鍵是 Info.plist 的模式 ID（#87）。 */
+"com.biggo.inputmethod.0c.Bopomofo" = "靈犀注音";

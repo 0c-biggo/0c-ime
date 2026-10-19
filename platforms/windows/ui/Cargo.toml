@@ -1,0 +1,38 @@
+[package]
+name = "zuin-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Zuin 的候選窗：0c-ui 在自己的行程繪製，DLL 只送訊息（docs/19）；繪製函式庫也供 DLL 在沙箱／沉浸式宿主內使用"
+
+[lib]
+name = "zuin_ui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "0c-ui"
+path = "src/main.rs"
+
+[dependencies]
+zuin-win-common = { path = "../common" }
+windows = { version = "=0.61.3", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_Direct2D",
+    "Win32_Graphics_Direct2D_Common",
+    "Win32_Graphics_DirectWrite",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Pipes",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Accessibility",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+windows-core = "=0.61.2"
+serde_json = "1"

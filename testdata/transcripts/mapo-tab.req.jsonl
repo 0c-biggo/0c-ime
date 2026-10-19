@@ -1,0 +1,11 @@
+# docs/17：麻婆豆腐。第二個音即正確，並建議補全；Tab 接受
+{"type": "key", "key": "a"}
+{"type": "key", "key": "8"}
+{"type": "key", "key": "6"}
+{"type": "key", "key": "q"}
+{"type": "key", "key": "i"}
+{"type": "key", "key": "6"}
+{"type": "key", "key": "Tab"}
+{"type": "commit"}
+# 沒有建議時 Tab 交還應用程式（handled=false）
+{"type": "key", "key": "Tab"}

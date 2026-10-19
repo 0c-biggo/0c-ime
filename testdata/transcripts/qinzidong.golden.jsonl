@@ -1,0 +1,33 @@
+# docs/12：親子丼。第一次要手選；第二次自動正確；單打 ㄐㄧㄥˇ 不受污染
+{"revision":1,"handled":true,"preedit":[{"text":"ㄑ","style":"pending"}],"cursor":{"rune":1,"utf16":1},"mode":"zhuyin"}
+{"revision":2,"handled":true,"preedit":[{"text":"ㄑㄧ","style":"pending"}],"cursor":{"rune":2,"utf16":2},"mode":"zhuyin"}
+{"revision":3,"handled":true,"preedit":[{"text":"ㄑㄧㄣ","style":"pending"}],"cursor":{"rune":3,"utf16":3},"mode":"zhuyin"}
+{"revision":4,"handled":true,"preedit":[{"text":"親","style":"normal"}],"cursor":{"rune":1,"utf16":1},"mode":"zhuyin"}
+{"revision":5,"handled":true,"preedit":[{"text":"親","style":"normal"},{"text":"ㄗ","style":"pending"}],"cursor":{"rune":2,"utf16":2},"mode":"zhuyin"}
+{"revision":6,"handled":true,"preedit":[{"text":"親子","style":"normal"}],"cursor":{"rune":2,"utf16":2},"mode":"zhuyin"}
+{"revision":7,"handled":true,"preedit":[{"text":"親子","style":"normal"},{"text":"ㄐ","style":"pending"}],"cursor":{"rune":3,"utf16":3},"mode":"zhuyin"}
+{"revision":8,"handled":true,"preedit":[{"text":"親子","style":"normal"},{"text":"ㄐㄧ","style":"pending"}],"cursor":{"rune":4,"utf16":4},"mode":"zhuyin"}
+{"revision":9,"handled":true,"preedit":[{"text":"親子","style":"normal"},{"text":"ㄐㄧㄥ","style":"pending"}],"cursor":{"rune":5,"utf16":5},"mode":"zhuyin"}
+{"revision":10,"handled":true,"preedit":[{"text":"親子","style":"normal"},{"text":"景","style":"normal"}],"cursor":{"rune":3,"utf16":3},"mode":"zhuyin"}
+{"revision":11,"handled":true,"preedit":[{"text":"親子","style":"normal"},{"text":"景","style":"normal"}],"cursor":{"rune":2,"utf16":2},"mode":"zhuyin"}
+{"revision":12,"handled":true,"preedit":[{"text":"親子","style":"normal"},{"text":"景","style":"normal"}],"cursor":{"rune":2,"utf16":2},"candidates":{"items":[{"id":0,"text":"景","label":"common"},{"id":1,"text":"警","label":"common"},{"id":2,"text":"井","label":"common"},{"id":3,"text":"丼"},{"id":4,"text":"ㄐㄧㄥˇ"}],"page":0,"pages":1,"start":2,"length":1,"highlight":0,"title":"修改「景」 · Tab 切換詞長"},"mode":"zhuyin"}
+{"revision":13,"handled":true,"preedit":[{"text":"親子","style":"normal"},{"text":"丼","style":"locked"}],"cursor":{"rune":2,"utf16":2},"mode":"zhuyin"}
+{"revision":14,"handled":true,"commit":"親子丼","cursor":{"rune":0,"utf16":0},"mode":"zhuyin"}
+# 第二次：自動轉換即為 親子丼
+{"revision":15,"handled":true,"preedit":[{"text":"ㄑ","style":"pending"}],"cursor":{"rune":1,"utf16":1},"mode":"zhuyin"}
+{"revision":16,"handled":true,"preedit":[{"text":"ㄑㄧ","style":"pending"}],"cursor":{"rune":2,"utf16":2},"mode":"zhuyin"}
+{"revision":17,"handled":true,"preedit":[{"text":"ㄑㄧㄣ","style":"pending"}],"cursor":{"rune":3,"utf16":3},"mode":"zhuyin"}
+{"revision":18,"handled":true,"preedit":[{"text":"親","style":"partial"}],"cursor":{"rune":1,"utf16":1},"mode":"zhuyin"}
+{"revision":19,"handled":true,"preedit":[{"text":"親","style":"partial"},{"text":"ㄗ","style":"pending"}],"cursor":{"rune":2,"utf16":2},"mode":"zhuyin"}
+{"revision":20,"handled":true,"preedit":[{"text":"親子","style":"normal"}],"cursor":{"rune":2,"utf16":2},"mode":"zhuyin"}
+{"revision":21,"handled":true,"preedit":[{"text":"親子","style":"normal"},{"text":"ㄐ","style":"pending"}],"cursor":{"rune":3,"utf16":3},"mode":"zhuyin"}
+{"revision":22,"handled":true,"preedit":[{"text":"親子","style":"normal"},{"text":"ㄐㄧ","style":"pending"}],"cursor":{"rune":4,"utf16":4},"mode":"zhuyin"}
+{"revision":23,"handled":true,"preedit":[{"text":"親子","style":"normal"},{"text":"ㄐㄧㄥ","style":"pending"}],"cursor":{"rune":5,"utf16":5},"mode":"zhuyin"}
+{"revision":24,"handled":true,"preedit":[{"text":"親子","style":"normal"},{"text":"丼","style":"normal"}],"cursor":{"rune":3,"utf16":3},"mode":"zhuyin"}
+{"revision":25,"handled":true,"commit":"親子丼","cursor":{"rune":0,"utf16":0},"mode":"zhuyin"}
+# 單打 ㄐㄧㄥˇ 仍為 景
+{"revision":26,"handled":true,"preedit":[{"text":"ㄐ","style":"pending"}],"cursor":{"rune":1,"utf16":1},"mode":"zhuyin"}
+{"revision":27,"handled":true,"preedit":[{"text":"ㄐㄧ","style":"pending"}],"cursor":{"rune":2,"utf16":2},"mode":"zhuyin"}
+{"revision":28,"handled":true,"preedit":[{"text":"ㄐㄧㄥ","style":"pending"}],"cursor":{"rune":3,"utf16":3},"mode":"zhuyin"}
+{"revision":29,"handled":true,"preedit":[{"text":"景","style":"normal"}],"cursor":{"rune":1,"utf16":1},"mode":"zhuyin"}
+{"revision":30,"handled":true,"cursor":{"rune":0,"utf16":0},"mode":"zhuyin"}

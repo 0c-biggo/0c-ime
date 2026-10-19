@@ -1,0 +1,11 @@
+# docs/17：麻婆豆腐。第二個音即正確，並建議補全；Tab 接受
+{"revision":1,"handled":true,"preedit":[{"text":"ㄇ","style":"pending"}],"cursor":{"rune":1,"utf16":1},"mode":"zhuyin"}
+{"revision":2,"handled":true,"preedit":[{"text":"ㄇㄚ","style":"pending"}],"cursor":{"rune":2,"utf16":2},"mode":"zhuyin"}
+{"revision":3,"handled":true,"preedit":[{"text":"嘛","style":"normal"}],"cursor":{"rune":1,"utf16":1},"mode":"zhuyin"}
+{"revision":4,"handled":true,"preedit":[{"text":"嘛","style":"normal"},{"text":"ㄆ","style":"pending"}],"cursor":{"rune":2,"utf16":2},"mode":"zhuyin"}
+{"revision":5,"handled":true,"preedit":[{"text":"嘛","style":"normal"},{"text":"ㄆㄛ","style":"pending"}],"cursor":{"rune":3,"utf16":3},"mode":"zhuyin"}
+{"revision":6,"handled":true,"preedit":[{"text":"麻婆","style":"partial"}],"cursor":{"rune":2,"utf16":2},"suggestion":"豆腐","mode":"zhuyin"}
+{"revision":7,"handled":true,"preedit":[{"text":"麻婆豆腐","style":"locked"}],"cursor":{"rune":4,"utf16":4},"mode":"zhuyin"}
+{"revision":8,"handled":true,"commit":"麻婆豆腐","cursor":{"rune":0,"utf16":0},"mode":"zhuyin"}
+# 沒有建議時 Tab 交還應用程式（handled=false）
+{"revision":9,"handled":false,"cursor":{"rune":0,"utf16":0},"mode":"zhuyin"}

@@ -1,0 +1,13 @@
+id	want	reading	start	length	target	completion
+screenshot	截圖	ㄐㄧㄝˊ ㄊㄨˊ	0	2	截圖	
+screenshot_first	可以先截圖	ㄎㄜˇ ㄧˇ ㄒㄧㄢ ㄐㄧㄝˊ ㄊㄨˊ	3	2	截圖	
+screenshot_please	請先截圖	ㄑㄧㄥˇ ㄒㄧㄢ ㄐㄧㄝˊ ㄊㄨˊ	2	2	截圖	
+screenshot_need	需要截圖	ㄒㄩ ㄧㄠˋ ㄐㄧㄝˊ ㄊㄨˊ	2	2	截圖	
+screenshot_upload	上傳截圖	ㄕㄤˋ ㄔㄨㄢˊ ㄐㄧㄝˊ ㄊㄨˊ	2	2	截圖	
+screenshot_send	傳送截圖	ㄔㄨㄢˊ ㄙㄨㄥˋ ㄐㄧㄝˊ ㄊㄨˊ	2	2	截圖	
+mrt	搭捷運	ㄉㄚ ㄐㄧㄝˊ ㄩㄣˋ	1	2	捷運	
+journey	旅途愉快	ㄌㄩˇ ㄊㄨˊ ㄩˊ ㄎㄨㄞˋ	0	2	旅途	
+deadline	截止時間	ㄐㄧㄝˊ ㄓˇ ㄕˊ ㄐㄧㄢ	0	2	截止	
+image_save	應該另存新圖	ㄧㄥ ㄍㄞ ㄌㄧㄥˋ ㄘㄨㄣˊ ㄒㄧㄣ ㄊㄨˊ	4	1	新	
+implementation	這個有實作嗎	ㄓㄜˋ ㄍㄜ˙ ㄧㄡˇ ㄕˊ ㄗㄨㄛˋ ㄇㄚ˙	3	2	實作	
+intuitive	不直覺	ㄅㄨˋ ㄓˊ ㄐㄩㄝˊ	0	1	不	

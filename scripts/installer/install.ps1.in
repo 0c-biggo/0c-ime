@@ -1,0 +1,27 @@
+# 靈犀注音（0c）一行安裝：irm @SELF_URL@ | iex
+# 下載 0c-update.exe 並以下方固定的 SHA-256 核對，再以系統管理員權限（註冊輸入法需要）由它讀取
+# 已簽章的更新索引、下載並核對完整套件後安裝。原始碼：scripts/installer/install.ps1.in
+& {
+    $ErrorActionPreference = 'Stop'
+    $ProgressPreference = 'SilentlyContinue'
+    $feed = '@FEED@'
+    $channel = '@CHANNEL@'
+    $url = '@URL_WINDOWS_AMD64@'
+    $sum = '@SHA_WINDOWS_AMD64@'
+    if ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64' -or $env:PROCESSOR_ARCHITEW6432 -eq 'ARM64') { throw '靈犀注音目前只支援 Windows x64。' }
+    if (-not $url) { throw '這一版尚未提供 Windows 套件。' }
+    $dir = Join-Path $env:TEMP ('0c-install-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory $dir | Out-Null
+    try {
+        $exe = Join-Path $dir '0c-update.exe'
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $exe
+        if ((Get-FileHash $exe -Algorithm SHA256).Hash.ToLower() -ne $sum) { throw '安裝工具的 SHA-256 不符，已停止。' }
+        Write-Host '靈犀注音需要系統管理員權限註冊輸入法，請在接下來的視窗確認。'
+        $p = Start-Process $exe -ArgumentList @('install', '-online', '-feed', $feed, '-channel', $channel) -Verb RunAs -Wait -PassThru
+        if ($p.ExitCode -ne 0) { throw "安裝沒有完成（結束碼 $($p.ExitCode)）。" }
+        Write-Host '安裝完成。請登出再登入，然後在輸入法清單選擇「靈犀注音」。'
+    } finally {
+        Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue
+    }
+}

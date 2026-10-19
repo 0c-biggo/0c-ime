@@ -1,0 +1,23 @@
+# 授權
+
+本專案的自有程式碼、建置腳本、測試程式與文件，除另有聲明外，依 **GNU Affero General Public License version 3 only（AGPL-3.0-only）** 授權。完整條款見 [LICENSE](../LICENSE)。
+
+使用與授權說明見 [TERMS.md](TERMS.md)，不影響 LICENSE 已授予的權利。
+
+## 商業授權
+
+AGPL-3.0 允許研究、個人及商業使用。若需要以不符合 AGPL 條件的方式進行閉源整合或散布，請聯絡專案維護者洽談另行書面商業授權。未取得書面授權前，仍適用 AGPL-3.0。
+
+另行授權僅涵蓋授權方有權授權且書面約定納入的內容；外部貢獻不自動取得閉源重授權權利。
+
+## 資料、模型與第三方元件
+
+第三方程式與相依元件、詞庫、語料、模型、字型及圖片依各自授權或權利聲明處理，不因本專案的 LICENSE 而變更。
+
+- 詞庫與詞頻：原始碼中的 `data/sources/ledger.tsv` 與 `data/sources/licenses/`；編譯後資料包中的 `data/NOTICE.txt`。
+- 英文詞表：原始碼中的 `data/english/LICENSE.txt`；編譯後資料包中的 `data/english/NOTICE.txt`。
+- 神經模型：各模型套件隨附的 `LICENSE`；目前選字與補標點的固定 D512 模型採 MIT。
+- Unicode：[授權聲明](UNICODE-NOTICE.txt)。
+- 其他隨安裝包出貨的元件：`THIRD_PARTY_NOTICES.txt`。
+
+授權全文保留在各元件或資料所在目錄，供編譯、打包時一併附上。本文件不額外授予資料或素材的散布權，也不撤回先前版本已有效授予的權利。

@@ -1,0 +1,17 @@
+[package]
+name = "zuin-win-common"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Zuin Windows 外殼（TSF DLL 與 ui 程式）共用：使用者 SID、管道名稱、候選窗訊息"
+
+[dependencies]
+windows = { version = "=0.61.3", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Threading",
+] }
+windows-core = "=0.61.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

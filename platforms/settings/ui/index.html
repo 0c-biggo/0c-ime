@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>靈犀注音設定</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="app">
+  <nav class="side" aria-label="設定頁面">
+    <div class="brand"><img src="icon.png" alt="" width="32" height="32"><span>靈犀注音</span></div>
+    <button type="button" class="nav" data-page="overview">總覽</button>
+    <button type="button" class="nav" data-page="input">輸入設定</button>
+    <button type="button" class="nav" data-page="vocab" hidden>我的詞彙</button>
+    <button type="button" class="nav" data-page="update">更新</button>
+    <button type="button" class="nav" data-page="troubleshoot">問題排解</button>
+    <button type="button" class="nav" data-page="about">關於</button>
+  </nav>
+  <main>
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    <section id="page-overview" class="page" hidden></section>
+    <section id="page-input" class="page" hidden></section>
+    <section id="page-vocab" class="page" hidden></section>
+    <section id="page-update" class="page" hidden></section>
+    <section id="page-troubleshoot" class="page" hidden></section>
+    <section id="page-about" class="page" hidden></section>
+  </main>
+</div>
+<script src="vocab.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

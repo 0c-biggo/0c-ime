@@ -1,0 +1,33 @@
+# docs/12：親子丼。第一次要手選；第二次自動正確；單打 ㄐㄧㄥˇ 不受污染
+{"type": "key", "key": "f"}
+{"type": "key", "key": "u"}
+{"type": "key", "key": "p"}
+{"type": "key", "key": " "}
+{"type": "key", "key": "y"}
+{"type": "key", "key": "3"}
+{"type": "key", "key": "r"}
+{"type": "key", "key": "u"}
+{"type": "key", "key": "/"}
+{"type": "key", "key": "3"}
+{"type": "cursor", "to": 2}
+{"type": "candidates", "length": 1}
+{"type": "select", "index": 3}
+{"type": "commit"}
+# 第二次：自動轉換即為 親子丼
+{"type": "key", "key": "f"}
+{"type": "key", "key": "u"}
+{"type": "key", "key": "p"}
+{"type": "key", "key": " "}
+{"type": "key", "key": "y"}
+{"type": "key", "key": "3"}
+{"type": "key", "key": "r"}
+{"type": "key", "key": "u"}
+{"type": "key", "key": "/"}
+{"type": "key", "key": "3"}
+{"type": "commit"}
+# 單打 ㄐㄧㄥˇ 仍為 景
+{"type": "key", "key": "r"}
+{"type": "key", "key": "u"}
+{"type": "key", "key": "/"}
+{"type": "key", "key": "3"}
+{"type": "cancel"}

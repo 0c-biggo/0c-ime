@@ -1,0 +1,2 @@
+本資料包使用全字庫（CNS11643）屬性資料中的注音與 CNS 至 Unicode 對照，依「政府資料開放授權條款－第1版」利用。
+https://data.gov.tw/license

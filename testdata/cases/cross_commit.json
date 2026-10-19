@@ -1,0 +1,14 @@
+[
+ {"id":"screenshot","left":"可以先","left_reading":"ㄎㄜˇ ㄧˇ ㄒㄧㄢ","want":"截圖","reading":"ㄐㄧㄝˊ ㄊㄨˊ"},
+ {"id":"save_image","left":"應該另存","left_reading":"ㄧㄥ ㄍㄞ ㄌㄧㄥˋ ㄘㄨㄣˊ","want":"新圖","reading":"ㄒㄧㄣ ㄊㄨˊ"},
+ {"id":"implementation","left":"這個有","left_reading":"ㄓㄜˋ ㄍㄜ˙ ㄧㄡˇ","want":"實作嗎","reading":"ㄕˊ ㄗㄨㄛˋ ㄇㄚ˙"},
+ {"id":"management_page","left":"另外","left_reading":"ㄌㄧㄥˋ ㄨㄞˋ","want":"管理頁","reading":"ㄍㄨㄢˇ ㄌㄧˇ ㄧㄝˋ"},
+ {"id":"cut_in","left":"可以","left_reading":"ㄎㄜˇ ㄧˇ","want":"切入","reading":"ㄑㄧㄝ ㄖㄨˋ"},
+ {"id":"dumpling","left":"我想吃","left_reading":"ㄨㄛˇ ㄒㄧㄤˇ ㄔ","want":"小籠包","reading":"ㄒㄧㄠˇ ㄌㄨㄥˊ ㄅㄠ"},
+ {"id":"scenery","left":"欣賞","left_reading":"ㄒㄧㄣ ㄕㄤˇ","want":"風景","reading":"ㄈㄥ ㄐㄧㄥˇ"},
+ {"id":"well","left":"一口","left_reading":"ㄧˋ ㄎㄡˇ","want":"井","reading":"ㄐㄧㄥˇ"},
+ {"id":"meet_again","left":"希望","left_reading":"ㄒㄧ ㄨㄤˋ","want":"再見一面","reading":"ㄗㄞˋ ㄐㄧㄢˋ ㄧˊ ㄇㄧㄢˋ"},
+ {"id":"table","left":"放","left_reading":"ㄈㄤˋ","want":"在桌子上","reading":"ㄗㄞˋ ㄓㄨㄛ ㄗ˙ ㄕㄤˋ"},
+ {"id":"travel","left":"祝你","left_reading":"ㄓㄨˋ ㄋㄧˇ","want":"旅途愉快","reading":"ㄌㄩˇ ㄊㄨˊ ㄩˊ ㄎㄨㄞˋ"},
+ {"id":"deadline","left":"注意","left_reading":"ㄓㄨˋ ㄧˋ","want":"截止時間","reading":"ㄐㄧㄝˊ ㄓˇ ㄕˊ ㄐㄧㄢ"}
+]

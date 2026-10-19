@@ -1,0 +1,422 @@
+#!/usr/bin/env python3
+"""Upgrade the existing per-user Linux desktop; never replace its dictionaries."""
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import select
+import signal
+import socket
+import struct
+import subprocess
+import sys
+import tempfile
+import time
+
+from install_package import (STATUS_ICONS, LEGACY_STATUS_ICONS, status_icon_config_changes,
+                             kimpanel_spacing_changes, kimpanel_block, kimpanel_record,
+                             KIMPANEL_SPACING, KIMPANEL_INDICATOR, KIMPANEL_RECORD, OPTIONAL, destination,
+                             KIMPANEL_START, KIMPANEL_END, icon_files, refresh_icon_theme,
+                             addon_conf, addon_env_change, addon_env_cleanup, obsolete_addon_dirs, clear_session_addon_dirs)
+
+ROOT = Path(__file__).resolve().parents[1]
+PLATFORM = ROOT / "platforms/linux-fcitx5"
+INSTALL_HOME = Path.home()
+BASE = INSTALL_HOME / ".local/share/zuin"
+FILES = {
+    "build/0c-server": INSTALL_HOME / ".local/bin/0c-server",
+    "build/0c-trace": INSTALL_HOME / ".local/bin/0c-trace",
+    "build/lib0c.so": INSTALL_HOME / ".local/lib/fcitx5/lib0c.so",
+    "0c-addon.conf": INSTALL_HOME / ".local/share/fcitx5/addon/0c.conf",
+    # The file name is the Fcitx input method ID saved in the user's profile; keep it.
+    "0c-im.conf": INSTALL_HOME / ".local/share/fcitx5/inputmethod/zuin.conf",
+    **{f"icons/{name}.svg": INSTALL_HOME / f".local/share/icons/hicolor/scalable/status/{name}.svg"
+       for name in ("0c-zhuyin", "0c-english")},
+}
+# 舊 zuin-* 程式名稱及會蓋過彩色圖的單色 SVG；更新時移入備份。
+LEGACY_SERVER = INSTALL_HOME / ".local/bin/zuin-server"
+LEGACY_ADDON = INSTALL_HOME / ".local/lib/fcitx5/libzuin.so"
+LEGACY_ENVIRONMENT = INSTALL_HOME / ".config/environment.d/90-zuin.conf"
+LEGACY = (LEGACY_SERVER, INSTALL_HOME / ".local/bin/zuin-trace", LEGACY_ADDON,
+          INSTALL_HOME / ".local/share/fcitx5/addon/zuin.conf", LEGACY_ENVIRONMENT,
+          *(INSTALL_HOME / name for name in LEGACY_STATUS_ICONS.values()))
+ENVIRONMENT = INSTALL_HOME / ".config/environment.d/90-0c.conf"
+
+
+def install_content(src):
+    """要安裝的內容：addon 設定的 Library 改成外殼的絕對路徑（同完整套件），其餘照建置結果。"""
+    data = (PLATFORM / src).read_bytes()
+    return addon_conf(data, INSTALL_HOME.resolve()) if src == "0c-addon.conf" else data
+
+
+def run(*args, **kwargs):
+    return subprocess.run(args, cwd=ROOT, check=True, **kwargs)
+
+
+def digest(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def preflight():
+    if sys.platform != "linux":
+        raise RuntimeError("make upgrade 目前支援 Linux Fcitx5；macOS 請參考 platforms/macos/README.md")
+    if os.getuid() == 0:
+        raise RuntimeError("請以桌面使用者執行，不要使用 sudo。")
+    if not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
+        raise RuntimeError("需要 Python 3.9 以上及支援 pidfd 的 Linux 核心。")
+    fd = os.pidfd_open(os.getpid())
+    os.close(fd)
+    for tool in ("git", "go", "make", "g++", "pkg-config", "fcitx5"):
+        if not shutil.which(tool):
+            raise RuntimeError(f"缺少建置工具：{tool}")
+    for path, legacy in ((FILES["build/0c-server"], LEGACY_SERVER), (FILES["build/lib0c.so"], LEGACY_ADDON),
+                         (BASE / "data/manifest.json", None)):
+        if not path.is_file() and not (legacy and legacy.is_file()):
+            raise RuntimeError(f"找不到既有安裝：{path}；首次安裝請依 README 操作。")
+    run("pkg-config", "--exists", "Fcitx5Core", "Fcitx5Utils", "Fcitx5Config")
+
+
+def pull():
+    status = run("git", "status", "--porcelain", stdout=subprocess.PIPE, text=True).stdout
+    if status.strip():
+        raise RuntimeError("工作目錄有未提交變更，請先處理；若要安裝本機版本，使用 make upgrade PULL=0。")
+    run("git", "pull", "--ff-only")
+
+
+def frame(conn, payload):
+    data = json.dumps(payload).encode()
+    conn.sendall(struct.pack("<I", len(data)) + data)
+
+    def read(size):
+        result = b""
+        while len(result) < size:
+            part = conn.recv(size - len(result))
+            if not part:
+                raise RuntimeError("測試引擎中斷連線")
+            result += part
+        return result
+
+    size = struct.unpack("<I", read(4))[0]
+    if not 0 < size <= 1 << 20:
+        raise RuntimeError("測試引擎回傳無效訊框")
+    reply = json.loads(read(size))
+    if not reply.get("ok"):
+        raise RuntimeError(f"測試引擎拒絕請求：{reply.get('error')}")
+    return reply
+
+
+def check_data():
+    # Use a private socket and empty user store: no desktop session or learning touched.
+    with tempfile.TemporaryDirectory(prefix="0c-upgrade-") as directory:
+        tmp = Path(directory)
+        with (tmp / "server.log").open("w+b") as log:
+            proc = subprocess.Popen([
+                str(PLATFORM / "build/0c-server"), "-data", str(BASE / "data"),
+                "-user", str(tmp / "user.json"), "-socket", str(tmp / "engine.sock"),
+            ], stdout=log, stderr=log)
+            try:
+                deadline = time.monotonic() + 30
+                while not (tmp / "engine.sock").exists():
+                    if proc.poll() is not None or time.monotonic() >= deadline:
+                        log.seek(0)
+                        raise RuntimeError("新版無法載入現有字典：\n" + log.read().decode(errors="replace"))
+                    time.sleep(0.1)
+                with socket.socket(socket.AF_UNIX) as conn:
+                    conn.settimeout(5)
+                    conn.connect(str(tmp / "engine.sock"))
+                    reply = frame(conn, {"op": "open", "version": 0})
+                    frame(conn, {"op": "close", "session": reply["session"]})
+            finally:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    # Only our isolated probe, never the desktop engine.
+                    proc.kill()
+                    proc.wait()
+
+
+PROC = Path("/proc")
+
+
+def settle():
+    """確認多個同名行程前的等待；測試替換成直接改假 /proc。"""
+    time.sleep(0.15)
+
+
+def scan_processes(name):
+    """目前使用者名為 name、非殭屍的行程：pid → (路徑, 父行程, 啟動時間)。"""
+    found = {}
+    for proc in PROC.iterdir():
+        if not proc.name.isdigit():
+            continue
+        try:
+            if proc.stat().st_uid != os.getuid() or (proc / "comm").read_text().strip() != name:
+                continue
+            stat = (proc / "stat").read_text()
+            fields = stat[stat.rindex(")") + 2:].split()  # comm 可含空白與括號，從最後一個 ) 起算
+            state, parent = fields[0], int(fields[1])
+        except (FileNotFoundError, ProcessLookupError, ValueError, IndexError):
+            continue
+        if state != "Z":
+            found[int(proc.name)] = (proc, parent, fields[19] if len(fields) > 19 else "")
+    return found
+
+
+def processes(name):
+    """目前使用者名為 name 的行程，排除外殼的暫時子行程。
+
+    外殼（lib0c.so，跑在 Fcitx5 裡）用 posix_spawn 啟動 0c-update、用兩次 fork 啟動 0c-server，子行程在 exec 之前
+    沿用父行程的名稱 fcitx5，那幾毫秒內會被數成第二個 Fcitx5，造成「偵測到多個 Fcitx5 行程」的誤報。posix_spawn 的
+    子行程父行程仍是 Fcitx5，直接排除；兩次 fork 的孫行程在中間層退出後由 init 接手，只能靠時間分辨：找到不只一個時
+    隔一小段時間重掃兩次，只留每次都在、啟動時間相同的行程。另一個桌面的 Fcitx5 會一直在，仍各算一個。
+    """
+    def without_children(found):
+        return [proc for pid, (proc, parent, _) in sorted(found.items()) if parent not in found]
+
+    found = scan_processes(name)
+    if len(without_children(found)) <= 1:
+        return without_children(found)
+    for _ in range(2):
+        settle()
+        again = scan_processes(name)
+        found = {pid: v for pid, v in found.items() if pid in again and again[pid][2] == v[2]}
+    return without_children(found)
+
+
+def running_same(proc, path):
+    try:
+        return digest(proc / "exe") == digest(path)
+    except FileNotFoundError:
+        return False
+
+
+def addon_loaded(proc):
+    path = FILES["build/lib0c.so"]
+    try:
+        stat = path.stat()
+        mappings = [line.split() for line in (proc / "maps").read_text().splitlines()
+                    if str(path) in line]
+        return bool(mappings) and all(int(line[4]) == stat.st_ino and line[-1] != "(deleted)"
+                                      for line in mappings)
+    except FileNotFoundError:
+        return False
+
+
+def atomic_copy(src, dst):
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=f".{dst.name}.", dir=dst.parent)
+    os.close(fd)
+    try:
+        shutil.copy2(src, name)
+        os.replace(name, dst)
+    finally:
+        Path(name).unlink(missing_ok=True)
+
+
+def install(changes, removals, config_changes=()):
+    """config_changes：(路徑, 新內容)，例如去掉舊 addon 搜尋路徑後的 90-0c.conf；與其他檔案一起備份。"""
+    icon_configs = status_icon_config_changes(INSTALL_HOME) if all((PLATFORM / name).is_file() for name in STATUS_ICONS) else []
+    icon_configs += list(config_changes)
+    spacing_src = PLATFORM / "kimpanel-spacing.js"
+    if spacing_src.is_file():
+        snippet = spacing_src.read_text()
+        spacing = kimpanel_spacing_changes(INSTALL_HOME, snippet)
+        icon_configs += spacing
+        indicator = destination(INSTALL_HOME, KIMPANEL_INDICATOR)
+        content = spacing[0][1].decode("utf-8") if spacing else indicator.read_text() if indicator.is_file() else ""
+        expected = KIMPANEL_START + "".join("        " + line + "\n" for line in snippet.splitlines()) + KIMPANEL_END
+        if kimpanel_block(content) == expected:
+            for relative, payload in ((OPTIONAL[KIMPANEL_SPACING], snippet.encode("utf-8")),
+                                      (KIMPANEL_RECORD, kimpanel_record(snippet))):
+                path = destination(INSTALL_HOME, relative)
+                if not path.exists() or path.read_bytes() != payload:
+                    icon_configs.append((path, payload))
+    if not changes and not removals and not icon_configs:
+        return None
+    changes = dict(changes)
+    backups = BASE / "backups"
+    backups.mkdir(parents=True, exist_ok=True)
+    backup = Path(tempfile.mkdtemp(prefix=time.strftime("upgrade-%Y%m%d-%H%M%S-"), dir=backups))
+    sources = {src: PLATFORM / src for src in changes}
+    if "0c-addon.conf" in sources:
+        sources["0c-addon.conf"] = backup / "new-0c.conf"
+        sources["0c-addon.conf"].write_bytes(install_content("0c-addon.conf"))
+    for path, content in icon_configs:
+        source = backup / f"new-{path.name}"
+        source.write_bytes(content)
+        if path.exists():
+            shutil.copymode(path, source)
+        key = str(path.relative_to(INSTALL_HOME))
+        changes[key] = path
+        sources[key] = source
+    existed = {}
+    for src, dst in changes.items():
+        existed[src] = dst.exists()
+        if existed[src]:
+            saved = backup / dst.relative_to(INSTALL_HOME)
+            saved.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(dst, saved)
+    # Keep a copy of the personal dictionary for a manual restore; installing never changes it.
+    if (BASE / "user.json").is_file():
+        (backup / "personal").mkdir(mode=0o700)
+        shutil.copy2(BASE / "user.json", backup / "personal/user.json")
+    for path in removals:
+        saved = backup / path.relative_to(INSTALL_HOME)
+        saved.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, saved)
+    print(f"舊程式備份：{backup}", flush=True)
+    applied = []
+    try:
+        for src, dst in changes.items():
+            atomic_copy(sources[src], dst)
+            applied.append(src)
+    except Exception:
+        for src in reversed(applied):
+            dst = changes[src]
+            if existed[src]:
+                atomic_copy(backup / dst.relative_to(INSTALL_HOME), dst)
+            else:
+                dst.unlink()
+        raise
+    # 舊名稱的環境檔若有使用者自己的設定，改名保留；外殼的 addon 搜尋路徑已不需要，不帶過去。
+    if LEGACY_ENVIRONMENT in removals and not ENVIRONMENT.exists():
+        content = LEGACY_ENVIRONMENT.read_text(errors="surrogateescape")
+        kept = addon_env_cleanup(content, INSTALL_HOME.resolve())
+        if any(line.strip() and not line.lstrip().startswith("#") for line in kept.splitlines()):
+            carried = backup / "new-90-0c.conf"
+            carried.write_text(kept, errors="surrogateescape")
+            atomic_copy(carried, ENVIRONMENT)
+    # Remove old names only after every new file is in place.
+    for path in removals:
+        path.unlink()
+    return backup
+
+
+def stop_old_servers():
+    installed = FILES["build/0c-server"]
+    # An old zuin-server keeps serving the legacy socket that the new addon falls back to; always stop it.
+    for name, path, legacy in (("0c-server", installed, False), ("zuin-server", LEGACY_SERVER, True)):
+        stop_servers(name, path, legacy)
+
+
+def stop_servers(name, installed, legacy):
+    for proc in processes(name):
+        try:
+            # Leave test engines and other installations alone; pidfd prevents PID reuse.
+            fd = os.pidfd_open(int(proc.name))
+            try:
+                if os.readlink(proc / "exe").removesuffix(" (deleted)") != str(installed):
+                    continue
+                if not legacy and running_same(proc, installed):
+                    continue
+                print("讓舊引擎正常退出並保存學習資料…", flush=True)
+                signal.pidfd_send_signal(fd, signal.SIGTERM)
+                poll = select.poll()
+                poll.register(fd, select.POLLIN)
+                if not poll.poll(10000):
+                    raise RuntimeError("舊引擎未在 10 秒內退出；未強制終止，請檢查後重跑 make upgrade PULL=0。")
+            finally:
+                os.close(fd)
+        except (ProcessLookupError, FileNotFoundError):
+            pass
+
+
+def apply():
+    print("測試與建置新版…", flush=True)
+    run("go", "test", "./...")
+    run("go", "vet", "./...")
+    # Force rebuild: timestamps alone miss deleted sources and Git build metadata.
+    run("make", "-C", str(PLATFORM), "-B", "all", "test", "build/0c-trace")
+    check_data()
+    fcitx = processes("fcitx5")
+    if len(fcitx) > 1:
+        raise RuntimeError("偵測到多個 Fcitx5 行程，無法判斷要更新哪個桌面；尚未安裝。")
+    env = dict(os.environ)
+    if fcitx:
+        # Preserve Wayland/D-Bus and ZUIN_* settings even when invoked over SSH.
+        for entry in (fcitx[0] / "environ").read_bytes().split(b"\0"):
+            if b"=" in entry:
+                key, value = entry.split(b"=", 1)
+                env[os.fsdecode(key)] = os.fsdecode(value)
+        # addon 設定寫的是外殼的絕對路徑；舊版留下的搜尋路徑可能只有建置機的系統目錄，重啟時不再沿用。
+        if obsolete_addon_dirs(env.get("FCITX_ADDON_DIRS", ""), INSTALL_HOME.resolve()):
+            del env["FCITX_ADDON_DIRS"]
+    expected = {src: hashlib.sha256(install_content(src)).hexdigest() for src in FILES}
+    changes = {src: dst for src, dst in FILES.items()
+               if not dst.exists() or expected[src] != digest(dst)}
+    removals = [path for path in LEGACY if path.is_file()]
+    env_change = addon_env_change(INSTALL_HOME)
+    if env_change and env_change[1] is None:
+        removals.append(env_change[0])
+    icon_config_changed = all((PLATFORM / name).is_file() for name in STATUS_ICONS) and bool(status_icon_config_changes(INSTALL_HOME))
+    restart = bool(fcitx) and (not addon_loaded(fcitx[0]) or bool(removals) or any(
+        src in changes for src in ("build/lib0c.so", "0c-addon.conf", "0c-im.conf")) or icon_config_changed)
+    if changes or removals or restart or icon_config_changed or env_change:
+        print("準備更新；請完成目前組字，5 秒後安裝並在需要時重啟輸入法。", flush=True)
+        time.sleep(5)
+    icons = icon_files(INSTALL_HOME)
+    backup = install(changes, removals, [env_change] if env_change and env_change[1] is not None else [])
+    refresh_icon_theme(INSTALL_HOME, icons)
+    clear_session_addon_dirs(INSTALL_HOME, bool(env_change))
+    stop_old_servers()
+    if restart:
+        print("重新載入 Fcitx5 外殼…", flush=True)
+        # Use the original desktop's environment; do not print its potentially private values.
+        with tempfile.TemporaryFile() as log:
+            try:
+                run("fcitx5", "-r", "-d", env=env, stdout=log, stderr=log, timeout=20)
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline:
+                    current = processes("fcitx5")
+                    if len(current) == 1 and addon_loaded(current[0]):
+                        break
+                    time.sleep(0.1)
+                else:
+                    raise RuntimeError("Fcitx5 尚未載入新版外殼，請重新登入。")
+            except Exception:
+                if backup:
+                    log.seek(0)
+                    with (backup / "fcitx-restart.log").open("wb") as output:
+                        shutil.copyfileobj(log, output)
+                raise
+    for src, dst in FILES.items():
+        if expected[src] != digest(dst):
+            raise RuntimeError(f"安裝驗證失敗：{dst}")
+    revision = run("git", "rev-parse", "--short", "HEAD", stdout=subprocess.PIPE, text=True).stdout.strip()
+    dirty = run("git", "status", "--porcelain", stdout=subprocess.PIPE, text=True).stdout.strip()
+    print(f"更新完成：{revision}{'（含本機變更）' if dirty else ''}；現有字典與個人詞庫保留。", flush=True)
+    if not fcitx:
+        print("目前未執行 Fcitx5；下次登入桌面時載入新版。")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--no-pull", action="store_true")
+    parser.add_argument("--apply", action="store_true", help=argparse.SUPPRESS)
+    args = parser.parse_args()
+    preflight()
+    if args.apply:
+        apply()
+        return
+    import fcntl
+    # One lock across checkouts, including the child running the freshly pulled script.
+    with (BASE / "upgrade.lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError("另一個 make upgrade 正在執行。") from None
+        if not args.no_pull:
+            pull()
+        run(sys.executable, str(Path(__file__).resolve()), "--apply")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (RuntimeError, OSError, subprocess.SubprocessError) as error:
+        print(f"更新未完成：{error}", file=sys.stderr)
+        sys.exit(1)

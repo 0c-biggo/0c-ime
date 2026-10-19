@@ -1,0 +1,67 @@
+/bin/
+__pycache__/
+*.pyc
+*.test
+*.out
+/data/raw
+/build
+/data/lm/bigram
+/platforms/linux-fcitx5/build
+/platforms/macos/build
+.env
+.env.*
+!.env.example
+
+# Rust 建置產物（Windows 外殼）
+platforms/windows/target/
+platforms/windows/test/job.out
+platforms/windows/test/shot-*.png
+
+# Local editor, OS and Python tooling state.
+/.venv/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local agent state, direct CLI builds and model artifacts.
+/.claude/
+/AGENTS.md
+/CLAUDE.md
+/0c-*
+/neural/
+/models/select/
+/models/punct/
+/SOURCE-RELEASE.json
+
+# Private working notes belong outside the public repository.
+/MEMORY.md
+/IME_OSS.md
+/docs/
+
+# Private records and research are not public source.
+/build/
+/data/raw/
+/data/research
+/migration
+/Mac-E2E.md
+/platforms/macos/Tests/E2E
+/platforms/macos/Tests/Acceptance
+/data/pipeline/probe_lexicon
+/**/HANDOFF.md
+
+/testdata/ux-audit/README.md
+/data/curation/v1.md
+
+# Website publication is maintained outside this source repository.
+/scripts/publish_release.py
+/scripts/renew_feed.py
+/scripts/install_renew_timer.sh
+/scripts/policy_gate.py
+
+/assets/data/

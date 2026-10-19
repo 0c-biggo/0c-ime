@@ -1,0 +1,4 @@
+@echo off
+rem 靈犀注音（0c）一行安裝（命令提示字元）：curl -fsSL @SELF_URL@ -o install.cmd && install.cmd && del install.cmd
+rem 交給 PowerShell 版本（@PS1_URL@）執行。
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm '@PS1_URL@' | iex"

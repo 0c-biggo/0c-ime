@@ -1,0 +1,25 @@
+# Text files use LF; binary data is never converted.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary
+*.zip binary
+*.gz binary
+*.bin binary
+*.pt binary
+*.onnx binary
+*.safetensors binary
+
+# TSV cases retain empty trailing columns.
+testdata/cases/*.tsv whitespace=-blank-at-eol
+
+# Source archives omit local agent instructions and historical working evidence.
+AGENTS.md export-ignore
+CLAUDE.md export-ignore
+MEMORY.md export-ignore
+.claude export-ignore
+docs/oss export-ignore
+docs/acceptance export-ignore
+data/research export-ignore
+migration export-ignore
+Mac-E2E.md export-ignore

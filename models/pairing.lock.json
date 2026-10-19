@@ -1,0 +1,27 @@
+{
+  "dictionary_manifest_sha256": "36eecfadc7f2ab9758146560f5b0ba5f9a639d8f9e4ef35423f40de3bddec07b",
+  "models_lock_sha256": "59a021df3441fbfa5db32008bde4b9f84e60cd7eb08e68df479c74466585fd39",
+  "packages": {
+    "punct": {
+      "manifest.json": {
+        "sha256": "183dbd8dd50d58a051347825051a3482e1d6a801a368891903fb18ae50dd5feb",
+        "size": 556
+      },
+      "vocab.json": {
+        "sha256": "ffdc406229f9d12c721c55ecbbcfc88d377ac8d883357fe8591ef13b25973cf0",
+        "size": 312708
+      }
+    },
+    "select": {
+      "manifest.json": {
+        "sha256": "7d631f3f273640ffa3789cbc5bfa8b007bc72bd7aed2aeba7b0380876291e6ab",
+        "size": 1081
+      },
+      "vocab.json": {
+        "sha256": "ffdc406229f9d12c721c55ecbbcfc88d377ac8d883357fe8591ef13b25973cf0",
+        "size": 312708
+      }
+    }
+  },
+  "schema": 1
+}

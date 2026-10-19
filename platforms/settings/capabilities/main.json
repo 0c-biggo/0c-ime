@@ -1,0 +1,22 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "設定視窗只能呼叫下列自訂指令與監聽事件；沒有 shell、檔案系統或其他外掛的權限。",
+  "windows": ["main-*"],
+  "permissions": [
+    "allow-app-info",
+    "allow-get-status",
+    "allow-get-settings",
+    "allow-set-settings",
+    "allow-check-update",
+    "allow-download-update",
+    "allow-install-update",
+    "allow-export-summary",
+    "allow-vocab-request",
+    "allow-api-command",
+    "allow-vocab-watch",
+    "allow-vocab-unwatch",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
+}

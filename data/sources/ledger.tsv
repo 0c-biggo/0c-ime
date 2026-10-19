@@ -1,0 +1,19 @@
+# id	名稱	URL	版本	授權	可散布	姓名標示
+# 公開包以 -public 檢查實際使用來源；可散布欄記錄發布狀態，不代表資料是自有或第三方。
+# 0c 自有資料；0c_collect* 為自建詞頻與語言模型的內部 ID。
+curated	0c 人工維護的詞條	https://0c.biggo.com	2026-10-19；curated rows sha256 90cc8608a20d7784607d1dad41cff486bafb405be38b8ef7cf34234c7bc628c1	CC-BY-SA-4.0	yes	0c contributors
+0c_collect	0c 收集、整理與分類的 unigram 詞頻	https://0c.biggo.com	2026-10-17 以 5a057dd 的詞庫斷詞；197 萬篇、7.4 億詞次	CC-BY-SA-4.0	yes	0c contributors
+0c_collect-ns	0c 收集、整理與分類的 bigram 統計：多字詞配對	https://0c.biggo.com	同 0c_collect；sha256 7333e8ca02d051bec1b6ef0a723fb0d6ffe030b439ab48d5b496a3ea421c38b5	CC-BY-SA-4.0	yes	0c contributors
+0c_collect-ss	0c 收集、整理與分類的 bigram 統計：單字詞配對	https://0c.biggo.com	同 0c_collect；sha256 1c4bc727c31316f87b01c47fb542e22a52628032b6bb828c8a58941d86e52267	CC-BY-SA-4.0	yes	0c contributors
+# 第三方資料來源與其分類。
+mcbopomofo	小麥注音輸入法詞庫資料（BPMFBase、BPMFMappings、phrase.occ、破音字優先表）	https://github.com/openvanilla/McBopomofo	commit a5ad2e94a173d6721b9d52e60f4d0266251a76ba	MIT	yes	Copyright (c) 2011-2026 Mengjuei Hsieh et al.；BPMFMappings 最初簡化自 libtabe 的 tsi.src（BSD）
+cns11643	全字庫 CNS11643 屬性與碼表（CNS_phonetic、CNS2UNICODE）	https://data.gov.tw/dataset/5961	Properties.zip sha256 3d56ef14cc809989… MapingTables.zip sha256 4502fcf7b433d679…	政府資料開放授權條款第1版	yes	全字庫（CNS11643 中文標準交換碼全字庫），依政府資料開放授權條款第 1 版使用
+cc-cedict	CC-CEDICT	https://www.mdbg.net/chinese/dictionary?page=cc-cedict	2026-09-19 下載，sha256 38e1697e3925a2c7…	CC-BY-SA-4.0	yes	CC-CEDICT，MDBG 與 CC-CEDICT 編者
+chewing-v4	新酷音詞庫 chewing_v4 語言模型（tsi_unigram.arpa、bigram_p50.arpa）	https://codeberg.org/chewing/libchewing-data	commit e5d726d9c09afd562309b05d9adad29940de5ebb	CC-BY-4.0	yes	libchewing-data（新酷音詞庫）dict/chewing_v4，libchewing Core Team
+moi-places	內政部全國路名資料（路名、鄉鎮市區名）	https://data.gov.tw/dataset/35321	115 年版	政府資料開放授權條款第1版	yes	內政部
+zhwiki	中文維基百科 n-gram（0c-corpus：OpenCC s2twp 轉台灣繁體、以 0c 詞庫斷詞；已剔除與評測句子相同的 5 字以上片段）	https://dumps.wikimedia.org/zhwiki/	zhwiki-latest-pages-articles.xml.bz2，Last-Modified 2026-09-01，sha256 c95f29db704eb6a5…	CC-BY-SA-4.0	yes	Wikipedia contributors
+mcbopomofo-rare	小麥注音 BPMFBase 中不在 Big5 字集的單字（同一來源，另標以便降級）	https://github.com/openvanilla/McBopomofo	同 mcbopomofo	MIT	yes	Copyright (c) 2011-2026 Mengjuei Hsieh et al.
+moe-schools	教育部統計處學校名錄：大專校院、一般高級中等學校、國民中學、國民小學（115 學年）	https://data.gov.tw/dataset/6091（6089、6088、6087 同）	2026-10-17 下載，sha256 3c261c4485feecce…、826979ec988a0a94…、860eae1b6f93b5ed…、2cf2c5c6c2ce9cad…	政府資料開放授權條款第1版	yes	教育部統計處
+nhi-hospitals	健保署特約醫事機構：醫學中心、區域醫院、地區醫院	https://data.gov.tw/dataset/39280（39281、39282 同）	2026-10-17 下載，sha256 5a242a69f8090096…、41d5848b72202632…、f6c4dca80ca0419c…	政府資料開放授權條款第1版	yes	衛生福利部中央健康保險署
+moi-villages	內政部村里戶數、單一年齡人口（村里名稱）	https://data.gov.tw/dataset/77132	2026-10-17 下載（114 年 3 月），sha256 2a4b02ebafe8a128…	政府資料開放授權條款第1版	yes	內政部
+gov-agencies	筆硯公文製作通訊錄（機關名稱）	https://data.gov.tw/dataset/38403	2026-10-17 下載，sha256 78e2f069582c2eed…	政府資料開放授權條款第1版	yes	國家發展委員會檔案管理局

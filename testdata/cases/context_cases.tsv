@@ -1,0 +1,8 @@
+id	want	reading	start	length	target	completion
+implementation	這個有實作嗎	ㄓㄜˋ ㄍㄜ˙ ㄧㄡˇ ㄕˊ ㄗㄨㄛˋ ㄇㄚ˙	3	2	實作	
+like	就像我在打這句話的時候	ㄐㄧㄡˋ ㄒㄧㄤˋ ㄨㄛˇ ㄗㄞˋ ㄉㄚˇ ㄓㄜˋ ㄐㄩˋ ㄏㄨㄚˋ ㄉㄜ˙ ㄕˊ ㄏㄡˋ	1	1	像	
+towards	就向銀行申請	ㄐㄧㄡˋ ㄒㄧㄤˋ ㄧㄣˊ ㄏㄤˊ ㄕㄣ ㄑㄧㄥˇ	1	1	向	
+xiaolong	小籠	ㄒㄧㄠˇ ㄌㄨㄥˊ	0	2	小籠	小籠包
+eat_xiaolong	我想吃小籠	ㄨㄛˇ ㄒㄧㄤˇ ㄔ ㄒㄧㄠˇ ㄌㄨㄥˊ	3	2	小籠	我想吃小籠包
+buzhijue	不直覺	ㄅㄨˋ ㄓˊ ㄐㄩㄝˊ	0	1	不	
+save_new_image	應該另存新圖	ㄧㄥ ㄍㄞ ㄌㄧㄥˋ ㄘㄨㄣˊ ㄒㄧㄣ ㄊㄨˊ	4	1	新	

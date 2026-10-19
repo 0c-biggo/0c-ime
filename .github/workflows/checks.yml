@@ -1,0 +1,38 @@
+name: Checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Check public source paths
+        run: python3 scripts/check_public_tree.py
+      - name: Test Go code
+        run: go test ./...
+      - name: Vet Go code
+        run: go vet ./...
+      - name: Test Fcitx5 client
+        run: make -C platforms/linux-fcitx5 test
+      - name: Test upgrades
+        run: make test-upgrade
+      - name: Test release packaging
+        run: make test-release

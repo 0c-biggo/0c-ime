@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "files": {
+    "chewing-v4.tsv": {
+      "source": "chewing-v4",
+      "license": "CC-BY-4.0",
+      "sha256": "67fc25d67d002bb45421ba725d9f815df829adf521e1274f5248fa52916eecec",
+      "size": 163245645
+    },
+    "zhwiki.tsv": {
+      "source": "zhwiki",
+      "license": "CC-BY-SA-4.0",
+      "sha256": "5fc64d17bc03c018f01cf71d219a310ee316720a3015a44ca2ea8144d98512dc",
+      "size": 443954295
+    },
+    "0c_collect-ns.tsv": {
+      "source": "0c_collect-ns",
+      "license": "CC-BY-SA-4.0",
+      "sha256": "7333e8ca02d051bec1b6ef0a723fb0d6ffe030b439ab48d5b496a3ea421c38b5",
+      "size": 571039861
+    },
+    "0c_collect-ss.tsv": {
+      "source": "0c_collect-ss",
+      "license": "CC-BY-SA-4.0",
+      "sha256": "1c4bc727c31316f87b01c47fb542e22a52628032b6bb828c8a58941d86e52267",
+      "size": 22901950
+    }
+  }
+}

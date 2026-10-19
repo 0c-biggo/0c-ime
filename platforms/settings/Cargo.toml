@@ -1,0 +1,29 @@
+[package]
+name = "zc-settings"
+version = "0.1.0"
+edition = "2021"
+description = "靈犀注音設定"
+publish = false
+
+[[bin]]
+name = "0c-settings"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+# semver：不同版本的設定程式同時存在時（核心更新後舊視窗還開著）各自獨立，不會把參數交給舊版。
+tauri-plugin-single-instance = { version = "2", features = ["semver"] }
+serde_json = "1"
+
+# 這個目錄是自己的 workspace：不併入 platforms/windows，免得 Tauri 的相依拖慢 DLL 的每次建置。
+[workspace]
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

@@ -1,0 +1,27 @@
+# Paths reserved for local instructions, private records, and generated work.
+AGENTS.md
+CLAUDE.md
+MEMORY.md
+IME_OSS.md
+.claude/
+docs/
+build/
+data/raw/
+data/research
+migration
+Mac-E2E.md
+platforms/macos/Tests/E2E
+platforms/macos/Tests/Acceptance
+data/pipeline/probe_lexicon
+**/HANDOFF.md
+
+testdata/ux-audit/README.md
+data/curation/v1.md
+
+# Website publication is maintained outside this source repository.
+scripts/publish_release.py
+scripts/renew_feed.py
+scripts/install_renew_timer.sh
+scripts/policy_gate.py
+
+data/lm/bigram/

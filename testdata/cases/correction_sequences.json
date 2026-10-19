@@ -1,0 +1,170 @@
+[
+  {
+    "id": "new-image-overrides-earlier-context-choice",
+    "steps": [
+      {
+        "reading": "ㄕㄤˋ ㄔㄨㄢˊ ㄒㄧㄣ ㄊㄨˊ"
+      },
+      {
+        "select": {
+          "at": 2,
+          "text": "心"
+        },
+        "want": "上傳心圖"
+      },
+      {
+        "request": {
+          "type": "commit"
+        },
+        "want": "上傳心圖"
+      },
+      {
+        "reading": "ㄘㄨㄣˊ ㄒㄧㄣ ㄊㄨˊ"
+      },
+      {
+        "select": {
+          "at": 1,
+          "text": "新"
+        },
+        "want": "存新圖"
+      },
+      {
+        "reading": "ㄅㄧㄥˋ ㄑㄧㄝˇ ㄕㄤˋ ㄔㄨㄢˊ ㄒㄧㄣ ㄊㄨˊ",
+        "want": "存新圖並且上傳新圖"
+      }
+    ]
+  },
+  {
+    "id": "new-image-does-not-change-mood",
+    "no_learning": true,
+    "steps": [
+      {
+        "reading": "ㄘㄨㄣˊ ㄒㄧㄣ ㄊㄨˊ"
+      },
+      {
+        "select": {
+          "at": 1,
+          "text": "新"
+        },
+        "want": "存新圖"
+      },
+      {
+        "reading": "ㄅㄧㄥˋ ㄑㄧㄝˇ ㄕㄤˋ ㄔㄨㄢˊ ㄒㄧㄣ ㄑㄧㄥˊ",
+        "want": "存新圖並且上傳心情"
+      }
+    ]
+  },
+  {
+    "id": "cancelled-selection-is-not-persistent",
+    "no_learning": true,
+    "steps": [
+      {
+        "reading": "ㄅㄨˋ ㄓˊ ㄐㄩㄝˊ",
+        "want": "不直覺"
+      },
+      {
+        "select": {
+          "at": 0,
+          "text": "布"
+        },
+        "want": "布直覺"
+      },
+      {
+        "request": {
+          "type": "cancel"
+        }
+      },
+      {
+        "reading": "ㄅㄨˋ ㄓˊ ㄐㄩㄝˊ",
+        "want": "不直覺"
+      }
+    ]
+  },
+  {
+    "id": "committed-zai-contexts-remain-independent",
+    "steps": [
+      {
+        "reading": "ㄗㄞˋ ㄐㄧㄢˋ"
+      },
+      {
+        "select": {
+          "at": 0,
+          "text": "再"
+        },
+        "want": "再見"
+      },
+      {
+        "request": {
+          "type": "commit"
+        },
+        "want": "再見"
+      },
+      {
+        "reading": "ㄗㄞˋ ㄏㄞˇ ㄧ ㄈㄤ"
+      },
+      {
+        "select": {
+          "at": 0,
+          "text": "在"
+        },
+        "want": "在海一方"
+      },
+      {
+        "request": {
+          "type": "commit"
+        },
+        "want": "在海一方"
+      },
+      {
+        "reading": "ㄗㄞˋ ㄐㄧㄢˋ",
+        "want": "再見"
+      },
+      {
+        "request": {
+          "type": "commit"
+        },
+        "want": "再見"
+      },
+      {
+        "reading": "ㄗㄞˋ ㄏㄞˇ ㄧ ㄈㄤ",
+        "want": "在海一方"
+      },
+      {
+        "request": {
+          "type": "commit"
+        },
+        "want": "在海一方"
+      },
+      {
+        "reading": "ㄗㄞˋ ㄓㄨㄛ ㄗˇ ㄕㄤˋ"
+      },
+      {
+        "select": {
+          "at": 0,
+          "text": "在"
+        },
+        "want": "在桌子上"
+      },
+      {
+        "request": {
+          "type": "commit"
+        },
+        "want": "在桌子上"
+      },
+      {
+        "reading": "ㄗㄞˋ ㄐㄧㄢˋ",
+        "want": "再見"
+      },
+      {
+        "request": {
+          "type": "commit"
+        },
+        "want": "再見"
+      },
+      {
+        "reading": "ㄗㄞˋ ㄓㄨㄛ ㄗˇ ㄕㄤˋ",
+        "want": "在桌子上"
+      }
+    ]
+  }
+]

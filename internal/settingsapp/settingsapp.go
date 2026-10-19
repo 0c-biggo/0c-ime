@@ -1,0 +1,114 @@
+// Package settingsapp 找出、核對並啟動「靈犀注音設定」程式（docs/desktop-manager.md、#47）。
+//
+// 設定程式放在目前的核心版本目錄（隨核心更新，不需要管理員權限），完整安裝另外留一份在安裝位置。
+// 入口一律是 0c-update open-settings：每次從 engine.json 找出目前版本，啟動前再核對檔案，
+// 所以捷徑與外殼都不必指向某個版本的路徑。
+package settingsapp
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+
+	"git.biggo.com/0c/ime/internal/enginedir"
+	"git.biggo.com/0c/ime/internal/update"
+)
+
+// hiddenPages 是開發中、還沒列進用法的頁面（0.2.0 的「我的詞彙」，#125）。舊版設定程式不認得時開總覽。
+var hiddenPages = []string{"vocab"}
+
+// Pages 是可以指定開啟的頁面；不認得的名稱開總覽。
+var Pages = []string{"overview", "input", "update", "troubleshoot", "about"}
+
+// Page 回傳白名單內的頁面名稱。
+func Page(name string) string {
+	for _, p := range append(Pages, hiddenPages...) {
+		if p == name {
+			return p
+		}
+	}
+	return Pages[0]
+}
+
+// 來源。
+const (
+	SourceCore    = "core"    // 目前核心版本目錄
+	SourceInstall = "install" // 完整安裝的副本
+)
+
+// ErrNotFound：這個安裝沒有設定程式（舊版套件，或這個平台還沒出貨）。
+var ErrNotFound = errors.New("這個安裝沒有附設定程式")
+
+type Location struct {
+	Path   string
+	Source string
+}
+
+// Locate 找出可以啟動的設定程式：先看目前核心版本目錄（核心更新帶來的較新版本），沒有或核對不過
+// 再用完整安裝的副本。installed 與 installedSHA256 是安裝位置與安裝收據記錄的雜湊（可為空）。
+// 找到的檔案一定通過 Verify；找不到時回傳 ErrNotFound，找到但核對不過時回傳原因。
+func Locate(base, installed, installedSHA256 string) (Location, error) {
+	var problems []error
+	if dir, ok := enginedir.Dir(base); ok {
+		path := filepath.Join(dir, enginedir.SettingsExecutable())
+		if _, err := os.Lstat(path); err == nil {
+			hashes, err := enginedir.ReadFiles(dir)
+			if err == nil {
+				err = Verify(path, hashes[enginedir.SettingsExecutable()])
+			}
+			if err == nil {
+				return Location{Path: path, Source: SourceCore}, nil
+			}
+			problems = append(problems, fmt.Errorf("核心版本目錄的設定程式：%w", err))
+		}
+	}
+	if installed != "" {
+		if _, err := os.Lstat(installed); err == nil {
+			if err := Verify(installed, installedSHA256); err != nil {
+				problems = append(problems, fmt.Errorf("安裝位置的設定程式：%w", err))
+			} else {
+				return Location{Path: installed, Source: SourceInstall}, nil
+			}
+		}
+	}
+	if len(problems) > 0 {
+		return Location{}, errors.Join(problems...)
+	}
+	return Location{}, ErrNotFound
+}
+
+// Verify 確認檔案是目前使用者擁有的一般可執行檔、其他人不能改，且雜湊與記錄相符。
+// 沒有記錄的雜湊就無從核對，視為不可啟動。
+func Verify(path, want string) error {
+	if want == "" {
+		return errors.New("沒有可核對的雜湊記錄")
+	}
+	st, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !st.Mode().IsRegular() {
+		return errors.New("不是一般檔案")
+	}
+	if runtime.GOOS != "windows" {
+		if st.Mode().Perm()&0o111 == 0 {
+			return errors.New("沒有執行權限")
+		}
+		if st.Mode().Perm()&0o022 != 0 {
+			return errors.New("群組或其他人可以修改")
+		}
+		if !ownedByCurrentUser(st) {
+			return errors.New("不屬於目前使用者")
+		}
+	}
+	got, err := update.Hash(path)
+	if err != nil {
+		return err
+	}
+	if got != want {
+		return errors.New("雜湊與記錄不符")
+	}
+	return nil
+}

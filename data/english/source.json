@@ -1,0 +1,50 @@
+{
+  "source": {
+    "name": "English Speller Database (ESDB / SCOWL)",
+    "version": "2026.02.25 (7e99edab8e32f9f9ea2b15f249ca8d4d67237410)",
+    "url": "https://github.com/en-wl/wordlist/tree/7e99edab8e32f9f9ea2b15f249ca8d4d67237410",
+    "sha256": "770dd3e42d20b47bb2dd87d150db4ee5472841a7f062876592f67840f5a0b902",
+    "license": "ESDB Copyright (MIT-like; full upstream text in LICENSE.txt)",
+    "attribution": "Copyright 2000-2026 Kevin Atkinson; special credit Alan Beale (12dicts / ENABLE2K)"
+  },
+  "normalized_sha256": "0bc3e0c846d49a6b89e089ea2fad325416b6d968752372b77b4a3627dbfb14d4",
+  "license_sha256": "090575a131b4260926c7a6b30a90aca0f5db5fbb5c46778e0c5855227bf6ebc3",
+  "words": 82000,
+  "exports": [
+    {
+      "size": 10,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "file": "10.txt"
+    },
+    {
+      "size": 20,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "file": "20.txt"
+    },
+    {
+      "size": 35,
+      "sha256": "d9d2b97959b962915aae128fe7695fd73cc89564a1b61aac19affc0d884d71c4",
+      "file": "35.txt"
+    },
+    {
+      "size": 40,
+      "sha256": "49eed572cae6d2d68fb59054effd60002503be711b8b0de478e26774e24ddade",
+      "file": "40.txt"
+    },
+    {
+      "size": 50,
+      "sha256": "700b9b422b85aba73d6645c37826bb393e86bdf137b5d47119553bffdf67e6ff",
+      "file": "50.txt"
+    },
+    {
+      "size": 55,
+      "sha256": "700b9b422b85aba73d6645c37826bb393e86bdf137b5d47119553bffdf67e6ff",
+      "file": "55.txt"
+    },
+    {
+      "size": 60,
+      "sha256": "b95f493cc474b4dfb77067cc438a4cf76db1516727b4a6a21f7b69de7e1d1bef",
+      "file": "60.txt"
+    }
+  ]
+}
