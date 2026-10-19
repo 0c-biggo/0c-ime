@@ -2034,6 +2034,8 @@ Successfully verified: 0c-update.exe
         self.assertIn("TERMS.md", text)
         self.assertIn("LICENSE", text)
         self.assertIn("legal/README.md", text)
+        self.assertIn("OpenCC ver.1.4.2", text)  # 輸出簡體字的字典編在 0c-server 裡（#118）
+        self.assertIn("Apache License", text)
 
     def test_versions_match_updater_constraints(self):
         for version in ("0.1.0", "1.2.3-beta.1", "1.0.0-rc.10"):

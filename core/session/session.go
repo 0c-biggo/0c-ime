@@ -20,6 +20,7 @@ import (
 	"git.biggo.com/0c/ime/core/punct"
 	"git.biggo.com/0c/ime/core/rerank"
 	"git.biggo.com/0c/ime/core/suggest"
+	"git.biggo.com/0c/ime/core/zhconv"
 	"git.biggo.com/0c/ime/core/zhuyin"
 )
 
@@ -94,6 +95,9 @@ type Session struct {
 	Punct punct.Punctuator
 	// Fuzzy 由宿主依使用者設定：逐對啟用的模糊音；零值全部關閉，行為與沒有此功能時相同。
 	Fuzzy fuzzy.Config
+	// Simplified 由宿主依「輸出簡體字」設定（#118）：送出給應用程式的文字轉成簡體，nil 照原樣送出繁體。
+	// 組字區、候選、學習、補標點與前文都維持繁體，只有 Snapshot.Commit 改變。
+	Simplified *zhconv.Converter
 	// MixedInput is opt-in; English is a shared, immutable vocabulary.
 	EnglishAutocomplete   bool
 	MixedInput            bool
@@ -346,6 +350,7 @@ func (s *Session) Handle(r proto.Request) proto.Snapshot {
 		s.paletteCommit = false
 		s.refresh()
 		commit = s.snapshot().Text() // direct palette output is exact; no punctuation/model rewrite.
+		commit = s.output(commit, commit, s.readingPins(commit))
 		s.reset()
 	}
 	s.refresh()
@@ -1210,6 +1215,7 @@ func (s *Session) commit() string {
 		s.refresh()
 	} // 神經模式提交已顯示路徑；Enter 不啟動推論或接受其他欄位的模型更新。
 	text := s.snapshot().Text() // 未完成注音可能在句中，依畫面位置提交。
+	pins := s.readingPins(text)
 	ev := personal.Commit{Syls: s.syls, Rejected: s.rejected}
 	for _, g := range s.path {
 		if s.literals[g.Start] {
@@ -1234,6 +1240,7 @@ func (s *Session) commit() string {
 	if s.mixedInput() && !s.paused && !s.private && !s.localBlocked {
 		s.model.LearnEnglish(s.mixedEnglishCommits())
 	}
+	shown := text
 	text = s.punctuate(text)
 	tail := s.committedTail()
 	neural := s.neuralCommitContext(text)
@@ -1246,7 +1253,69 @@ func (s *Session) commit() string {
 		s.pendingNeural = neural
 		s.pendingContextID = uint64(s.rev + 1)
 	}
-	return text
+	return s.output(shown, text, pins) // 學習與前文都用上面的繁體
+}
+
+// readingPins 找出提交文字中讀音能決定簡體寫法的字（zhconv.Pin），以 text 的字元位置為鍵。
+// 只在 text 正好是路徑上各詞依序接起來時才找（未打完的注音夾在句中等情況位置對不上，交給 OpenCC）。
+func (s *Session) readingPins(text string) map[int]string {
+	if s.Simplified == nil || len(s.path) == 0 {
+		return nil
+	}
+	var pins map[int]string
+	var joined strings.Builder
+	at := 0
+	for _, g := range s.path {
+		runes := []rune(g.Word)
+		joined.WriteString(g.Word)
+		reading := s.syls[g.Start:min(g.End, len(s.syls))]
+		if g.Matched != "" {
+			reading = zhuyin.ParseReading(g.Matched) // 近音到達的詞，用詞庫的讀音
+		}
+		if !s.literals[g.Start] && len(reading) == len(runes) {
+			for k, c := range runes {
+				if out, ok := zhconv.Pin(c, string(reading[k])); ok {
+					if pins == nil {
+						pins = map[int]string{}
+					}
+					pins[at+k] = out
+				}
+			}
+		}
+		at += len(runes)
+	}
+	if joined.String() != text {
+		return nil
+	}
+	return pins
+}
+
+// output 是真正送出的文字：開啟「輸出簡體字」時轉成簡體。shown 是補標點前的文字（pins 的位置以它為準），
+// text 是補過標點的文字；補標點只在兩個漢字之間插入，原本的字在 text 裡依序都還在。
+func (s *Session) output(shown, text string, pins map[int]string) string {
+	if s.Simplified == nil || text == "" {
+		return text
+	}
+	if len(pins) > 0 && shown != text {
+		moved := map[int]string{}
+		a, b := []rune(shown), []rune(text)
+		j := 0
+		for i := range a {
+			for j < len(b) && b[j] != a[i] {
+				j++
+			}
+			if j == len(b) {
+				moved = nil
+				break
+			}
+			if p, ok := pins[i]; ok {
+				moved[j] = p
+			}
+			j++
+		}
+		pins = moved
+	}
+	return s.Simplified.ConvertPinned(text, pins)
 }
 
 // punctuate 在提交時補標點。學習已依原路徑完成，插入的標點只影響送出的文字與之後的前文。

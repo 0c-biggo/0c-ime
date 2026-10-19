@@ -9,6 +9,7 @@ import (
 	"git.biggo.com/0c/ime/core/lexicon"
 	"git.biggo.com/0c/ime/core/lm"
 	"git.biggo.com/0c/ime/core/proto"
+	"git.biggo.com/0c/ime/core/zhconv"
 	"git.biggo.com/0c/ime/core/zhuyin"
 )
 
@@ -90,6 +91,22 @@ func TestOpenSessionCarriesAdvanceAfterSelect(t *testing.T) {
 	e.AdvanceAfterSelect = true
 	if !e.Session(e.OpenSession()).AdvanceAfterSelect {
 		t.Fatal("session 沒有帶到選字後游標後移的設定")
+	}
+}
+
+// #118：使用者開啟「輸出簡體字」時，之後開的每個 session 都用同一個轉換器；預設送出繁體。
+func TestOpenSessionCarriesSimplified(t *testing.T) {
+	e := testEngine()
+	if e.Session(e.OpenSession()).Simplified != nil {
+		t.Fatal("預設送出繁體")
+	}
+	conv, err := zhconv.TW2S(zhconv.Data{CJKCompatibility: "\uF900\t豈\n", TWVariants: "着\t著\n", TWVariantsRevPhrases: "什么\t什麼\n", TSPhrases: "計畫\t计划\n", TSCharacters: "計\t计\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.Simplified = conv
+	if e.Session(e.OpenSession()).Simplified != conv {
+		t.Fatal("session 沒有帶到簡體轉換器")
 	}
 }
 

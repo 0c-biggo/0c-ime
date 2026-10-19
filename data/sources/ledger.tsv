@@ -17,3 +17,4 @@ moe-schools	教育部統計處學校名錄：大專校院、一般高級中等�
 nhi-hospitals	健保署特約醫事機構：醫學中心、區域醫院、地區醫院	https://data.gov.tw/dataset/39280（39281、39282 同）	2026-10-17 下載，sha256 5a242a69f8090096…、41d5848b72202632…、f6c4dca80ca0419c…	政府資料開放授權條款第1版	yes	衛生福利部中央健康保險署
 moi-villages	內政部村里戶數、單一年齡人口（村里名稱）	https://data.gov.tw/dataset/77132	2026-10-17 下載（114 年 3 月），sha256 2a4b02ebafe8a128…	政府資料開放授權條款第1版	yes	內政部
 gov-agencies	筆硯公文製作通訊錄（機關名稱）	https://data.gov.tw/dataset/38403	2026-10-17 下載，sha256 78e2f069582c2eed…	政府資料開放授權條款第1版	yes	國家發展委員會檔案管理局
+opencc	OpenCC 簡繁轉換字典（tw2s 用的 TSCharacters、TSPhrases、TWVariants、TWVariantsRevPhrases、CJK_Compatibility_Ideographs；「輸出簡體字」送出時轉換，原文放在 internal/simplified/opencc、編在 0c-server 裡，不進詞庫與資料包）	https://github.com/BYVoid/OpenCC	ver.1.4.2，commit 025f371dc76b598d77384fbdab90c937471844d8	Apache-2.0	yes	Copyright 2010-2026 Carbo Kuo and contributors

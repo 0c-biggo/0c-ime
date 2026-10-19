@@ -18,6 +18,7 @@ import (
 	"git.biggo.com/0c/ime/core/personal"
 	"git.biggo.com/0c/ime/core/proto"
 	"git.biggo.com/0c/ime/internal/datadir"
+	"git.biggo.com/0c/ime/internal/simplified"
 )
 
 const help = `直接輸入按鍵（預設標準注音排列，-keyboard-layout eten 為倚天 41 鍵；空白鍵是一聲），按 Enter 送出這一行的按鍵。
@@ -44,6 +45,7 @@ func main() {
 	emojiEqualsFirst := flag.Bool("emoji-equals-first", true, "將 = 放在 Emoji 第一項；關閉仍可按 == 輸入等號")
 	escClear := flag.Bool("esc-clear", true, "按 Esc 清除整段組字；關閉時只清未打完的注音")
 	advanceAfterSelect := flag.Bool("advance-after-select", false, "選字後游標移到所選詞後面（前方模式往後移一個字）。重播需使用相同開關")
+	outputSimplified := flag.Bool("output-simplified", false, "送出時轉成簡體字（組字與候選仍是繁體）")
 	spaceSelects := flag.Bool("space-selects", true, "注音打完按空白選字；關閉時空白輸入空格、↓ 選字。重播需使用相同開關")
 	keyboardLayout := flag.String("keyboard-layout", "standard", "鍵盤排列：standard 或 eten（倚天 41 鍵，停用混打與 = 開 Emoji）。重播需使用相同排列")
 	flag.Parse()
@@ -65,6 +67,10 @@ func main() {
 	eng.EscKeepComposition = !*escClear
 	eng.SpaceInsertsSpace = !*spaceSelects
 	eng.AdvanceAfterSelect = *advanceAfterSelect
+	if *outputSimplified {
+		eng.Simplified, err = simplified.TW2S()
+		check(err)
+	}
 	kb, ok := layout.ByName(*keyboardLayout)
 	if !ok {
 		check(fmt.Errorf("未知鍵盤排列 %q（standard、eten）", *keyboardLayout))
@@ -113,6 +119,9 @@ func main() {
 		}
 		if *advanceAfterSelect {
 			fmt.Fprintln(rec, "# 重播需要相同的選字後游標設定：0c-cli -advance-after-select")
+		}
+		if *outputSimplified {
+			fmt.Fprintln(rec, "# 重播需要相同的簡體輸出設定：0c-cli -output-simplified")
 		}
 		if !*spaceSelects {
 			fmt.Fprintln(rec, "# 重播需要相同的空白鍵設定：0c-cli -space-selects=false")
