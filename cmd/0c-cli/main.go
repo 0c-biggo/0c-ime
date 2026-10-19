@@ -47,6 +47,7 @@ func main() {
 	advanceAfterSelect := flag.Bool("advance-after-select", false, "選字後游標移到所選詞後面（前方模式往後移一個字）。重播需使用相同開關")
 	outputSimplified := flag.Bool("output-simplified", false, "送出時轉成簡體字（組字與候選仍是繁體）")
 	spaceSelects := flag.Bool("space-selects", true, "注音打完按空白選字；關閉時空白輸入空格、↓ 選字。重播需使用相同開關")
+	selectionKeys := flag.String("selection-keys", "1234567890", "選字鍵：1234567890、1234qweras 或 asdfghjkl;（數字仍照位置選字）。重播需使用相同選字鍵")
 	keyboardLayout := flag.String("keyboard-layout", "standard", "鍵盤排列：standard 或 eten（倚天 41 鍵，停用混打與 = 開 Emoji）。重播需使用相同排列")
 	flag.Parse()
 
@@ -71,6 +72,10 @@ func main() {
 		eng.Simplified, err = simplified.TW2S()
 		check(err)
 	}
+	if *selectionKeys != "1234567890" && *selectionKeys != "1234qweras" && *selectionKeys != "asdfghjkl;" {
+		check(fmt.Errorf("未知選字鍵 %q", *selectionKeys))
+	}
+	eng.SelectionKeys = *selectionKeys
 	kb, ok := layout.ByName(*keyboardLayout)
 	if !ok {
 		check(fmt.Errorf("未知鍵盤排列 %q（standard、eten）", *keyboardLayout))
@@ -125,6 +130,9 @@ func main() {
 		}
 		if !*spaceSelects {
 			fmt.Fprintln(rec, "# 重播需要相同的空白鍵設定：0c-cli -space-selects=false")
+		}
+		if *selectionKeys != "1234567890" {
+			fmt.Fprintf(rec, "# 重播需要相同的選字鍵：0c-cli -selection-keys '%s'\n", *selectionKeys)
 		}
 		if kb != layout.Standard {
 			fmt.Fprintf(rec, "# 重播需要相同的鍵盤排列：0c-cli -keyboard-layout %s\n", *keyboardLayout)

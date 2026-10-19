@@ -52,7 +52,7 @@ func allItems(s *Session) []proto.CandidateItem {
 	}
 	s.cand.cursor = 0
 	for i := range items {
-		items[i].ID = 0 // 兩張清單的 ID 起點不同，比對內容就好
+		items[i].ID, items[i].Key = 0, "" // 兩張清單的 ID 起點與頁內位置不同，比對內容就好
 	}
 	return items
 }

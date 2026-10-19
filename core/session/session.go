@@ -128,6 +128,9 @@ type Session struct {
 	// 後方模式游標移到所選詞的結尾，前方模式往後移一個字（同新酷音 autoShiftCur），句尾時不動。
 	// 零值游標留在原處。符號、Emoji 與原樣注音本來就插入在游標處、游標停在它們後面，不受影響。
 	AdvanceAfterSelect bool
+	// SelectionKeys 由宿主依使用者設定（#112）：候選窗每一頁第 1–10 項的選字鍵，例如 1234qweras。
+	// 空字串或不合用的值為 1234567890。數字 1–0 不論設定都照位置選字。
+	SelectionKeys string
 	// Preview02 打開時處理 0.2.0 的按鍵（組字中加詞、反悔鍵、「我的片語」，#128）；0.2.0 起宿主一律打開。
 	// 零值時這些按鍵照舊回 handled=false 交還應用程式，行為與沒有此功能時相同（測試用它確認這一點）。
 	Preview02    bool
@@ -470,8 +473,7 @@ func (s *Session) key(k string) (handled bool, commit string) {
 		case proto.KeyTab:
 			s.nextCandidateLength() // 不必走過所有單字候選才能改選長詞
 		default:
-			if len(k) == 1 && k[0] >= '0' && k[0] <= '9' {
-				n := (int(k[0]-'0') + 9) % 10 // 1..9,0 → 第 0..9 項
+			if n := s.selectionIndex(k); n >= 0 {
 				s.selectCandidate(s.candidateID(s.cand.page()*perPage + n))
 			}
 		}
@@ -1483,6 +1485,9 @@ func (s *Session) snapshot() proto.Snapshot {
 			}
 			if id < len(s.cand.labels) && s.cand.keyLiterals[id] == "" {
 				item.Label = s.cand.labels[id]
+			}
+			if !s.cand.english { // 英文補字只能按 Tab 接受（#112）
+				item.Key = string(s.selectionKeys()[id-lo])
 			}
 			cl.Items = append(cl.Items, item)
 		}

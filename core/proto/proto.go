@@ -124,6 +124,10 @@ type CandidateItem struct {
 	Note string `json:"note,omitempty"`
 	// Label 是候選的顯示原因，不參與排序；未知值可忽略。近音候選優先顯示 Note。
 	Label string `json:"label,omitempty"`
+	// Key 是這一項的選字鍵（#112），外殼照著畫成鍵標（1、q、;）。預設是 1–0；使用者可改成 1234qweras
+	// 或 asdfghjkl;，這時數字 1–0 仍照位置選字。英文模式的自動補字候選只能按 Tab 接受，沒有 Key、不畫鍵標。
+	// 舊核心沒有這個欄位：外殼退回依位置畫 1–0（英文模式不畫）。
+	Key string `json:"key,omitempty"`
 }
 
 const (

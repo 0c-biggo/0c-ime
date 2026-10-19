@@ -23,6 +23,36 @@ var selected: Int?
 panel.choose = { selected = $0 }
 buttons[1].performClick(nil)
 precondition(selected == 23, "click must send the engine ID, not the row index")
+// 舊引擎沒有 key：依位置畫 1、2（#112）。Tab 補全提示跟候選同字級（#118）。
+precondition(buttons[0].title == "1  麻婆" && buttons[1].title == "2  媽婆", "legacy payload numbers rows by position")
+let suggestionField = descendants(panel.contentView!, of: NSTextField.self).first { $0.accessibilityIdentifier() == "suggestion" }
+precondition(suggestionField?.stringValue == "⇥ 豆腐", "suggestion line shows the completion")
+let suggestionFont = suggestionField?.attributedStringValue.attribute(.font, at: 2, effectiveRange: nil) as? NSFont
+precondition(suggestionFont?.pointSize == 18, "suggestion uses the candidate font size, not the 13pt label default")
+if CommandLine.arguments.count > 1, let view = panel.contentView, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+    view.cacheDisplay(in: view.bounds, to: bitmap)
+    if let png = bitmap.representation(using: .png, properties: [:]) {
+        try png.write(to: URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("suggestion.png"))
+    }
+}
+// #112：引擎給的選字鍵照畫（1234qweras 的第 5 項是 q）；英文模式的補字候選不畫鍵標。
+let keyed = try JSONDecoder().decode(Snapshot.self, from: Data(#"{"handled":true,"cursor":{"utf16":1},"mode":"zhuyin","candidates":{"items":[{"id":1,"text":"是","key":"1"},{"id":2,"text":"事","key":"2"},{"id":3,"text":"市","key":"3"},{"id":4,"text":"試","key":"4"},{"id":5,"text":"式","key":"q"},{"id":6,"text":"世","key":"w"},{"id":7,"text":"室","key":"e"},{"id":8,"text":"士","key":"r"},{"id":9,"text":"視","key":"a"},{"id":10,"text":"示","key":"s"}],"page":0,"pages":2,"highlight":0}}"#.utf8))
+panel.show(keyed, at: NSRect(x: bounds.minX + 40, y: bounds.minY + 40, width: 1, height: 20))
+panel.contentView!.layoutSubtreeIfNeeded()
+let keyedRows = descendants(panel.contentView!, of: NSButton.self)
+precondition(keyedRows.map { String($0.title.prefix(1)) } == ["1", "2", "3", "4", "q", "w", "e", "r", "a", "s"], "rows show the engine's selection keys")
+if CommandLine.arguments.count > 1, let view = panel.contentView, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+    view.cacheDisplay(in: view.bounds, to: bitmap)
+    if let png = bitmap.representation(using: .png, properties: [:]) {
+        try png.write(to: URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("selection-keys.png"))
+    }
+}
+let tenth = try JSONDecoder().decode(Snapshot.self, from: Data(#"{"handled":true,"cursor":{"utf16":1},"mode":"zhuyin","candidates":{"items":[{"id":1,"text":"一"},{"id":2,"text":"二"},{"id":3,"text":"三"},{"id":4,"text":"四"},{"id":5,"text":"五"},{"id":6,"text":"六"},{"id":7,"text":"七"},{"id":8,"text":"八"},{"id":9,"text":"九"},{"id":10,"text":"十"}],"page":0,"pages":1,"highlight":0}}"#.utf8))
+precondition(tenth.candidateKey(9) == "0", "legacy tenth row is 0, the key that selects it")
+let completion = try JSONDecoder().decode(Snapshot.self, from: Data(#"{"handled":true,"cursor":{"utf16":3},"mode":"english","preedit":[{"text":"hel","style":"normal"}],"candidates":{"items":[{"id":0,"text":"hello"},{"id":1,"text":"help"}],"page":0,"pages":1,"highlight":0,"title":"按 Tab 補全或修正拼字 · Esc 關閉"}}"#.utf8))
+panel.show(completion, at: NSRect(x: bounds.minX + 40, y: bounds.minY + 40, width: 1, height: 20))
+panel.contentView!.layoutSubtreeIfNeeded()
+precondition(descendants(panel.contentView!, of: NSButton.self).map(\.title) == ["hello", "help"], "English completions have no key labels")
 
 // Grids retain stable engine IDs and actual row/column geometry. Cache the
 // rendered NSView only when an explicit output directory is supplied.

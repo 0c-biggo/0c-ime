@@ -25,6 +25,15 @@ static int failures = 0;
 
 int main(int argc, char **argv) {
     {
+        // #112：鍵標照核心給的 key；舊核心沒有時依位置 1–0（第 10 項是 0），英文模式的補字候選不畫。
+        using nlohmann::json;
+        CHECK(zuin::candidateKey(json{{"key", "q"}}, 4, false) == "q", "核心給的選字鍵");
+        CHECK(zuin::candidateKey(json{{"key", ";"}}, 9, true) == ";", "有 key 時照畫");
+        CHECK(zuin::candidateKey(json{{"text", "是"}}, 0, false) == "1" && zuin::candidateKey(json{{"text", "是"}}, 9, false) == "0",
+              "舊核心依位置 1–0");
+        CHECK(zuin::candidateKey(json{{"text", "hello"}}, 0, true).empty(), "舊核心的英文補字不畫鍵標");
+    }
+    {
         zuin::ShiftTap tap, other;
         CHECK(!tap.key(false, false, false) && !tap.key(false, true, false), "左 Shift 不應切換");
         CHECK(!tap.key(true, false, false) && tap.key(true, true, false), "右 Shift 單按應切換");
@@ -270,6 +279,8 @@ int main(int argc, char **argv) {
               snap.candidateNotes.empty() ? "" : snap.candidateNotes[0].c_str());
         CHECK(!snap.candidates.empty() && snap.candidates.back().second == "ㄘ" && snap.candidateNotes.back().empty(),
               "原樣注音應在最後且沒有附註");
+        CHECK(snap.candidateKeys.size() == snap.candidates.size() && snap.candidateKeys[0] == "1" && snap.candidateKeys[1] == "2",
+              "鍵標由核心給，預設 1–0（#112）");
         snap = s.key("1");
         CHECK(snap.text() == "吃" && snap.commit.empty(), "選近音不應提交：%s", snap.text().c_str());
         CHECK(s.key("Enter").commit == "吃", "確認近音選字");

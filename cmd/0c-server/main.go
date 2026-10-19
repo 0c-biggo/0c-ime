@@ -135,6 +135,7 @@ func main() {
 			eng.Simplified = conv
 		}
 	}
+	eng.SelectionKeys = config.SelectionKeys // #112
 	// 0.2.0 正式開放（#128）：引擎的欄位留著，零值給測試確認關閉時行為不變。
 	eng.Preview02 = true
 	eng.SharedMode = config.ModeMemory == settings.ModeShared // #115
@@ -316,7 +317,7 @@ func main() {
 		"neural_startup_state": neuralState, "personal_store": personalState, "personal_lock": lockState,
 		"selection_setting": config.Selection, "punctuation": fmt.Sprint(eng.Punct != nil), "document_context": fmt.Sprint(config.DocumentContext),
 		"fuzzy": eng.Fuzzy.Key(), "mixed_input": fmt.Sprint(config.MixedInput), "english_autocomplete": fmt.Sprint(config.EnglishAutocomplete), "left_shift": fmt.Sprint(config.TogglesLeft()), "right_shift": fmt.Sprint(config.TogglesRight()), "toggle_key": config.ToggleKey, "shift_tap_ms": "300", "mode_memory": config.ModeMemory, "start_mode": config.StartMode, "esc_clear": fmt.Sprint(config.EscClear), "space_selects": fmt.Sprint(config.SpaceSelects), "advance_after_select": fmt.Sprint(config.AdvanceAfterSelect), "output_simplified": fmt.Sprint(eng.Simplified != nil),
-		"candidate_cursor": config.CandidateCursor, "candidate_layout": config.CandidateLayout, "emoji_shortcut": config.EmojiShortcut, "emoji_equals_first": fmt.Sprint(config.EmojiEqualsFirst),
+		"selection_keys": config.SelectionKeys, "candidate_cursor": config.CandidateCursor, "candidate_layout": config.CandidateLayout, "emoji_shortcut": config.EmojiShortcut, "emoji_equals_first": fmt.Sprint(config.EmojiEqualsFirst),
 		"keyboard_layout": config.KeyboardLayout, "preview_0_2": fmt.Sprint(eng.Preview02), "vocab_state": vocabState,
 		// #123：外殼據此決定要不要把組字中的 Shift＋←／→、候選窗的 Shift＋Delete／⌫ 送給引擎。
 		"vocab_keys": fmt.Sprint(eng.Preview02 && vocabDisabled == ""),

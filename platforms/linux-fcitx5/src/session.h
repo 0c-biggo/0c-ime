@@ -13,6 +13,13 @@ struct Segment {
     std::string text, style; // style：normal、locked、corrected、partial、pending、marked、reading
 };
 
+// candidateKey 是候選第 index 項的鍵標（#112）：核心給的 key（1、q、;）；舊核心沒有這個欄位時依位置 1–0，
+// 英文模式（只有自動補字候選，數字在那裡是文字）不畫。
+inline std::string candidateKey(const nlohmann::json &item, size_t index, bool english) {
+    if (item.contains("key") && item["key"].is_string()) { return item["key"].get<std::string>(); }
+    return english ? std::string() : std::to_string((index + 1) % 10);
+}
+
 struct Snapshot {
     bool ok = false;      // false：server 不可用，呼叫端應放行按鍵
     bool handled = false; // false：把原始按鍵交還應用程式
@@ -22,6 +29,8 @@ struct Snapshot {
     std::string suggestion;
     std::vector<std::pair<int, std::string>> candidates; // （ID, 文字），目前這一頁
     std::vector<std::string> candidateNotes; // 與 candidates 等長的低調附註；模糊音近音為「近音 ㄓ ㄕˋ」，其餘為空字串
+    // 與 candidates 等長的鍵標（#112）：核心給的選字鍵（1、q、;）；舊核心沒有時依位置 1–0，英文模式的補字候選為空字串（不畫）。
+    std::vector<std::string> candidateKeys;
     int page = 0, pages = 0;
     int highlight = 0; // 反白的候選在 candidates 裡的索引
 	std::string candidateTitle;

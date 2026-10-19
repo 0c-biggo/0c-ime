@@ -34,6 +34,7 @@ type Engine struct {
 	SpaceInsertsSpace     bool              // 使用者關閉「空白鍵選字」時由宿主設定。
 	AdvanceAfterSelect    bool              // 使用者開啟「選字後游標移到下一個字」時由宿主設定（#133）。
 	Simplified            *zhconv.Converter // 使用者開啟「輸出簡體字」時由宿主設定（#118）；nil 送出繁體。
+	SelectionKeys         string            // 使用者選的選字鍵（#112）；空字串為 1234567890。
 	Fuzzy                 fuzzy.Config      // 使用者逐對啟用的模糊音；零值全部關閉。
 	EnglishAutocomplete   bool
 	MixedInput            bool                // opt-in bilingual keys; disabled preserves legacy behavior.
@@ -84,6 +85,7 @@ func (e *Engine) OpenSession() uint64 {
 	e.sessions[e.next].SpaceInsertsSpace = e.SpaceInsertsSpace
 	e.sessions[e.next].AdvanceAfterSelect = e.AdvanceAfterSelect
 	e.sessions[e.next].Simplified = e.Simplified
+	e.sessions[e.next].SelectionKeys = e.SelectionKeys
 	e.sessions[e.next].Fuzzy = e.Fuzzy
 	e.sessions[e.next].EnglishAutocomplete = e.EnglishAutocomplete
 	e.sessions[e.next].MixedInput = e.MixedInput

@@ -402,6 +402,7 @@ impl TextService_Impl {
                     id: *id,
                     text: text.clone(),
                     note: snapshot.candidate_notes.get(i).cloned().unwrap_or_default(),
+                    key: Some(snapshot.candidate_keys.get(i).cloned().unwrap_or_default()),
                 })
                 .collect(),
             highlight: snapshot.highlight,
@@ -1337,7 +1338,7 @@ mod layout_tests {
         assert!(!drop_expired_notice(&mut m, expired));
         // 有候選時只拿掉提示，候選照常移位置。
         let mut m = UiMessage {
-            candidates: vec![UiCandidate { id: 1, text: "世傑".into(), note: String::new() }],
+            candidates: vec![UiCandidate { id: 1, text: "世傑".into(), ..Default::default() }],
             ..notice.clone()
         };
         assert!(drop_expired_notice(&mut m, expired));

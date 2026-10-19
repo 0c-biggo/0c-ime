@@ -324,6 +324,7 @@ Snapshot Session::parse(const nlohmann::json &reply) {
         s.highlight = c.value("highlight", 0);
 		s.candidateTitle = c.value("title", "");
         for (const auto &it : c["items"]) {
+            s.candidateKeys.push_back(candidateKey(it, s.candidates.size(), s.english));
             s.candidates.emplace_back(it.value("id", 0), it.value("text", ""));
             s.candidateNotes.push_back(it.value("note", ""));
         }

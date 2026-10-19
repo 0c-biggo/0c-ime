@@ -82,8 +82,11 @@ type Settings struct {
 	EmojiEqualsFirst   bool   `json:"emoji_equals_first"`
 	KeyboardLayout     string `json:"keyboard_layout"` // standard（預設）或 eten（倚天 41 鍵，#83）
 	// OutputSimplified：送出時把繁體轉成簡體（#118）；組字、候選與學習仍是繁體。預設 false。
-	OutputSimplified bool  `json:"output_simplified"`
-	Fuzzy            Fuzzy `json:"fuzzy,omitzero"`
+	OutputSimplified bool `json:"output_simplified"`
+	// SelectionKeys 是候選窗的選字鍵（#112）：1234567890（預設，檔案沒有這個欄位時也是）、1234qweras 或 asdfghjkl;。
+	// 換成字母鍵時數字 1–0 仍照位置選字。
+	SelectionKeys string `json:"selection_keys"`
+	Fuzzy         Fuzzy  `json:"fuzzy,omitzero"`
 	// 0.2.0 開發期間的內部開關 preview_0_2（#128）已拿掉：自訂詞彙、加詞按鍵、「我的片語」、本機 API 等
 	// 入口 0.2.0 起所有人都有。舊檔裡的 preview_0_2 不論值為何都忽略，存檔時移除（retiredKeys）。
 
@@ -222,9 +225,16 @@ func (s Settings) FuzzyConfig() fuzzy.Config {
 }
 
 func Default() Settings {
-	return Settings{Selection: Neural, Punctuation: false, DocumentContext: true, CandidateCursor: defaultCandidateCursor(runtime.GOOS), CandidateLayout: "vertical", EmojiShortcut: "equals", EmojiEqualsFirst: true, EscClear: true, SpaceSelects: true, KeyboardLayout: LayoutStandard,
+	return Settings{Selection: Neural, Punctuation: false, DocumentContext: true, CandidateCursor: defaultCandidateCursor(runtime.GOOS), CandidateLayout: "vertical", EmojiShortcut: "equals", EmojiEqualsFirst: true, EscClear: true, SpaceSelects: true, KeyboardLayout: LayoutStandard, SelectionKeys: SelectDigits,
 		ToggleKey: defaultToggleKey(runtime.GOOS), ModeMemory: defaultModeMemory(runtime.GOOS), StartMode: StartZhuyin}
 }
+
+// 選字鍵（#112）。值就是依序對應第 1–10 項的鍵；不開放自訂。
+const (
+	SelectDigits = "1234567890"
+	SelectQwer   = "1234qweras"
+	SelectHome   = "asdfghjkl;"
+)
 
 // 中英切換鍵（#117）。
 const (
@@ -335,6 +345,7 @@ func (s *Settings) UnmarshalJSON(b []byte) error {
 		{"candidate_layout", &s.CandidateLayout, []string{"vertical", "grid"}},
 		{"emoji_shortcut", &s.EmojiShortcut, []string{"off", "equals"}},
 		{"keyboard_layout", &s.KeyboardLayout, []string{LayoutStandard, LayoutETen}},
+		{"selection_keys", &s.SelectionKeys, []string{SelectDigits, SelectQwer, SelectHome}},
 		{"toggle_key", &s.ToggleKey, []string{ToggleRight, ToggleBoth, ToggleLeft, ToggleNone}},
 		{"mode_memory", &s.ModeMemory, []string{ModeNative, ModeShared}},
 		{"start_mode", &s.StartMode, []string{StartZhuyin, StartEnglish}},
@@ -408,7 +419,7 @@ func (s Settings) MarshalJSON() ([]byte, error) {
 	for _, field := range []struct {
 		key   string
 		value any
-	}{{"selection", s.Selection}, {"punctuation", s.Punctuation}, {"document_context", s.DocumentContext}, {"mixed_input", s.MixedInput}, {"english_autocomplete", s.EnglishAutocomplete}, {"left_shift", s.LeftShift}, {"esc_clear", s.EscClear}, {"space_selects", s.SpaceSelects}, {"candidate_cursor", s.CandidateCursor}, {"advance_after_select", s.AdvanceAfterSelect}, {"candidate_layout", s.CandidateLayout}, {"emoji_shortcut", s.EmojiShortcut}, {"emoji_equals_first", s.EmojiEqualsFirst}, {"keyboard_layout", s.KeyboardLayout}, {"toggle_key", s.ToggleKey}, {"mode_memory", s.ModeMemory}, {"start_mode", s.StartMode}, {"output_simplified", s.OutputSimplified}} {
+	}{{"selection", s.Selection}, {"punctuation", s.Punctuation}, {"document_context", s.DocumentContext}, {"mixed_input", s.MixedInput}, {"english_autocomplete", s.EnglishAutocomplete}, {"left_shift", s.LeftShift}, {"esc_clear", s.EscClear}, {"space_selects", s.SpaceSelects}, {"candidate_cursor", s.CandidateCursor}, {"advance_after_select", s.AdvanceAfterSelect}, {"candidate_layout", s.CandidateLayout}, {"emoji_shortcut", s.EmojiShortcut}, {"emoji_equals_first", s.EmojiEqualsFirst}, {"keyboard_layout", s.KeyboardLayout}, {"selection_keys", s.SelectionKeys}, {"toggle_key", s.ToggleKey}, {"mode_memory", s.ModeMemory}, {"start_mode", s.StartMode}, {"output_simplified", s.OutputSimplified}} {
 		if err := typed(field.key, field.value); err != nil {
 			return nil, err
 		}
@@ -460,7 +471,7 @@ func (s Settings) notes() []string {
 	if s.extra != "" {
 		_ = json.Unmarshal([]byte(s.extra), &kept)
 	}
-	for _, key := range []string{"selection", "punctuation", "document_context", "mixed_input", "english_autocomplete", "left_shift", "esc_clear", "space_selects", "candidate_cursor", "advance_after_select", "candidate_layout", "emoji_shortcut", "emoji_equals_first", "keyboard_layout", "toggle_key", "mode_memory", "start_mode", "output_simplified"} {
+	for _, key := range []string{"selection", "punctuation", "document_context", "mixed_input", "english_autocomplete", "left_shift", "esc_clear", "space_selects", "candidate_cursor", "advance_after_select", "candidate_layout", "emoji_shortcut", "emoji_equals_first", "keyboard_layout", "selection_keys", "toggle_key", "mode_memory", "start_mode", "output_simplified"} {
 		if raw, ok := kept[key]; ok {
 			out = append(out, fmt.Sprintf("%s：本版不認得 %s，暫用預設值，存檔時保留原值", strings.ReplaceAll(key, "_", "-"), raw))
 			delete(kept, key)
@@ -608,6 +619,8 @@ func (s Settings) valueLabels(key string) map[string]string {
 		return map[string]string{ToggleRight: "右 Shift", ToggleBoth: "左右 Shift", ToggleLeft: "左 Shift", ToggleNone: "不用 Shift"}
 	case "start-mode":
 		return map[string]string{StartZhuyin: "注音", StartEnglish: "英文"}
+	case "selection-keys":
+		return map[string]string{SelectDigits: "1 2 3 4 5 6 7 8 9 0", SelectQwer: "1 2 3 4 q w e r a s", SelectHome: "a s d f g h j k l ;"}
 	case "mode-memory":
 		return map[string]string{ModeNative: modeNativeLabel(runtime.GOOS, s.StartsEnglish()), ModeShared: "全部共用同一個模式"}
 	}
@@ -665,6 +678,8 @@ func specs() []spec {
 		{"emoji-equals-first", "將 = 放在第一項", "關閉後，按兩次 == 可輸入一個 =", "on", []string{"on", "off"}, func(s Settings) string { return onOff(s.EmojiEqualsFirst) }},
 		{"keyboard-layout", "鍵盤排列", "注音鍵盤排列。倚天 41 鍵的 = 是 ㄦ、' 是 ㄘ，頓號改按 \\；這時不提供 Emoji 選單與中英混打", LayoutStandard, []string{LayoutStandard, LayoutETen},
 			func(s Settings) string { return s.KeyboardLayout }},
+		{"selection-keys", "選字鍵", "候選窗用哪一排鍵選第 1 到第 10 個字；換成字母鍵時，數字鍵仍可照位置選字", SelectDigits, []string{SelectDigits, SelectQwer, SelectHome},
+			func(s Settings) string { return s.SelectionKeys }},
 	}
 	for _, p := range fuzzy.Pairs() {
 		out = append(out, spec{"fuzzy-" + p.ID(), "模糊音 " + p.Symbols(), "把近音的字也列進候選，原音仍排在前面；「自動修正」（實驗）會在上下文明顯支持近音時另外自動改字", DefaultFuzzy, []string{"off", "select", "auto"},
@@ -871,6 +886,9 @@ func (s *Settings) Set(key, value string) error {
 	case "keyboard-layout":
 		s.KeyboardLayout = value
 		s.forget("keyboard_layout")
+	case "selection-keys":
+		s.SelectionKeys = value
+		s.forget("selection_keys")
 	case PreviewRetiredKey: // 已正式開放：不改任何東西
 	default:
 		p, _ := fuzzy.ParsePair(strings.TrimPrefix(key, "fuzzy-"))

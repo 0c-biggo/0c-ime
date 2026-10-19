@@ -259,6 +259,43 @@ func TestCandidatesAndMouseSelect(t *testing.T) {
 	}
 }
 
+// #112：候選表的鍵標照核心給的選字鍵；按 a 選第一項，數字照舊依位置選字。
+func TestSelectionKeysLabelAndSelect(t *testing.T) {
+	e, rec, sock := newTestEngine(t)
+	eng := toyEngine(t)
+	eng.SelectionKeys = "asdfghjkl;"
+	defer startServer(t, sock, eng)()
+	typeKeys(e, "ji3")
+	rec.take()
+	e.processKey(keyDown, 0, 0)
+	var lt ibusLookupTable
+	for _, s := range rec.take() {
+		if s.name == "UpdateLookupTable" {
+			lt = s.args[0].(dbus.Variant).Value().(ibusLookupTable)
+		}
+	}
+	if len(lt.Labels) < 2 || lt.Labels[0].Value().(ibusText).Text != "a" || lt.Labels[1].Value().(ibusText).Text != "s" {
+		t.Fatalf("鍵標 %#v", lt.Labels)
+	}
+	want := e.table[0]
+	typeKeys(e, "a")
+	if len(e.table) != 0 || e.preedit != want {
+		t.Fatalf("按 a 選第一項 %q：組字 %q、候選 %v", want, e.preedit, e.table)
+	}
+}
+
+func TestCandidateLabelFallback(t *testing.T) {
+	if candidateLabel(proto.CandidateItem{Key: "q"}, 4, false) != "q" || candidateLabel(proto.CandidateItem{Key: ";"}, 9, true) != ";" {
+		t.Fatal("核心給的選字鍵")
+	}
+	if candidateLabel(proto.CandidateItem{}, 0, false) != "1" || candidateLabel(proto.CandidateItem{}, 9, false) != "0" {
+		t.Fatal("舊核心依位置 1–0")
+	}
+	if candidateLabel(proto.CandidateItem{}, 0, true) != " " {
+		t.Fatal("英文補字不畫鍵標")
+	}
+}
+
 func TestRightShiftTogglesModeAndProperty(t *testing.T) {
 	e, rec, sock := newTestEngine(t)
 	defer startServer(t, sock, toyEngine(t))()

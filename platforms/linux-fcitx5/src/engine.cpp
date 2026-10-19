@@ -467,7 +467,8 @@ private:
             auto list = std::make_unique<fcitx::CommonCandidateList>();
             std::vector<std::string> labels;
             for (size_t i = 0; i < snap.candidates.size(); i++) {
-                labels.push_back(std::to_string((i + 1) % 10) + ". ");
+                const std::string key = i < snap.candidateKeys.size() ? snap.candidateKeys[i] : std::string();
+                labels.push_back(key.empty() ? std::string() : key + ". "); // 選字鍵由核心給（#112）
                 list->append<ZuinCandidate>(this, snap.candidates[i].second, snap.candidates[i].first,
                                             i < snap.candidateNotes.size() ? snap.candidateNotes[i] : std::string());
             }
