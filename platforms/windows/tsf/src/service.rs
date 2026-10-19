@@ -275,8 +275,14 @@ impl TextService_Impl {
         if !hotkey {
             return;
         }
+        // 不用 allowed()：它要同步唯讀鎖，Word、Outlook 收到熱鍵當下拒絕（TS_E_SYNCHRONOUS），被當成擋下的欄位，
+        // 不但沒切換還清掉組字狀態（#164）。切換不送按鍵、不讀文件，只在確定擋下的欄位不切換。
         let ctx = self.focused_context();
-        if self.allowed(ctx.as_ref()) {
+        let (secure, client, ui_less) = {
+            let st = self.state.borrow();
+            (st.secure, st.client_id, st.ui_less)
+        };
+        if !secure && privacy::hotkey_allowed(ctx.as_ref(), client, ui_less) {
             self.toggle_mode();
         }
     }

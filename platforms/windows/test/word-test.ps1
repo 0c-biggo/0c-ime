@@ -57,6 +57,7 @@ public static class WordProbe {
  }
  public static void Key(byte key) {keybd_event(key,0,0,UIntPtr.Zero);System.Threading.Thread.Sleep(30);keybd_event(key,0,2,UIntPtr.Zero);}
  public static void SelectAll() {keybd_event(0x11,0,0,UIntPtr.Zero);System.Threading.Thread.Sleep(30);Key(0x41);System.Threading.Thread.Sleep(30);keybd_event(0x11,0,2,UIntPtr.Zero);}
+ public static void CtrlSpace() {keybd_event(0x11,0x1D,0,UIntPtr.Zero);System.Threading.Thread.Sleep(60);keybd_event(0x20,0x39,0,UIntPtr.Zero);System.Threading.Thread.Sleep(60);keybd_event(0x20,0x39,2,UIntPtr.Zero);System.Threading.Thread.Sleep(60);keybd_event(0x11,0x1D,2,UIntPtr.Zero);}
 }
 '@
     $env:LOCALAPPDATA=$ResultDir
@@ -79,6 +80,7 @@ public static class WordProbe {
         if([WordProbe]::GetForegroundWindow() -ne $hwnd){throw 'Word test document lost focus'}
         if($keys -match '^[a-z0-9=]+$'){[WordProbe]::Latin($keys)}
         elseif($keys -eq '^a'){[WordProbe]::SelectAll()}
+        elseif($keys -eq '^{SPACE}'){[WordProbe]::CtrlSpace()}
         elseif($keys -eq '{ENTER}'){[WordProbe]::Key(13)}
         elseif($keys -eq '{ESC}'){[WordProbe]::Key(27)}
         elseif($keys -eq '{BACKSPACE}'){[WordProbe]::Key(8)}
@@ -111,6 +113,10 @@ public static class WordProbe {
     Send 'su3';Send '{ENTER}';Send 'su3';Send '{ENTER}';Expect '你你' 'word_consecutive_commits'
     ClearDocument
     Send '==';Expect '=' 'word_empty_emoji_double_equals'
+    ClearDocument
+    # 系統的輸入法開關熱鍵 Ctrl＋Space：Word 收到熱鍵當下不給同步鎖，0.2.0 沒有切換、還清掉組字狀態（#164）。
+    Send 'su3';Send '{ENTER}';Send '^{SPACE}';Send 'ab';Expect '你ab' 'word_ctrl_space_english'
+    Send '^{SPACE}';Send 'su3';Send '{ENTER}';Expect '你ab你' 'word_ctrl_space_back'
     ClearDocument
     $table=$doc.Tables.Add($word.Selection.Range,1,1)
     $table.Cell(1,1).Range.Select();$word.Selection.Collapse(1)
