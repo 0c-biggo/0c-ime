@@ -185,8 +185,9 @@ PY"
   xdotool key space
   sleep 3
   check "選字後游標開關可改回 off" grep -q '"advance_after_select": false' "$(settings_of live)"
-  # 選字排列（一組單選）之後是輸出簡體字，預設關閉（#118）。
-  xdotool key Tab Tab space
+  # 輸出簡體字在「輸出設定」一節，預設關閉（#118）：選字排列（一組單選）、Emoji 選單（一組單選）、
+  # 將 = 放在第一項、模糊音之後。
+  xdotool key Tab Tab Tab Tab Tab space
   sleep 3
   check "輸出簡體字開關可保存 on" grep -q '"output_simplified": true' "$(settings_of live)"
   import -window root "$OUT/output-simplified-on.png"
@@ -287,8 +288,9 @@ launch toggles input
 if window_up; then
   sleep 2.5
   import -window root "$OUT/toggles-before.png"
-  # 6 個導覽（含我的詞彙）、選字方式、補標點、前文、混打、英文補字、中英切換鍵、開始時的中英模式、切換視窗後的中英模式、Esc、空白選字、修改位置、選字後游標、排列、輸出簡體字 → Emoji（第21個）。
-  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab space
+  # 6 個導覽（含我的詞彙）、選字方式、補標點、前文、混打、英文補字、中英切換鍵、開始時的中英模式、切換視窗後的中英模式、Esc、空白選字、修改位置、選字後游標、排列 → Emoji（第20個）。
+  # 輸出簡體字在後面的「輸出設定」一節（模糊音之後），不在這段。
+  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab space
   check "預設啟用的 Emoji 開關可以關閉，保留未知設定" toggle_value emoji_off
   sleep 1
   xdotool key space
@@ -399,7 +401,7 @@ if window_up; then
   sleep 2.5
   import -window root "$OUT/eten-input.png"
   # 停用的混打、Emoji、等號首項不在 Tab 順序裡：6 個導覽（含我的詞彙）、選字方式、補標點、前文、英文補字、中英切換鍵、開始時的中英模式、
-  # 切換視窗後的中英模式、Esc、空白選字、修改位置、選字後游標、排列、輸出簡體字、模糊音 → 鍵盤排列（第21個），← 選標準。
+  # 切換視窗後的中英模式、Esc、空白選字、修改位置、選字後游標、排列、模糊音、輸出簡體字 → 鍵盤排列（第21個），← 選標準。
   xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab
   sleep 1
   import -window root "$OUT/eten-input-keyboard.png"
