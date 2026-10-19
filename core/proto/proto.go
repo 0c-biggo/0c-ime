@@ -27,6 +27,10 @@ const (
 	Mode       = "mode"       // On：設定中英模式（true 為英文）；外殼重連後用它還原模式
 	Toggle     = "toggle"     // 中英模式切換（單按 Shift）；Restore 見 Request
 	Display    = "display"    // 外殼可呈現的欄數；1 表示原生直排。
+	// CapsLock（#173）：On 為按鍵事件帶的 Caps Lock 鎖定狀態。設定「Caps Lock 開著時直接打英文」開著時，
+	// 開啟先送出組字、暫時切到英文，關閉回到原本的模式；設定關閉時回 handled=false、什麼都不改。
+	// 外殼只在引擎回報 caps_lock_english=true、而且狀態跟快照的 CapsLock 不同時送（Windows、Linux）。
+	CapsLock = "caps_lock"
 )
 
 // 輸入模式。
@@ -205,7 +209,13 @@ type Snapshot struct {
 	Candidates          *CandidateList  `json:"candidates,omitempty"` //
 	Notices             []string        `json:"notices,omitempty"`    //
 	Mode                string          `json:"mode"`                 // zhuyin 或 english
-	ReadingHint         *ReadingHint    `json:"reading_hint,omitempty"`
+	// CapsLock（#173）：核心記得的 Caps Lock 狀態（最近一次 caps_lock 請求；切換模式的 mode 請求會清掉）。
+	// 外殼看到按鍵的鎖定狀態跟它不同時才送 caps_lock，換欄位、重開 session 後自然重新同步。
+	CapsLock bool `json:"caps_lock,omitempty"`
+	// CapsEnglish（#173）：目前的英文模式是 Caps Lock 帶來的，關掉 Caps Lock 會回到注音。外殼自己記中英模式時
+	// （Windows 每個程式各自記住）記的是這一項以外的模式，重開 session 時不把它當成使用者切的英文。
+	CapsEnglish bool         `json:"caps_english,omitempty"`
+	ReadingHint *ReadingHint `json:"reading_hint,omitempty"`
 }
 
 // SuggestedText 回傳按 Tab 接受後預覽的完整組字；無建議或範圍不合法時為空。

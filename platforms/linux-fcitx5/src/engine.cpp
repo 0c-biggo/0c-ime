@@ -237,6 +237,22 @@ public:
             return;
         }
         if (event.isRelease()) { return; }
+        // Caps Lock 開著時直接打英文（#173）：按鍵事件帶的是按下之前的鎖定狀態（同 RIME 的 ascii_composer），Caps Lock 鍵本身
+        // 要反過來算；其他按鍵照它帶的狀態（rawKey，正規化會拿掉 CapsLock），猜錯時下一個按鍵就改正。不讀 LED（Wayland 讀不到）。
+        // 開啟時引擎先送出組字、切到英文；關閉時回到原本的模式。設定關閉或舊引擎時不送，照 #168 不理 Caps Lock。
+        {
+            const bool capsKey = event.key().sym() == FcitxKey_Caps_Lock;
+            const bool locked = event.rawKey().states().test(fcitx::KeyState::CapsLock);
+            const bool on = capsKey ? !locked : locked;
+            if (session.capsNeedsSync(on, !capsKey)) {
+                s->context.clear(); syncContext(ic);
+                const bool before = s->shownEnglish;
+                auto snap = session.capsLock(on);
+                render(ic, snap);
+                // 內部模式切換不會觸發框架的輸入法切換提示（同 toggleMode）；Caps Lock 鍵本身切換時主動顯示。
+                if (snap.ok && capsKey && before != session.english()) { instance_->showInputMethodInformation(ic); }
+            }
+        }
         fcitx::Key typed = event.key();
         if (!session.english()) {
             // 中文模式不理 Caps Lock（#168）：字母換回沒開 Caps Lock 時的大小寫。英文模式照 Caps Lock 打大寫。

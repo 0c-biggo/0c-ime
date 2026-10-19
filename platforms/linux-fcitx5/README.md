@@ -57,7 +57,7 @@ gdbus call --session --dest org.fcitx.Fcitx5 --object-path /controller --method 
 
 ## 按鍵
 
-按鍵的意義全部由核心決定，外殼只轉送按鍵、照快照畫（含候選窗的反白位置）。帶 Ctrl／Alt／Super 的組合鍵交還應用程式；組字中先送出組字再交還，Ctrl+Enter、Ctrl+V 才會在組字之後執行（單按修飾鍵本身不送出，#106）。例外是注音模式的 Ctrl＋標點（#168）：只按著 Ctrl（可加 Shift）的 , . ' ; ? ! 在引擎回報 `ctrl_punctuation=true`（設定「Ctrl＋標點打全形」，預設開）時送 `Ctrl+,` 等鍵名，核心打全形的 ，。、；？！ 插進組字區；引擎沒處理就照一般組合鍵。Ctrl+; 是 Fcitx5 剪貼簿外掛的預設熱鍵；剪貼簿在輸入法之後（`PostInputMethod`）才看按鍵，外殼吃掉就叫不出剪貼簿，所以剪貼簿外掛載入時外殼照舊放行 Ctrl+;，不打；（沒載入剪貼簿時才打；）。外殼不去改使用者的 Fcitx5 設定。注音模式不理 Caps Lock（#168）：字母照 `rawKey` 的 Shift 換回不受 Caps Lock 影響的大小寫，照打注音，Shift＋字母仍是大寫；英文模式照 Caps Lock 打大寫。
+按鍵的意義全部由核心決定，外殼只轉送按鍵、照快照畫（含候選窗的反白位置）。帶 Ctrl／Alt／Super 的組合鍵交還應用程式；組字中先送出組字再交還，Ctrl+Enter、Ctrl+V 才會在組字之後執行（單按修飾鍵本身不送出，#106）。例外是注音模式的 Ctrl＋標點（#168）：只按著 Ctrl（可加 Shift）的 , . ' ; ? ! 在引擎回報 `ctrl_punctuation=true`（設定「Ctrl＋標點打全形」，預設開）時送 `Ctrl+,` 等鍵名，核心打全形的 ，。、；？！ 插進組字區；引擎沒處理就照一般組合鍵。Ctrl+; 是 Fcitx5 剪貼簿外掛的預設熱鍵；剪貼簿在輸入法之後（`PostInputMethod`）才看按鍵，外殼吃掉就叫不出剪貼簿，所以剪貼簿外掛載入時外殼照舊放行 Ctrl+;，不打；（沒載入剪貼簿時才打；）。外殼不去改使用者的 Fcitx5 設定。注音模式不理 Caps Lock（#168）：字母照 `rawKey` 的 Shift 換回不受 Caps Lock 影響的大小寫，照打注音，Shift＋字母仍是大寫；英文模式照 Caps Lock 打大寫。設定「Caps Lock 開著時直接打英文」（`caps-lock-english`，預設關閉，#173）開啟時，Caps Lock 是暫時的英文模式：每個按鍵依 `rawKey` 帶的鎖定狀態（Caps Lock 鍵本身帶的是按下前的狀態，反過來算；不讀 LED，Wayland 讀不到）跟快照的 `caps_lock` 比較，不同才送 `caps_lock` 請求，核心開啟時先送出組字、切到英文，關閉時回到原本的模式，注／英圖示跟著快照，Caps Lock 鍵切換時也跳出輸入法資訊提示；猜錯時下一個按鍵改正。外殼只在 open 回覆 `caps_lock_english=true` 時送；Caps Lock 鍵本身不為此啟動 0c-server，並以 health 再確認一次（設定剛打開、引擎重啟後 open 的快取是舊的，否則第一個字母會照注音打），`caps_lock` 不寫進重播紀錄。
 
 | 情境 | 按鍵 | 作用 |
 |---|---|---|

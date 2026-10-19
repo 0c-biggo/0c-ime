@@ -432,6 +432,11 @@ if window_up; then
   sleep 3
   check "Ctrl＋標點開關可關閉" grep -q '"ctrl_punctuation": false' "$(settings_of eten)"
   import -window root "$OUT/ctrl-punctuation-off.png"
+  # 最後是「Caps Lock 開著時直接打英文」（#173，Windows、Linux），預設關閉；空白鍵開啟。
+  xdotool key Tab space
+  sleep 3
+  check "Caps Lock 英文開關可開啟" grep -q '"caps_lock_english": true' "$(settings_of eten)"
+  import -window root "$OUT/caps-lock-english-on.png"
 else bad "eten/input 視窗沒有出現"; cat /tmp/app-eten-input.log; fi
 stop_app
 

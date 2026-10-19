@@ -157,6 +157,7 @@ type session struct {
 	recovered      *proto.Snapshot // 重播結果與斷線前不同，等使用者確認
 
 	private, english, englishPending bool
+	capsLock                         bool // 引擎記得的 Caps Lock 狀態（快照的 caps_lock，#173）
 }
 
 func newSession(c *client, documentContext bool) *session {
@@ -211,6 +212,27 @@ func (s *session) vocabKeys() bool {
 // 舊引擎沒有這一項時為 false，Ctrl＋標點照舊交給應用程式。
 func (s *session) ctrlPunct() bool {
 	return s.client.connect() && s.ensureOpen() && s.info["ctrl_punctuation"] == "true"
+}
+
+// capsLockEnglish 回報引擎是否認得 caps_lock 請求而且「Caps Lock 開著時直接打英文」開著（open 回覆的 caps_lock_english，
+// #173）；快取方式同 vocabKeys。舊引擎沒有這一項、或設定關閉時為 false，注音模式照舊不理 Caps Lock（#168）。
+// spawn=false（Caps Lock 鍵本身）不為此啟動 0c-server：之後第一個按鍵會帶著鎖定狀態再同步一次。
+// Caps Lock 鍵本身先以 health 重新確認：剛在設定程式打開這一項時引擎重啟了，open 的快取還是舊的，
+// 不重新確認的話第一個字母會照注音打（ㄇ）、下一個才切英文。
+func (s *session) capsLockEnglish(spawn bool) bool {
+	if !spawn {
+		if s.client.conn == nil {
+			return false
+		}
+		reply, ok := s.client.call(ipc.Envelope{Op: ipc.OpHealth})
+		if !ok { // 引擎重啟過：舊連線這一次才發現斷了，重連再問一次（同 shiftKeys）
+			reply, ok = s.client.call(ipc.Envelope{Op: ipc.OpHealth})
+		}
+		if !ok || !reply.OK || reply.Info["caps_lock_english"] != "true" {
+			return false
+		}
+	}
+	return s.client.connect() && s.ensureOpen() && s.info["caps_lock_english"] == "true"
 }
 
 func (s *session) contextAllowed() bool {
@@ -375,7 +397,7 @@ func (s *session) handle(req proto.Request) snapshot {
 			snap.Handled, snap.Commit = true, ""
 			snap.Notices = []string{recoveryNotice}
 			s.view, s.shown = viewOf(snap), snap
-			s.english, s.englishPending = snap.Mode == proto.ModeEnglish, snap.EnglishPending
+			s.english, s.englishPending, s.capsLock = snap.Mode == proto.ModeEnglish, snap.EnglishPending, snap.CapsLock
 			return snapshot{Snapshot: snap, ok: true, reconnected: true}
 		}
 		if req.Type == proto.Context && before != s.client.generation {
@@ -390,7 +412,7 @@ func (s *session) handle(req proto.Request) snapshot {
 			continue
 		}
 		out := snapshot{Snapshot: *reply.Snapshot, ok: true, reconnected: before != s.client.generation}
-		s.english, s.englishPending = out.english(), out.EnglishPending
+		s.english, s.englishPending, s.capsLock = out.english(), out.EnglishPending, out.CapsLock
 		// 符號選單可以在空白組字區開啟，也必須重播才能保留選單與反白位置。
 		composing := len(out.Preedit) > 0 || len(out.candidates()) > 0
 		if out.Commit != "" || req.Type == proto.Cancel || !composing {
@@ -399,7 +421,7 @@ func (s *session) handle(req proto.Request) snapshot {
 				s.cleared = append(s.log, wire)
 			}
 			s.log, s.view = nil, nil
-		} else if req.Type != proto.Context {
+		} else if req.Type != proto.Context && req.Type != proto.CapsLock { // Caps Lock 狀態不重播：新 session 由下一個按鍵重新同步
 			if len(s.log) == 0 && req.Type == proto.Toggle {
 				s.log = cleared
 			}

@@ -36,6 +36,7 @@ type Engine struct {
 	Simplified            *zhconv.Converter // 使用者開啟「輸出簡體字」時由宿主設定（#118）；nil 送出繁體。
 	SelectionKeys         string            // 使用者選的選字鍵（#112）；空字串為 1234567890。
 	CtrlPunct             bool              // 「Ctrl＋標點打全形」開著時由宿主設定（#168）；零值時 Ctrl＋標點交給應用程式。
+	CapsLockEnglish       bool              // 「Caps Lock 開著時直接打英文」開著時由宿主設定（#173）；零值時 caps_lock 請求不起作用。
 	Fuzzy                 fuzzy.Config      // 使用者逐對啟用的模糊音；零值全部關閉。
 	EnglishAutocomplete   bool
 	MixedInput            bool                // opt-in bilingual keys; disabled preserves legacy behavior.
@@ -88,6 +89,7 @@ func (e *Engine) OpenSession() uint64 {
 	e.sessions[e.next].Simplified = e.Simplified
 	e.sessions[e.next].SelectionKeys = e.SelectionKeys
 	e.sessions[e.next].CtrlPunct = e.CtrlPunct
+	e.sessions[e.next].CapsLockEnglish = e.CapsLockEnglish
 	e.sessions[e.next].Fuzzy = e.Fuzzy
 	e.sessions[e.next].EnglishAutocomplete = e.EnglishAutocomplete
 	e.sessions[e.next].MixedInput = e.MixedInput
@@ -191,6 +193,7 @@ func (e *Engine) Do(id uint64, req proto.Request) (proto.Snapshot, error) {
 	}
 	// 全部共用（#115）：只有使用者的切換（Toggle）改變共用的模式。外殼的「設成中文」（Fcitx5／IBus 換輸入框時的
 	// 重設、macOS 關掉 Caps Lock）改成回到共用的模式；「設成英文」（macOS 開 Caps Lock）只影響這個輸入框。
+	// Windows／Linux 的 caps_lock（#173）同理：開啟只影響這個輸入框，關閉回到共用的模式。
 	// 舊外殼不必改。
 	e.initShared()
 	if req.Type == proto.Mode && !req.On {
@@ -199,6 +202,10 @@ func (e *Engine) Do(id uint64, req proto.Request) (proto.Snapshot, error) {
 		s.Handle(proto.Request{Type: proto.Mode, On: e.sharedEnglish}) // 跟上別的輸入框切換後的模式
 	}
 	snap := s.Handle(req)
+	// 關掉 Caps Lock（#173）回到共用的模式：暫時英文期間別的輸入框可能切換過。
+	if req.Type == proto.CapsLock && !req.On && snap.Handled && s.EnglishMode() != e.sharedEnglish {
+		snap = s.Handle(proto.Request{Type: proto.Mode, On: e.sharedEnglish})
+	}
 	if req.Type == proto.Toggle && s.EnglishMode() != e.sharedEnglish {
 		e.sharedEnglish = s.EnglishMode()
 		e.modeGen++
