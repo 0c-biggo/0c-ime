@@ -130,7 +130,8 @@ func TestMixedListSelection(t *testing.T) {
 	}{
 		{"數字鍵選詞", []string{"2"}, "如果事務", 2, 2},
 		{"翻到第二頁選單字", []string{proto.KeyPageDown, "1"}, "如果", 2, 1},
-		{"方向鍵走到單字按 Enter", []string{proto.KeyDown, proto.KeyDown, proto.KeyDown, proto.KeyEnter}, "如果是", 2, 1},
+		// 單字段依選了之後的整句排序（#172）：「事」「飾」在「事物」「飾物」裡，排在詞頻最高的「是」前面。
+		{"方向鍵走到單字按 Enter", []string{proto.KeyDown, proto.KeyDown, proto.KeyDown, proto.KeyDown, proto.KeyDown, proto.KeyEnter}, "如果是", 2, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := shiwuSession()

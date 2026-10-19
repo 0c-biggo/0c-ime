@@ -119,6 +119,39 @@ func TestContextRetainsAlternativeLeftSegmentations(t *testing.T) {
 	}
 }
 
+// #172：候選是較長詞的一部分時（「空氣」的「氣」），分數要算經過那個詞的路徑：選了「氣」之後解碼仍會組回
+// 「空氣」（鎖定允許跨過它的詞）。只把「氣」當獨立一個詞時，bigram 依詞庫斷詞計數，「空→氣」被「空氣」
+// 吸收而沒有配對，沒成詞的「空→気」「空→器」反而有，詞頻低很多的字就排到前面。
+func TestCandidatesScoreWordsThatContainThem(t *testing.T) {
+	lex := lexicon.NewMem()
+	for _, x := range []struct{ w, r string }{
+		{"空", "ㄎㄨㄥ"}, {"空氣", "ㄎㄨㄥ ㄑㄧˋ"}, {"氣", "ㄑㄧˋ"}, {"気", "ㄑㄧˋ"}, {"器", "ㄑㄧˋ"},
+		{"很", "ㄏㄣˇ"}, {"氣很", "ㄑㄧˋ ㄏㄣˇ"},
+	} {
+		lex.Add(lexicon.Entry{Surface: x.w, Reading: zhuyin.ParseReading(x.r), PRW: 1})
+	}
+	d := &Decoder{Lex: lex, Score: contextScore{
+		{"<s>", "空"}: .5, {"<s>", "空氣"}: .3,
+		{"空", "気"}: .2, {"空", "器"}: .25,
+	}}
+	for _, reading := range []string{"ㄎㄨㄥ ㄑㄧˋ", "ㄎㄨㄥ ㄑㄧˋ ㄏㄣˇ"} {
+		lat := input.Exact{}.Expand(zhuyin.ParseReading(reading))
+		cs := d.CandidatesInContext(lat, 1, 1, nil, nil)
+		var got []string
+		for _, c := range cs {
+			got = append(got, c.Entry.Surface)
+			// 分數與鎖定這個字後的整段最佳路徑相同（鎖定可以被跨過它的詞吃進去）。
+			_, want := d.Best(lat, map[int]Lock{1: {Word: c.Entry.Surface, Len: 1}}, false)
+			if math.Abs(want-c.Score) > 1e-10 {
+				t.Errorf("%s %s: %g != %g", reading, c.Entry.Surface, c.Score, want)
+			}
+		}
+		if len(got) == 0 || got[0] != "氣" {
+			t.Errorf("%s：氣 在「空氣」裡，應排第一：%v", reading, got)
+		}
+	}
+}
+
 func TestContextFallbackKeepsCandidatesWhenSuffixIsUnreachable(t *testing.T) {
 	d := fixture()
 	lat := input.Exact{}.Expand(zhuyin.ParseReading("ㄧㄥ ㄅㄨㄛˇ"))
