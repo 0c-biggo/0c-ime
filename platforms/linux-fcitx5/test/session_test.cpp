@@ -594,6 +594,30 @@ int main(int argc, char **argv) {
         std::ofstream(home + "/settings.json") << R"({})";
     }
     {
+        // #173：caps_lock_english 來自 open 回覆；預設關，外殼不送 caps_lock（注音模式不理 Caps Lock，#168）。
+        // 開啟後：組字中開 Caps Lock 先送出組字、切到英文；同樣的狀態不重送；關掉回到注音。
+        zuin::Session s(client, nullptr);
+        s.handle({{"type", "cancel"}});
+        CHECK(!s.capsLockEnglish(true) && !s.capsNeedsSync(true, true), "預設不應回報 caps_lock_english");
+        (void)!system((std::string("pkill -f '0c-server -socket ") + argv[1] + "'").c_str());
+        usleep(300 * 1000);
+        std::ofstream(home + "/settings.json") << R"({"caps_lock_english":true})";
+        // 設定程式打開這一項、引擎重啟後，Caps Lock 鍵本身（spawn=false）以 health 重新確認，不用 open 的舊快取。
+        CHECK(s.capsLockEnglish(false), "引擎重啟後 Caps Lock 鍵應重新確認到 caps_lock_english");
+        CHECK(s.capsLockEnglish(true), "設定開啟後重開的 session 應回報 caps_lock_english");
+        s.key("j"); s.key("i"); s.key("3");
+        CHECK(s.capsNeedsSync(true, true) && !s.capsNeedsSync(false, true), "開 Caps Lock 才需要同步");
+        auto snap = s.capsLock(true);
+        CHECK(snap.commit == "我" && snap.english && snap.capsLock && s.english(), "開 Caps Lock 應先送出組字再切英文：%s %d", snap.commit.c_str(), snap.english);
+        CHECK(!s.capsNeedsSync(true, true), "引擎已記得開啟，不重送");
+        CHECK(!s.key("A").handled, "暫時英文的 A 交給應用程式");
+        snap = s.capsLock(false);
+        CHECK(!snap.english && !snap.capsLock && !s.english(), "關 Caps Lock 應回到注音");
+        (void)!system((std::string("pkill -f '0c-server -socket ") + argv[1] + "'").c_str());
+        usleep(300 * 1000);
+        std::ofstream(home + "/settings.json") << R"({})";
+    }
+    {
         // #117：預設（右 Shift）時 health 回報右 Shift 切換、左 Shift 不切換。
         zuin::Session s(client, nullptr);
         auto keys = s.shiftKeys();

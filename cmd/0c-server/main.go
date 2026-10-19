@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"sync"
 	"sync/atomic"
@@ -129,6 +130,8 @@ func main() {
 	eng.SpaceInsertsSpace = !config.SpaceSelects
 	eng.AdvanceAfterSelect = config.AdvanceAfterSelect
 	eng.CtrlPunct = config.CtrlPunctuation // #168
+	// #173：Windows、Linux 的設定；macOS 開 Caps Lock 一律切到英文（#84），不看設定檔的值。
+	eng.CapsLockEnglish = config.CapsLockEnglish && settings.CapsLockEnglishSetting(runtime.GOOS)
 
 	if config.OutputSimplified { // #118：字典編在執行檔裡，只有開啟時才解析
 		if conv, err := simplified.TW2S(); err != nil {
@@ -327,7 +330,10 @@ func main() {
 		"tone_mark_keys": fmt.Sprint(eng.ToneMarkKeys()),
 		// #168：引擎認得 Ctrl＋標點的鍵名而且設定開著；外殼只在這一項是 true、又在中文模式時送那六個鍵，
 		// 舊引擎沒有這一項，外殼照舊交給應用程式。
-		"ctrl_punctuation": fmt.Sprint(eng.CtrlPunct)}
+		"ctrl_punctuation": fmt.Sprint(eng.CtrlPunct),
+		// #173：引擎認得 caps_lock 請求而且設定「Caps Lock 開著時直接打英文」開著；外殼只在這一項是 true 時回報
+		// Caps Lock 狀態，舊引擎沒有這一項、或設定關閉時，注音模式照舊不理 Caps Lock（#168）。
+		"caps_lock_english": fmt.Sprint(eng.CapsLockEnglish)}
 	srv.Info["english_words"] = fmt.Sprint(eng.English.Len())
 	srv.Info["english_pack"] = eng.EnglishPack
 	if eng.EnglishPack == "" {

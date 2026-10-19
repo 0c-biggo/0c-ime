@@ -312,6 +312,26 @@ impl TextService_Impl {
         }
     }
 
+    /// Caps Lock 開著時直接打英文（#173）：按鍵當下的鎖定狀態跟引擎記得的不同時告訴引擎；開啟時引擎先送出組字、
+    /// 切到英文，關閉時回到原本的模式，組字區與中／英指示照快照更新。TestKeyDown 與 OnKeyDown 都呼叫，第二次狀態已相同、
+    /// 不再送，兩者看到的模式一樣；Caps Lock 鍵本身在按下時（系統已切換鎖定狀態）與放開時（保險）各同步一次。
+    /// 設定關閉或舊引擎時什麼都不做，注音模式照舊不理 Caps Lock（#168）。
+    fn sync_caps(&self, ctx: Option<&ITfContext>, vk: u32) {
+        let on = keys::caps_lock_on();
+        let snapshot = {
+            let mut st = self.state.borrow_mut();
+            if vk == keys::VK_CAPS_LOCK {
+                st.session.refresh_caps_lock_english(); // 設定剛打開、引擎重啟後的第一次 Caps Lock
+            }
+            if !st.session.caps_needs_sync(on) || !st.session.available() {
+                return;
+            }
+            st.session.caps_lock(on)
+        };
+        zdebug!("Caps Lock {} -> english={}", on, snapshot.english);
+        self.present(ctx, &snapshot);
+    }
+
     fn sync_langbar(&self) {
         let st = self.state.borrow();
         if let Some((_, button)) = st.langbar.as_ref() {
@@ -1077,6 +1097,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             self.observe_shift(vk, lparam.0);
             self.commit_before_host_key(pic.as_ref(), vk, lparam.0);
             self.learn_mode(vk);
+            self.sync_caps(pic.as_ref(), vk);
             let wants = self
                 .english_key_policy(pic.as_ref(), vk, lparam.0)
                 .unwrap_or_else(|| self.wants_key(vk, lparam.0));
@@ -1096,6 +1117,9 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
                 return Ok(false.into());
             }
             let vk = wparam.0 as u32;
+            if vk == keys::VK_CAPS_LOCK {
+                self.sync_caps(pic.as_ref(), 0); // #173：按下時沒同步到的話（宿主時序不同），放開時一定已切換
+            }
             let mut st = self.state.borrow_mut();
             // Shift 只在設定開啟這一側、單按而且沒超過時限時才吃 key-up；其他情況照舊交給宿主與系統。
             if let Some(side) = keys::shift_side(vk, lparam.0) {
@@ -1125,6 +1149,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             self.observe_shift(vk, lparam.0);
             self.commit_before_host_key(pic.as_ref(), vk, lparam.0);
             self.learn_mode(vk);
+            self.sync_caps(pic.as_ref(), vk);
             if !self
                 .english_key_policy(pic.as_ref(), vk, lparam.0)
                 .unwrap_or_else(|| self.wants_key(vk, lparam.0))

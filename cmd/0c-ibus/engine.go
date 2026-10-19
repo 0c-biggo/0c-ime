@@ -41,6 +41,7 @@ const (
 	keyKPEqual     = 0xffbd
 	keyShiftL      = 0xffe1
 	keyShiftR      = 0xffe2
+	keyCapsLock    = 0xffe5
 	keyDelete      = 0xffff
 	keyISOLeftTab  = 0xfe20
 	keySpace       = 0x20
@@ -274,6 +275,13 @@ func (e *engine) processKey(keyval, keycode, state uint32) bool {
 	if release {
 		return false
 	}
+	// Caps Lock 開著時直接打英文（#173）：按鍵事件帶的是按下之前的鎖定狀態（同 RIME 的 ascii_composer），
+	// Caps Lock 鍵本身要反過來算；其他按鍵照它帶的狀態，猜錯時下一個按鍵就改正。不讀 LED（Wayland 讀不到）。
+	if keyval == keyCapsLock {
+		e.syncCaps(state&maskLock == 0, false)
+	} else {
+		e.syncCaps(state&maskLock != 0, true)
+	}
 	if !e.session.english {
 		keyval = foldCaps(keyval, state)
 		// Ctrl＋標點打全形（#168）：只在中文模式、引擎回報 ctrl_punctuation（認得鍵名而且設定開著）時送；
@@ -324,6 +332,19 @@ func (e *engine) processKey(keyval, keycode, state uint32) bool {
 	}
 	e.render(snap) // 先送出提交的文字，再決定是否把按鍵交還應用程式，順序才不會顛倒
 	return snap.Handled
+}
+
+// syncCaps 把 Caps Lock 狀態告訴引擎（#173）：只在引擎回報 caps_lock_english（認得 caps_lock、設定開著），
+// 而且跟引擎記得的狀態不同時才送；開啟時引擎先送出組字、切到英文，關閉時回到原本的模式。
+func (e *engine) syncCaps(on, spawn bool) {
+	if on == e.session.capsLock || !e.session.capsLockEnglish(spawn) {
+		return
+	}
+	e.context.clear()
+	e.syncContext()
+	if snap := e.session.handle(proto.Request{Type: proto.CapsLock, On: on}); snap.ok {
+		e.render(snap)
+	}
 }
 
 // toggleMode 切換注／英；引擎不可用時不切換。

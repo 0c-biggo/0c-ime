@@ -80,6 +80,9 @@ func listSettings(w io.Writer, r settings.Report, path string) {
 	fmt.Fprintf(w, "output-simplified=%s（輸出簡體字：組字和候選仍是繁體，送出時轉成簡體）\n", onOff(s.OutputSimplified))
 	fmt.Fprintf(w, "selection-keys=%s（選字鍵：1234567890、1234qweras 或 asdfghjkl;；換成字母時數字仍照位置選字）\n", s.SelectionKeys)
 	fmt.Fprintf(w, "ctrl-punctuation=%s（注音模式按 Ctrl＋, . ' ; 與 Ctrl＋Shift＋/ 1 打全形標點；關閉時交給應用程式）\n", onOff(s.CtrlPunctuation))
+	if settings.CapsLockEnglishSetting(runtime.GOOS) {
+		fmt.Fprintf(w, "caps-lock-english=%s（Caps Lock 開著時直接打英文：字母大寫、數字與符號半形，關掉回到注音；關閉時注音模式不理 Caps Lock）\n", onOff(s.CapsLockEnglish))
+	}
 	fmt.Fprintf(w, "keyboard-layout=%s（鍵盤排列：standard 標準；eten 倚天 41 鍵，這時不提供 Emoji 選單與中英混打）\n", s.KeyboardLayout)
 	fuzzyConfig := s.FuzzyConfig()
 	for _, p := range fuzzy.Pairs() {

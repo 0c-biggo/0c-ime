@@ -88,7 +88,10 @@ type Settings struct {
 	SelectionKeys string `json:"selection_keys"`
 	// CtrlPunctuation：中文模式按 Ctrl＋, . ' ; 與 Ctrl＋Shift＋/ 1 打全形標點（#168）。預設 true；
 	// 想保留程式快速鍵（VS Code 的 Ctrl＋, 等）時關閉，這些鍵照舊交給應用程式。
-	CtrlPunctuation bool  `json:"ctrl_punctuation"`
+	CtrlPunctuation bool `json:"ctrl_punctuation"`
+	// CapsLockEnglish：Caps Lock 開著時直接打英文（#173，Windows、Linux）。預設 false：注音模式不理 Caps Lock（#168）。
+	// 開啟時 Caps Lock 是暫時的英文模式：字母大寫、數字與符號半形，關掉回到原本的模式。macOS 一律如此（#84），不用這一項。
+	CapsLockEnglish bool  `json:"caps_lock_english"`
 	Fuzzy           Fuzzy `json:"fuzzy,omitzero"`
 	// 0.2.0 開發期間的內部開關 preview_0_2（#128）已拿掉：自訂詞彙、加詞按鍵、「我的片語」、本機 API 等
 	// 入口 0.2.0 起所有人都有。舊檔裡的 preview_0_2 不論值為何都忽略，存檔時移除（retiredKeys）。
@@ -321,7 +324,7 @@ func (s *Settings) UnmarshalJSON(b []byte) error {
 	for _, field := range []struct {
 		key string
 		dst *bool
-	}{{"punctuation", &s.Punctuation}, {"document_context", &s.DocumentContext}, {"mixed_input", &s.MixedInput}, {"english_autocomplete", &s.EnglishAutocomplete}, {"left_shift", &s.LeftShift}, {"esc_clear", &s.EscClear}, {"space_selects", &s.SpaceSelects}, {"advance_after_select", &s.AdvanceAfterSelect}, {"emoji_equals_first", &s.EmojiEqualsFirst}, {"output_simplified", &s.OutputSimplified}, {"ctrl_punctuation", &s.CtrlPunctuation}} {
+	}{{"punctuation", &s.Punctuation}, {"document_context", &s.DocumentContext}, {"mixed_input", &s.MixedInput}, {"english_autocomplete", &s.EnglishAutocomplete}, {"left_shift", &s.LeftShift}, {"esc_clear", &s.EscClear}, {"space_selects", &s.SpaceSelects}, {"advance_after_select", &s.AdvanceAfterSelect}, {"emoji_equals_first", &s.EmojiEqualsFirst}, {"output_simplified", &s.OutputSimplified}, {"ctrl_punctuation", &s.CtrlPunctuation}, {"caps_lock_english", &s.CapsLockEnglish}} {
 		if raw, ok := take(field.key); ok {
 			var v bool
 			if json.Unmarshal(raw, &v) == nil {
@@ -422,7 +425,7 @@ func (s Settings) MarshalJSON() ([]byte, error) {
 	for _, field := range []struct {
 		key   string
 		value any
-	}{{"selection", s.Selection}, {"punctuation", s.Punctuation}, {"document_context", s.DocumentContext}, {"mixed_input", s.MixedInput}, {"english_autocomplete", s.EnglishAutocomplete}, {"left_shift", s.LeftShift}, {"esc_clear", s.EscClear}, {"space_selects", s.SpaceSelects}, {"candidate_cursor", s.CandidateCursor}, {"advance_after_select", s.AdvanceAfterSelect}, {"candidate_layout", s.CandidateLayout}, {"emoji_shortcut", s.EmojiShortcut}, {"emoji_equals_first", s.EmojiEqualsFirst}, {"keyboard_layout", s.KeyboardLayout}, {"selection_keys", s.SelectionKeys}, {"toggle_key", s.ToggleKey}, {"mode_memory", s.ModeMemory}, {"start_mode", s.StartMode}, {"output_simplified", s.OutputSimplified}, {"ctrl_punctuation", s.CtrlPunctuation}} {
+	}{{"selection", s.Selection}, {"punctuation", s.Punctuation}, {"document_context", s.DocumentContext}, {"mixed_input", s.MixedInput}, {"english_autocomplete", s.EnglishAutocomplete}, {"left_shift", s.LeftShift}, {"esc_clear", s.EscClear}, {"space_selects", s.SpaceSelects}, {"candidate_cursor", s.CandidateCursor}, {"advance_after_select", s.AdvanceAfterSelect}, {"candidate_layout", s.CandidateLayout}, {"emoji_shortcut", s.EmojiShortcut}, {"emoji_equals_first", s.EmojiEqualsFirst}, {"keyboard_layout", s.KeyboardLayout}, {"selection_keys", s.SelectionKeys}, {"toggle_key", s.ToggleKey}, {"mode_memory", s.ModeMemory}, {"start_mode", s.StartMode}, {"output_simplified", s.OutputSimplified}, {"ctrl_punctuation", s.CtrlPunctuation}, {"caps_lock_english", s.CapsLockEnglish}} {
 		if err := typed(field.key, field.value); err != nil {
 			return nil, err
 		}
@@ -474,7 +477,7 @@ func (s Settings) notes() []string {
 	if s.extra != "" {
 		_ = json.Unmarshal([]byte(s.extra), &kept)
 	}
-	for _, key := range []string{"selection", "punctuation", "document_context", "mixed_input", "english_autocomplete", "left_shift", "esc_clear", "space_selects", "candidate_cursor", "advance_after_select", "candidate_layout", "emoji_shortcut", "emoji_equals_first", "keyboard_layout", "selection_keys", "toggle_key", "mode_memory", "start_mode", "output_simplified", "ctrl_punctuation"} {
+	for _, key := range []string{"selection", "punctuation", "document_context", "mixed_input", "english_autocomplete", "left_shift", "esc_clear", "space_selects", "candidate_cursor", "advance_after_select", "candidate_layout", "emoji_shortcut", "emoji_equals_first", "keyboard_layout", "selection_keys", "toggle_key", "mode_memory", "start_mode", "output_simplified", "ctrl_punctuation", "caps_lock_english"} {
 		if raw, ok := kept[key]; ok {
 			out = append(out, fmt.Sprintf("%s：本版不認得 %s，暫用預設值，存檔時保留原值", strings.ReplaceAll(key, "_", "-"), raw))
 			delete(kept, key)
@@ -741,12 +744,22 @@ func specs() []spec {
 		{"ctrl-punctuation", "Ctrl＋標點打全形", ctrlPunctuationDescription(runtime.GOOS), "on", []string{"on", "off"},
 			func(s Settings) string { return onOff(s.CtrlPunctuation) }},
 	}
+	// Caps Lock 開著時直接打英文（#173）：只有 Windows、Linux。macOS 開 Caps Lock 一律切到英文大寫（#84），沒有這一項。
+	if CapsLockEnglishSetting(runtime.GOOS) {
+		out = append(out, spec{"caps-lock-english", "Caps Lock 開著時直接打英文",
+			"開著 Caps Lock 時暫時切到英文：字母大寫、數字和符號半形，正在打的字先送出；關掉 Caps Lock 回到注音。關閉時注音模式不理 Caps Lock，照打注音",
+			"off", []string{"on", "off"}, func(s Settings) string { return onOff(s.CapsLockEnglish) }})
+	}
 	for _, p := range fuzzy.Pairs() {
 		out = append(out, spec{"fuzzy-" + p.ID(), "模糊音 " + p.Symbols(), "把近音的字也列進候選，原音仍排在前面；「自動修正」（實驗）會在上下文明顯支持近音時另外自動改字", DefaultFuzzy, []string{"off", "select", "auto"},
 			func(s Settings) string { return s.FuzzyConfig().Mode(p).String() }})
 	}
 	return out
 }
+
+// CapsLockEnglishSetting 回報這個平台有沒有「Caps Lock 開著時直接打英文」（#173）：Windows、Linux 有；
+// macOS 開 Caps Lock 一律切到英文大寫（#84、#67），沒有這一項，設定檔裡的值也不用。
+func CapsLockEnglishSetting(goos string) bool { return goos != "darwin" }
 
 // toggleKeyDescription：Windows 另外提醒 Ctrl＋空白鍵。那是繁中輸入法的系統熱鍵，外殼接到就切換（#117），不受這一項影響。
 func toggleKeyDescription(goos string) string {
@@ -946,6 +959,9 @@ func (s *Settings) Set(key, value string) error {
 	case "ctrl-punctuation":
 		s.CtrlPunctuation = value == "on"
 		s.forget("ctrl_punctuation")
+	case "caps-lock-english":
+		s.CapsLockEnglish = value == "on"
+		s.forget("caps_lock_english")
 	case "mixed-input":
 		s.MixedInput = value == "on"
 		s.forget("mixed_input")

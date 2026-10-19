@@ -148,6 +148,23 @@ bool Session::vocabKeys() {
     return value != serverInfo_.end() && value->is_string() && value->get<std::string>() == "true";
 }
 
+bool Session::capsLockEnglish(bool spawn) {
+    if (!spawn) {
+        // Caps Lock 鍵本身：不為此啟動 0c-server，先以 health 重新確認。剛在設定程式打開這一項時引擎重啟了，
+        // open 的快取還是舊的，不重新確認的話第一個字母會照注音打、下一個才切英文。舊連線這一次才發現斷了，重連再問一次。
+        if (!client_.connected()) { return false; }
+        nlohmann::json reply;
+        bool ok = client_.call({{"op", "health"}}, reply) || client_.call({{"op", "health"}}, reply);
+        if (!ok || !reply.value("ok", false)) { return false; }
+        auto info = reply.value("info", nlohmann::json::object());
+        auto value = info.find("caps_lock_english");
+        if (value == info.end() || !value->is_string() || value->get<std::string>() != "true") { return false; }
+    }
+    if (!client_.connect() || !ensureOpen()) { return false; }
+    auto value = serverInfo_.find("caps_lock_english");
+    return value != serverInfo_.end() && value->is_string() && value->get<std::string>() == "true";
+}
+
 bool Session::ctrlPunct() {
     if (!client_.connect() || !ensureOpen()) { return false; }
     auto value = serverInfo_.find("ctrl_punctuation");
@@ -259,6 +276,7 @@ Snapshot Session::handle(const nlohmann::json &request) {
             s.reconnected = true;
             english_ = s.english;
         englishPending_ = s.englishPending;
+            capsLock_ = s.capsLock;
             s.traceSequence = traceRequest({{"type", "recovery"}}, reply["snapshot"], started,
                                           attempt + 1, generationBefore);
             return s;
@@ -280,6 +298,7 @@ Snapshot Session::handle(const nlohmann::json &request) {
                                        reply.value("engine_us", int64_t(-1)));
         english_ = s.english;
         englishPending_ = s.englishPending;
+        capsLock_ = s.capsLock;
         std::string type = request.value("type", "");
         // 符號選單可以在空白組字區開啟，也必須重播才能保留選單與反白位置。
         bool composing = !s.preedit.empty() || !s.candidates.empty();
@@ -291,7 +310,7 @@ Snapshot Session::handle(const nlohmann::json &request) {
             }
             log_.clear();
             replayView_ = nullptr;
-        } else if (type != "context") {
+        } else if (type != "context" && type != "caps_lock") { // Caps Lock 狀態不重播：新 session 由下一個按鍵重新同步（#173）
             if (log_.empty() && type == "toggle") { log_ = std::move(cleared); }
             log_.push_back(wireRequest);
         }
@@ -315,6 +334,7 @@ Snapshot Session::parse(const nlohmann::json &reply) {
     s.suggestion = j.value("suggestion", "");
     s.english = j.value("mode", "") == "english";
     s.englishPending = j.value("english_pending", false);
+    s.capsLock = j.value("caps_lock", false);
     if (j.contains("preedit")) {
         for (const auto &g : j["preedit"]) {
             s.preedit.push_back({g.value("text", ""), g.value("style", "normal")});

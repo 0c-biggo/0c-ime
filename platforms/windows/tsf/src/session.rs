@@ -37,6 +37,10 @@ pub struct Snapshot {
     pub english_autocomplete: bool,
     pub english_pending: bool,
     pub english_can_start: bool,
+    /// 引擎記得的 Caps Lock 狀態（caps_lock，#173）；跟按鍵當下的鎖定狀態不同時外殼送 caps_lock。
+    pub caps_lock: bool,
+    /// 目前的英文是 Caps Lock 帶來的（caps_english，#173），關掉 Caps Lock 會回到注音。
+    pub caps_english: bool,
     pub reconnected: bool,
     pub context_id: u64, // 本次提交可供外殼確認的代號；不是文件文字
     /// 核心這次請求的提示（例如「已加入詞庫：…」，#123）；顯示在候選窗上方，下一鍵或幾秒後消失。
@@ -105,6 +109,12 @@ pub struct Session {
     mode_known: bool,
     // 引擎回報「所有輸入框共用中英模式」（mode_memory=shared，#115）：換欄位後別的程式可能已經切換，重新查。
     shared: bool,
+    // 引擎認得 caps_lock 請求而且「Caps Lock 開著時直接打英文」開著（health／open 的 caps_lock_english，#173）。
+    // 跟著最近一次 health（learn_mode）或 open 快取：新開的程式第一個按鍵前就知道，換欄位（session 關掉）也沿用。
+    caps_lock_english: bool,
+    // 最近一次快照的 caps_english（#173），換欄位清掉 english_state 後仍保留：重開 session 還原模式時，
+    // Caps Lock 帶來的英文以 caps_lock 還原（關掉 Caps Lock 才回得到注音），不當成使用者切的英文。
+    caps_english: bool,
 }
 
 /// 重開 session（引擎重啟、斷線）時要不要送「設定模式」還原外殼記得的模式（#160）。新 session 從開始時的模式起：
@@ -142,6 +152,8 @@ impl Session {
             vocab_keys: false,
             mode_known: false,
             shared: false,
+            caps_lock_english: false,
+            caps_english: false,
         }
     }
 
@@ -165,9 +177,11 @@ impl Session {
         };
         self.mode_known = true;
         self.shared = reply["info"]["mode_memory"] == "shared";
+        self.caps_lock_english = reply["info"]["caps_lock_english"] == "true";
         let before = self.english;
         if let Some(english) = initial_english(&reply["info"]) {
             self.english = english;
+            self.caps_english = false; // 模式照引擎的（共用模式或開始時的）；Caps Lock 由下一個按鍵重新同步（#173）
         }
         before != self.english
     }
@@ -206,6 +220,32 @@ impl Session {
 
     pub fn english(&self) -> bool {
         self.english
+    }
+
+    /// 按鍵當下的 Caps Lock 鎖定狀態要不要告訴引擎（#173）：引擎回報 caps_lock_english，而且跟引擎記得的不同。
+    /// 換欄位後（english_state 已清掉）還記得 Caps Lock 帶來的英文時當成開著：在別處關掉 Caps Lock 回來，
+    /// 第一個按鍵就回到注音。設定關閉或舊引擎時一律 false，注音模式照舊不理 Caps Lock（#168）。
+    pub fn caps_needs_sync(&self, on: bool) -> bool {
+        self.caps_lock_english && (self.english_state.caps_lock || self.caps_english) != on
+    }
+
+    /// Caps Lock 鍵本身（#173）：以 health 重新確認 caps_lock_english。剛在設定程式打開這一項時引擎重啟了，
+    /// open／health 的快取還是舊的，不重新確認的話第一個字母會照注音打、下一個才切英文。舊連線這一次才發現斷了，
+    /// 重連再問一次。沒有連線而且引擎沒在執行時不為此啟動，沿用快取。
+    pub fn refresh_caps_lock_english(&mut self) {
+        if !self.client.connected() && !self.client.connect_existing() {
+            return;
+        }
+        let health = json!({"op": "health"});
+        let reply = self.client.call(&health).or_else(|| self.client.call(&health));
+        if let Some(reply) = reply.filter(|r| r["ok"] == true) {
+            self.caps_lock_english = reply["info"]["caps_lock_english"] == "true";
+        }
+    }
+
+    /// 回報 Caps Lock 狀態（#173）：開啟時引擎先送出組字、切到英文；關閉時回到原本的模式。
+    pub fn caps_lock(&mut self, on: bool) -> Snapshot {
+        self.handle(json!({"type": "caps_lock", "on": on}))
     }
 
     /// TestKeyDown 只查設定，不送按鍵：關閉捷徑或接舊引擎時，= 必須交還宿主。
@@ -279,6 +319,7 @@ impl Session {
         self.generation = self.client.generation();
         self.vocab_keys = reply["info"]["vocab_keys"] == "true";
         self.shared = reply["info"]["mode_memory"] == "shared";
+        self.caps_lock_english = reply["info"]["caps_lock_english"] == "true";
         let start_english = reply["info"]["start_mode"] == "english";
         self.pending_context = None; // 新 session 不認得舊代號
         if self.context_enabled {
@@ -306,10 +347,17 @@ impl Session {
         } else {
             self.replay_english
         };
-        if let Some(english) = restore_mode(self.mode_known, want, start_english) {
-            let restored = self.client.call(
-                &json!({"op": "handle", "session": self.id, "req": {"type": "mode", "on": english}}),
-            );
+        // Caps Lock 帶來的英文（#173）以 caps_lock 還原：新 session 也記得是暫時的，關掉 Caps Lock 才回到注音。
+        let restore = if want && self.caps_english && self.caps_lock_english && !start_english {
+            Some(json!({"type": "caps_lock", "on": true}))
+        } else {
+            restore_mode(self.mode_known, want, start_english)
+                .map(|english| json!({"type": "mode", "on": english}))
+        };
+        if let Some(req) = restore {
+            let restored = self
+                .client
+                .call(&json!({"op": "handle", "session": self.id, "req": req}));
             if !restored
                 .as_ref()
                 .and_then(|r| r["ok"].as_bool())
@@ -382,6 +430,7 @@ impl Session {
                 self.pending_context = None;
             }
             self.english = s.english;
+            self.caps_english = s.caps_english;
             self.mode_known = true;
             self.english_state = s.clone();
             self.down = false;
@@ -393,7 +442,8 @@ impl Session {
                     self.cleared = Some((log, self.replay_english));
                 }
                 self.log.clear();
-            } else {
+            } else if kind != "caps_lock" {
+                // Caps Lock 狀態不重播（#173）：重開的 session 由還原模式與下一個按鍵重新同步。
                 if self.log.is_empty() {
                     match cleared.take().filter(|_| kind == "toggle") {
                         Some((log, english)) => {
@@ -485,6 +535,8 @@ fn parse(reply: &Value) -> Snapshot {
     s.english_autocomplete = j["english_autocomplete"].as_bool().unwrap_or(false);
     s.english_pending = j["english_pending"].as_bool().unwrap_or(false);
     s.english_can_start = j["english_can_start"].as_bool().unwrap_or(false);
+    s.caps_lock = j["caps_lock"].as_bool().unwrap_or(false);
+    s.caps_english = j["caps_english"].as_bool().unwrap_or(false);
     s.reading_hint = j["reading_hint"]["text"].as_str().unwrap_or("").to_string();
     if let Some(notices) = j["notices"].as_array() {
         s.notices = notices
@@ -801,6 +853,49 @@ mod tests {
         s.key("Escape");
         let mut other = Session::with_client(Client::with_pipe(&pipe));
         assert!(other.learn_mode(true) && other.english(), "另一個新開的程式從英文開始");
+    }
+
+    // #173：引擎開著「Caps Lock 開著時直接打英文」（ZUIN_TEST_CAPS_PIPE 的 settings.json 有 caps_lock_english=true）。
+    // 開 Caps Lock 先送出組字、切到英文；換欄位或引擎重啟後仍是暫時的英文，關掉 Caps Lock 回到注音。
+    // 一般的 ZUIN_TEST_PIPE（設定關閉）不回報 caps_lock_english，外殼不送 caps_lock。
+    #[test]
+    fn caps_lock_english_survives_focus_and_reconnect() {
+        if let Some(mut s) = session() {
+            s.learn_mode(true);
+            assert!(s.mode_known && !s.caps_needs_sync(true), "設定關閉時不送 caps_lock");
+        }
+        let Ok(pipe) = std::env::var("ZUIN_TEST_CAPS_PIPE") else {
+            return;
+        };
+        let mut s = Session::with_client(Client::with_pipe(&pipe));
+        s.learn_mode(true);
+        assert!(s.mode_known && !s.english());
+        assert!(s.caps_needs_sync(true) && !s.caps_needs_sync(false), "新開的程式第一個按鍵前就知道要同步");
+        for k in ["s", "u", "3"] {
+            assert!(s.key(k).handled);
+        }
+        let snap = s.caps_lock(true);
+        assert!(snap.ok && snap.commit == "你" && snap.english && snap.caps_lock && snap.caps_english);
+        assert!(!s.caps_needs_sync(true));
+        let snap = s.key("A");
+        assert!(snap.ok && !snap.handled, "暫時英文的 A 交給應用程式");
+        // 換欄位：session 關掉；Caps Lock 還開著時不必重送，引擎重開 session 時以 caps_lock 還原。
+        s.reset();
+        assert!(s.english() && !s.caps_needs_sync(true) && s.caps_needs_sync(false));
+        // 在別的程式關掉了 Caps Lock：回來第一個按鍵就回到注音。
+        let snap = s.caps_lock(false);
+        assert!(snap.ok && !snap.english && !snap.caps_english, "關 Caps Lock 應回到注音：{snap:?}");
+        // 引擎重啟（斷線）時 Caps Lock 帶來的英文照樣是暫時的。
+        s.caps_lock(true);
+        s.client.disconnect_for_test();
+        let snap = s.caps_lock(false);
+        assert!(snap.ok && !snap.english, "重開 session 後關 Caps Lock 也回到注音：{snap:?}");
+        // Shift 切到英文後開關 Caps Lock：維持英文。
+        s.toggle();
+        s.caps_lock(true);
+        let snap = s.caps_lock(false);
+        assert!(snap.ok && snap.english, "Shift 切的英文不受 Caps Lock 影響");
+        s.toggle();
     }
 
     #[test]
