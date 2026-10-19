@@ -82,10 +82,14 @@ fn valid_key(key: &str) -> bool {
 }
 
 // 值不能以 - 開頭：0c-update 會把它當成旗標（例如 -apply），而不是設定的值。
+// 含標點的值只放行明列的幾個：選字鍵 asdfghjkl;（#112，值就是那一排鍵）。
+const PUNCTUATED_VALUES: &[&str] = &["asdfghjkl;"];
+
 fn valid_value(value: &str) -> bool {
-    value.len() <= 40
-        && value.chars().next().is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
-        && value.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    PUNCTUATED_VALUES.contains(&value)
+        || value.len() <= 40
+            && value.chars().next().is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+            && value.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
 /// 前端送來的設定修改：數量與字元都限制住，不讓任意字串變成 0c-update 的參數。
@@ -430,6 +434,11 @@ mod tests {
     fn only_plain_keys_and_values_reach_the_updater() {
         let ok = |k: &str, v: &str| (k.to_string(), v.to_string());
         assert!(validate_pairs(&[ok("selection", "statistical"), ok("fuzzy-z-zh", "select"), ok("document-context", "off")]).is_ok());
+        // 選字鍵（#112）的三個值；asdfghjkl; 是明列放行的含標點值。
+        for keys in ["1234567890", "1234qweras", "asdfghjkl;"] {
+            assert!(validate_pairs(&[ok("selection-keys", keys)]).is_ok(), "{keys}");
+        }
+        assert!(validate_pairs(&[ok("selection-keys", "asdfghjk;l")]).is_err());
         // 旗標（以 - 開頭的鍵或值）、空值、大寫、空白、標點與非英數字元都擋掉。
         for bad in [ok("-apply", "on"), ok("Selection", "neural"), ok("selection", ""), ok("selection", "a b"), ok("selection", "x;y"),
                     ok("", "on"), ok("1abc", "on"), ok("selection", "--json"), ok("selection", "-apply"), ok("a/b", "on"),
