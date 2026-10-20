@@ -24,7 +24,8 @@ import (
 //     路徑，lsof 才是目前的位置。
 //   - 系統的背景項目（SMAppService，com.biggo.0c.update）登記指向裡面的 App：macOS 15 背景更新後，
 //     登記會跟著被移入備份的 App 走，排程執行的是備份裡的 0c-update（#178）。launchctl print 不顯示
-//     登記的路徑，但有登記 App 的版本（parent bundle version）；備份裡的 App 是這個版本就當作使用中。
+//     登記的路徑，但有登記 App 的版本（parent bundle version）；這個版本的備份裡最早的一份當作使用中
+//     （同版本重裝留下的其他幾份不算，見 agentBackup）。
 //   - 查不到（lsof、launchctl 失敗）時一律當作使用中，這次不刪，下次更新再試。
 
 // backupUsage 是清理當下觀察到的使用情形。
@@ -118,11 +119,32 @@ func (u backupUsage) inUse(dir string, version func(app string) string) bool {
 		}
 	}
 	if u.agent != "" {
+		return filepath.Base(filepath.Clean(dir)) == agentBackup(filepath.Dir(filepath.Clean(dir)), u.agent, version)
+	}
+	return false
+}
+
+// macBackupDir 是安裝備份的名稱（macos-<UTC 時間>-<亂數>，與 internal/update 的格式相同），依名稱排序就是建立的先後。
+var macBackupDir = regexp.MustCompile(`^macos-[0-9]{8}-[0-9]{6}-[0-9]+$`)
+
+// agentBackup 是背景項目登記可能指向的那一份備份：App 版本等於登記版本的備份裡最早建立的一份；沒有時為空字串。
+// 登記只指向一個 App，同版本重裝（.pkg 修復安裝）留下的其他同版本備份不必保留。取最早的一份：登記跟著 App
+// 被移入備份之後，之後安裝時的重新登記不一定生效（#178），登記會停在第一份移入備份的 App；最新的那一份通常是
+// 收據的 previous，清理本來就保留。
+func agentBackup(backups, agent string, version func(app string) string) string {
+	entries, err := os.ReadDir(backups) // 依名稱排序
+	if err != nil {
+		return ""
+	}
+	for _, e := range entries {
+		if !e.IsDir() || !macBackupDir.MatchString(e.Name()) {
+			continue
+		}
 		for _, name := range []string{update.MacApp, update.LegacyMacApp} {
-			if v := version(filepath.Join(dir, name)); v != "" && v == u.agent {
-				return true
+			if v := version(filepath.Join(backups, e.Name(), name)); v != "" && v == agent {
+				return e.Name()
 			}
 		}
 	}
-	return false
+	return ""
 }
