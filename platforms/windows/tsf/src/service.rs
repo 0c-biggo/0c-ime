@@ -255,6 +255,25 @@ impl TextService_Impl {
         self.present(ctx.as_ref(), &snapshot);
     }
 
+    /// 選單的「輸出簡體字」（#169）：在這個程式的 session 請引擎即時切換，組字不動；快照帶的提示
+    /// 「已切換為輸出簡體字／繁體字」照一般提示顯示在游標旁、幾秒後收起，指示器跟著換成「简」／「中」。
+    /// 走的是打字用的同一條引擎管道，沙箱宿主（搜尋框等）也可以。引擎不能即時切換或沒回應時回傳 false。
+    pub(crate) fn set_output_simplified(&self, on: bool) -> bool {
+        let ctx = self.focused_context();
+        let snapshot = {
+            let Ok(mut st) = self.state.try_borrow_mut() else { return false };
+            if !st.session.available() {
+                return false;
+            }
+            st.session.output_simplified(on)
+        };
+        if !snapshot.ok || !snapshot.handled {
+            return false;
+        }
+        self.present(ctx.as_ref(), &snapshot);
+        true
+    }
+
     /// 鍵盤開關 compartment 改變（#117）。Windows 繁中的 Ctrl＋Space 是系統的輸入法開關熱鍵（輸入語言熱鍵
     /// IME_THOTKEY_IME_NONIME_TOGGLE），系統收到後翻轉這個值，按鍵本身不會送到 key event sink；外殼把每次翻轉當成
     /// 一次中英切換（同 Shift 單按，組字中保留組字）。值本身不代表中英：外殼從來不設定它（啟用後通常是 0），
@@ -335,7 +354,7 @@ impl TextService_Impl {
     fn sync_langbar(&self) {
         let st = self.state.borrow();
         if let Some((_, button)) = st.langbar.as_ref() {
-            crate::langbar::set_english(button, st.session.english());
+            crate::langbar::set_state(button, st.session.english(), st.session.simplified());
         }
     }
 
@@ -971,14 +990,18 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
                 // 新開的程式從開始時的中英模式起（#160）：引擎已在執行就先問，中／英指示一開始就對；不為此啟動引擎。
                 st.session.learn_mode(false);
                 let english = st.session.english();
+                let simplified = st.session.simplified();
                 drop(st);
                 // 輸入指示器的中／英按鈕與選單（#13）。按鈕持有本服務的參考，Deactivate 時移除以解開循環。
                 let tm = self.state.borrow().thread_mgr.clone();
                 if let Some(Ok(mgr)) = tm.map(|tm| tm.cast::<ITfLangBarItemMgr>()) {
                     let service = self.to_object();
+                    let simplify = self.to_object();
                     let button = crate::langbar::LangBarButton::create(
                         english,
+                        simplified,
                         Box::new(move || service.toggle_mode()),
+                        Box::new(move |on| simplify.set_output_simplified(on)),
                     );
                     if let Ok(item) = button.cast::<ITfLangBarItem>() {
                         if mgr.AddItem(&item).is_ok() {
@@ -1288,7 +1311,9 @@ impl ITfThreadMgrEventSink_Impl for TextService_Impl {
                 st.selection = None;
                 st.ui.hide();
                 // 全部共用（#115）時別的程式可能已經切換：引擎在執行就重新問，中／英指示跟著換（不為此啟動引擎）。
-                st.session.learn_mode(false)
+                // 「輸出簡體字」也可能剛在設定程式或別的程式切換過（#169）：指示器的「简」跟著換。
+                let mode = st.session.learn_mode(false);
+                st.session.refresh_simplified() || mode
             };
             if changed {
                 self.sync_langbar();
