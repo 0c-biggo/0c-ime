@@ -45,7 +45,7 @@ final class CandidatePanel: NSPanel {
                 rowButtons = []
             }
             for (index, candidate) in candidates.items.enumerated() {
-                let button = CandidateRow(candidate, number: index == 9 ? 0 : index + 1,
+                let button = CandidateRow(candidate, key: snapshot.candidateKey(index),
                                           highlighted: index == candidates.highlight,
                                           gridWidth: columns > 1 ? cellWidth : nil,
                                           largeEmoji: candidates.kind == "emoji")
@@ -76,7 +76,16 @@ final class CandidatePanel: NSPanel {
             stack.addArrangedSubview(footer)
         }
         if let suggestion = snapshot.suggestion, !suggestion.isEmpty {
-            stack.addArrangedSubview(NSTextField(labelWithString: "⇥ \(suggestion)"))
+            // Tab 補全提示（長詞補全、近音修正、神經次佳、英文補全共用）跟候選同字級（#118），⇥ 用次要文字色。
+            let hint = NSMutableAttributedString(string: "⇥ ", attributes: [
+                .font: NSFont.systemFont(ofSize: 18), .foregroundColor: NSColor.secondaryLabelColor
+            ])
+            hint.append(NSAttributedString(string: suggestion, attributes: [
+                .font: NSFont.systemFont(ofSize: 18), .foregroundColor: NSColor.labelColor
+            ]))
+            let label = NSTextField(labelWithAttributedString: hint)
+            label.setAccessibilityIdentifier("suggestion")
+            stack.addArrangedSubview(label)
         }
         // 讀音提示（#162）：中英混打打 20 時在游標下方顯示 ㄉㄢ，比照常見注音輸入法在數字下方附注音，事先看得出按空白會出中文
         // （Enter 留數字）。只有讀音本身，面板很小、不擋字；開候選時引擎不送。
@@ -215,7 +224,8 @@ private final class CandidateRow: NSButton {
     private let candidateHighlighted: Bool
     private let gridWidth: CGFloat?
 
-    init(_ candidate: Snapshot.Candidate, number: Int, highlighted: Bool, gridWidth: CGFloat? = nil, largeEmoji: Bool = false) {
+    /// key 是鍵標（#112，1、q、;）；空字串時不畫（英文模式的補字候選）。
+    init(_ candidate: Snapshot.Candidate, key: String, highlighted: Bool, gridWidth: CGFloat? = nil, largeEmoji: Bool = false) {
         self.candidateHighlighted = highlighted
         self.gridWidth = gridWidth
         super.init(frame: .zero)
@@ -223,7 +233,8 @@ private final class CandidateRow: NSButton {
         isBordered = false
         alignment = .left
         font = .systemFont(ofSize: 18)
-        title = "\(number)  \(candidate.text)"
+        let prefix = key.isEmpty ? "" : "\(key)  "
+        title = prefix + candidate.text
         contentTintColor = highlighted ? .selectedMenuItemTextColor : .labelColor
         let color: NSColor = highlighted ? .selectedMenuItemTextColor : .labelColor
         let attributed = NSMutableAttributedString(string: title, attributes: [
@@ -231,7 +242,7 @@ private final class CandidateRow: NSButton {
         ])
         if largeEmoji {
             attributed.addAttribute(.font, value: NSFont.systemFont(ofSize: 32),
-                range: NSRange(location: "\(number)  ".utf16.count, length: candidate.text.utf16.count))
+                range: NSRange(location: prefix.utf16.count, length: candidate.text.utf16.count))
         }
         if let note = candidate.note, !note.isEmpty {
             // 用動態次要文字色，避免背景輸入法行程切換外觀後附註變成白底白字。

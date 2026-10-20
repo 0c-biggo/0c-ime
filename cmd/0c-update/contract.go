@@ -136,7 +136,7 @@ func featuresOf() features { return features{Vocab: true} }
 // runningValues 把引擎 health 回報的啟動配置換成設定的命令列寫法；沒有回報的項目不出現。
 func runningValues(info map[string]string) map[string]string {
 	out := map[string]string{}
-	for _, key := range []string{"candidate-cursor", "candidate-layout", "emoji-shortcut", "keyboard-layout", "toggle-key", "mode-memory", "start-mode"} {
+	for _, key := range []string{"candidate-cursor", "candidate-layout", "emoji-shortcut", "keyboard-layout", "toggle-key", "mode-memory", "start-mode", "selection-keys"} {
 		if value := info[strings.ReplaceAll(key, "-", "_")]; value != "" {
 			out[key] = value
 		}
@@ -167,6 +167,18 @@ func runningValues(info map[string]string) map[string]string {
 		out["advance-after-select"] = "on"
 	case "false":
 		out["advance-after-select"] = "off"
+	}
+	switch info["output_simplified"] {
+	case "true":
+		out["output-simplified"] = "on"
+	case "false":
+		out["output-simplified"] = "off"
+	}
+	switch info["ctrl_punctuation"] {
+	case "true":
+		out["ctrl-punctuation"] = "on"
+	case "false":
+		out["ctrl-punctuation"] = "off"
 	}
 	switch info["space_selects"] {
 	case "true":
@@ -258,7 +270,7 @@ type setOptions struct {
 	repair bool // 設定檔壞掉時改名保留，從預設值重新開始
 }
 
-const setUsage = "用法：0c-update set selection neural|statistical、set punctuation on|off、set document-context on|off、set mixed-input on|off、set english-autocomplete on|off、set left-shift on|off、set esc-clear on|off、set space-selects on|off、set candidate-cursor before|after、set advance-after-select on|off、set keyboard-layout standard|eten、set fuzzy-z-zh|fuzzy-c-ch|fuzzy-s-sh|fuzzy-en-eng off|select|auto [鍵 值 ...] [-apply] [-notify] [-json] [-repair]"
+const setUsage = "用法：0c-update set selection neural|statistical、set punctuation on|off、set document-context on|off、set mixed-input on|off、set english-autocomplete on|off、set left-shift on|off、set esc-clear on|off、set space-selects on|off、set candidate-cursor before|after、set advance-after-select on|off、set output-simplified on|off、set ctrl-punctuation on|off、set keyboard-layout standard|eten、set fuzzy-z-zh|fuzzy-c-ch|fuzzy-s-sh|fuzzy-en-eng off|select|auto [鍵 值 ...] [-apply] [-notify] [-json] [-repair]"
 
 func parseSetArgs(args []string) (setOptions, error) {
 	var o setOptions

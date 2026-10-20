@@ -18,6 +18,7 @@ import (
 	"git.biggo.com/0c/ime/core/personal"
 	"git.biggo.com/0c/ime/core/proto"
 	"git.biggo.com/0c/ime/internal/datadir"
+	"git.biggo.com/0c/ime/internal/simplified"
 )
 
 const help = `直接輸入按鍵（預設標準注音排列，-keyboard-layout eten 為倚天 41 鍵；空白鍵是一聲），按 Enter 送出這一行的按鍵。
@@ -25,7 +26,7 @@ const help = `直接輸入按鍵（預設標準注音排列，-keyboard-layout e
   :c [詞長]   開候選（不給詞長則優先目前分詞）    :n ID      選候選
   :p 頁碼     換頁          :x  關閉候選            :tab       接受補全／候選內切詞長
   :bs         退格          :esc 放棄組字           :to 位置   移動游標（音節位置）
-  :k 鍵名     送具名鍵：Up Down Left Right Enter Escape Delete PageUp PageDown
+  :k 鍵名     送具名鍵：Up Down Left Right Enter Escape Delete PageUp PageDown；Ctrl+, Ctrl+. 等 Ctrl＋標點
               多排候選用方向鍵移動；表情選單啟用時 = 開啟、== 輸入等號、:tab 切顏文字
   :forget 詞  撤銷與該詞有關的學習                  :pause on|off  暫停學習
   :learned    列出學到的個人片語                    :why       說明目前的自動近音修正（模糊音 auto）
@@ -43,8 +44,11 @@ func main() {
 	emojiShortcut := flag.String("emoji-shortcut", "equals", "表情選單：off 或 equals；= 開選單，== 輸入等號，Tab 切顏文字")
 	emojiEqualsFirst := flag.Bool("emoji-equals-first", true, "將 = 放在 Emoji 第一項；關閉仍可按 == 輸入等號")
 	escClear := flag.Bool("esc-clear", true, "按 Esc 清除整段組字；關閉時只清未打完的注音")
+	ctrlPunct := flag.Bool("ctrl-punctuation", true, "注音模式的 Ctrl＋, . ' ; ? ! 打全形標點（用 :k Ctrl+, 送）；關閉時交給應用程式")
 	advanceAfterSelect := flag.Bool("advance-after-select", false, "選字後游標移到所選詞後面（前方模式往後移一個字）。重播需使用相同開關")
+	outputSimplified := flag.Bool("output-simplified", false, "送出時轉成簡體字（組字與候選仍是繁體）")
 	spaceSelects := flag.Bool("space-selects", true, "注音打完按空白選字；關閉時空白輸入空格、↓ 選字。重播需使用相同開關")
+	selectionKeys := flag.String("selection-keys", "1234567890", "選字鍵：1234567890、1234qweras 或 asdfghjkl;（數字仍照位置選字）。重播需使用相同選字鍵")
 	keyboardLayout := flag.String("keyboard-layout", "standard", "鍵盤排列：standard 或 eten（倚天 41 鍵，停用混打與 = 開 Emoji）。重播需使用相同排列")
 	flag.Parse()
 
@@ -65,6 +69,15 @@ func main() {
 	eng.EscKeepComposition = !*escClear
 	eng.SpaceInsertsSpace = !*spaceSelects
 	eng.AdvanceAfterSelect = *advanceAfterSelect
+	eng.CtrlPunct = *ctrlPunct
+	if *outputSimplified {
+		eng.Simplified, err = simplified.TW2S()
+		check(err)
+	}
+	if *selectionKeys != "1234567890" && *selectionKeys != "1234qweras" && *selectionKeys != "asdfghjkl;" {
+		check(fmt.Errorf("未知選字鍵 %q", *selectionKeys))
+	}
+	eng.SelectionKeys = *selectionKeys
 	kb, ok := layout.ByName(*keyboardLayout)
 	if !ok {
 		check(fmt.Errorf("未知鍵盤排列 %q（standard、eten）", *keyboardLayout))
@@ -114,8 +127,14 @@ func main() {
 		if *advanceAfterSelect {
 			fmt.Fprintln(rec, "# 重播需要相同的選字後游標設定：0c-cli -advance-after-select")
 		}
+		if *outputSimplified {
+			fmt.Fprintln(rec, "# 重播需要相同的簡體輸出設定：0c-cli -output-simplified")
+		}
 		if !*spaceSelects {
 			fmt.Fprintln(rec, "# 重播需要相同的空白鍵設定：0c-cli -space-selects=false")
+		}
+		if *selectionKeys != "1234567890" {
+			fmt.Fprintf(rec, "# 重播需要相同的選字鍵：0c-cli -selection-keys '%s'\n", *selectionKeys)
 		}
 		if kb != layout.Standard {
 			fmt.Fprintf(rec, "# 重播需要相同的鍵盤排列：0c-cli -keyboard-layout %s\n", *keyboardLayout)

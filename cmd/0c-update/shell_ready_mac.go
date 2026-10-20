@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -19,6 +20,9 @@ import (
 // ASID belongs to the GUI domain; unlocking or switching users keeps it intact.
 // 開機後 ASID 從同一個起點重新編號，重開機後的第一個登入可能拿到與安裝時相同的 ASID（#98），
 // 所以開機時間晚於收據寫入（安裝完成）也算跨過登入邊界；boot 為零值表示無法取得。
+// errNoLoginBoundary：收據或目前的工作階段沒有 ASID，又沒有重新開機，無法判斷是否跨過登入邊界。
+var errNoLoginBoundary = errors.New("無法確認安裝與登入的工作階段邊界")
+
 func macShellBoundary(receipt, version string, current uint64, boot time.Time) (bool, error) {
 	b, err := os.ReadFile(receipt)
 	if err != nil {
@@ -36,7 +40,7 @@ func macShellBoundary(receipt, version string, current uint64, boot time.Time) (
 		return true, nil
 	}
 	if r.SessionASID == 0 || current == 0 {
-		return false, fmt.Errorf("無法確認安裝與登入的工作階段邊界")
+		return false, errNoLoginBoundary
 	}
 	return r.SessionASID != current, nil
 }

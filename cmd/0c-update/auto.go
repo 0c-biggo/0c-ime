@@ -150,7 +150,9 @@ func (p *system) InstallShell(ctx context.Context, archive string) (bool, error)
 		return false, err
 	}
 	afterInstall()
-	return true, nil // 外殼在重新登入後才全面載入
+	// Windows 的外殼在重新登入後才全面載入；macOS 安裝時已請舊的輸入法程式結束（#170），只有要重新登入的情況才回 pending，
+	// 其餘由協調器接著以 ShellReady 核對。
+	return shellPendingAfterInstall(), nil
 }
 
 func (p *system) ReloadsShell() bool { return reloadableShell() }
@@ -509,6 +511,8 @@ func autoCommand(action string, args []string) (resultErr error) {
 	// #120：0.2.0 起引擎常駐，引擎沒在跑就叫起來。以暫時性 service 啟動只要幾十毫秒、不等它載入，
 	// 登入單元也做，引擎在登入當下就起來，不必等 timer 第一次喚起（OnStartupSec=5min）。
 	ensureEngineService(base)
+	// Windows：背景完整更新由舊的穩定更新器安裝，它不會請舊版的 0c-ui 結束；新版的穩定副本每次喚起時補上。
+	handOverUI(uiWaitAuto)
 	if *login {
 		return nil
 	}
@@ -738,7 +742,7 @@ func statusMap(base, installed string, dial autoupdate.Dialer) map[string]any {
 		for _, p := range fuzzy.Pairs() {
 			fuzzyModes[p.ID()] = st.FuzzyConfig().Mode(p).String()
 		}
-		out["settings"] = map[string]any{"selection": st.Selection, "punctuation": st.Punctuation, "document_context": st.DocumentContext, "mixed_input": st.MixedInput, "english_autocomplete": st.EnglishAutocomplete, "left_shift": st.LeftShift, "esc_clear": st.EscClear, "space_selects": st.SpaceSelects, "advance_after_select": st.AdvanceAfterSelect, "keyboard_layout": st.KeyboardLayout, "fuzzy": fuzzyModes}
+		out["settings"] = map[string]any{"selection": st.Selection, "punctuation": st.Punctuation, "document_context": st.DocumentContext, "mixed_input": st.MixedInput, "english_autocomplete": st.EnglishAutocomplete, "left_shift": st.LeftShift, "esc_clear": st.EscClear, "space_selects": st.SpaceSelects, "advance_after_select": st.AdvanceAfterSelect, "output_simplified": st.OutputSimplified, "ctrl_punctuation": st.CtrlPunctuation, "keyboard_layout": st.KeyboardLayout, "fuzzy": fuzzyModes}
 	}
 	return out
 }

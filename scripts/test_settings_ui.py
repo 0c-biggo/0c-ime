@@ -14,6 +14,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from build_settings_linux import ROOT, ensure_image  # noqa: E402
 
+ENGINE_VERSION = "0.2.1"
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -27,13 +29,16 @@ def main():
     bin_dir = out / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
     for name in ("0c-update", "0c-server"):
-        subprocess.run([args.go, "build", "-trimpath", "-o", str(bin_dir / name), f"./cmd/{name}"], cwd=ROOT, check=True,
+        # 引擎回報固定版本：總覽比對執行中的引擎與收據／核心指標的場景要用（smoke.sh 的 ENGINE_VERSION）。
+        ldflags = [f"-ldflags=-X main.buildVersion={ENGINE_VERSION}"] if name == "0c-server" else []
+        subprocess.run([args.go, "build", "-trimpath", *ldflags, "-o", str(bin_dir / name), f"./cmd/{name}"], cwd=ROOT, check=True,
                        env=dict(os.environ, CGO_ENABLED="0", GOOS="linux"))
     image = ensure_image(args.rust)
     shots = out / "shots"
     shots.mkdir(exist_ok=True)
     env = {"SETTINGS_BIN": "/in/0c-settings", "UPDATE_BIN": "/bin-dir/0c-update", "SERVER_BIN": "/bin-dir/0c-server",
-           "DATA": "/src/testdata/toy", "OUT": "/shots", "HOME": "/tmp/h", "SMOKE_ONLY": args.only or ""}
+           "DATA": "/src/testdata/toy", "OUT": "/shots", "HOME": "/tmp/h", "SMOKE_ONLY": args.only or "",
+           "ENGINE_VERSION": ENGINE_VERSION}
     # /etc/passwd：以任意 uid 執行時，dbus-launch 需要查得到使用者。
     command = ["docker", "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}",
                "-v", "/etc/passwd:/etc/passwd:ro", "-v", f"{ROOT}:/src:ro", "-v", f"{args.settings.resolve()}:/in/0c-settings:ro", "-v", f"{bin_dir}:/bin-dir:ro", "-v", f"{shots}:/shots",

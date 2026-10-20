@@ -63,8 +63,8 @@ type Settings struct {
 	MixedInput          bool   `json:"mixed_input"`
 	EnglishAutocomplete bool   `json:"english_autocomplete"`
 	LeftShift           bool   `json:"left_shift"` // 舊欄位：ToggleKey 含左 Shift。讀新檔時由 ToggleKey 推出，存檔時一併寫回給舊版讀
-	// ToggleKey 是單按哪個 Shift 切換注音／英文（#117）：right（預設）、both、left、none。檔案沒有這個欄位時
-	// 依舊欄位 left_shift 推出（true 為 both）。Shift 加字母一律打大寫，不算切換。
+	// ToggleKey 是單按哪個 Shift 切換注音／英文（#117）：right、both、left、none。macOS 預設 none，其他平台 right。
+	// 檔案沒有這個欄位時沿用平台預設；舊欄位 left_shift=true 保留為 both。Shift 加字母一律打大寫，不算切換。
 	ToggleKey string `json:"toggle_key"`
 	// ModeMemory 是切換視窗或輸入框後的中英模式（#115）：native 照平台原本的做法（Windows 每個程式各自記住、
 	// Linux 回到注音），shared 全部共用同一個模式（macOS 的預設，同系統輸入方式全域共用）。
@@ -81,7 +81,15 @@ type Settings struct {
 	EmojiShortcut      string `json:"emoji_shortcut"`
 	EmojiEqualsFirst   bool   `json:"emoji_equals_first"`
 	KeyboardLayout     string `json:"keyboard_layout"` // standard（預設）或 eten（倚天 41 鍵，#83）
-	Fuzzy              Fuzzy  `json:"fuzzy,omitzero"`
+	// OutputSimplified：送出時把繁體轉成簡體（#118）；組字、候選與學習仍是繁體。預設 false。
+	OutputSimplified bool `json:"output_simplified"`
+	// SelectionKeys 是候選窗的選字鍵（#112）：1234567890（預設，檔案沒有這個欄位時也是）、1234qweras 或 asdfghjkl;。
+	// 換成字母鍵時數字 1–0 仍照位置選字。
+	SelectionKeys string `json:"selection_keys"`
+	// CtrlPunctuation：中文模式按 Ctrl＋, . ' ; 與 Ctrl＋Shift＋/ 1 打全形標點（#168）。預設 true；
+	// 想保留程式快速鍵（VS Code 的 Ctrl＋, 等）時關閉，這些鍵照舊交給應用程式。
+	CtrlPunctuation bool  `json:"ctrl_punctuation"`
+	Fuzzy           Fuzzy `json:"fuzzy,omitzero"`
 	// 0.2.0 開發期間的內部開關 preview_0_2（#128）已拿掉：自訂詞彙、加詞按鍵、「我的片語」、本機 API 等
 	// 入口 0.2.0 起所有人都有。舊檔裡的 preview_0_2 不論值為何都忽略，存檔時移除（retiredKeys）。
 
@@ -220,9 +228,16 @@ func (s Settings) FuzzyConfig() fuzzy.Config {
 }
 
 func Default() Settings {
-	return Settings{Selection: Neural, Punctuation: false, DocumentContext: true, CandidateCursor: defaultCandidateCursor(runtime.GOOS), CandidateLayout: "vertical", EmojiShortcut: "equals", EmojiEqualsFirst: true, EscClear: true, SpaceSelects: true, KeyboardLayout: LayoutStandard,
-		ToggleKey: ToggleRight, ModeMemory: defaultModeMemory(runtime.GOOS), StartMode: StartZhuyin}
+	return Settings{Selection: Neural, Punctuation: false, DocumentContext: true, CandidateCursor: defaultCandidateCursor(runtime.GOOS), CandidateLayout: "vertical", EmojiShortcut: "equals", EmojiEqualsFirst: true, EscClear: true, SpaceSelects: true, KeyboardLayout: LayoutStandard, SelectionKeys: SelectDigits, CtrlPunctuation: true,
+		ToggleKey: defaultToggleKey(runtime.GOOS), ModeMemory: defaultModeMemory(runtime.GOOS), StartMode: StartZhuyin}
 }
+
+// 選字鍵（#112）。值就是依序對應第 1–10 項的鍵；不開放自訂。
+const (
+	SelectDigits = "1234567890"
+	SelectQwer   = "1234qweras"
+	SelectHome   = "asdfghjkl;"
+)
 
 // 中英切換鍵（#117）。
 const (
@@ -231,6 +246,14 @@ const (
 	ToggleLeft  = "left"
 	ToggleNone  = "none"
 )
+
+// macOS 預設沿用系統的輸入來源切換，避免誤觸 Shift 後留在英文模式；想用 Shift 的使用者可在設定開啟。
+func defaultToggleKey(goos string) string {
+	if goos == "darwin" {
+		return ToggleNone
+	}
+	return ToggleRight
+}
 
 // 切換視窗後的中英模式（#115）。
 const (
@@ -298,7 +321,7 @@ func (s *Settings) UnmarshalJSON(b []byte) error {
 	for _, field := range []struct {
 		key string
 		dst *bool
-	}{{"punctuation", &s.Punctuation}, {"document_context", &s.DocumentContext}, {"mixed_input", &s.MixedInput}, {"english_autocomplete", &s.EnglishAutocomplete}, {"left_shift", &s.LeftShift}, {"esc_clear", &s.EscClear}, {"space_selects", &s.SpaceSelects}, {"advance_after_select", &s.AdvanceAfterSelect}, {"emoji_equals_first", &s.EmojiEqualsFirst}} {
+	}{{"punctuation", &s.Punctuation}, {"document_context", &s.DocumentContext}, {"mixed_input", &s.MixedInput}, {"english_autocomplete", &s.EnglishAutocomplete}, {"left_shift", &s.LeftShift}, {"esc_clear", &s.EscClear}, {"space_selects", &s.SpaceSelects}, {"advance_after_select", &s.AdvanceAfterSelect}, {"emoji_equals_first", &s.EmojiEqualsFirst}, {"output_simplified", &s.OutputSimplified}, {"ctrl_punctuation", &s.CtrlPunctuation}} {
 		if raw, ok := take(field.key); ok {
 			var v bool
 			if json.Unmarshal(raw, &v) == nil {
@@ -325,6 +348,7 @@ func (s *Settings) UnmarshalJSON(b []byte) error {
 		{"candidate_layout", &s.CandidateLayout, []string{"vertical", "grid"}},
 		{"emoji_shortcut", &s.EmojiShortcut, []string{"off", "equals"}},
 		{"keyboard_layout", &s.KeyboardLayout, []string{LayoutStandard, LayoutETen}},
+		{"selection_keys", &s.SelectionKeys, []string{SelectDigits, SelectQwer, SelectHome}},
 		{"toggle_key", &s.ToggleKey, []string{ToggleRight, ToggleBoth, ToggleLeft, ToggleNone}},
 		{"mode_memory", &s.ModeMemory, []string{ModeNative, ModeShared}},
 		{"start_mode", &s.StartMode, []string{StartZhuyin, StartEnglish}},
@@ -398,7 +422,7 @@ func (s Settings) MarshalJSON() ([]byte, error) {
 	for _, field := range []struct {
 		key   string
 		value any
-	}{{"selection", s.Selection}, {"punctuation", s.Punctuation}, {"document_context", s.DocumentContext}, {"mixed_input", s.MixedInput}, {"english_autocomplete", s.EnglishAutocomplete}, {"left_shift", s.LeftShift}, {"esc_clear", s.EscClear}, {"space_selects", s.SpaceSelects}, {"candidate_cursor", s.CandidateCursor}, {"advance_after_select", s.AdvanceAfterSelect}, {"candidate_layout", s.CandidateLayout}, {"emoji_shortcut", s.EmojiShortcut}, {"emoji_equals_first", s.EmojiEqualsFirst}, {"keyboard_layout", s.KeyboardLayout}, {"toggle_key", s.ToggleKey}, {"mode_memory", s.ModeMemory}, {"start_mode", s.StartMode}} {
+	}{{"selection", s.Selection}, {"punctuation", s.Punctuation}, {"document_context", s.DocumentContext}, {"mixed_input", s.MixedInput}, {"english_autocomplete", s.EnglishAutocomplete}, {"left_shift", s.LeftShift}, {"esc_clear", s.EscClear}, {"space_selects", s.SpaceSelects}, {"candidate_cursor", s.CandidateCursor}, {"advance_after_select", s.AdvanceAfterSelect}, {"candidate_layout", s.CandidateLayout}, {"emoji_shortcut", s.EmojiShortcut}, {"emoji_equals_first", s.EmojiEqualsFirst}, {"keyboard_layout", s.KeyboardLayout}, {"selection_keys", s.SelectionKeys}, {"toggle_key", s.ToggleKey}, {"mode_memory", s.ModeMemory}, {"start_mode", s.StartMode}, {"output_simplified", s.OutputSimplified}, {"ctrl_punctuation", s.CtrlPunctuation}} {
 		if err := typed(field.key, field.value); err != nil {
 			return nil, err
 		}
@@ -450,7 +474,7 @@ func (s Settings) notes() []string {
 	if s.extra != "" {
 		_ = json.Unmarshal([]byte(s.extra), &kept)
 	}
-	for _, key := range []string{"selection", "punctuation", "document_context", "mixed_input", "english_autocomplete", "left_shift", "esc_clear", "space_selects", "candidate_cursor", "advance_after_select", "candidate_layout", "emoji_shortcut", "emoji_equals_first", "keyboard_layout", "toggle_key", "mode_memory", "start_mode"} {
+	for _, key := range []string{"selection", "punctuation", "document_context", "mixed_input", "english_autocomplete", "left_shift", "esc_clear", "space_selects", "candidate_cursor", "advance_after_select", "candidate_layout", "emoji_shortcut", "emoji_equals_first", "keyboard_layout", "selection_keys", "toggle_key", "mode_memory", "start_mode", "output_simplified", "ctrl_punctuation"} {
 		if raw, ok := kept[key]; ok {
 			out = append(out, fmt.Sprintf("%s：本版不認得 %s，暫用預設值，存檔時保留原值", strings.ReplaceAll(key, "_", "-"), raw))
 			delete(kept, key)
@@ -537,6 +561,57 @@ func Load(path string) (Settings, error) {
 	return r.Settings, err
 }
 
+// KeepToggleKey 在設定檔沒有記下中英切換鍵時寫入 value，回報是否寫入（#167：升級前的平台預設和現在不同，
+// 升級的人保留原本的行為）。已有 toggle_key、舊版的 left_shift=true（已推出 both）、來自較新版本或無法解析的檔案都不動；
+// 寫過一次之後檔案就有 toggle_key，使用者之後自己改的值不會被蓋回去。
+// 只加這一個欄位：其他欄位與未知欄位逐字保留，不把其餘的預設值寫成使用者的選擇；缺檔時只寫 schema 與 toggle_key。
+func KeepToggleKey(path, value string) (bool, error) {
+	if !slices.Contains([]string{ToggleRight, ToggleBoth, ToggleLeft, ToggleNone}, value) {
+		return false, &SetError{Code: CodeInvalidValue, Msg: "不認得的切換鍵：" + value}
+	}
+	b, missing, err := readFile(path)
+	if err != nil {
+		return false, err
+	}
+	if missing && legacyPath(path) != "" {
+		if _, oldMissing, _ := readFile(legacyPath(path)); !oldMissing {
+			return false, nil // 讀的是舊路徑的設定：不在新路徑另寫一份把它蓋掉
+		}
+	}
+	entry, _ := json.Marshal(value)
+	var out []byte
+	if missing {
+		out = []byte(fmt.Sprintf("{\n  \"schema\": %d,\n  \"toggle_key\": %s\n}\n", SchemaVersion, entry))
+	} else {
+		var members map[string]json.RawMessage
+		if err = json.Unmarshal(b, &members); err != nil || members == nil {
+			return false, fmt.Errorf("%s：%w", path, ErrCorrupt)
+		}
+		var s Settings
+		if err = json.Unmarshal(b, &s); err != nil {
+			return false, fmt.Errorf("%s：%w：%v", path, ErrCorrupt, err)
+		}
+		if _, ok := members["toggle_key"]; ok || s.readOnly || s.LeftShift {
+			return false, nil
+		}
+		body := bytes.TrimRight(b, " \t\r\n")
+		if len(body) == 0 || body[len(body)-1] != '}' {
+			return false, fmt.Errorf("%s：%w", path, ErrCorrupt)
+		}
+		sep := ","
+		if len(members) == 0 {
+			sep = ""
+		}
+		out = append(append([]byte{}, body[:len(body)-1]...), []byte(sep+"\n  \"toggle_key\": "+string(entry)+"\n}\n")...)
+		// 逐字插入前一個成員之後：前面是空白或換行時照樣是合法 JSON，寫入前再核對一次。
+		var check map[string]json.RawMessage
+		if json.Unmarshal(out, &check) != nil || len(check) != len(members)+1 {
+			return false, fmt.Errorf("%s：%w", path, ErrCorrupt)
+		}
+	}
+	return true, writeAtomic(path, out)
+}
+
 // Save 先寫暫存檔再改名，中斷時保留原設定。讀到的未知欄位與讀不懂的值原樣寫回；
 // 來自較新版本的檔案回傳 ErrReadOnly，不覆寫。
 func Save(path string, s Settings) error {
@@ -547,7 +622,11 @@ func Save(path string, s Settings) error {
 	if err != nil {
 		return err
 	}
-	if err = os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	return writeAtomic(path, append(b, '\n'))
+}
+
+func writeAtomic(path string, b []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	f, err := os.CreateTemp(filepath.Dir(path), ".settings-")
@@ -555,7 +634,7 @@ func Save(path string, s Settings) error {
 		return err
 	}
 	defer os.Remove(f.Name())
-	if _, err = f.Write(append(b, '\n')); err != nil {
+	if _, err = f.Write(b); err != nil {
 		f.Close()
 		return err
 	}
@@ -598,6 +677,8 @@ func (s Settings) valueLabels(key string) map[string]string {
 		return map[string]string{ToggleRight: "右 Shift", ToggleBoth: "左右 Shift", ToggleLeft: "左 Shift", ToggleNone: "不用 Shift"}
 	case "start-mode":
 		return map[string]string{StartZhuyin: "注音", StartEnglish: "英文"}
+	case "selection-keys":
+		return map[string]string{SelectDigits: "1 2 3 4 5 6 7 8 9 0", SelectQwer: "1 2 3 4 q w e r a s", SelectHome: "a s d f g h j k l ;"}
 	case "mode-memory":
 		return map[string]string{ModeNative: modeNativeLabel(runtime.GOOS, s.StartsEnglish()), ModeShared: "全部共用同一個模式"}
 	}
@@ -631,11 +712,11 @@ func specs() []spec {
 			func(s Settings) string { return onOff(s.Punctuation) }},
 		{"document-context", "依前文選字", "依自己剛提交的文字選字", "on", []string{"on", "off"},
 			func(s Settings) string { return onOff(s.DocumentContext) }},
-		{"mixed-input", "中英混打（試用）", "直接在注音中打英文；提供英文補全與拼字修正，由你確認接受。開啟時空白鍵輸入空白，按 ↓ 選字；數字拼得成注音時，按 Enter 留數字。開不開都能單按 Shift 切換到英文模式", "off", []string{"on", "off"},
+		{"mixed-input", "中英混打（試用）", "直接在注音中打英文；提供英文補全與拼字修正，由你確認接受。開啟時空白鍵輸入空白，按 ↓ 選字；數字拼得成注音時，按 Enter 留數字。若已啟用 Shift 中英切換，混打開或關都能單按 Shift 切到英文", "off", []string{"on", "off"},
 			func(s Settings) string { return onOff(s.MixedInput) }},
 		{"english-autocomplete", "英文模式自動補字", "單按 Shift 切換到英文模式後，輸入至少兩個字母時顯示補全候選，三個字母起也提供拼字修正；按 Tab 補全或修正拼字、Esc 關閉。與中英混打分開設定，空白與 Enter 保留原操作", "off", []string{"on", "off"},
 			func(s Settings) string { return onOff(s.EnglishAutocomplete) }},
-		{"toggle-key", "中英切換鍵", toggleKeyDescription(runtime.GOOS), ToggleRight, []string{ToggleRight, ToggleBoth, ToggleLeft, ToggleNone},
+		{"toggle-key", "中英切換鍵", toggleKeyDescription(runtime.GOOS), Default().ToggleKey, []string{ToggleRight, ToggleBoth, ToggleLeft, ToggleNone},
 			func(s Settings) string { return s.ToggleKey }},
 		{"start-mode", "開始時的中英模式", startModeDescription(runtime.GOOS), StartZhuyin, []string{StartZhuyin, StartEnglish},
 			func(s Settings) string { return s.StartMode }},
@@ -649,10 +730,16 @@ func specs() []spec {
 		{"advance-after-select", "選字後游標移到下一個字", "從候選窗選好字後，游標跳到所選的詞後面，可以接著按 ↓ 改下一個字；修改游標前方字詞時往後移一個字。游標在句尾時不動", "off", []string{"on", "off"},
 			func(s Settings) string { return onOff(s.AdvanceAfterSelect) }},
 		{"candidate-layout", "選字排列", "直排，或每排五個的多排選字；Linux 原生候選窗依桌面介面呈現", "vertical", []string{"vertical", "grid"}, func(s Settings) string { return s.CandidateLayout }},
+		{"output-simplified", "輸出簡體字", "組字和候選仍顯示繁體，送出時才轉成簡體字；我的詞彙與我的片語也一起轉，英文、數字與標點不變", "off", []string{"on", "off"},
+			func(s Settings) string { return onOff(s.OutputSimplified) }},
 		{"emoji-shortcut", "Emoji 選單", "在注音模式按 = 開啟選單；Tab 切換顏文字，選過的排前面", "equals", []string{"off", "equals"}, func(s Settings) string { return s.EmojiShortcut }},
 		{"emoji-equals-first", "將 = 放在第一項", "關閉後，按兩次 == 可輸入一個 =", "on", []string{"on", "off"}, func(s Settings) string { return onOff(s.EmojiEqualsFirst) }},
 		{"keyboard-layout", "鍵盤排列", "注音鍵盤排列。倚天 41 鍵的 = 是 ㄦ、' 是 ㄘ，頓號改按 \\；這時不提供 Emoji 選單與中英混打", LayoutStandard, []string{LayoutStandard, LayoutETen},
 			func(s Settings) string { return s.KeyboardLayout }},
+		{"selection-keys", "選字鍵", "候選窗用哪一排鍵選第 1 到第 10 個字；換成字母鍵時，數字鍵仍可照位置選字", SelectDigits, []string{SelectDigits, SelectQwer, SelectHome},
+			func(s Settings) string { return s.SelectionKeys }},
+		{"ctrl-punctuation", "Ctrl＋標點打全形", ctrlPunctuationDescription(runtime.GOOS), "on", []string{"on", "off"},
+			func(s Settings) string { return onOff(s.CtrlPunctuation) }},
 	}
 	for _, p := range fuzzy.Pairs() {
 		out = append(out, spec{"fuzzy-" + p.ID(), "模糊音 " + p.Symbols(), "把近音的字也列進候選，原音仍排在前面；「自動修正」（實驗）會在上下文明顯支持近音時另外自動改字", DefaultFuzzy, []string{"off", "select", "auto"},
@@ -666,6 +753,23 @@ func toggleKeyDescription(goos string) string {
 	d := "單按哪個 Shift 切換注音／英文；按住 Shift 超過 0.3 秒、或 Shift 加字母（打大寫）不算切換。沒用來切換的 Shift 照系統原本的用途"
 	if goos == "windows" {
 		d += "。也可以按 Ctrl＋空白鍵"
+	} else if goos == "darwin" {
+		d += "。Mac 預設不用 Shift，使用系統的輸入來源切換；想用 Shift 可在這裡開啟"
+	}
+	return d
+}
+
+// ctrlPunctuationDescription：說明會占用哪些程式快速鍵、可以關掉（#168）。Mac 是 Control 鍵（⌃），程式快速鍵多用 ⌘，
+// 撞到的少，不舉 VS Code 的例子。
+func ctrlPunctuationDescription(goos string) string {
+	if goos == "darwin" {
+		return "注音模式按 ⌃, 打「，」、⌃. 打「。」、⌃' 打「、」、⌃; 打「；」、⌃⇧/ 打「？」、⌃⇧1 打「！」，沒在打字時也可以。" +
+			"注音模式時這幾個鍵不再交給 App，要保留時可以關掉；英文模式不受影響"
+	}
+	d := "注音模式按 Ctrl＋, 打「，」、Ctrl＋. 打「。」、Ctrl＋' 打「、」、Ctrl＋; 打「；」、Ctrl＋Shift＋/ 打「？」、Ctrl＋Shift＋1 打「！」，沒在打字時也可以。" +
+		"會占用程式的這幾個快速鍵（例如 VS Code 的 Ctrl＋, 開設定、Ctrl＋. 快速修正），要保留時可以關掉；英文模式不受影響"
+	if goos == "linux" {
+		d += "。Fcitx5 的剪貼簿開著時，Ctrl＋; 照舊叫出剪貼簿"
 	}
 	return d
 }
@@ -836,6 +940,12 @@ func (s *Settings) Set(key, value string) error {
 	case "advance-after-select":
 		s.AdvanceAfterSelect = value == "on"
 		s.forget("advance_after_select")
+	case "output-simplified":
+		s.OutputSimplified = value == "on"
+		s.forget("output_simplified")
+	case "ctrl-punctuation":
+		s.CtrlPunctuation = value == "on"
+		s.forget("ctrl_punctuation")
 	case "mixed-input":
 		s.MixedInput = value == "on"
 		s.forget("mixed_input")
@@ -854,6 +964,9 @@ func (s *Settings) Set(key, value string) error {
 	case "keyboard-layout":
 		s.KeyboardLayout = value
 		s.forget("keyboard_layout")
+	case "selection-keys":
+		s.SelectionKeys = value
+		s.forget("selection_keys")
 	case PreviewRetiredKey: // 已正式開放：不改任何東西
 	default:
 		p, _ := fuzzy.ParsePair(strings.TrimPrefix(key, "fuzzy-"))

@@ -20,7 +20,8 @@ func main() {
 	// 0c_collect 的 bigram 分成多字配對（-ns）與單字配對（-ss）：單字配對多是未收錄名稱被拆開的碎片，權重低一些。
 	o.Unigram, o.Bigram = "mcbopomofo=2,0c_collect=1", "chewing-v4=3,zhwiki=1,0c_collect-ns=3,0c_collect-ss=2"
 	// 罕用字（全字庫獨有、小麥注音中不在 Big5 者）排在常用字之後，避免候選第一頁滿是
-	// 字型沒有的擴充區字（使用者回報「選字會出現很多亂碼」）
+	// 字型沒有的擴充區字（使用者回報「選字會出現很多亂碼」），也不讓日文新字體與簡化字
+	// 排到常用字前面（#171：ㄑㄧˋ 的「気」排在「氣」前面）
 	o.Rare = "cns11643,mcbopomofo-rare"
 	flag.BoolVar(&o.RelativeReadings, "relative-readings", true, "以詞內最高正常讀音為基準保留相對成本（來源等級不變；false 可重跑舊公式）")
 	flag.BoolVar(&o.InheritVariants, "inherit", o.InheritVariants, "L2：單字變體讀音繼承到詞")
@@ -37,7 +38,7 @@ func main() {
 	flag.Float64Var(&o.PruneMu, "prune-mu", 0.7, "剪枝時假設的執行期內插權重 μ")
 	flag.StringVar(&o.PruneBy, "prune-by", "entropy", "剪枝排序標準：entropy、joint、ratio")
 	flag.StringVar(&o.Demote, "demote", o.Demote, "罕用來源的沒有詞頻的字詞 unigram 乘上係數，如 cns11643=0.01（影響解碼）")
-	flag.StringVar(&o.Rare, "rare", o.Rare, "罕用來源（逗號分隔）：沒有詞頻的字詞在候選視窗排到最後")
+	flag.StringVar(&o.Rare, "rare", o.Rare, "罕用來源（逗號分隔）：只來自這些來源的字詞在候選視窗排在其他字之後")
 	flag.StringVar(&o.Exclude, "exclude", o.Exclude, "排除的來源 ID（逗號分隔），供消融使用")
 	flag.StringVar(&o.Boost, "boost", o.Boost, "沒有詞頻的詞依來源給虛擬次數，如 moi-places=5")
 	seal := flag.String("seal", "", "只混淆既有資料包目錄中的字典檔（打包時使用），不編譯")

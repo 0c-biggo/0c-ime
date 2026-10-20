@@ -15,6 +15,7 @@ import (
 
 	"git.biggo.com/0c/ime/bridge/ipc"
 	"git.biggo.com/0c/ime/internal/autoupdate"
+	"git.biggo.com/0c/ime/internal/enginedir"
 	"git.biggo.com/0c/ime/internal/settings"
 	"git.biggo.com/0c/ime/internal/update"
 )
@@ -530,6 +531,56 @@ func TestDescribeUpdateNeverSaysLatestWhenUnknown(t *testing.T) {
 		if got := describeUpdate(c.view); !strings.Contains(got, c.want) || strings.Contains(got, c.not) {
 			t.Errorf("%s：%s", c.view.State, got)
 		}
+	}
+}
+
+// 設定程式總覽以 engine（引擎指標）|| installed（收據）判斷「應該在跑的版本」，與 update.installed 一致。
+// 核心更新只換引擎，收據仍是外殼的版本；只拿收據比會把執行中的新引擎當成舊版（0.2.1 候選版冒煙）。
+func TestStatusMapReportsCorePointerBesideShellReceipt(t *testing.T) {
+	base := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(base, "update"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := autoupdate.Load(base)
+	s.ScheduleRemoved = true
+	if err := autoupdate.Save(base, s); err != nil {
+		t.Fatal(err)
+	}
+	type doc struct {
+		Installed, Engine string
+		Runtime           struct{ State, Version string }
+		Update            struct{ Installed string }
+	}
+	read := func(dial autoupdate.Dialer) doc {
+		b, err := json.Marshal(statusMap(base, "0.2.0", dial))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var d doc
+		if err = json.Unmarshal(b, &d); err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	// 沒做過核心更新：engine 是空字串（0.2.0 實際的 status.json 就是這樣），以收據為準。
+	if d := read(modelStatusDial(map[string]string{"version": "0.2.0"}, true)); d.Installed != "0.2.0" || d.Engine != "" || d.Runtime.Version != "0.2.0" || d.Update.Installed != "0.2.0" {
+		t.Fatalf("no pointer: %+v", d)
+	}
+	dir := "versions/0.2.1-c-aaaaaaaaaaaa"
+	if err := os.MkdirAll(filepath.Join(base, filepath.FromSlash(dir), "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{enginedir.Executable(), "data/manifest.json"} {
+		if err := os.WriteFile(filepath.Join(base, filepath.FromSlash(dir), filepath.FromSlash(f)), []byte("{}"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := enginedir.Write(base, enginedir.Current{Directory: dir, Version: "0.2.1"}); err != nil {
+		t.Fatal(err)
+	}
+	// 核心更新後：收據仍是 0.2.0，engine 與 update.installed 是 0.2.1，執行中的引擎也是 0.2.1。
+	if d := read(modelStatusDial(map[string]string{"version": "0.2.1"}, true)); d.Installed != "0.2.0" || d.Engine != "0.2.1" || d.Runtime.Version != "0.2.1" || d.Update.Installed != "0.2.1" {
+		t.Fatalf("core pointer: %+v", d)
 	}
 }
 

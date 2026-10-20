@@ -17,6 +17,7 @@ import (
 	"git.biggo.com/0c/ime/core/punct"
 	"git.biggo.com/0c/ime/core/rerank"
 	"git.biggo.com/0c/ime/core/session"
+	"git.biggo.com/0c/ime/core/zhconv"
 	"git.biggo.com/0c/ime/core/zhuyin"
 )
 
@@ -26,13 +27,16 @@ type Engine struct {
 	// 由宿主在建立 session 前設定；nil 使用核心預設值。
 	// 資料包可攜帶其開發集校準的前文權重，不寫入個人詞庫。
 	DocumentContextWeight *float64
-	Rerank                rerank.Options   // 宿主在建立 session 前設定；可選、同步、有界評分器。
-	Punct                 punct.Punctuator // 宿主在建立 session 前設定；提交時補標點，nil 停用。
-	DocumentContextOff    bool             // 使用者關閉前文時由宿主設定；外殼的前文確認一律忽略。
-	EscKeepComposition    bool             // 使用者關閉「按 Esc 清除整段組字」時由宿主設定。
-	SpaceInsertsSpace     bool             // 使用者關閉「空白鍵選字」時由宿主設定。
-	AdvanceAfterSelect    bool             // 使用者開啟「選字後游標移到下一個字」時由宿主設定（#133）。
-	Fuzzy                 fuzzy.Config     // 使用者逐對啟用的模糊音；零值全部關閉。
+	Rerank                rerank.Options    // 宿主在建立 session 前設定；可選、同步、有界評分器。
+	Punct                 punct.Punctuator  // 宿主在建立 session 前設定；提交時補標點，nil 停用。
+	DocumentContextOff    bool              // 使用者關閉前文時由宿主設定；外殼的前文確認一律忽略。
+	EscKeepComposition    bool              // 使用者關閉「按 Esc 清除整段組字」時由宿主設定。
+	SpaceInsertsSpace     bool              // 使用者關閉「空白鍵選字」時由宿主設定。
+	AdvanceAfterSelect    bool              // 使用者開啟「選字後游標移到下一個字」時由宿主設定（#133）。
+	Simplified            *zhconv.Converter // 使用者開啟「輸出簡體字」時由宿主設定（#118）；nil 送出繁體。
+	SelectionKeys         string            // 使用者選的選字鍵（#112）；空字串為 1234567890。
+	CtrlPunct             bool              // 「Ctrl＋標點打全形」開著時由宿主設定（#168）；零值時 Ctrl＋標點交給應用程式。
+	Fuzzy                 fuzzy.Config      // 使用者逐對啟用的模糊音；零值全部關閉。
 	EnglishAutocomplete   bool
 	MixedInput            bool                // opt-in bilingual keys; disabled preserves legacy behavior.
 	English               *english.Dictionary // nil uses the authored prototype vocabulary.
@@ -81,6 +85,9 @@ func (e *Engine) OpenSession() uint64 {
 	e.sessions[e.next].EscKeepComposition = e.EscKeepComposition
 	e.sessions[e.next].SpaceInsertsSpace = e.SpaceInsertsSpace
 	e.sessions[e.next].AdvanceAfterSelect = e.AdvanceAfterSelect
+	e.sessions[e.next].Simplified = e.Simplified
+	e.sessions[e.next].SelectionKeys = e.SelectionKeys
+	e.sessions[e.next].CtrlPunct = e.CtrlPunct
 	e.sessions[e.next].Fuzzy = e.Fuzzy
 	e.sessions[e.next].EnglishAutocomplete = e.EnglishAutocomplete
 	e.sessions[e.next].MixedInput = e.MixedInput

@@ -18,6 +18,16 @@ func TestRunningValuesStartMode(t *testing.T) {
 	}
 }
 
+// #112：引擎回報的選字鍵對回設定的寫法；舊引擎沒有回報時不出現。
+func TestRunningValuesSelectionKeys(t *testing.T) {
+	if v, ok := runningValues(map[string]string{"selection_keys": "1234qweras"})["selection-keys"]; !ok || v != "1234qweras" {
+		t.Fatal(v)
+	}
+	if _, ok := runningValues(map[string]string{"version": "old"})["selection-keys"]; ok {
+		t.Fatal("舊引擎沒有回報")
+	}
+}
+
 // settings 的文字清單要列出設定程式看得到的每一項（曾經漏過 toggle-key、mode-memory）。
 func TestPrintSettingsListsEveryItem(t *testing.T) {
 	s := settings.Default()

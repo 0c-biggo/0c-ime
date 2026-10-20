@@ -10,7 +10,7 @@
 {"revision":9,"handled":true,"preedit":[{"text":"親子","style":"normal"},{"text":"ㄐㄧㄥ","style":"pending"}],"cursor":{"rune":5,"utf16":5},"mode":"zhuyin"}
 {"revision":10,"handled":true,"preedit":[{"text":"親子","style":"normal"},{"text":"景","style":"normal"}],"cursor":{"rune":3,"utf16":3},"mode":"zhuyin"}
 {"revision":11,"handled":true,"preedit":[{"text":"親子","style":"normal"},{"text":"景","style":"normal"}],"cursor":{"rune":2,"utf16":2},"mode":"zhuyin"}
-{"revision":12,"handled":true,"preedit":[{"text":"親子","style":"normal"},{"text":"景","style":"normal"}],"cursor":{"rune":2,"utf16":2},"candidates":{"items":[{"id":0,"text":"景","label":"common"},{"id":1,"text":"警","label":"common"},{"id":2,"text":"井","label":"common"},{"id":3,"text":"丼"},{"id":4,"text":"ㄐㄧㄥˇ"}],"page":0,"pages":1,"start":2,"length":1,"highlight":0,"title":"修改「景」 · Tab 切換詞長"},"mode":"zhuyin"}
+{"revision":12,"handled":true,"preedit":[{"text":"親子","style":"normal"},{"text":"景","style":"normal"}],"cursor":{"rune":2,"utf16":2},"candidates":{"items":[{"id":0,"text":"景","label":"common","key":"1"},{"id":1,"text":"警","label":"common","key":"2"},{"id":2,"text":"井","label":"common","key":"3"},{"id":3,"text":"丼","key":"4"},{"id":4,"text":"ㄐㄧㄥˇ","key":"5"}],"page":0,"pages":1,"start":2,"length":1,"highlight":0,"title":"修改「景」 · Tab 切換詞長"},"mode":"zhuyin"}
 {"revision":13,"handled":true,"preedit":[{"text":"親子","style":"normal"},{"text":"丼","style":"locked"}],"cursor":{"rune":2,"utf16":2},"mode":"zhuyin"}
 {"revision":14,"handled":true,"commit":"親子丼","cursor":{"rune":0,"utf16":0},"mode":"zhuyin"}
 # 第二次：自動轉換即為 親子丼

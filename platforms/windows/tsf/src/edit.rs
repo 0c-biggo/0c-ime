@@ -557,6 +557,8 @@ mod tests {
         /// GetTextExt 與 GetSelection 被呼叫的次數（每鍵不做多餘的查詢）。
         extents: Cell<u32>,
         selections: Cell<u32>,
+        /// GetStatus 的 dwDynamicFlags（欄位政策看 TF_SD_READONLY）。
+        dynamic: Cell<u32>,
     }
 
     struct Span {
@@ -766,7 +768,10 @@ mod tests {
             Err(E_NOTIMPL.into())
         }
         fn GetStatus(&self) -> windows_core::Result<TS_STATUS> {
-            Err(E_NOTIMPL.into())
+            Ok(TS_STATUS {
+                dwDynamicFlags: self.doc.dynamic.get(),
+                dwStaticFlags: 0,
+            })
         }
         fn GetProperty(&self, _: *const GUID) -> windows_core::Result<ITfProperty> {
             Err(E_NOTIMPL.into())
@@ -899,6 +904,7 @@ mod tests {
             layout: Cell::new(Layout::NoView),
             extents: Cell::new(0),
             selections: Cell::new(0),
+            dynamic: Cell::new(0),
         });
         let ctx = ComObject::new(FakeContext { doc: doc.clone() }).into_interface();
         (doc, ctx)
@@ -1140,5 +1146,27 @@ mod tests {
         request_locate(&ctx, 1, None, 0, Box::new(move |l| sink.set(Some(l)))).unwrap();
         drain(&doc);
         assert_eq!(found.get(), Some(Err(Miss::Range(E_NOTIMPL))));
+    }
+
+    #[test]
+    fn ctrl_space_toggles_when_the_host_refuses_a_sync_read_lock() {
+        // #164：Word、Outlook 收到系統的 Ctrl＋Space 熱鍵當下拒絕同步唯讀鎖（TS_E_SYNCHRONOUS）。
+        // 按鍵仍當成讀不到欄位而不送引擎，但熱鍵切換不讀文件、照常切換。
+        use crate::privacy::{field, hotkey_allowed, Field};
+        let (_, refusing) = host(Sync::Refuse);
+        assert_eq!(field(Some(&refusing), 1, false), Field::Blocked);
+        assert!(hotkey_allowed(Some(&refusing), 1, false));
+        // 給鎖的宿主：沒有 InputScope 屬性的一般欄位，按鍵與熱鍵都照常。
+        let (_, open) = host(Sync::Run);
+        assert_eq!(field(Some(&open), 1, false), Field::Open);
+        assert!(hotkey_allowed(Some(&open), 1, false));
+        // 唯讀的欄位：不論給不給鎖都不切換。
+        for sync in [Sync::Run, Sync::Refuse] {
+            let (doc, readonly) = host(sync);
+            doc.dynamic.set(windows::Win32::UI::TextServices::TF_SD_READONLY);
+            assert_eq!(field(Some(&readonly), 1, false), Field::Blocked);
+            assert!(!hotkey_allowed(Some(&readonly), 1, false));
+        }
+        assert!(!hotkey_allowed(None, 1, false));
     }
 }

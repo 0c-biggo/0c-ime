@@ -33,10 +33,28 @@ pub enum Field {
 
 /// `ui_less`：本執行緒以 TF_TMAE_UIELEMENTENABLEDONLY 啟用（自行繪製候選的宿主，例如遊戲，#86）。
 pub fn field(ctx: Option<&ITfContext>, client: u32, ui_less: bool) -> Field {
-    let Some(ctx) = ctx else { return Field::Blocked };
+    match ctx {
+        Some(ctx) => probe(ctx, client, ui_less).unwrap_or(Field::Blocked),
+        None => Field::Blocked,
+    }
+}
+
+/// 系統的輸入法開關熱鍵（Ctrl＋Space，#117）能不能切換中英：切換不送按鍵、不讀文件，只在確定擋下的欄位
+/// （唯讀、停用、密碼）不切換。宿主正在處理按鍵、不給同步唯讀鎖時（Word、Outlook 收到熱鍵當下回
+/// TS_E_SYNCHRONOUS，#164）讀不到欄位政策，照常切換，同輸入指示器按鈕。
+pub fn hotkey_allowed(ctx: Option<&ITfContext>, client: u32, ui_less: bool) -> bool {
+    ctx.is_some_and(|ctx| toggle_allowed(probe(ctx, client, ui_less)))
+}
+
+fn toggle_allowed(probed: Option<Field>) -> bool {
+    probed != Some(Field::Blocked)
+}
+
+/// 欄位政策；宿主拒絕同步唯讀 edit session（讀不到）時回 None。停用或唯讀的 context 直接是 Blocked。
+fn probe(ctx: &ITfContext, client: u32, ui_less: bool) -> Option<Field> {
     unsafe {
         if context_disabled(ctx) {
-            return Field::Blocked;
+            return Some(Field::Blocked);
         }
         crate::object_created();
         let probe = ComObject::new(ScopeProbe {
@@ -46,14 +64,14 @@ pub fn field(ctx: Option<&ITfContext>, client: u32, ui_less: bool) -> Field {
         });
         let edit: ITfEditSession = probe.to_interface();
         match ctx.RequestEditSession(client, &edit, TF_ES_SYNC | TF_ES_READ) {
-            Ok(hr) if hr.is_ok() => probe.field.get(),
+            Ok(hr) if hr.is_ok() => Some(probe.field.get()),
             Ok(hr) => {
                 crate::log::zdebug!("field policy read session={:?}", hr);
-                Field::Blocked
+                None
             }
             Err(error) => {
                 crate::log::zdebug!("field policy request={:?}", error.code());
-                Field::Blocked
+                None
             }
         }
     }
@@ -124,6 +142,22 @@ fn focused_window(ctx: &ITfContext) -> Option<HWND> {
 /// Word 等文件編輯器沒有標準 EDIT 類別；InputScope 不可用時以 MSAA 的角色／狀態核對。
 fn native_edit_allows(ctx: &ITfContext) -> bool {
     focused_window(ctx).is_some_and(|focus| native_edit_is_plain(focus) || accessible_edit_allows(focus))
+}
+
+/// 已知沒有 InputScope、MSAA 在行程內也查不到的文件畫布：OneNote 桌面版（2016、2024、Microsoft 365 是同一套程式）
+/// 的頁面 OneNote::DocumentCanvas 讀 InputScope 回 E_FAIL；跨行程看它的 MSAA 是 PANE、焦點物件是 DOCUMENT，
+/// 但在 OneNote 行程裡（輸入法所在）AccessibleObjectFromWindow 回 E_FAIL，不論在不在文件鎖裡，
+/// 原本的原生／MSAA 檢查都核對不到，整個頁面被當成擋下的欄位，按鍵直接以英文進入、Shift 也切不了（#163）。
+/// 頁面裡沒有密碼欄（密碼保護的節由另外的對話框輸入）；context 的停用／唯讀已先檢查，
+/// 這裡再確認焦點屬於本 context、本行程且可用，MSAA 查得到時也不能標成保護、唯讀或停用。
+fn document_canvas_allows(ctx: &ITfContext) -> bool {
+    focused_window(ctx).is_some_and(|focus| {
+        window_class(focus).is_some_and(|class| document_canvas(&class)) && !accessible_secret(focus)
+    })
+}
+
+fn document_canvas(class: &str) -> bool {
+    class == "OneNote::DocumentCanvas"
 }
 
 /// IMM32 程式（系統相容層建立的暫時 context，TF_SS_TRANSITORY）與自行繪製候選的宿主（UI-less，
@@ -341,7 +375,7 @@ impl ITfEditSession_Impl for ScopeProbe_Impl {
                 // 部分 RichEdit（含 Windows 11 記事本）沒有 InputScope，回傳 E_FAIL。
                 // 僅在焦點確實屬於本 context 且密碼／唯讀狀態可核對時退回原生／MSAA 檢查。
                 Err(error) if error.code() == E_FAIL || error.code() == E_NOTIMPL => {
-                    let field = if native_edit_allows(&self.ctx) {
+                    let field = if native_edit_allows(&self.ctx) || document_canvas_allows(&self.ctx) {
                         Field::Open
                     } else if let Some(field) = xaml_island_field(&self.ctx) {
                         field
@@ -433,6 +467,33 @@ mod tests {
             false
         ));
     }
+
+    #[test]
+    fn onenote_page_canvas_is_a_document() {
+        // #163：OneNote 桌面版的頁面（標題與內文）是這個視窗類別；大小寫不同、OneNote 的其他視窗不算。
+        assert!(document_canvas("OneNote::DocumentCanvas"));
+        for class in [
+            "onenote::documentcanvas",
+            "Framework::CFrame",
+            "OneNote::CFirstRunDialog",
+            "NetUIHWND",
+            "_WwG",
+            "RichEdit20W",
+            "",
+        ] {
+            assert!(!document_canvas(class), "{class}");
+        }
+    }
+
+    #[test]
+    fn hotkey_toggles_unless_the_field_is_known_blocked() {
+        // #164：讀不到欄位政策（宿主不給同步鎖）照常切換；確定擋下的欄位不切換。
+        assert!(toggle_allowed(None));
+        assert!(toggle_allowed(Some(Field::Open)));
+        assert!(toggle_allowed(Some(Field::Private)));
+        assert!(!toggle_allowed(Some(Field::Blocked)));
+    }
+
     #[test]
     fn native_fallback_rejects_password_readonly_disabled_and_unknown_controls() {
         use windows::Win32::UI::Controls::EM_SETPASSWORDCHAR;

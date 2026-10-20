@@ -23,7 +23,7 @@ type Entry struct {
 	PRW float64
 	// Correction 表示此讀音是自動修正用的錯誤讀音。
 	Correction bool
-	// Rare 表示罕用字（只來自罕用來源、沒有詞頻）：候選視窗排在其他字之後；整句解碼不受影響。
+	// Rare 表示罕用字（只來自罕用來源，即全字庫獨有或不在 Big5 的字）：候選視窗排在其他字之後；整句解碼不受影響。
 	Rare bool
 }
 

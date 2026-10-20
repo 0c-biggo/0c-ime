@@ -230,11 +230,37 @@ public:
                 auto keys = session.shiftKeys();
                 toggle = keys.right && s->rightShift.within(keys.tapMs);
             }
-            if (toggle && toggleMode(ic)) { event.filterAndAccept(); }
+            // 切換鍵的按下與放開都交給應用程式，切換了也不吃掉放開（同 Fcitx5 的 AltTriggerKeys、RIME、ibus-chewing）：
+            // GNOME Wayland 經 IBus 介面收鍵的 Chromium／Electron（VS Code）只看按鍵事件，收到按下卻收不到放開，
+            // 會以為 Shift 一直按著，之後的 ↑ 變成 Shift＋↑（#165）。
+            if (toggle) { toggleMode(ic); }
             return;
         }
         if (event.isRelease()) { return; }
-        std::string key = toKey(event.key());
+        fcitx::Key typed = event.key();
+        if (!session.english()) {
+            // 中文模式不理 Caps Lock（#168）：字母換回沒開 Caps Lock 時的大小寫。英文模式照 Caps Lock 打大寫。
+            auto raw = event.rawKey().states();
+            auto folded = zuin::foldCaps(typed.sym(), raw.test(fcitx::KeyState::CapsLock), raw.test(fcitx::KeyState::Shift));
+            if (folded != static_cast<uint32_t>(typed.sym())) { typed = fcitx::Key(static_cast<fcitx::KeySym>(folded), typed.states()); }
+            // Ctrl＋標點打全形（#168）：只在中文模式、引擎回報 ctrl_punctuation（認得鍵名而且設定開著）時送；
+            // 引擎沒處理（設定剛關掉、模式不同步）就照下面的一般快捷鍵先送出組字再交給應用程式。
+            auto ctrlKey = zuin::ctrlPunctKey(fcitx::Key::keySymToUnicode(typed.sym()), typed.states().test(fcitx::KeyState::Ctrl),
+                typed.states().testAny(fcitx::KeyStates{fcitx::KeyState::Alt, fcitx::KeyState::Super, fcitx::KeyState::Hyper}));
+            // Ctrl+; 是 Fcitx5 剪貼簿外掛的預設熱鍵。剪貼簿在輸入法之後（PostInputMethod）才看這個鍵，輸入法吃掉就叫不出剪貼簿，
+            // 所以剪貼簿外掛載入時照舊放行，不搶走使用者原本就有的功能（#168）。
+            if (ctrlKey == "Ctrl+;" && instance_->addonManager().addon("clipboard")) { ctrlKey.clear(); }
+            if (!ctrlKey.empty() && session.ctrlPunct()) {
+                syncContext(ic);
+                zuin::Snapshot snap = session.key(ctrlKey);
+                if (snap.ok && snap.handled) {
+                    render(ic, snap);
+                    event.filterAndAccept();
+                    return;
+                }
+            }
+        }
+        std::string key = toKey(typed);
         if (key.empty()) {
             session.bypassed();
             std::string boundary;
@@ -354,22 +380,21 @@ private:
         return event.key().states().testAny(fcitx::KeyStates{fcitx::KeyState::Ctrl, fcitx::KeyState::Alt, fcitx::KeyState::Super});
     }
 
-    // 切換注／英：保留已組好的字，切到英文時清掉未打完的注音（#90）；回傳引擎是否處理。
-    bool toggleMode(fcitx::InputContext *ic) {
+    // 切換注／英：保留已組好的字，切到英文時清掉未打完的注音（#90）。引擎不可用時不切換。
+    void toggleMode(fcitx::InputContext *ic) {
         auto *s = state(ic);
         s->context.clear(); syncContext(ic);
         auto snap = s->session.toggle();
-        if (!snap.ok) { return false; }
+        if (!snap.ok) { return; }
         render(ic, snap);
         s->shownEnglish = s->session.english();
         ic->updateUserInterface(fcitx::UserInterfaceComponent::StatusArea);
         // 內部模式切換不會觸發框架的輸入法切換提示，需主動顯示。
         instance_->showInputMethodInformation(ic);
-        return true;
     }
 
     // 設定開啟「左 Shift 切換中英」時，左 Shift 單按與右 Shift 相同。按下與放開都 filter：不給 Fcitx5 的
-    // AltTriggerKeys 與輸入法，但照樣送給應用程式，Shift 加字母仍是大寫；只有切換成功的放開會被吃掉。
+    // AltTriggerKeys 與輸入法，但照樣送給應用程式，Shift 加字母仍是大寫；切換成功的放開也照樣送出（#165）。
     void leftShiftKey(fcitx::KeyEvent &event) {
         auto *ic = event.inputContext();
         if (instance_->inputMethodEngine(ic) != this) { return; }
@@ -396,7 +421,9 @@ private:
         s->leftShiftOwned = false;
         s->session.traceEvent("shift_release", {{"side", "left"}});
         // 按住超過門檻（預設 0.3 秒）不算切換；放開照樣不給 Fcitx5，按下時已經接手了（#117）。
-        if (toggle && s->leftShift.within(s->leftShiftTapMs) && toggleMode(ic)) { event.filterAndAccept(); } else { event.filter(); }
+        // 切換了也只 filter 不 accept：放開要送到應用程式，否則 GNOME Wayland 的 VS Code 會以為 Shift 沒放開（#165）。
+        if (toggle && s->leftShift.within(s->leftShiftTapMs)) { toggleMode(ic); }
+        event.filter();
     }
 
     ZuinState *state(fcitx::InputContext *ic) {
@@ -463,7 +490,8 @@ private:
             auto list = std::make_unique<fcitx::CommonCandidateList>();
             std::vector<std::string> labels;
             for (size_t i = 0; i < snap.candidates.size(); i++) {
-                labels.push_back(std::to_string((i + 1) % 10) + ". ");
+                const std::string key = i < snap.candidateKeys.size() ? snap.candidateKeys[i] : std::string();
+                labels.push_back(key.empty() ? std::string() : key + ". "); // 選字鍵由核心給（#112）
                 list->append<ZuinCandidate>(this, snap.candidates[i].second, snap.candidates[i].first,
                                             i < snap.candidateNotes.size() ? snap.candidateNotes[i] : std::string());
             }

@@ -58,6 +58,27 @@ const (
 	KeyShiftBackspace = "ShiftBackspace" // 同上（Mac 筆電沒有獨立的 Delete 鍵）
 )
 
+// Ctrl＋標點（#168）：中文模式按 Ctrl＋, 打「，」等全形標點。Key 為 CtrlPrefix 加上不按 Ctrl 時這一鍵產生的字元
+// （Ctrl+Shift+/ 是 "Ctrl+?"、Ctrl+Shift+1 是 "Ctrl+!"）。外殼只在引擎回報 ctrl_punctuation=true、而且在中文模式時
+// 送這六個鍵，其他 Ctrl 組合鍵照舊交給應用程式；引擎在設定關閉或英文模式時回 handled=false，外殼照一般快捷鍵處理
+// （先送出組字再交給應用程式，#106）。
+const (
+	CtrlPrefix       = "Ctrl+"
+	KeyCtrlComma     = "Ctrl+," // ，
+	KeyCtrlPeriod    = "Ctrl+." // 。
+	KeyCtrlQuote     = "Ctrl+'" // 、
+	KeyCtrlSemicolon = "Ctrl+;" // ；
+	KeyCtrlQuestion  = "Ctrl+?" // ？（Ctrl+Shift+/）
+	KeyCtrlExclaim   = "Ctrl+!" // ！（Ctrl+Shift+1）
+)
+
+// CtrlPunct 回傳 Ctrl＋標點鍵打出的全形標點；不是這六個鍵回傳 false。
+func CtrlPunct(k string) (string, bool) {
+	p, ok := map[string]string{KeyCtrlComma: "，", KeyCtrlPeriod: "。", KeyCtrlQuote: "、",
+		KeyCtrlSemicolon: "；", KeyCtrlQuestion: "？", KeyCtrlExclaim: "！"}[k]
+	return p, ok
+}
+
 // KeypadPrefix 標示數字鍵盤（NumLock 開啟時的數字與 . + - * / =）：Key 為前綴加上該鍵產生的字元，
 // 例如 "KP1"、"KP."。核心不把它當注音鍵；沒在組字時交還應用程式，由系統送出原本的字元。
 const KeypadPrefix = "KP"
@@ -124,6 +145,10 @@ type CandidateItem struct {
 	Note string `json:"note,omitempty"`
 	// Label 是候選的顯示原因，不參與排序；未知值可忽略。近音候選優先顯示 Note。
 	Label string `json:"label,omitempty"`
+	// Key 是這一項的選字鍵（#112），外殼照著畫成鍵標（1、q、;）。預設是 1–0；使用者可改成 1234qweras
+	// 或 asdfghjkl;，這時數字 1–0 仍照位置選字。英文模式的自動補字候選只能按 Tab 接受，沒有 Key、不畫鍵標。
+	// 舊核心沒有這個欄位：外殼退回依位置畫 1–0（英文模式不畫）。
+	Key string `json:"key,omitempty"`
 }
 
 const (

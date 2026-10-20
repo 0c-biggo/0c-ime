@@ -52,8 +52,9 @@ type Options struct {
 	// Demote 讓「只來自這些來源、又沒有詞頻」的字詞的 unigram 乘上係數，如 "cns11643=0.01"。
 	// 會同時影響整句解碼；預設不用，改用 Rare。
 	Demote string
-	// Rare 是罕用來源（逗號分隔）：只來自這些來源、又沒有詞頻的字詞標為罕用，
-	// 候選視窗排在其他字之後；整句解碼不受影響。
+	// Rare 是罕用來源（逗號分隔）：只來自這些來源的字詞標為罕用，候選視窗排在其他字之後；
+	// 整句解碼不受影響。有沒有詞頻不改變這一點：維基、新聞與 PTT 的次數也數到日文新字體、
+	// 簡化字與粵語用字（気、国、嘅），它們的 bigram 會在單字候選把字抬到常用字前面（#171）。
 	Rare string
 	// Boost 讓特定來源的詞在沒有詞頻時得到虛擬次數，如 "moi-places=5"。
 	// 用在地名這類確定存在、但詞頻語料沒涵蓋的詞。
@@ -243,7 +244,7 @@ func Build(d *Data, o Options) *Result {
 		}
 	}
 	isRare := func(w string) bool {
-		if len(rareSrc) == 0 || countedAnywhere(d.Counts, w) {
+		if len(rareSrc) == 0 {
 			return false
 		}
 		for x := range surfaceOrigins[w] {
@@ -448,15 +449,6 @@ func normalizeReadings(all map[key]*entry) {
 			e.prw /= best[e.word]
 		}
 	}
-}
-
-func countedAnywhere(counts map[string]map[string]float64, w string) bool {
-	for _, c := range counts {
-		if c[w] > 0 {
-			return true
-		}
-	}
-	return false
 }
 
 func hasWord(all map[key]*entry, w string) bool {
