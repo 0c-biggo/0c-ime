@@ -124,7 +124,7 @@ class SourceReleaseTests(unittest.TestCase):
         self.assertIn("assets/data/lm.bin", record["files"])
         self.assertFalse(any("data/lm/bigram/" in p for p in record["files"]))
         with tarfile.open(first) as archive:
-            self.assertEqual(archive.extractfile("ime-oss-0.2.0/README.md").read(), b"Tagged source\n")
+            self.assertEqual(archive.extractfile("0c-ime-0.2.0/README.md").read(), b"Tagged source\n")
         other = self.build("repeat")
         self.assertEqual(release.digest(first), release.digest(other))
         self.assertEqual((first.parent / "SHA256SUMS").read_text(),
@@ -312,10 +312,25 @@ class SourceReleaseTests(unittest.TestCase):
                         member.size = len(stream.getvalue())
                     target.addfile(member, stream)
                 if extra:
-                    member = tarfile.TarInfo("ime-oss-0.2.0/extra.txt")
+                    member = tarfile.TarInfo("0c-ime-0.2.0/extra.txt")
                     target.addfile(member, io.BytesIO())
             with self.assertRaisesRegex(ValueError, "inventory mismatch"):
                 release.verify(bad)
+
+    def test_verify_accepts_legacy_name_but_not_other_roots(self):
+        good = self.build()
+        for prefix, ok in (("ime-oss-0.2.0", True), ("ime-oss-0.2.1", False), ("other-0.2.0", False)):
+            renamed = self.work / f"{prefix}.tar.xz"
+            with tarfile.open(good) as source, tarfile.open(renamed, "w:xz") as target:
+                for member in source:
+                    stream = source.extractfile(member) if member.isfile() else None
+                    member.name = prefix + member.name[len("0c-ime-0.2.0"):]
+                    target.addfile(member, stream)
+            if ok:
+                self.assertEqual(release.verify(renamed)["tag"], "v0.2.0")
+            else:
+                with self.assertRaisesRegex(ValueError, "does not match version"):
+                    release.verify(renamed)
 
     def test_rejects_escaping_symlinks_and_traversal(self):
         (self.repo / "escape").symlink_to("../outside")

@@ -10,8 +10,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/0c-biggo/ime-oss/releases/latest"><img src="https://img.shields.io/github/v/release/0c-biggo/ime-oss?color=005c73&label=release" alt="Release"></a>
-  <a href="https://github.com/0c-biggo/ime-oss/actions/workflows/checks.yml"><img src="https://github.com/0c-biggo/ime-oss/actions/workflows/checks.yml/badge.svg" alt="Checks"></a>
+  <a href="https://github.com/0c-biggo/0c-ime/releases/latest"><img src="https://img.shields.io/github/v/release/0c-biggo/0c-ime?color=005c73&label=release" alt="Release"></a>
+  <a href="https://github.com/0c-biggo/0c-ime/actions/workflows/checks.yml"><img src="https://github.com/0c-biggo/0c-ime/actions/workflows/checks.yml/badge.svg" alt="Checks"></a>
   <a href="legal/README.md"><img src="https://img.shields.io/badge/license-AGPL--3.0-005c73" alt="License"></a>
   <img src="https://img.shields.io/badge/go-1.26-005c73?logo=go&logoColor=white" alt="Go 1.26">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-005c73" alt="Platforms">
@@ -22,7 +22,7 @@
   <a href="https://0c.biggo.com/download/">下載</a> ·
   <a href="https://0c.biggo.com/technology/">選字技術</a> ·
   <a href="https://0c.biggo.com/guide/basics/">操作指南</a> ·
-  <a href="https://github.com/0c-biggo/ime-oss/issues">回報問題</a>
+  <a href="https://github.com/0c-biggo/0c-ime/issues">回報問題</a>
 </p>
 
 <p align="center">
@@ -103,15 +103,15 @@ xychart-beta
 
 Windows、macOS、Linux 安裝包請到官網下載：👉 [0c.biggo.com/download](https://0c.biggo.com/download/)
 
-發行版打包請用 [Releases](https://github.com/0c-biggo/ime-oss/releases/latest) 的 `ime-oss-<版本>.tar.xz`：內附現成字典與已配對模型，解壓即可建置，見 [打包與發佈](PACKAGING.md)。
+發行版打包請用 [Releases](https://github.com/0c-biggo/0c-ime/releases/latest) 的 `0c-ime-<版本>.tar.xz`：內附現成字典與已配對模型，解壓即可建置，見 [打包與發佈](PACKAGING.md)。
 
 ## 🛠️ 從原始碼建置
 
 需要 Go 1.26 以上；測試與發佈工具使用 Python 3.11 以上。以下指令在 repo 根目錄執行，不會安裝或重啟桌面輸入法：
 
 ```sh
-git clone https://github.com/0c-biggo/ime-oss.git
-cd ime-oss
+git clone https://github.com/0c-biggo/0c-ime.git
+cd 0c-ime
 go test ./...
 go run ./cmd/0c-compile -public -bigram '' -out build/public-data
 go run ./cmd/0c-cli -data build/public-data
