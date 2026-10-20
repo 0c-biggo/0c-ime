@@ -80,7 +80,7 @@ jobs:
               f'請下載 `0c-ime-{tag[1:]}.tar.xz` 與 `SHA256SUMS`。\n\n'
               '完整 tarball 包含程式碼、現成統計字典、兩個已配對模型與各自授權。'
               '解壓後可離線建置輸入法，直接使用內附字典與模型（須備妥建置相依）。'
-              'GitHub 自動附的 Source code 壓縮檔不含現成字典與模型。\n\n'
+              '從 Source code 壓縮檔或 git clone 建置時，執行 `make assets` 取得同版本的字典與模型。\n\n'
               '發行版整合的系統字典配對與建置相依需求，請見包內 `PACKAGING.md`。'
               '使用者安裝包由[官網](https://0c.biggo.com)提供。\n'
           )

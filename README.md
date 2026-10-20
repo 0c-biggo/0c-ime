@@ -112,12 +112,12 @@ Windows、macOS、Linux 安裝包請到官網下載：👉 [0c.biggo.com/downloa
 ```sh
 git clone https://github.com/0c-biggo/0c-ime.git
 cd 0c-ime
+make assets          # 下載與這份原始碼相符的字典與模型
 go test ./...
-go run ./cmd/0c-compile -public -bigram '' -out build/public-data
-go run ./cmd/0c-cli -data build/public-data
+go run ./cmd/0c-cli -data assets/data
 ```
 
-這會從 repo 內的詞庫編出公開資料包並開啟命令列試打。它沒有 bigram，也沒有配對神經模型；要用和出貨相同的字典與模型，請從 Release 的完整 tarball 建置（見 [打包與發佈](PACKAGING.md)）。
+`make assets` 從同版本的 [Release](https://github.com/0c-biggo/0c-ime/releases) 取得完整 tarball（約 275 MB），驗證後把現成字典放到 `assets/data/`、已配對模型放到 `models/select/` 與 `models/punct/`，和出貨內容相同；0.2.2 起 Release 附的 Source code 壓縮檔也適用。要指定版本用 `make assets RELEASE=v0.2.1`。
 
 各平台外殼另需各自的工具鏈與系統函式庫：
 
