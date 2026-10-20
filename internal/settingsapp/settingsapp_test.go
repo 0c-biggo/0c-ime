@@ -310,3 +310,33 @@ func TestDesktopEntryRefusesPathsThatCouldChangeTheCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// 系統套件的設定程式（#181）沒有收據雜湊，改核對擁有者與權限。
+func TestLocateSystemChecksOwnerAndPermissions(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "0c-settings")
+	if _, err := LocateSystem(path); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing: %v", err)
+	}
+	os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755)
+	if _, err := LocateSystem(path); err == nil {
+		t.Fatal("a file owned by the test user is not a system file")
+	}
+	old := systemOwner
+	systemOwner = os.Getuid()
+	t.Cleanup(func() { systemOwner = old })
+	loc, err := LocateSystem(path)
+	if err != nil || loc.Path != path || loc.Source != SourceSystem {
+		t.Fatalf("got %+v %v", loc, err)
+	}
+	os.Chmod(path, 0o775)
+	if _, err := LocateSystem(path); err == nil {
+		t.Fatal("group-writable must be refused")
+	}
+	os.Chmod(path, 0o755)
+	link := filepath.Join(dir, "link")
+	os.Symlink(path, link)
+	if _, err := LocateSystem(link); err == nil {
+		t.Fatal("symlink must be refused")
+	}
+}

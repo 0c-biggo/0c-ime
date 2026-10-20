@@ -71,6 +71,10 @@
     missing_runtime: '（缺少系統元件：Visual C++ 執行階段）', timeout: '（模型載入逾時）', failed: '（模型程式無法啟動）',
   };
   const MODE = { auto: '自動保持最新', ask: '下載後詢問', manual: '手動' };
+  // 由系統套件管理員更新（#181，Linux 發行版的套件）：0c-update 不檢查、不下載、不安裝，這裡也不提供這些按鈕。
+  const packageManaged = () => state.status?.updates === 'package-manager';
+  const PACKAGE_MANAGED = '由系統套件管理員更新';
+  const INSTALL_KIND = { personal: '官網安裝（家目錄）', system: '系統套件' };
   const REASON = {
     rollout: '分批發布還沒輪到這台電腦', no_asset: '沒有這個平台的安裝包',
     withdrawn: '該版本已撤回', failed: '該版本在這台電腦上檢查失敗過，已暫停',
@@ -326,12 +330,13 @@
         row(labelBlock('神經選字'), h('div', { class: 'value' }, modelLabel(runtime.selection_state, '統計引擎') + (MODEL_REASON[runtime.selection_reason] || ''))),
         row(labelBlock('補標點（Beta）'), h('div', { class: 'value' }, modelLabel(runtime.punctuation_state, '原文提交') + (MODEL_REASON[runtime.punctuation_reason] || ''))));
     }
-    const summary = updateSummary(status.update);
+    const managed = packageManaged();
+    const summary = managed ? { text: PACKAGE_MANAGED, tone: 'muted' } : updateSummary(status.update);
     rows.push(
       row(labelBlock('更新'), h('div', { class: 'value' },
         h('span', { class: summary.tone === 'ok' ? 'status-ok' : summary.tone === 'warn' ? 'status-warn' : 'muted' }, summary.text), ' ',
         h('button', { type: 'button', class: 'secondary', onclick: () => show('update') }, '查看'))),
-      row(labelBlock('更新方式'), h('div', { class: 'value' }, MODE[status.mode] || status.mode || '未知')));
+      row(labelBlock('更新方式'), h('div', { class: 'value' }, managed ? '系統套件管理員' : MODE[status.mode] || status.mode || '未知')));
     root.append(h('div', { class: 'card' }, ...rows));
     if (vocabEnabled()) {
       const text = vocab.overviewText();
@@ -423,6 +428,13 @@
     root.append(h('h1', {}, '更新'));
     if (problem(root)) return;
     const status = state.status;
+    if (packageManaged()) {
+      root.append(h('p', { class: 'lead' }, '目前版本 ' + (status.installed || '未知')),
+        h('div', { class: 'notice info' },
+          h('p', {}, PACKAGE_MANAGED + '。'),
+          h('p', {}, '這份靈犀注音是用系統的套件管理員（例如 apt）安裝的，更新與移除也請用套件管理員；這裡不會檢查、下載或安裝更新。')));
+      return;
+    }
     const view = status.update || {};
     const op = view.operation;
     const blocked = view.blocked || status.blocked;
@@ -480,9 +492,20 @@
         h('p', {}, '已匯出到：'), h('p', {}, h('code', {}, state.summary)),
         h('p', {}, '寫信到 ', email(), '，附上這個檔案，並描述發生了什麼。')));
     }
+    // 同一個帳號有官網安裝與系統套件時（#181），外殼用官網安裝（使用者自己裝的通常比較新）；兩份都列出來。
+    const installs = Array.isArray(state.status?.installs) ? state.status.installs : [];
+    const active = installs.find((item) => item.active);
+    if (installs.length > 1 || active?.kind === 'system') {
+      root.append(h('h2', {}, '使用中的安裝'), h('div', { class: 'card' }, ...installs.map((item) => row(
+        h('div', {}, h('div', { class: 'label' }, INSTALL_KIND[item.kind] || item.kind),
+          h('div', { class: 'desc paths' }, '引擎 ' + item.server + '\n字典 ' + item.data)),
+        h('div', { class: 'value' }, h('span', { class: item.active ? 'status-ok' : 'muted' }, item.active ? '使用中' : '未使用（官網安裝優先）'))))));
+    }
+    // 系統套件的 0c-update 不在 PATH 上，命令列範例寫完整路徑。
+    const cli = active?.kind === 'system' && active.updater ? active.updater : '0c-update';
     root.append(h('h2', {}, '命令列'),
       h('p', { class: 'muted' }, '設定程式打不開、或你偏好終端機時，同樣的設定可以這樣查看與修改：'),
-      h('pre', { class: 'cmd' }, '0c-update settings\n0c-update set punctuation off -apply'));
+      h('pre', { class: 'cmd' }, cli + ' settings\n' + cli + ' set punctuation off -apply'));
   }
 
   function about(root) {

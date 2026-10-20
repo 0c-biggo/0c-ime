@@ -27,6 +27,8 @@ const (
 	codeBusy       = "busy"
 	codeInProgress = "in_progress"
 	codeIO         = "io"
+	// codePackageManaged：由系統套件管理員更新（#181），更新、安裝、回復與排程的命令不能用。
+	codePackageManaged = "package_managed"
 )
 
 // 套用結果（apply.state）。設定「已儲存」與「已套用」是兩回事：引擎只在啟動時讀設定。
@@ -72,6 +74,8 @@ func classify(err error) contractError {
 		return contractError{Code: codeInProgress, Message: err.Error()}
 	case errors.Is(err, autoupdate.ErrLocked):
 		return contractError{Code: codeBusy, Message: err.Error()}
+	case errors.Is(err, errPackageManaged):
+		return contractError{Code: codePackageManaged, Message: err.Error()}
 	}
 	return contractError{Code: codeIO, Message: err.Error()}
 }

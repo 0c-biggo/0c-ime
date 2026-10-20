@@ -85,7 +85,7 @@ func (f *engineStartFake) install(t *testing.T) {
 		}
 		return nil, nil
 	}
-	spawnEngineDirect = func(server string) error {
+	spawnEngineDirect = func(server string, _ ...string) error {
 		f.spawned = append(f.spawned, server)
 		return f.spawnErr
 	}

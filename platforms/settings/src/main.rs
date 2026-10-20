@@ -8,7 +8,7 @@ mod updater;
 mod watch;
 
 use serde_json::{json, Value};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilder};
@@ -53,6 +53,19 @@ fn home() -> Option<PathBuf> {
     std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from)
 }
 
+/// Linux 系統套件的位置（#181）：make install 依 PREFIX 在建置時設定，預設是 PREFIX=/usr 的位置。
+fn system_dir(dir: &'static str) -> Option<&'static Path> {
+    cfg!(target_os = "linux").then(|| Path::new(dir))
+}
+
+fn system_libexec() -> Option<&'static Path> {
+    system_dir(option_env!("ZC_SYSTEM_LIBEXECDIR").unwrap_or("/usr/libexec/0c"))
+}
+
+fn system_bin() -> Option<&'static Path> {
+    system_dir(option_env!("ZC_SYSTEM_BINDIR").unwrap_or("/usr/bin"))
+}
+
 fn updater_path() -> Result<PathBuf, String> {
     let local_app_data = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
     updater::find_updater(
@@ -60,6 +73,7 @@ fn updater_path() -> Result<PathBuf, String> {
         std::env::current_exe().ok().as_deref(),
         home().as_deref(),
         local_app_data.as_deref(),
+        system_libexec(),
     )
 }
 
@@ -80,7 +94,7 @@ fn args(items: &[&str]) -> Vec<String> {
 #[tauri::command]
 fn app_info() -> Value {
     let local_app_data = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
-    let mcp = updater::planned_mcp_path(std::env::consts::OS, std::env::current_exe().ok().as_deref(), home().as_deref(), local_app_data.as_deref());
+    let mcp = updater::planned_mcp_path(std::env::consts::OS, std::env::current_exe().ok().as_deref(), home().as_deref(), local_app_data.as_deref(), system_bin());
     json!({
         "version": option_env!("ZC_BUILD_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")),
         "platform": format!("{}/{}", std::env::consts::OS, std::env::consts::ARCH),

@@ -77,6 +77,8 @@ go test ./cmd/0c-ibus
 
 ## 安裝、更新與移除
 
+發行版的系統安裝（`make install PREFIX=/usr`）把 `0c-ibus` 放在 `/usr/libexec/0c/`、元件檔放在 `/usr/share/ibus/component/0c.xml`（由 `0c.xml.in` 產生，內容與 `0c-ibus -component` 相同，測試核對），不必 `register`；由套件管理員更新時選單沒有更新列。見 [Linux 系統安裝](../linux-system/README.md)。
+
 - `install.py`：`0c-ibus` 是選用檔案（舊套件沒有它）。只有 IBus、沒有 Fcitx5 的電腦也能安裝；這時不以 `ldd` 檢查 Fcitx5 外殼的函式庫（`lib0c.so` 照樣裝，不影響輸入）。升級、回復與移除時要求 `0c-ibus` 已結束（與 Fcitx5 相同，桌面更新請用 `0c-update finish`）。移除時、或回復到沒有 IBus 外殼的版本時，撤銷 IBus 登錄（只刪內容是靈犀注音的元件檔）。
 - `0c-update`：換外殼的更新不必登出。Fcitx5 沒在執行、使用者登錄了 IBus 外殼時走 IBus 路徑；`0c-ibus` 沒在執行時直接交接引擎並換檔，下次選用時 ibus-daemon 啟動的就是新版。
 - 交接入口與 Fcitx5 外殼相同（session bus 的 `org.biggo.ime.Update`／`/update`／`org.biggo.ime.Update1`）。`Status` 另回報 `frontend`、`active`（是否為選用中的 engine）與 `ibus_address`；`ExitForUpdate` 在沒有組字、閒置夠久時回 `ready`，之後不再處理按鍵並結束行程。兩個外殼同時在執行時只有先取得名稱的那個提供交接入口。

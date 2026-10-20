@@ -21,7 +21,7 @@ func TestEnsureEngineServiceStartsResidentEngine(t *testing.T) {
 	starts := 0
 	lookSystemdRun = func() (string, error) { return "/usr/bin/systemd-run", nil }
 	runSystemdRun = func(_ context.Context, _ string, args []string) ([]byte, error) { starts++; return nil, nil }
-	spawnEngineDirect = func(string) error { t.Fatal("systemd-run 成功時不直接啟動"); return nil }
+	spawnEngineDirect = func(string, ...string) error { t.Fatal("systemd-run 成功時不直接啟動"); return nil }
 	running := false
 	engineRunning = func() bool { return running }
 

@@ -1,4 +1,5 @@
 #include "menu.h"
+#include "locate.h"
 
 #include <cerrno>
 #include <chrono>
@@ -31,6 +32,7 @@ UpdateStatus parseStatus(const std::string &text) {
     s.installed = str(j, "installed"); s.engine = str(j, "engine"); s.stage = str(j, "stage");
     s.action = str(j, "action"); s.pausedUntil = str(j, "paused_until");
     s.lastSuccess = str(j, "last_success"); s.lastError = str(j, "last_error");
+    s.packageManaged = str(j, "updates") == "package-manager";
     if (auto m = str(j, "mode"); !m.empty()) { s.mode = m; }
     if (auto t = j.find("target"); t != j.end() && t->is_object()) { s.target = str(*t, "version"); }
     if (auto b = j.find("blocked"); b != j.end() && b->is_object()) { s.blocked = str(*b, "reason"); s.detail = str(*b, "detail"); }
@@ -93,15 +95,7 @@ std::vector<std::string> simplifiedCommand(bool on) {
     return {"set", "output-simplified", on ? "on" : "off", "-apply", "-notify"};
 }
 
-std::string updaterPath() {
-    const char *home = std::getenv("HOME");
-    std::string h = home ? home : "";
-    for (auto p : {h + "/.local/share/zuin/bin/0c-update", h + "/.local/bin/0c-update"}) {
-        struct stat st;
-        if (::stat(p.c_str(), &st) == 0 && S_ISREG(st.st_mode) && (st.st_mode & 0111)) { return p; }
-    }
-    return h + "/.local/share/zuin/bin/0c-update";
-}
+std::string updaterPath() { return locateUpdater(defaultInstallDirs()); }
 
 bool runUpdater(const std::vector<std::string> &args, std::string *output, int timeoutSeconds) {
     std::string exe = updaterPath();

@@ -1,4 +1,5 @@
 #include "client.h"
+#include "locate.h"
 
 #include <cerrno>
 #include <cstdint>
@@ -30,22 +31,20 @@ std::string defaultSocket() { return runtimeDir() + "/0c/0c.sock"; }
 // 升級過渡期：舊版 zuin-server 仍在執行時它是個人詞庫唯一的寫入者，新外殼先接上它，不另起新 server。
 std::string legacySocket() { return runtimeDir() + "/zuin/zuin.sock"; }
 
-std::string defaultServer() {
-    if (const char *home = std::getenv("HOME")) {
-        std::string p = std::string(home) + "/.local/bin/0c-server";
-        if (access(p.c_str(), X_OK) == 0) {
-            return p;
-        }
-    }
-    return "0c-server";
-}
-
 } // namespace
 
 Client::Client(std::string socketPath, std::string serverPath)
     : socketPath_(socketPath.empty() ? defaultSocket() : std::move(socketPath)),
-      legacySocketPath_(socketPath_ == defaultSocket() ? legacySocket() : ""),
-      serverPath_(serverPath.empty() ? defaultServer() : std::move(serverPath)) {}
+      legacySocketPath_(socketPath_ == defaultSocket() ? legacySocket() : "") {
+    if (serverPath.empty()) {
+        // 共用規則（locate.h，#181）：官網安裝的 ~/.local/bin/0c-server，再來是系統安裝（帶 -data），都沒有時找 PATH。
+        auto server = locateServer(defaultInstallDirs());
+        serverPath_ = std::move(server.path);
+        serverArgs_ = std::move(server.args);
+    } else {
+        serverPath_ = std::move(serverPath);
+    }
+}
 
 Client::~Client() { closeSocket(); }
 
@@ -102,7 +101,10 @@ void Client::spawnServer() {
                 dup2(devnull, 0);
                 dup2(devnull, 1);
             }
-            execlp(serverPath_.c_str(), serverPath_.c_str(), static_cast<char *>(nullptr));
+            std::vector<char *> argv{const_cast<char *>(serverPath_.c_str())};
+            for (auto &a : serverArgs_) { argv.push_back(const_cast<char *>(a.c_str())); }
+            argv.push_back(nullptr);
+            execvp(serverPath_.c_str(), argv.data());
             _exit(127);
         }
         _exit(0);
