@@ -624,12 +624,17 @@ func TestEngineShouldCheck(t *testing.T) {
 	if !EngineShouldCheck(dir, dictA, now) {
 		t.Fatal("要重新配對")
 	}
-	r.RepairFailed = dictA
+	r.Checked = s.EngineState(dictA)
 	s.SaveRemind(r)
 	if EngineShouldCheck(dir, dictA, now) {
-		t.Fatal("同一份字典重新配對失敗過，不再一直重試")
+		t.Fatal("0c-update 處理過這個狀態（例如重新配對失敗），不再一直叫")
 	}
 	if !EngineShouldCheck(dir, dictB, now) {
 		t.Fatal("換了字典再試")
+	}
+	os.MkdirAll(filepath.Join(s.PairDir(dictA), RoleSelect), 0o700)
+	os.WriteFile(filepath.Join(s.PairDir(dictA), pairedRecord), []byte(`{"models_lock_sha256":"x"}`), 0o600)
+	if !EngineShouldCheck(dir, dictA, now) {
+		t.Fatal("配對目錄變了再試")
 	}
 }

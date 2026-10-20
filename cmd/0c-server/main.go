@@ -230,11 +230,11 @@ func serve() string {
 	if pythonSource == "" {
 		pythonSource = "missing"
 	}
-	// #180：沒有找到選字模型時，在 Linux 檢查要不要重新配對（升級換了字典）或提醒下載。只看安裝的字典（官網安裝的
-	// 預設位置或系統安裝的 share/0c/data，與 0c-update 找的同一份）；隔離測試（指定 -user、-socket）與開發時指定
-	// 別的字典不碰使用者的 0c-update 與個人目錄。
+	// #180：沒有內建選字模型時，在 Linux 檢查要不要重新配對（升級換了字典，或正在用的個人目錄配對是舊的
+	// models.lock 配的）或提醒下載。只看安裝的字典（官網安裝的預設位置或系統安裝的 share/0c/data，與 0c-update
+	// 找的同一份）；隔離測試（指定 -user、-socket）與開發時指定別的字典不碰使用者的 0c-update 與個人目錄。
 	var remind *modelRemind
-	if bundled.SelectSource == "" && !explicit["neural-package"] && !explicit["user"] && !explicit["socket"] &&
+	if bundled.SelectSource != neural.SourceBundled && !explicit["neural-package"] && !explicit["user"] && !explicit["socket"] &&
 		(filepath.Clean(*data) == filepath.Clean(defaultData) || filepath.Clean(*data) == filepath.Clean(installs.Default().SystemData())) {
 		remind = newModelRemind(filepath.Dir(*user), dictionarySHA, lg)
 	}

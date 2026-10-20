@@ -1,7 +1,10 @@
 package models
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -38,8 +41,10 @@ type Remind struct {
 	NextAt    time.Time `json:"next_at,omitzero"`
 	Stopped   string    `json:"stopped,omitempty"`
 	StoppedAt time.Time `json:"stopped_at,omitzero"`
-	// RepairFailed 是重新配對失敗過的字典雜湊（例如發行版自己重建的字典沒有配對清單）；同一份字典不再自動重試。
-	RepairFailed string `json:"repair_failed,omitempty"`
+	// Checked 是 0c-update models remind（或下載）處理完時個人目錄的狀態（Store.EngineState）。狀態沒變時引擎不再
+	// 為了重新配對叫 0c-update：重新配對失敗過、這份字典沒有配對清單、或 0c-update 看來不必處理（引擎卻找不到模型，
+	// 例如 worker 腳本不在）都一樣，不會每次啟動、每小時白叫一次。
+	Checked string `json:"checked,omitempty"`
 }
 
 // RemindInput 是這一次檢查時的情況。
@@ -133,13 +138,38 @@ func (r *Remind) NotDelivered(now time.Time) {
 	r.NextAt = now.UTC().Truncate(time.Second).Add(RemindEvery)
 }
 
-// EngineShouldCheck 是引擎端便宜的檢查（只讀 remind.json 與一個目錄）：沒有找到模型時，什麼時候值得叫
-// 0c-update models remind。個人目錄有權重但沒有這份字典的配對（升級換了字典）時要重新配對；否則看提醒
-// 有沒有停止、時間到了沒有。
+// EngineState 是個人目錄裡跟重新配對有關的狀態，引擎與 0c-update 都只靠讀目錄就算得出來（不必有 models.lock）：
+// 這份字典、它的配對目錄有哪些模型與 paired.json 的內容、權重有哪些 revision。內容變了（升級換了字典、
+// models.lock 換了、下載或刪除過）雜湊就不同。
+func (s Store) EngineState(dictionary string) string {
+	h := sha256.New()
+	fmt.Fprintf(h, "dictionary %s\n", dictionary)
+	if validHex(dictionary) {
+		dir := s.PairDir(dictionary)
+		for _, role := range Roles {
+			fmt.Fprintf(h, "pair %s %t\n", role, regular(filepath.Join(dir, role, "manifest.json")))
+		}
+		record, _ := os.ReadFile(filepath.Join(dir, pairedRecord))
+		fmt.Fprintf(h, "paired %x\n", sha256.Sum256(record))
+	}
+	roles, _ := os.ReadDir(filepath.Join(s.Root, "weights"))
+	for _, role := range roles {
+		revisions, _ := os.ReadDir(filepath.Join(s.Root, "weights", role.Name()))
+		fmt.Fprintf(h, "weights %s %d\n", role.Name(), len(revisions))
+		for _, rev := range revisions {
+			fmt.Fprintf(h, "revision %s\n", rev.Name())
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// EngineShouldCheck 是引擎端便宜的檢查（只讀 remind.json 與幾個目錄）：什麼時候值得叫 0c-update models remind。
+// 個人目錄有權重、而且狀態跟 0c-update 上次處理完的不同（升級換了字典、配對是舊的 models.lock 配的）時，讓它看看
+// 要不要重新配對；否則看提醒有沒有停止、時間到了沒有。
 func EngineShouldCheck(userDir, dictionary string, now time.Time) bool {
 	s := NewStore(userDir)
 	r := s.LoadRemind()
-	if entries, err := os.ReadDir(filepath.Join(s.Root, "weights")); err == nil && len(entries) > 0 && validHex(dictionary) && r.RepairFailed != dictionary {
+	if entries, err := os.ReadDir(filepath.Join(s.Root, "weights")); err == nil && len(entries) > 0 && validHex(dictionary) && r.Checked != s.EngineState(dictionary) {
 		return true
 	}
 	if r.Stopped != "" {
