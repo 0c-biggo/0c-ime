@@ -206,6 +206,24 @@ func TestRetireMacShellOnlyWhenAway(t *testing.T) {
 	}
 }
 
+// 使用者在不在每次要跑 ioreg：retireProcesses 每 200 毫秒一輪、每個程序各問一次，以前等 30 秒要跑三百次；
+// 現在最多每秒一次。
+func TestAwayOnlyChecksAtMostOncePerSecond(t *testing.T) {
+	m := newMacShellRetire()
+	m.alive[12], m.exitAfter[12] = true, 30*time.Millisecond
+	m.lastKey = 0
+	calls := 0
+	away := func() bool { calls++; return false } // 人一直在：不關，等滿 30 秒
+	ctl := awayOnly(m.control(), away)
+	ctl.quiet = 2 * time.Second
+	if retired, left := retireProcesses(ctl, m.pending, 30*time.Second); retired != 0 || len(left) != 2 {
+		t.Fatalf("retired=%d left=%v", retired, left)
+	}
+	if calls > 32 {
+		t.Fatalf("30 秒內問了 %d 次", calls)
+	}
+}
+
 // 舊程式全部結束後才啟動新版（同一個 bundle ID 的兩份 App 會搶 IMK 連線名稱）；沒有結束任何程式時不啟動。
 func TestHandOverShellsRelaunchesOnlyAfterAllRetired(t *testing.T) {
 	m := newMacShellRetire()
