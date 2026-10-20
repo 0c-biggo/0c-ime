@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/0c-biggo/0c-ime/internal/installs"
@@ -451,6 +452,20 @@ func ibusAddressFile() (string, error) {
 	return filepath.Join(config, "ibus/bus", strings.TrimSpace(string(id))+"-"+host+"-"+display), nil
 }
 
+// handOffToPersonal：ibus-daemon 帶起的是系統安裝的 0c-ibus，而這個帳號另外有官網安裝時，原地換成官網的
+// 0c-ibus（成功時不會返回）。兩個元件同名，IBUS_COMPONENT_PATH 常把 /usr/share 排在家目錄前面；不交給官網
+// 那一份的話，官網更新器換掉的外殼要等系統套件移除才生效（#181，.13 實測）。
+func handOffToPersonal() {
+	self, err := os.Executable()
+	if err != nil || !installs.Default().InSystem(self) {
+		return
+	}
+	if p, ok := installs.Default().Personal(); ok && p.IBus != "" {
+		err = syscall.Exec(p.IBus, append([]string{p.IBus}, os.Args[1:]...), os.Environ())
+		log.Printf("0c-ibus: 無法交給官網安裝的 %s，照常使用系統安裝：%v", p.IBus, err)
+	}
+}
+
 // component 是 ibus-daemon 讀的元件描述檔；路徑都是絕對路徑（ibus-daemon 不搜尋 PATH）。
 // component 是元件描述檔：官網安裝寫到 ~/.local/share/ibus/component（register），系統安裝由 make install 從
 // platforms/linux-ibus/0c.xml.in 產生（測試核對兩者一致）。
@@ -535,6 +550,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "0c-ibus 由 ibus-daemon 啟動；以 0c-ibus register 登錄到 IBus。")
 		os.Exit(2)
 	}
+	handOffToPersonal()
 	log.SetPrefix("0c-ibus: ")
 	if debug {
 		dir := filepath.Join(runtimeDir(), "0c")

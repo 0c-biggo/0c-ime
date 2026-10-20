@@ -177,6 +177,7 @@ func run(args []string) error {
 		return fmt.Errorf("用法：0c-update status|settings|set|vocab|api|open-settings|engine|auto|finish|mode|pause|resume|snooze|schedule|verify|check|download|download-now|apply|install|rollback|uninstall [選項]")
 	}
 	action := args[0]
+	delegateToPersonal(args) // 系統安裝的 0c-update、而官網安裝也在時，交給官網那一份（成功時不會返回）
 	if err := refusePackageManaged(action, args[1:]); err != nil {
 		return err
 	}
@@ -190,7 +191,6 @@ func run(args []string) error {
 	case "api": // AI 助手的本機 API（#126）
 		return apiCommand(args[1:])
 	case "open-settings":
-		delegateOpenSettings(args[1:]) // 系統安裝的 0c-update、而官網安裝也在時，交給官網那一份（成功時不會返回）
 		return openSettings(args[1:])
 	case "download-now":
 		return downloadNowCommand(args[1:])

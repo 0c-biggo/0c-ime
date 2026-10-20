@@ -140,3 +140,4 @@ uninstall:
 	      $(DESTDIR)$(DATAROOTDIR)/icons/hicolor/scalable/status/0c-zhuyin.svg $(DESTDIR)$(DATAROOTDIR)/icons/hicolor/scalable/status/0c-english.svg
 	rm -rf $(DESTDIR)$(ZC_SHARE)/data
 	-rmdir $(DESTDIR)$(ZC_SHARE)/neural $(DESTDIR)$(ZC_SHARE) $(DESTDIR)$(ZC_LIBEXEC) 2>/dev/null
+	-rmdir $(DESTDIR)$(DATAROOTDIR)/fcitx5/inputmethod $(DESTDIR)$(DATAROOTDIR)/fcitx5/addon 2>/dev/null # 只刪空的：install 時建了，別的套件的檔案還在就留著

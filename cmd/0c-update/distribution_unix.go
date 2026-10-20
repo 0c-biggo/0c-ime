@@ -20,9 +20,10 @@ func distributionVersion() string {
 	return d.Version
 }
 
-// delegateOpenSettings：系統安裝的 0c-update 被叫去開設定程式（例如 IBus 輸入來源的齒輪），而這個帳號另外有
-// 官網安裝時，交給官網安裝的 0c-update：外殼用的是官網那一份，設定程式也要讀它的狀態。
-func delegateOpenSettings(args []string) bool {
+// delegateToPersonal：執行的是系統安裝的 0c-update，而這個帳號另外有官網安裝時，整個命令交給官網安裝的
+// 0c-update（成功時不會返回）：外殼、引擎、設定程式用的都是官網那一份，status、set、開設定程式（例如 IBus
+// 輸入來源的齒輪）都要對它做，不然會把系統套件的版本與「由套件管理員更新」報成使用中的安裝。
+func delegateToPersonal(args []string) bool {
 	self, err := os.Executable()
 	if err != nil || !installs.Default().InSystem(self) {
 		return false
@@ -31,5 +32,5 @@ func delegateOpenSettings(args []string) bool {
 	if !ok || p.Updater == "" {
 		return false
 	}
-	return syscall.Exec(p.Updater, append([]string{p.Updater, "open-settings"}, args...), os.Environ()) == nil
+	return syscall.Exec(p.Updater, append([]string{p.Updater}, args...), os.Environ()) == nil
 }
