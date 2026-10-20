@@ -13,7 +13,10 @@ import (
 	"github.com/godbus/dbus/v5"
 
 	core "git.biggo.com/0c/ime/core/engine"
+	"git.biggo.com/0c/ime/core/lexicon"
+	"git.biggo.com/0c/ime/core/lm"
 	"git.biggo.com/0c/ime/core/zhconv"
+	"git.biggo.com/0c/ime/core/zhuyin"
 	"git.biggo.com/0c/ime/internal/simplified"
 )
 
@@ -125,6 +128,50 @@ func TestSimplifiedToggleSwitchesLive(t *testing.T) {
 	e.toggleMode()
 	if e.modeProperty().symbol != "英" {
 		t.Fatalf("英文模式：%q", e.modeProperty().symbol)
+	}
+}
+
+// 候選有多頁時提示列是「提示　1/2」：提示照樣幾秒後收起，換回候選標題與頁碼（code review：只比對提示本身時永遠收不掉）。
+func TestSimplifiedNoticeClearsWithCandidatePages(t *testing.T) {
+	e, _, sock := newTestEngine(t)
+	lex, sys := lexicon.NewMem(), lm.NewMem()
+	for _, w := range strings.Split("是事世市式室試視示士勢氏仕侍誓適釋飾", "") {
+		lex.Add(lexicon.Entry{Surface: w, Reading: zhuyin.ParseReading("ㄕˋ"), PRW: 1})
+		sys.SetUni(w, 1e-4)
+	}
+	eng := core.New(lex, sys)
+	eng.SimplifiedSwitch = core.SimplifiedSwitch{Load: func() (*zhconv.Converter, error) { return simplified.TW2S() },
+		Save: func(bool) error { return nil }}
+	defer serveEngine(t, sock, eng, map[string]string{"output_simplified_live": "true"})()
+	old := simplifiedNoticeFor
+	simplifiedNoticeFor = 50 * time.Millisecond
+	defer func() { simplifiedNoticeFor = old }()
+	svc := e.svc
+	svc.update = parseStatus(`{"settings":{"output_simplified":false}}`)
+	svc.mu.Lock()
+	typeKeys(e, "g4") // ㄕˋ
+	e.processKey(keyDown, 0, 0)
+	before := e.aux
+	if !strings.HasSuffix(before, "　1/2") {
+		svc.mu.Unlock()
+		t.Fatalf("前置：候選應有兩頁，提示列 %q", before)
+	}
+	svc.engineMethod(e, "PropertyActivate", []interface{}{propSimplified, uint32(propStateChecked)})
+	if e.aux != "已切換為輸出簡體字　1/2" {
+		svc.mu.Unlock()
+		t.Fatalf("切換後的提示列：%q", e.aux)
+	}
+	svc.mu.Unlock()
+	for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		svc.mu.Lock()
+		aux := e.aux
+		svc.mu.Unlock()
+		if aux == before {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("提示沒有收起：%q，應換回 %q", aux, before)
+		}
 	}
 }
 
