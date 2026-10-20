@@ -22,6 +22,8 @@ make install PREFIX=/usr VERSION=0.2.3 DESTDIR=$PWD/debian/tmp
 | `DATA` | `assets/data` | 字典目錄（0c-ime 原始碼 tarball 內附，`make assets` 取得；也可指向完整套件的 `data/` 或 `0c-compile` 的輸出） |
 | `FCITX5`、`IBUS`、`SETTINGS` | `1` | 設成 `0` 就不建、不裝那一項 |
 | `SETTINGS_BIN` | 空 | 已建好的 `0c-settings`；空的時候以 `cargo build --locked` 建置 |
+| `PAIRING_LOCK` | `models/pairing.lock.json` | 字典的模型配對清單（0c-ime 原始碼 tarball 內附，綁定 `assets/data`），裝到 `share/0c/neural/pairing.lock.json`；`DATA` 換成別的字典時下載的模型不會啟用（`install` 會提示），見[神經模型](#神經模型180) |
+| `MODEL_DOWNLOAD` | `1` | 設成 `0` 關掉設定程式的「下載模型」與沒有模型時的提醒（寫進 `distribution.json` 的 `"model_download": false`；之後也可以直接改這個檔案） |
 | `FCITX5_ADDONDIR` | `PREFIX=/usr` 時是 `pkg-config --variable=libdir Fcitx5Core`/fcitx5（Debian：`/usr/lib/<triplet>/fcitx5`），否則 `$(LIBDIR)/fcitx5` | 不是 Fcitx5 自己的 addon 目錄時，addon 設定的 `Library` 寫絕對路徑 |
 | `IBUS_COMPONENTDIR` | `pkg-config --variable=datadir ibus-1.0`/ibus/component（沒有 `libibus-1.0-dev` 時 `/usr/share/ibus/component`），不隨 `PREFIX` | ibus-daemon 只讀它自己的元件目錄（設了 `IBUS_COMPONENT_PATH` 才讀別處；IBus 1.5.34 容器實測 `/usr/local/share/ibus/component` 不會被讀到），所以 `PREFIX=/usr/local` 也裝到這裡。要放在 `PREFIX` 底下就自己設 `IBUS_COMPONENTDIR`，並讓 ibus-daemon 的 `IBUS_COMPONENT_PATH` 包含它與 `/usr/share/ibus/component` |
 
@@ -43,7 +45,7 @@ make install PREFIX=/usr VERSION=0.2.3 DESTDIR=$PWD/debian/tmp
 |---|---|
 | 輸入法框架（擇一或兩者） | `fcitx5`，或 `ibus` |
 | 設定程式 | `libwebkit2gtk-4.1-0` |
-| 神經選字、補標點（選用，見 #180） | `python3`、`python3-numpy`、`python3-onnxruntime`；沒有模型或缺少時自動退回統計選字 |
+| 神經選字、補標點（選用，見[神經模型](#神經模型180)） | `python3`、`python3-numpy`、`python3-onnxruntime`；模型由使用者在設定程式下載。沒有模型或缺少時自動退回統計選字 |
 
 ## 放到哪裡
 
@@ -61,6 +63,7 @@ make install PREFIX=/usr VERSION=0.2.3 DESTDIR=$PWD/debian/tmp
 | `/usr/share/ibus/component/0c.xml` | IBus 元件（`org.biggo.ime.IBus`、engine `0c`），由 `platforms/linux-ibus/0c.xml.in` 產生 |
 | `/usr/share/0c/data/` | 字典 |
 | `/usr/share/0c/neural/sequence_runtime.py`、`punct_runtime.py` | 神經推論 worker |
+| `/usr/share/0c/neural/pairing.lock.json` | 字典與 Hugging Face 模型的配對清單（#180） |
 | `/usr/share/0c/distribution.json` | 模式標記，例如 `{"schema":1,"updates":"package-manager","version":"0.2.3"}` |
 | `/usr/share/applications/0c-settings.desktop`、`/usr/share/icons/hicolor/…` | 應用程式選單項目、設定程式圖示、注／英狀態圖示 |
 
@@ -71,7 +74,7 @@ make install PREFIX=/usr VERSION=0.2.3 DESTDIR=$PWD/debian/tmp
 `/usr/share/0c/distribution.json` 的 `updates` 是 `package-manager`，而且執行的是 `/usr/libexec/0c/0c-update` 時：
 
 - `0c-update` 拒絕 `check`、`download`、`download-now`、`apply`、`install`、`verify`、`rollback`、`uninstall`、`schedule`、`auto`、`finish`、`mode`、`pause`、`resume`、`snooze` 與通知的動作，說明「由系統套件管理員安裝與更新」；帶 `-json` 時回契約錯誤 `package_managed`。不打索引伺服器、不建排程、不複製穩定副本。
-- `status`、`settings`、`set`、`vocab`、`api`、`engine`、`open-settings` 照常。`status -json` 回報 `"updates":"package-manager"`、`installed` 是 `distribution.json` 的版本，並以 `installs` 列出找到的安裝。
+- `status`、`settings`、`set`、`models`（#180 的模型下載）、`vocab`、`api`、`engine`、`open-settings` 照常。`status -json` 回報 `"updates":"package-manager"`、`installed` 是 `distribution.json` 的版本，並以 `installs` 列出找到的安裝。
 - 設定程式的「更新」頁只顯示「由系統套件管理員更新」與目前版本，沒有檢查、下載、安裝或回復；Fcitx5 與 IBus 的輸入法選單沒有更新列。
 - 引擎不常駐：外殼在第一個按鍵帶起它（`set -apply` 換設定後也會立刻帶起）。套件升級換掉 `/usr` 的檔案後，執行中的外殼要等宿主重啟才換新。
 
@@ -89,6 +92,15 @@ make install PREFIX=/usr VERSION=0.2.3 DESTDIR=$PWD/debian/tmp
 | 設定程式 | `~/.local/bin/0c-settings`（核對安裝收據的雜湊） | `/usr/bin/0c-settings`（核對屬於 root、其他人不能改） |
 
 兩份都在時用官網安裝（使用者自己裝的通常比較新）；設定程式「問題排解」列出兩份並標示使用中的那一份。系統的 `0c-update open-settings`（例如 IBus 輸入來源的齒輪）在官網安裝也在時交給官網那一份。Fcitx5 依 XDG 順序先讀家目錄的 addon 設定，所以載入的是官網安裝的外殼；IBus 兩個元件同名，哪一個被啟動都會照上面的規則連到官網安裝的引擎。
+
+## 神經模型（#180）
+
+系統套件不帶模型（模型沒有公開訓練程式與資料，不屬於 DFSG-free 的原始碼）。使用者在設定程式的「模型」頁按「下載模型」時，`0c-update models download` 才連到 Hugging Face（[Funmula/0c-sequence-d512](https://huggingface.co/Funmula/0c-sequence-d512)、[Funmula/0c-punct-d512](https://huggingface.co/Funmula/0c-punct-d512)，MIT，合計約 262 MB），逐檔核對編進 `0c-update` 的 `models/models.lock.json`，在本機配對到 `/usr/share/0c/data`，結果要等於 `/usr/share/0c/neural/pairing.lock.json`，存到 `~/.local/share/zuin/models/`，再請引擎重新載入，不必重新登入。不會在背景自動下載。
+
+- 字典不是 `pairing.lock.json` 上的那一份（例如自己重建字典）時，設定程式說明原因，不提供下載。
+- 套件升級換了字典、模型沒換（`models.lock.json` 相同）時，引擎在本機用已下載的權重重新配對，不重新下載、不打擾使用者；`models.lock.json` 換了時設定程式提示重新下載，下載成功後才刪舊的。
+- 沒有模型時，引擎在安裝滿一小時、使用者打過字之後送桌面通知提醒可以下載（最多 3 次、間隔 24 小時，可按「不再提醒」）。`MODEL_DOWNLOAD=0` 同時關掉下載與提醒。
+- 推論用系統的 `python3`、`python3-numpy`、`python3-onnxruntime`；缺少時設定程式列出要裝的套件，仍允許先下載。
 
 ## 加入輸入法
 
