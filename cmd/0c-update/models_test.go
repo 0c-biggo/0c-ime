@@ -21,6 +21,7 @@ import (
 
 	"github.com/0c-biggo/0c-ime/internal/models"
 	"github.com/0c-biggo/0c-ime/internal/settings"
+	upstream "github.com/0c-biggo/0c-ime/models"
 )
 
 func hexSum(b []byte) string {
@@ -244,6 +245,54 @@ func TestModelsStatusBundled(t *testing.T) {
 	}
 	if _, err := f.env.remove(); models.AsError(err).Code != codeModelsBundled {
 		t.Fatalf("內建模型不能刪：%v", err)
+	}
+}
+
+// 官網套件內建的模型：0.2.3 起是 Hugging Face 原檔（71af1f0e／4db3ed40），0.2.2 以前是權重相同的內部匯出
+// （cef689f1／2d98c7c6，models/equivalent.json）。兩種都附上 Hugging Face 的資訊；舊的另標 equivalent。
+func TestModelsStatusBundledAcceptsBothShippedHashes(t *testing.T) {
+	cases := []struct {
+		name               string
+		select_, punct     string
+		equivalent, hasURL bool
+	}{
+		{"Hugging Face 原檔", "71af1f0e77b2752cc71cbc04bf19c8e8f2e765662246f766e65a2822bab4e66e", "4db3ed40df777347d9c455da01285b01de192d4c210c5f7cd9f0646c727880d8", false, true},
+		{"0.2.2 以前的內部匯出", "cef689f1e706537e54eaed4241a776f1ea41b4cad2b504061d1e27cd0c1ca342", "2d98c7c6c75dc9d46081e967dbd2fccef67f73a1ed9b2da44d7e02002e760cf5", true, true},
+		{"其他模型", strings.Repeat("c", 64), strings.Repeat("d", 64), false, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newModelsFixture(t)
+			f.env.lock, f.env.equivalent = upstream.Lock, upstream.Equivalent
+			l, _ := models.ParseLock(upstream.Lock)
+			neural := filepath.Join(filepath.Dir(f.env.data), "neural")
+			for role, sha := range map[string]string{models.RoleSelect: c.select_, models.RolePunct: c.punct} {
+				writeModelFile(t, filepath.Join(neural, role, "manifest.json"), []byte(`{"files":{"model.onnx":"`+sha+`"}}`))
+				writeModelFile(t, filepath.Join(neural, role, "model.onnx"), []byte("onnx"))
+			}
+			st := f.status(t)
+			if st.Source != "bundled" || len(st.Models) != 2 {
+				t.Fatalf("%+v", st)
+			}
+			for _, m := range st.Models {
+				want := l.Models[m.Role]
+				if !c.hasURL {
+					if m.URL != "" || m.Repository != "" || m.Version != "" || m.Equivalent {
+						t.Fatalf("不是上游的模型不附網址：%+v", m)
+					}
+					continue
+				}
+				if m.URL != want.URL() || m.Repository != want.Repository || m.Revision != want.Revision || m.License != "MIT" ||
+					m.Version != want.Version || m.Equivalent != c.equivalent {
+					t.Fatalf("%+v", m)
+				}
+			}
+			var out bytes.Buffer
+			printModels(&out, st)
+			if strings.Contains(out.String(), "權重與公開版相同") != c.equivalent {
+				t.Fatalf("文字輸出：%s", out.String())
+			}
+		})
 	}
 }
 

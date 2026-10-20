@@ -72,6 +72,9 @@ type modelView struct {
 	Revision   string `json:"revision"`
 	URL        string `json:"url"`
 	License    string `json:"license"`
+	// Equivalent：本機模型不是 Hugging Face 那一份檔案，但權重相同、只差匯出資訊（models/equivalent.json，
+	// 0.2.2 以前官網套件內建的那份）。上游資訊照樣附上。
+	Equivalent bool `json:"equivalent"`
 }
 
 type modelsOperation struct {
@@ -102,7 +105,9 @@ type modelsEnv struct {
 	data string // 引擎用的字典
 	goos string
 	lock []byte
-	dial autoupdate.Dialer
+	// equivalent 是 models/equivalent.json：與 models.lock 的 model.onnx 等價的雜湊。
+	equivalent []byte
+	dial       autoupdate.Dialer
 	// runtimeCheck 核對系統 Python 能不能 import numpy、onnxruntime，回傳缺少的 apt 套件。
 	runtimeCheck func(python string) []string
 	// distributionDisabled：發行版關掉了模型下載與提醒。
@@ -112,7 +117,7 @@ type modelsEnv struct {
 
 func defaultModelsEnv() modelsEnv {
 	base := basePath()
-	return modelsEnv{base: base, data: dataPackDir(base), goos: runtime.GOOS, lock: upstream.Lock, dial: dialEngine,
+	return modelsEnv{base: base, data: dataPackDir(base), goos: runtime.GOOS, lock: upstream.Lock, equivalent: upstream.Equivalent, dial: dialEngine,
 		runtimeCheck: checkModelRuntime, distributionDisabled: modelDownloadDisabled, now: time.Now}
 }
 
@@ -143,6 +148,7 @@ func (e modelsEnv) pairing() (models.Pairing, error) {
 // modelsSnapshot 是一次檢查的結果，status、remind、download 共用。
 type modelsSnapshot struct {
 	lock       models.Lock
+	equivalent models.Equivalents
 	dictionary string
 	bundled    neural.Bundled
 	inspect    models.Inspection
@@ -158,6 +164,7 @@ func (e modelsEnv) snapshot() (modelsSnapshot, error) {
 		return s, err
 	}
 	s.lock, s.dictionary = l, e.dictionary()
+	s.equivalent, _ = models.ParseEquivalents(e.equivalent) // 讀不到就只認 models.lock 本身（測試核對編進去的那份）
 	s.bundled = neural.Find(neural.Options{DataDir: e.data, SystemPython: neural.SystemPython()})
 	s.inspect = e.store().Inspect(l, s.dictionary)
 	if p, err := e.pairing(); err == nil {
@@ -217,18 +224,20 @@ func (e modelsEnv) status() (modelsStatus, error) {
 		case snap.source == neural.SourceUser:
 			dir, source = filepath.Join(e.store().PairDir(snap.dictionary), role), neural.SourceUser
 		}
-		matches := true
+		match := models.MatchUpstream // 還沒安裝：顯示要下載的那一份
 		if dir != "" {
 			v.Path, v.Source = dir, source
 			v.SHA256 = manifestModelSHA(dir)
 			if fi, err := os.Stat(filepath.Join(dir, "model.onnx")); err == nil {
 				v.Size = fi.Size()
 			}
-			matches = v.SHA256 == m.Files["model.onnx"].SHA256
+			match = snap.lock.Match(role, v.SHA256, snap.equivalent)
 		}
-		// 只有本機的模型就是 models.lock 記的上游版本時才附上 Hugging Face 的資訊（官網套件內建的不是同一份檔案）。
-		if matches {
+		// 本機的模型是 models.lock 記的上游版本，或與它等價的匯出（0.2.2 以前官網套件內建的那份）時才附上
+		// Hugging Face 的資訊；其他模型（例如發行版自己換的）不冒用上游的網址。
+		if match != models.MatchNone {
 			v.Version, v.Repository, v.Revision, v.URL, v.License = m.Version, m.Repository, m.Revision, m.URL(), m.License
+			v.Equivalent = match == models.MatchEquivalent
 		}
 		st.Models = append(st.Models, v)
 	}
@@ -657,6 +666,9 @@ func printModels(w io.Writer, st modelsStatus) {
 		}
 		if m.URL != "" {
 			line += "（" + m.URL + "，" + m.License + "）"
+		}
+		if m.Equivalent {
+			line += "；權重與公開版相同，匯出資訊不同"
 		}
 		fmt.Fprintln(w, line)
 	}

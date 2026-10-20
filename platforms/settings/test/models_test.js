@@ -99,3 +99,11 @@ test('引擎狀態沿用總覽的文字；引擎沒在跑時說明', () => {
   assert.strictEqual(L.stateText({ role: 'punct', state: 'not_installed' }, label), 'not_installed/原文提交');
   assert.strictEqual(L.stateText({ role: 'select', state: '' }, label), '輸入法未執行');
 });
+
+test('0.2.2 以前內建的模型（equivalent）：照樣顯示 Hugging Face 來源，另加一行小字', () => {
+  const old = Object.assign({}, LOCK[0], { state: 'ready', source: 'bundled', path: '/x/neural/select', sha256: 'c'.repeat(64), equivalent: true });
+  assert.strictEqual(L.equivalentNote(old), '權重與公開版相同，僅匯出資訊不同。');
+  assert.strictEqual(L.equivalentNote(Object.assign({}, old, { equivalent: false })), null);
+  assert.strictEqual(L.equivalentNote(Object.assign({}, old, { url: '' })), null); // 沒有上游資訊時不說
+  assert.strictEqual(L.equivalentNote(LOCK[0]), null);
+});

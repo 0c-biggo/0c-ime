@@ -81,6 +81,11 @@
     return sha && sha.length > 20 ? sha.slice(0, 12) + '…' + sha.slice(-8) : (sha || '');
   }
 
+  // 0.2.2 以前官網套件內建的模型：不是 Hugging Face 那一份檔案，但權重相同、只差匯出資訊（status 的 equivalent）。
+  function equivalentNote(model) {
+    return model && model.equivalent && model.url ? '權重與公開版相同，僅匯出資訊不同。' : null;
+  }
+
   const safeUrl = (url) => typeof url === 'string' && HF.test(url) && !url.includes('..');
 
   // 引擎回報的狀態（同總覽的 modelLabel）；引擎沒在跑時是空字串。
@@ -89,7 +94,7 @@
     return modelLabel(model.state, ROLE_FALLBACK[model.role] || '統計引擎');
   }
 
-  const logic = { summary, actions, runtimeMissing, downloadNote, shortSha, safeUrl, operationText, percent, mb, aboutMB, stateText };
+  const logic = { summary, actions, runtimeMissing, downloadNote, equivalentNote, shortSha, safeUrl, operationText, percent, mb, aboutMB, stateText };
   window.ZcModelsLogic = logic;
 
   // ---- 畫面 ----
@@ -180,11 +185,13 @@
         }, 'Hugging Face ' + (model.repository || '') + (model.revision ? ' @ ' + shortRev(model.revision) : ''), h('span', { 'aria-hidden': 'true' }, ' ↗'))]);
       }
       if (model.license) facts.push(['授權', model.license]);
+      const note = equivalentNote(model);
       return h('div', { class: 'card model-card' },
         h('div', { class: 'row' },
           h('div', { class: 'label' }, model.label || model.role),
           h('div', { class: 'value' }, h('span', { class: ready ? 'status-ok' : 'muted' }, stateText(model, modelLabel)))),
-        facts.length ? h('dl', { class: 'facts' }, ...facts.flatMap(([k, v]) => [h('dt', {}, k), h('dd', {}, v)])) : null);
+        facts.length ? h('dl', { class: 'facts' }, ...facts.flatMap(([k, v]) => [h('dt', {}, k), h('dd', {}, v)])) : null,
+        note ? h('p', { class: 'muted small model-note' }, note) : null);
     }
 
     function render(root) {

@@ -1,5 +1,5 @@
 // Package models 管理個人目錄裡從 Hugging Face 下載的神經模型（#180）：兩份固定清單（models.lock.json、
-// pairing.lock.json）、Go 版配對、下載與核對、升級後重新配對，以及沒有模型時的提醒排程。
+// pairing.lock.json）與等價雜湊（equivalent.json）、Go 版配對、下載與核對、升級後重新配對，以及沒有模型時的提醒排程。
 //
 // 個人目錄（~/.local/share/zuin/models）的布局：
 //
@@ -187,6 +187,71 @@ func ParsePairing(b []byte) (Pairing, error) {
 		}
 	}
 	return p, nil
+}
+
+// 本機 model.onnx 與 models.lock 的關係（Lock.Match）。
+const (
+	MatchNone       = ""
+	MatchUpstream   = "upstream"   // 就是 models.lock 那一份
+	MatchEquivalent = "equivalent" // equivalent.json 記的等價匯出：權重相同、只差匯出資訊
+)
+
+// Equivalents 是 models/equivalent.json：與 models.lock 某個 revision 的 model.onnx 等價的其他雜湊。
+type Equivalents struct {
+	Schema int                        `json:"schema"`
+	Models map[string]EquivalentModel `json:"models"`
+}
+
+// EquivalentModel 只在 models.lock 的 repository、revision 與 model.onnx 都跟這裡一樣時成立。
+type EquivalentModel struct {
+	Repository string `json:"repository"`
+	Revision   string `json:"revision"`
+	Model      string `json:"model.onnx"`
+	Equivalent []File `json:"equivalent"`
+}
+
+// ParseEquivalents 讀 equivalent.json。
+func ParseEquivalents(b []byte) (Equivalents, error) {
+	var e Equivalents
+	if err := json.Unmarshal(b, &e); err != nil {
+		return Equivalents{}, fmt.Errorf("equivalent.json：%w", err)
+	}
+	if e.Schema != 1 {
+		return Equivalents{}, errors.New("equivalent.json：格式不符")
+	}
+	for role, m := range e.Models {
+		if !validHex(m.Model) || !validRevision(m.Revision) || m.Repository == "" {
+			return Equivalents{}, fmt.Errorf("equivalent.json：%s 不正確", role)
+		}
+		for _, f := range m.Equivalent {
+			if !validHex(f.SHA256) || f.Size <= 0 {
+				return Equivalents{}, fmt.Errorf("equivalent.json：%s 的等價雜湊不正確", role)
+			}
+		}
+	}
+	return e, nil
+}
+
+// Match 回報 sha（本機模型 manifest 記的 model.onnx 雜湊）是不是 models.lock 裡 role 的上游模型。
+func (l Lock) Match(role, sha string, eq Equivalents) string {
+	m, ok := l.Models[role]
+	if !ok || sha == "" {
+		return MatchNone
+	}
+	want := m.Files["model.onnx"].SHA256
+	if sha == want {
+		return MatchUpstream
+	}
+	e, ok := eq.Models[role]
+	if !ok || e.Repository != m.Repository || e.Revision != m.Revision || e.Model != want {
+		return MatchNone
+	}
+	for _, f := range e.Equivalent {
+		if f.SHA256 == sha {
+			return MatchEquivalent
+		}
+	}
+	return MatchNone
 }
 
 // Matches 回報這份配對是否適用目前的 models.lock 與字典。
