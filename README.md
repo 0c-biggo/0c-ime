@@ -103,7 +103,7 @@ xychart-beta
 
 Windows、macOS、Linux 安裝包請到官網下載：👉 [0c.biggo.com/download](https://0c.biggo.com/download/)
 
-發行版打包請用 [Releases](https://github.com/0c-biggo/0c-ime/releases/latest) 的 `0c-ime-<版本>.tar.xz`：內附現成字典與已配對模型，解壓即可建置，見 [打包與發佈](PACKAGING.md)。
+發行版打包請用 [Releases](https://github.com/0c-biggo/0c-ime/releases/latest) 的 `0c-ime-<版本>.tar.xz`：內附現成字典，符合 DFSG，解壓即可建置；已配對的神經模型在另附的 `0c-ime-models-<版本>.tar.xz`。見 [打包與發佈](PACKAGING.md)。
 
 ## 🛠️ 從原始碼建置
 
@@ -117,7 +117,7 @@ go test ./...
 go run ./cmd/0c-cli -data assets/data
 ```
 
-`make assets` 從同版本的 [Release](https://github.com/0c-biggo/0c-ime/releases) 取得完整 tarball（約 275 MB），驗證後把現成字典放到 `assets/data/`、已配對模型放到 `models/select/` 與 `models/punct/`，和出貨內容相同；0.2.2 起 Release 附的 Source code 壓縮檔也適用。要指定版本用 `make assets RELEASE=v0.2.2`。
+`make assets` 從同版本的 [Release](https://github.com/0c-biggo/0c-ime/releases) 取得原始碼與模型 tarball（合計約 275 MB），驗證後把現成字典放到 `assets/data/`、已配對模型放到 `models/select/` 與 `models/punct/`，和出貨內容相同；0.2.2 起 Release 附的 Source code 壓縮檔也適用。要指定版本用 `make assets RELEASE=v0.2.2`，只取字典用 `make assets MODELS=0`（約 36 MB，以統計選字運作）。
 
 各平台外殼另需各自的工具鏈與系統函式庫：
 
@@ -163,4 +163,4 @@ make test-release
 
 ## 📄 授權
 
-自有程式採 AGPL-3.0-only，另可洽談商業授權；資料、模型與第三方元件依各自授權，見 [授權說明](legal/README.md)。
+自有程式採 AGPL-3.0-only，另可洽談商業授權；自有圖示與圖片採 CC BY-SA 4.0；資料、模型與第三方元件依各自授權，見 [授權說明](legal/README.md)。

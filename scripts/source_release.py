@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Build a source release from a Git tag and hash-pinned public model packages.
+"""Build a source release from a Git tag, plus a separate tarball of the paired public models.
 
-Only the release assembler downloads files. Consumers of the tarball already
-have both models and their vocabularies; no LFS client is needed.
+The source tarball carries the code and the compiled dictionary and stays DFSG-free;
+the models tarball unpacks into the same directory. Only the release assembler
+downloads files, and no LFS client is needed.
 """
 
 import argparse
@@ -23,7 +24,10 @@ import release_dictionary
 ROOT = Path(__file__).resolve().parents[1]
 LOCK = "models/models.lock.json"
 RECORD = "SOURCE-RELEASE.json"
+MODELS_RECORD = "MODELS-RELEASE.json"
 NAME = "0c-ime"
+MODELS_NAME = "0c-ime-models"
+ROLES = ("select", "punct")
 # 0.2.1 以前的完整包以 ime-oss 為名；extract-data 仍要能重用它們的字典。
 LEGACY_NAMES = ("ime-oss",)
 MODEL_FILES = {"model.onnx", "vocab.json", "manifest.json", "LICENSE", "README.md"}
@@ -114,11 +118,11 @@ def check_models(root, lock):
                 raise ValueError("selection vocabulary and manifest bind different system dictionaries")
 
 
-def inventory(root):
+def inventory(root, skip=(RECORD, MODELS_RECORD)):
     files = {}
     for path in sorted(root.rglob("*")):
         relative = path.relative_to(root).as_posix()
-        if relative == RECORD:
+        if relative in skip:
             continue
         if path.is_symlink():
             # No source symlink may reach outside the tarball, even indirectly.
@@ -150,6 +154,19 @@ def git(repo, *args):
     return subprocess.check_output(["git", "-C", str(repo), *args], text=True).strip()
 
 
+def pack(root, tarball, epoch):
+    def normalized(info):
+        info.uid = info.gid = 0
+        info.uname = info.gname = ""
+        info.mtime = epoch
+        info.mode = 0o755 if info.isdir() or info.mode & 0o111 else 0o644
+        info.pax_headers = {}
+        return info
+
+    with tarfile.open(tarball, "w:xz", format=tarfile.PAX_FORMAT, preset=6) as archive:
+        archive.add(root, arcname=root.name, recursive=True, filter=normalized)
+
+
 def build(repo, tag, output, cache, offline=False, data_dir=None):
     if not TAG.fullmatch(tag):
         raise ValueError("expected a version tag such as v0.2.0 or v0.2.1-dev.1")
@@ -171,8 +188,9 @@ def build(repo, tag, output, cache, offline=False, data_dir=None):
         root.mkdir()
         with tarfile.open(source_tar) as archive:
             extract(archive, root)
-        if (root / RECORD).exists():
-            raise ValueError(f"{RECORD} is generated and must not be committed")
+        for generated in (RECORD, MODELS_RECORD):
+            if (root / generated).exists():
+                raise ValueError(f"{generated} is generated and must not be committed")
         dictionary_lock = release_dictionary.read_lock(root)
         if data_dir is None:
             raise ValueError("--data-dir is required; supply the pinned compiled dictionary")
@@ -200,30 +218,35 @@ def build(repo, tag, output, cache, offline=False, data_dir=None):
             for filename, content in derived[role].items():
                 (folder / filename).write_bytes(content)
         release_dictionary.check_assets(root)
-        record = {"schema": 2, "tag": tag, "commit": commit, "source_date_epoch": epoch,
+        # The paired models move to their own tarball, which unpacks over the source tree.
+        models_root = work / "models-stage" / name
+        (models_root / "models").mkdir(parents=True)
+        for role in ROLES:
+            os.rename(root / "models" / role, models_root / "models" / role)
+        record = {"schema": 3, "tag": tag, "commit": commit, "source_date_epoch": epoch,
                   "dictionary_lock_sha256": digest(root / release_dictionary.LOCK),
                   "models_lock_sha256": digest(root / LOCK), "files": inventory(root)}
         (root / RECORD).write_bytes(json_bytes(record))
+        from pair_models import PAIR_LOCK
+        models_record = {"schema": 1, "tag": tag, "commit": commit, "source_date_epoch": epoch,
+                         "models_lock_sha256": digest(root / LOCK), "pairing_lock_sha256": digest(root / PAIR_LOCK),
+                         "dictionary_manifest_sha256": digest(root / release_dictionary.DIRECTORY / "manifest.json"),
+                         "files": inventory(models_root)}
+        (models_root / MODELS_RECORD).write_bytes(json_bytes(models_record))
         stage = work / "output"
         stage.mkdir()
         tarball = stage / (name + ".tar.xz")
-
-        def normalized(info):
-            info.uid = info.gid = 0
-            info.uname = info.gname = ""
-            info.mtime = epoch
-            info.mode = 0o755 if info.isdir() or info.mode & 0o111 else 0o644
-            info.pax_headers = {}
-            return info
-
-        with tarfile.open(tarball, "w:xz", format=tarfile.PAX_FORMAT, preset=6) as archive:
-            archive.add(root, arcname=name, recursive=True, filter=normalized)
-        (stage / "SHA256SUMS").write_text(f"{digest(tarball)}  {tarball.name}\n", encoding="ascii")
+        models = stage / f"{MODELS_NAME}-{tag[1:]}.tar.xz"
+        pack(root, tarball, epoch)
+        pack(models_root, models, epoch)
+        (stage / "SHA256SUMS").write_text("".join(f"{digest(path)}  {path.name}\n" for path in sorted((tarball, models))),
+                                          encoding="ascii")
         os.rename(stage, output)
     return output / (name + ".tar.xz")
 
 
-def verify(tarball):
+def verify(tarball, models=None):
+    """Verify a source tarball, and with models also its models tarball unpacked over it."""
     with tempfile.TemporaryDirectory(prefix=NAME + "-verify-") as temp:
         destination = Path(temp)
         with tarfile.open(tarball) as archive:
@@ -233,21 +256,60 @@ def verify(tarball):
             raise ValueError("expected exactly one source directory")
         root = roots[0]
         record = json.loads((root / RECORD).read_text(encoding="utf-8"))
-        if record.get("schema") != 2 or not TAG.fullmatch(record["tag"]):
+        # Schema 2 (0.2.2 and earlier) bundled the models; schema 3 ships them separately.
+        if record.get("schema") not in (2, 3) or not TAG.fullmatch(record["tag"]):
             raise ValueError("invalid source release record")
         if root.name not in {f"{n}-{record['tag'][1:]}" for n in (NAME, *LEGACY_NAMES)}:
             raise ValueError("source directory does not match version")
         if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", record["commit"]):
             raise ValueError("invalid source commit")
-        if inventory(root) != record["files"]:
+        if inventory(root, skip=(RECORD,)) != record["files"]:
             raise ValueError("source release file inventory mismatch")
         check_paths(record["files"], read_rules((root / RULES).read_text(encoding="utf-8")))
         if digest(root / LOCK) != record["models_lock_sha256"]:
             raise ValueError("model lock checksum mismatch")
         if digest(root / release_dictionary.LOCK) != record["dictionary_lock_sha256"]:
             raise ValueError("dictionary lock checksum mismatch")
-        release_dictionary.check_assets(root)
+        if record["schema"] == 2:
+            if models is not None:
+                raise ValueError(f"{record['tag']} bundles its models; there is no separate models tarball")
+            release_dictionary.check_assets(root)
+            return record
+        if any(p.startswith(tuple(f"models/{role}/" for role in ROLES)) for p in record["files"]):
+            raise ValueError("source tarball must not contain model packages")
+        release_dictionary.check_dictionary(root)
+        if models is not None:
+            verify_models(models, destination, root, record)
         return record
+
+
+def verify_models(models, destination, root, record):
+    """Unpack a models tarball over a verified source tree and check its pairing."""
+    from pair_models import PAIR_LOCK
+    with tarfile.open(models) as archive:
+        for member in archive.getmembers():
+            parts = PurePosixPath(member.name).parts
+            if member.name in (root.name, f"{root.name}/models"):
+                if not member.isdir():
+                    raise ValueError(f"invalid models archive member: {member.name}")
+            elif not (member.name == f"{root.name}/{MODELS_RECORD}" and member.isfile()
+                      or len(parts) >= 3 and parts[:2] == (root.name, "models") and parts[2] in ROLES
+                      and (member.isfile() or member.isdir())):
+                raise ValueError(f"unexpected models archive member: {member.name}")
+        extract(archive, destination)
+    models_record = json.loads((root / MODELS_RECORD).read_text(encoding="utf-8"))
+    if (models_record.get("schema") != 1 or models_record.get("tag") != record["tag"]
+            or models_record.get("commit") != record["commit"]):
+        raise ValueError("models tarball belongs to another release")
+    files = {path: entry for path, entry in inventory(root, skip=(RECORD, MODELS_RECORD)).items()
+             if path.startswith("models/") and path.split("/")[1] in ROLES}
+    if files != models_record["files"]:
+        raise ValueError("models tarball file inventory mismatch")
+    if (models_record["models_lock_sha256"] != digest(root / LOCK)
+            or models_record["pairing_lock_sha256"] != digest(root / PAIR_LOCK)
+            or models_record["dictionary_manifest_sha256"] != digest(root / release_dictionary.DIRECTORY / "manifest.json")):
+        raise ValueError("models tarball does not match the source release locks")
+    release_dictionary.check_models_paired(root)
 
 
 def extract_dictionary(tarball, output, root=ROOT):
@@ -284,7 +346,7 @@ def main():
     fetch = commands.add_parser("fetch", help="prepare a verified model cache")
     fetch.add_argument("--lock", type=Path, default=ROOT / LOCK)
     fetch.add_argument("--cache", type=Path, default=ROOT / "build/cache/source-models")
-    release = commands.add_parser("build", help="assemble code from a tag plus pinned models")
+    release = commands.add_parser("build", help="assemble the source tarball and the paired models tarball from a tag")
     release.add_argument("--tag", required=True)
     release.add_argument("--out", type=Path, required=True, help="new output directory")
     release.add_argument("--cache", type=Path, default=ROOT / "build/cache/source-models")
@@ -295,6 +357,7 @@ def main():
     reuse.add_argument("--out", type=Path, required=True)
     check = commands.add_parser("verify", help="verify tarball contents without network access")
     check.add_argument("tarball", type=Path)
+    check.add_argument("--models", type=Path, help="also verify this release's models tarball")
     args = parser.parse_args()
     try:
         if args.command == "fetch":
@@ -306,8 +369,10 @@ def main():
             extract_dictionary(args.tarball, args.out.absolute())
             print("Compiled dictionary verified.")
         else:
-            record = verify(args.tarball)
-            print(f"Verified {record['tag']} ({record['commit']}), including the compiled dictionary and paired models.")
+            record = verify(args.tarball, args.models)
+            bundled = record["schema"] == 2 or args.models is not None
+            print(f"Verified {record['tag']} ({record['commit']}), including the compiled dictionary"
+                  + (" and paired models." if bundled else "."))
     except (ValueError, OSError, KeyError, subprocess.CalledProcessError, tarfile.TarError) as error:
         parser.exit(1, f"source release: {error}\n")
 

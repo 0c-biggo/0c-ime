@@ -22,6 +22,7 @@ PLATFORM = ROOT / "platforms/linux-fcitx5"
 LICENSE_FILES = {
     "LICENSE": "LICENSE",
     "legal/README.md": "legal/README.md",
+    "legal/CC-BY-SA-4.0.txt": "legal/CC-BY-SA-4.0.txt",
     "legal/UNICODE-NOTICE.txt": "legal/UNICODE-NOTICE.txt",
     "legal/TERMS.md": "TERMS.md",
 }
