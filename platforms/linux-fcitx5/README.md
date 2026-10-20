@@ -144,4 +144,6 @@ Fcitx5 設定工具中，選取「靈犀注音」後按齒輪，可修改神經�
 
 `0c-update status --json` 的 `features.vocab` 為 true 時（0.2.0 起一律為 true），設定列下面多一列「我的詞彙…」，執行 `0c-update open-settings vocab`，開到設定程式的「我的詞彙」頁；設定程式已經開著時由單一實例切過去（#125）。舊版 0c-update 沒有這個欄位就不顯示。外殼每 5 秒讀一次狀態，這個欄位改變時（例如回復到舊版）把這一列加進或拿出目前欄位的狀態區（Fcitx 的狀態區不能插在中間，所以拿掉自己的項目後依序加回）。開啟失敗的原因顯示在被點的那一列。
 
+「輸出簡體字」（#169）：`0c-update status --json` 有 `settings.output_simplified`（0.2.1 起），或引擎在 open 回覆 `output_simplified_live=true` 時，「我的詞彙…」與更新列之間多一個可以打勾的「輸出簡體字」。點了在這個欄位的 session 送 `output_simplified` 請求：引擎立即改變之後送出的文字（所有欄位，包括已經在組字區、還沒送出的字），組字不動，並把值寫進 `settings.json`（同 `0c-update set` 的寫入鎖與寫法），不重啟引擎；提示用輸入法資訊小窗：Fcitx 5.1.11 起（`showCustomInputMethodInformation`，執行時查符號）顯示「已切換為輸出簡體字／繁體字」，Ubuntu 24.04 的 5.1.7 沒有這個函式，退回一般的輸入法資訊，顯示標籤「注簡」。舊引擎退回 `0c-update set output-simplified on|off -apply -notify`。勾選與狀態顯示跟著每個快照的 `output_simplified` 與狀態查詢的 `runtime.output_simplified`（舊引擎時是 `settings.output_simplified`），在設定程式切換後下一個按鍵或下一次查詢（5 秒內）就跟上；選單切換後，切換前開始的查詢不會把勾選改回去。開著時注音模式的子模式文字是「注音・簡體輸出」，Kimpanel 的標籤是「注簡」（Kimpanel 有標籤時會用文字取代「注」圖示，所以只在這個狀態給標籤）；Classic UI／系統匣的圖示不變，看選單的勾選。英文模式照舊是「英」（兩個字的「注簡」與 IBus 外殼相同：GNOME 頂列的 IBus 指示只採用不到 3 個字）。這個請求不記進重播紀錄。不綁快捷鍵。限制（#118 起就有，與切換無關）：組字中直接失焦時，組字由 Fcitx／用戶端照畫面上的文字送出，所以是繁體；按 Enter、空白選字或選候選送出的才會轉成簡體。
+
 實機回歸可在專用帳號執行 `test/wayland_probe.py --result /tmp/0c-wayland-result.json`，用真正桌面操作組字、選單、跨欄位及敏感欄位。JSON 的文字是應用程式已提交內容，避免把組字預覽當成提交結果。

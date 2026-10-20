@@ -42,7 +42,7 @@ func propertyUpdate(sig []recorded, key string) (ibusProperty, bool) {
 }
 
 // #169：選單的「輸出簡體字」是可以打勾的屬性。點了在這個輸入框的 session 送 output_simplified：組字不動、提示列顯示
-// 「已切換為輸出簡體字」幾秒後換回原本的內容，注／英指示改成「注·簡」，之後送出的字是簡體；不記進重播紀錄。
+// 「已切換為輸出簡體字」幾秒後換回原本的內容，注／英指示改成「注簡」，之後送出的字是簡體；不記進重播紀錄。
 func TestSimplifiedToggleSwitchesLive(t *testing.T) {
 	e, rec, sock := newTestEngine(t)
 	eng, saved := liveSimplifiedEngine(t)
@@ -72,7 +72,8 @@ func TestSimplifiedToggleSwitchesLive(t *testing.T) {
 	if e.preedit != "風景" || e.aux != "已切換為輸出簡體字" || !svc.simplified || !slices.Equal(*saved, []bool{true}) {
 		t.Fatalf("切換後：組字 %q、提示 %q、狀態 %v、寫檔 %v", e.preedit, e.aux, svc.simplified, *saved)
 	}
-	if p, ok := propertyUpdate(sig, propInputMode); !ok || variantText(t, p.Symbol) != "注·簡" {
+	// GNOME Shell 的頂列只採用不到 3 個字的 symbol。
+	if p, ok := propertyUpdate(sig, propInputMode); !ok || variantText(t, p.Symbol) != "注簡" || len([]rune(variantText(t, p.Symbol))) >= 3 {
 		t.Fatalf("注／英指示：%+v", p)
 	}
 	if p, ok := propertyUpdate(sig, propSimplified); !ok || p.State != propStateChecked {
