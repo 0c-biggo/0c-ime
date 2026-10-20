@@ -2,8 +2,8 @@
   "schema": 1,
   "files": {
     "NOTICE.txt": {
-      "size": 122388,
-      "sha256": "432e3b8034c5d676a5943ceaa48cf6d9d7657096a6b4e19ac410f894dfeb4281"
+      "size": 122448,
+      "sha256": "0cf028486e3af3d5f618acda0a09fe9c3de4edd6277558dc4f256088ac6d842d"
     },
     "english/NOTICE.txt": {
       "size": 5365,
@@ -26,8 +26,8 @@
       "sha256": "18728c873b29e582eef5e0110ac882f8e85e7145475fd657c3d6fabd2f64ef01"
     },
     "manifest.json": {
-      "size": 7111,
-      "sha256": "91620d9640525e694afe417bd03e500a666441f72b59bc92c1913c83c17a3b9b"
+      "size": 7131,
+      "sha256": "3e93ed1ef3d2fc7443f64a0b5203294298181b84bed2cd6a144c48a4852aefee"
     },
     "report.txt": {
       "size": 2134,

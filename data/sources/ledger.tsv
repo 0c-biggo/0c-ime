@@ -1,10 +1,10 @@
 # id	名稱	URL	版本	授權	可散布	姓名標示
 # 公開包以 -public 檢查實際使用來源；可散布欄記錄發布狀態，不代表資料是自有或第三方。
 # 0c 自有資料；0c_collect* 為自建詞頻與語言模型的內部 ID。
-curated	0c 人工維護的詞條	https://0c.biggo.com	2026-10-19；curated rows sha256 90cc8608a20d7784607d1dad41cff486bafb405be38b8ef7cf34234c7bc628c1	CC-BY-SA-4.0	yes	0c contributors
-0c_collect	0c 收集、整理與分類的 unigram 詞頻	https://0c.biggo.com	2026-10-17 以 5a057dd 的詞庫斷詞；197 萬篇、7.4 億詞次	CC-BY-SA-4.0	yes	0c contributors
-0c_collect-ns	0c 收集、整理與分類的 bigram 統計：多字詞配對	https://0c.biggo.com	同 0c_collect；sha256 7333e8ca02d051bec1b6ef0a723fb0d6ffe030b439ab48d5b496a3ea421c38b5	CC-BY-SA-4.0	yes	0c contributors
-0c_collect-ss	0c 收集、整理與分類的 bigram 統計：單字詞配對	https://0c.biggo.com	同 0c_collect；sha256 1c4bc727c31316f87b01c47fb542e22a52628032b6bb828c8a58941d86e52267	CC-BY-SA-4.0	yes	0c contributors
+curated	0c 人工維護的詞條	https://0c.biggo.com	2026-10-19；curated rows sha256 90cc8608a20d7784607d1dad41cff486bafb405be38b8ef7cf34234c7bc628c1	CC-BY-SA-4.0	yes	Funmula Co., Limited
+0c_collect	0c 收集、整理與分類的 unigram 詞頻	https://0c.biggo.com	2026-10-17 以 5a057dd 的詞庫斷詞；197 萬篇、7.4 億詞次	CC-BY-SA-4.0	yes	Funmula Co., Limited
+0c_collect-ns	0c 收集、整理與分類的 bigram 統計：多字詞配對	https://0c.biggo.com	同 0c_collect；sha256 7333e8ca02d051bec1b6ef0a723fb0d6ffe030b439ab48d5b496a3ea421c38b5	CC-BY-SA-4.0	yes	Funmula Co., Limited
+0c_collect-ss	0c 收集、整理與分類的 bigram 統計：單字詞配對	https://0c.biggo.com	同 0c_collect；sha256 1c4bc727c31316f87b01c47fb542e22a52628032b6bb828c8a58941d86e52267	CC-BY-SA-4.0	yes	Funmula Co., Limited
 # 第三方資料來源與其分類。
 mcbopomofo	小麥注音輸入法詞庫資料（BPMFBase、BPMFMappings、phrase.occ、破音字優先表）	https://github.com/openvanilla/McBopomofo	commit a5ad2e94a173d6721b9d52e60f4d0266251a76ba	MIT	yes	Copyright (c) 2011-2026 Mengjuei Hsieh et al.；BPMFMappings 最初簡化自 libtabe 的 tsi.src（BSD）
 cns11643	全字庫 CNS11643 屬性與碼表（CNS_phonetic、CNS2UNICODE）	https://data.gov.tw/dataset/5961	Properties.zip sha256 3d56ef14cc809989… MapingTables.zip sha256 4502fcf7b433d679…	政府資料開放授權條款第1版	yes	全字庫（CNS11643 中文標準交換碼全字庫），依政府資料開放授權條款第 1 版使用
