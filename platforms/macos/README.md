@@ -31,8 +31,8 @@ make DATA_DIR="$(pwd)/../../build/macos-basic-data"
 在 Apple Silicon 的 macOS 上：
 
 ```sh
-python3 scripts/prepare_neural.py --platform macos-arm64 --select <選字模型> --punct <補標點模型> \
-  --dictionary <配對字典> --out build/neural-macos-arm64      # 也可在 Linux 產生後複製過來
+python3 scripts/prepare_neural.py --platform macos-arm64 --models <Hugging Face 原檔目錄> \
+  --dictionary <配對字典> --out build/neural-macos-arm64      # 也可在 Linux 產生後複製過來；模型見 models/models.lock.json
 python3 scripts/package_macos.py --preview --version 0.1.0-dev.17 \
   --data <配對字典> --neural build/neural-macos-arm64 --release-docs <安裝包文件目錄>
 ```

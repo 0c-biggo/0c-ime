@@ -17,6 +17,7 @@ import tempfile
 from collect_notices import collect
 from install_package import digest, regular, verify
 from pairing_lock import write_pairing_lock
+import hf_models
 
 PAIRING_LOCK_NAME = "pairing.lock.json"
 
@@ -335,6 +336,8 @@ def build(args):
             copy_neural(args.neural, stage)
         seal_data(stage, args.go, public=public)
         if args.neural:  # #180：出貨字典的模型配對清單（官網套件內建模型，用不到下載；每個出貨字典都有一份）
+            if public:  # 公開包內建 Hugging Face 公開版，配對結果就是這份 pairing.lock
+                hf_models.check_shipped(stage / "neural", stage / "data")
             write_pairing_lock(stage / "data", stage / "neural" / PAIRING_LOCK_NAME)
         copy(ROOT / "scripts/install_package.py", "install.py")
         copy_release_docs(release_docs, stage)
