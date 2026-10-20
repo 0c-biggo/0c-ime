@@ -22,6 +22,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/0c-biggo/0c-ime/internal/atomicfile"
 	"github.com/0c-biggo/0c-ime/internal/enginedir"
 )
 
@@ -160,23 +161,7 @@ func SyncLSForgotten(backups string) error {
 	if len(still) > 0 {
 		text = strings.Join(still, "\n") + "\n"
 	}
-	return writeFileAtomic(file, []byte(text))
-}
-
-func writeFileAtomic(file string, data []byte) error {
-	f, err := os.CreateTemp(filepath.Dir(file), ".tmp-")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name())
-	if _, err = f.Write(data); err != nil {
-		f.Close()
-		return err
-	}
-	if err = f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(f.Name(), file)
+	return atomicfile.Write(file, []byte(text))
 }
 
 // windowsOwnedVersion 認得完整安裝的版本目錄 <版本>-<12 位雜湊>（含 .broken-<數字>）；核心更新的 -c- 目錄不算。
