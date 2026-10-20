@@ -23,6 +23,9 @@ import release_dictionary
 ROOT = Path(__file__).resolve().parents[1]
 LOCK = "models/models.lock.json"
 RECORD = "SOURCE-RELEASE.json"
+NAME = "0c-ime"
+# 0.2.1 以前的完整包以 ime-oss 為名；extract-data 仍要能重用它們的字典。
+LEGACY_NAMES = ("ime-oss",)
 MODEL_FILES = {"model.onnx", "vocab.json", "manifest.json", "LICENSE", "README.md"}
 TAG = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?")
 SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -155,7 +158,7 @@ def build(repo, tag, output, cache, offline=False, data_dir=None):
     check_repo(repo, commit)
     epoch = int(git(repo, "show", "-s", "--format=%ct", commit))
     # Resolve once: a tag moved during assembly must not change the source.
-    name = "ime-oss-" + tag[1:]
+    name = f"{NAME}-{tag[1:]}"
     if output.exists():
         raise ValueError(f"output already exists: {output}")
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -221,7 +224,7 @@ def build(repo, tag, output, cache, offline=False, data_dir=None):
 
 
 def verify(tarball):
-    with tempfile.TemporaryDirectory(prefix="ime-oss-verify-") as temp:
+    with tempfile.TemporaryDirectory(prefix=NAME + "-verify-") as temp:
         destination = Path(temp)
         with tarfile.open(tarball) as archive:
             extract(archive, destination)
@@ -232,7 +235,7 @@ def verify(tarball):
         record = json.loads((root / RECORD).read_text(encoding="utf-8"))
         if record.get("schema") != 2 or not TAG.fullmatch(record["tag"]):
             raise ValueError("invalid source release record")
-        if root.name != "ime-oss-" + record["tag"][1:]:
+        if root.name not in {f"{n}-{record['tag'][1:]}" for n in (NAME, *LEGACY_NAMES)}:
             raise ValueError("source directory does not match version")
         if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", record["commit"]):
             raise ValueError("invalid source commit")
