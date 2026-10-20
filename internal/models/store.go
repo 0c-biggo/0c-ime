@@ -353,19 +353,46 @@ func (s Store) Remove() error {
 	return errors.Join(errs...)
 }
 
-// link 以硬連結共用權重（不多佔 260 MB）；檔案系統不支援時改用符號連結（worker 照路徑讀檔，兩種都可以）。
+// hardLink 測試替換用（模擬不支援硬連結的檔案系統）。
+var hardLink = os.Link
+
+// link 以硬連結共用權重（不多佔 260 MB）；檔案系統不支援硬連結時複製一份。不用符號連結：src 在暫存目錄裡，
+// 或是即將被 replaceDir 移到暫存目錄、隨它刪掉的權重，連結放上去之後就全部失效（重新配對時權重的連結甚至指向自己）。
 func link(src, dst string) error {
-	if err := os.Link(src, dst); err == nil {
+	if err := hardLink(src, dst); err == nil {
 		return nil
 	}
-	abs, err := filepath.Abs(src)
+	return copyFile(src, dst)
+}
+
+// copyFile 複製一般檔案到新的 dst（已存在時失敗）；寫完 Sync，放上去之前內容已落盤。
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
-	if real, err := filepath.EvalSymlinks(abs); err == nil {
-		abs = real
+	defer in.Close()
+	if st, err := in.Stat(); err != nil || !st.Mode().IsRegular() {
+		if err == nil {
+			err = fmt.Errorf("%s 不是一般檔案", src)
+		}
+		return err
 	}
-	return os.Symlink(abs, dst)
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err = io.Copy(out, in); err == nil {
+		err = out.Sync()
+	}
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(dst)
+		return AsError(err)
+	}
+	return nil
 }
 
 // checkFile 核對大小與 SHA-256。
