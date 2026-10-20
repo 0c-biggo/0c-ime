@@ -48,7 +48,7 @@ if [ "${SMOKE_ONLY:-}" != vocab ]; then
 
 # ---- 場景 A：全新安裝，沒有設定檔也沒有引擎 ----
 new_home fresh
-for page in overview input update troubleshoot about; do shoot fresh "$page"; done
+for page in overview input output update troubleshoot about; do shoot fresh "$page"; done
 
 # ---- 問題排解：匯出狀態摘要到「下載」資料夾，提示寫明寄到哪裡（#152，看截圖） ----
 new_home export
@@ -56,8 +56,8 @@ mkdir -p "$(home_of export)/Downloads"
 launch export troubleshoot
 if window_up; then
   sleep 2.5
-  # 6 個導覽（含我的詞彙）→ 匯出按鈕（第 7 個）。
-  xdotool key --delay 150 Tab Tab Tab Tab Tab Tab Tab space
+  # 7 個導覽（含我的詞彙、輸出設定）→ 匯出按鈕（第 8 個）。
+  xdotool key --delay 150 Tab Tab Tab Tab Tab Tab Tab Tab space
   sleep 3
   import -window root "$OUT/export-troubleshoot.png"
   check "匯出的狀態摘要寫進「下載」資料夾" bash -c "ls '$(home_of export)'/Downloads/0c-status-*.json >/dev/null 2>&1"
@@ -114,8 +114,8 @@ launch live input
 if window_up; then
   sleep 2.5
   import -window root "$OUT/live-input-before.png"
-  # 鍵盤路徑：6 個導覽按鈕（含我的詞彙）→ 選字方式（一組單選）→ 「提交時補標點（Beta）」開關，按空白鍵開啟。
-  xdotool key --delay 150 Tab Tab Tab Tab Tab Tab Tab Tab space
+  # 鍵盤路徑：7 個導覽按鈕（含我的詞彙、輸出設定）→ 選字方式（一組單選）→ 「提交時補標點（Beta）」開關，按空白鍵開啟。
+  xdotool key --delay 150 Tab Tab Tab Tab Tab Tab Tab Tab Tab space
   sleep 6
   import -window root "$OUT/live-input-after.png"
   check "自行開啟後新路徑 settings.json 的 punctuation 為 true" grep -q '"punctuation": true' "$(settings_of live)"
@@ -197,6 +197,75 @@ import -window root "$OUT/live-second-instance.png"
 stop_app
 unset HOME
 
+# 輸出設定是左側獨立一頁（#118）：7 個導覽 → 輸出簡體字開關（第 8 個），預設關閉。
+launch live output
+if window_up; then
+  sleep 2.5
+  xdotool key --delay 150 Tab Tab Tab Tab Tab Tab Tab Tab space
+  sleep 3
+  check "輸出簡體字開關可保存 on" grep -q '"output_simplified": true' "$(settings_of live)"
+  import -window root "$OUT/output-simplified-on.png"
+  xdotool key space
+  sleep 3
+  check "輸出簡體字開關可改回 off" grep -q '"output_simplified": false' "$(settings_of live)"
+else bad "live/output 視窗沒有出現"; cat /tmp/app-live-output.log; fi
+stop_app
+
+# ---- 總覽的「輸入法仍未全部切換」（0.2.1 候選版冒煙）：真引擎回報 ENGINE_VERSION ----
+# 核心更新只換引擎、外殼收據不變，不該提示；核心已切換但舊引擎還在跑、外殼等重新登入時要提示。
+# 判斷本身由 test/engine_state_test.js 逐平台斷言，這裡核對真的 0c-update 給畫面的欄位並截圖。
+pkill -x 0c-server 2>/dev/null; sleep 0.5
+start_engine() { # 場景 → 背景執行真引擎；設定 ENGINE_PID
+  rm -f "$XDG_RUNTIME_DIR/0c/0c.sock"
+  HOME=$(home_of "$1") "$SERVER_BIN" -data "$DATA" -user "$(base_of "$1")/user.json" -socket "$XDG_RUNTIME_DIR/0c/0c.sock" -legacy-socket "" >"/tmp/server-$1.log" 2>&1 &
+  ENGINE_PID=$!
+  for _ in $(seq 50); do [ -S "$XDG_RUNTIME_DIR/0c/0c.sock" ] && break; sleep 0.2; done
+}
+stop_engine() { kill "$ENGINE_PID" 2>/dev/null; wait "$ENGINE_PID" 2>/dev/null; }
+receipt() { printf '{"version":"%s","active":true}\n' "$2" > "$(base_of "$1")/install-receipt.json"; }
+core_pointer() { # 場景 版本 → 核心版本目錄與 engine.json（相容核心更新寫的指標）
+  local dir="versions/$2-c-aaaaaaaaaaaa" b
+  b=$(base_of "$1")
+  mkdir -p "$b/$dir/data"; echo '{}' > "$b/$dir/data/manifest.json"; install -m 0755 "$SERVER_BIN" "$b/$dir/0c-server"
+  printf '{"schema":1,"directory":"%s","version":"%s"}\n' "$dir" "$2" > "$b/engine.json"
+}
+status_is() { # 場景 收據 指標 執行中 → 核對 status -json 給畫面的三個版本
+  run_update "$1" status -json | python3 -c "import json,sys; d=json.load(sys.stdin); sys.exit(0 if (d['installed'],d['engine'],d['runtime'].get('version'))==tuple(sys.argv[1:]) else 1)" "$2" "$3" "$4"
+}
+done_at=',"last_check":"2026-10-18T08:00:00Z","last_success":"2026-10-18T08:00:00Z","next_check":"2026-10-18T14:00:00Z"'
+hash64=$(printf 'a%.0s' $(seq 64))
+
+new_home coreupdated   # 0.2.0 外殼＋相容核心更新到 ENGINE_VERSION，新引擎已在跑：不提示
+receipt coreupdated 0.2.0; core_pointer coreupdated "$ENGINE_VERSION"; state_json coreupdated idle "$done_at"
+start_engine coreupdated
+check "核心更新後：收據 0.2.0、指標與執行中的引擎都是 $ENGINE_VERSION" status_is coreupdated 0.2.0 "$ENGINE_VERSION" "$ENGINE_VERSION"
+shoot coreupdated overview
+shoot coreupdated update
+stop_engine
+
+new_home corepending   # 指標已切到 0.2.9，舊引擎（ENGINE_VERSION）還在組字：提示等引擎重新啟動，不叫人登出
+receipt corepending 0.2.0; core_pointer corepending 0.2.9
+state_json corepending pending "$done_at"',"target":{"version":"0.2.9","kind":"core","sha256":"'$hash64'","size":1},"switched":true,"blocked":{"reason":"engine_busy","detail":"仍在組字","since":"2026-10-18T08:00:00Z"}'
+start_engine corepending
+check "核心待交接：指標 0.2.9、執行中仍是 $ENGINE_VERSION" status_is corepending 0.2.0 0.2.9 "$ENGINE_VERSION"
+shoot corepending overview
+stop_engine
+
+new_home shellpending  # 外殼更新已安裝、等重新登入，引擎還是舊版：提示登出再登入
+receipt shellpending 0.2.9
+state_json shellpending pending "$done_at"',"target":{"version":"0.2.9","kind":"shell","sha256":"'$hash64'","size":1},"blocked":{"reason":"needs_relogin","detail":"已安裝，重新登入後生效","since":"2026-10-18T08:00:00Z"}'
+start_engine shellpending
+check "外殼等重新登入：收據 0.2.9、沒有指標、執行中是 $ENGINE_VERSION" status_is shellpending 0.2.9 "" "$ENGINE_VERSION"
+shoot shellpending overview
+stop_engine
+
+new_home switched      # 完整安裝 ENGINE_VERSION、引擎也是：不提示
+receipt switched "$ENGINE_VERSION"; state_json switched idle "$done_at"
+start_engine switched
+check "全部已切換：收據與執行中的引擎都是 $ENGINE_VERSION" status_is switched "$ENGINE_VERSION" "" "$ENGINE_VERSION"
+shoot switched overview
+stop_engine
+
 # ---- 一列模糊音總開關與 Emoji 開關，真的 UI → 多鍵原子保存 ----
 new_home toggles
 printf '{"schema":1,"future":{"x":1}}\n' > "$(base_of toggles)/settings.json"
@@ -224,8 +293,9 @@ launch toggles input
 if window_up; then
   sleep 2.5
   import -window root "$OUT/toggles-before.png"
-  # 6 個導覽（含我的詞彙）、選字方式、補標點、前文、混打、英文補字、中英切換鍵、開始時的中英模式、切換視窗後的中英模式、Esc、空白選字、修改位置、選字後游標、排列 → Emoji（第20個）。
-  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab space
+  # 7 個導覽（含我的詞彙、輸出設定）、選字方式、補標點、前文、混打、英文補字、中英切換鍵、開始時的中英模式、切換視窗後的中英模式、Esc、空白選字、修改位置、選字後游標、排列 → Emoji（第20個）。
+  # 輸出簡體字在後面的「輸出設定」一節（模糊音之後），不在這段。
+  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab space
   check "預設啟用的 Emoji 開關可以關閉，保留未知設定" toggle_value emoji_off
   sleep 1
   xdotool key space
@@ -292,8 +362,8 @@ PY_CURSOR
 launch cursor input
 if window_up; then
   sleep 2.5
-  # 6 個導覽（含我的詞彙）、選字方式、補標點、前文、混打、英文補字、中英切換鍵、開始時的中英模式、切換視窗後的中英模式、Esc、空白選字 → 修改字詞的位置（第17個）。
-  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Left
+  # 7 個導覽（含我的詞彙、輸出設定）、選字方式、補標點、前文、混打、英文補字、中英切換鍵、開始時的中英模式、切換視窗後的中英模式、Esc、空白選字 → 修改字詞的位置（第17個）。
+  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Left
   check "游標前方單選儲存 before，保留未知設定" cursor_value before
   sleep 1
   import -window root "$OUT/cursor-before.png"
@@ -302,7 +372,7 @@ stop_app
 launch cursor input
 if window_up; then
   sleep 2.5
-  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Right
+  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Right
   check "重新開啟設定後可改回游標後方，保留未知設定" cursor_value after
   sleep 1
   import -window root "$OUT/cursor-after.png"
@@ -335,15 +405,33 @@ launch eten input
 if window_up; then
   sleep 2.5
   import -window root "$OUT/eten-input.png"
-  # 停用的混打、Emoji、等號首項不在 Tab 順序裡：6 個導覽（含我的詞彙）、選字方式、補標點、前文、英文補字、中英切換鍵、開始時的中英模式、
-  # 切換視窗後的中英模式、Esc、空白選字、修改位置、選字後游標、排列、模糊音 → 鍵盤排列（第20個），← 選標準。
-  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab
+  # 停用的混打、Emoji、等號首項不在 Tab 順序裡：7 個導覽（含我的詞彙、輸出設定）、選字方式、補標點、前文、英文補字、中英切換鍵、開始時的中英模式、
+  # 切換視窗後的中英模式、Esc、空白選字、修改位置、選字後游標、排列、模糊音 → 鍵盤排列（第21個；輸出簡體字在輸出設定頁），← 選標準。
+  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab
   sleep 1
   import -window root "$OUT/eten-input-keyboard.png"
   xdotool key Left
   check "切回標準排列，保留混打原值與未知設定" layout_value standard
   sleep 2
   import -window root "$OUT/eten-back-to-standard.png"
+  # 鍵盤排列的下一個是選字鍵（一組單選，預設 1234567890，#112）：↓ 選 1234qweras，再 ↓ 選 asdfghjkl;，按兩次 ↑ 改回。
+  xdotool key Tab Down
+  sleep 3
+  check "選字鍵可保存 1234qweras，保留未知設定" bash -c "grep -q '\"selection_keys\": \"1234qweras\"' '$(settings_of eten)' && grep -q '\"future\"' '$(settings_of eten)'"
+  import -window root "$OUT/selection-keys-qwer.png"
+  xdotool key Down
+  sleep 3
+  check "選字鍵可保存 asdfghjkl;" grep -q '"selection_keys": "asdfghjkl;"' "$(settings_of eten)"
+  xdotool key Up
+  sleep 3
+  xdotool key Up
+  sleep 3
+  check "選字鍵可改回 1234567890" grep -q '"selection_keys": "1234567890"' "$(settings_of eten)"
+  # 鍵盤排列之後是「Ctrl＋標點打全形」（#168），預設開啟；空白鍵關閉。
+  xdotool key Tab space
+  sleep 3
+  check "Ctrl＋標點開關可關閉" grep -q '"ctrl_punctuation": false' "$(settings_of eten)"
+  import -window root "$OUT/ctrl-punctuation-off.png"
 else bad "eten/input 視窗沒有出現"; cat /tmp/app-eten-input.log; fi
 stop_app
 
@@ -357,7 +445,7 @@ check "背景更新期間仍可儲存輸入設定" run_update checking set punct
 launch checking update
 if window_up; then
   sleep 2.5
-  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab space
+  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab space
   sleep 3
   import -window root "$OUT/checking-in-progress.png"
   check "背景更新忙碌時設定視窗仍正常執行" kill -0 "$APP_PID"

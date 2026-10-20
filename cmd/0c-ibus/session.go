@@ -207,6 +207,12 @@ func (s *session) vocabKeys() bool {
 	return s.client.connect() && s.ensureOpen() && s.info["vocab_keys"] == "true"
 }
 
+// ctrlPunct 回報引擎是否認得 Ctrl＋標點的鍵名而且設定開著（open 回覆的 ctrl_punctuation，#168）；快取方式同 vocabKeys。
+// 舊引擎沒有這一項時為 false，Ctrl＋標點照舊交給應用程式。
+func (s *session) ctrlPunct() bool {
+	return s.client.connect() && s.ensureOpen() && s.info["ctrl_punctuation"] == "true"
+}
+
 func (s *session) contextAllowed() bool {
 	return s.documentContextEnabled && !s.private && !s.english
 }

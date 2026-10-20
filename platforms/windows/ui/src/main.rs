@@ -4,7 +4,10 @@
 #![windows_subsystem = "windows"]
 
 mod menu;
-use zuin_ui::candidate;
+use zuin_ui::{candidate, retire};
+
+use std::cell::Cell;
+use std::time::Instant;
 
 use std::ffi::c_void;
 
@@ -27,13 +30,32 @@ use windows::Win32::UI::HiDpi::{
     SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    DefWindowProcW, DispatchMessageW, GetMessageW, PostMessageW, PostQuitMessage,
-    TranslateMessage, MSG, WM_APP, WM_DESTROY, WM_ENDSESSION,
+    DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, IsWindowVisible, KillTimer,
+    PostMessageW, PostQuitMessage, SetTimer, TranslateMessage, MSG, WM_APP, WM_CLOSE, WM_DESTROY,
+    WM_ENDSESSION, WM_TIMER,
 };
 use windows_core::{w, PCWSTR};
 use zuin_win_common::{legacy_ui_pipe, pipe_sddl, ui_pipe, UiMessage, MAX_FRAME};
 
 const WM_ZUIN_PRESENT: u32 = WM_APP + 1;
+/// 延後結束的計時器（candidate 的提示計時器是 0x0c01）。
+const RETIRE_TIMER: usize = 0x0c02;
+
+thread_local! {
+    /// 最後一則呈現訊息的時間（視窗執行緒）。
+    static LAST_PRESENT: Cell<Option<Instant>> = const { Cell::new(None) };
+}
+
+/// 結束要求（WM_CLOSE，升級交接見 zuin_ui::retire）：閒下來就關視窗結束，否則稍後再看。
+unsafe fn retire(hwnd: HWND) {
+    let since = LAST_PRESENT.with(|t| t.get()).map(|t| t.elapsed());
+    if retire::ready_to_exit(IsWindowVisible(hwnd).as_bool(), since) {
+        let _ = KillTimer(Some(hwnd), RETIRE_TIMER);
+        let _ = DestroyWindow(hwnd);
+    } else {
+        SetTimer(Some(hwnd), RETIRE_TIMER, retire::RETIRE_POLL_MS, None);
+    }
+}
 
 fn main() {
     unsafe {
@@ -166,7 +188,16 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
     match msg {
         WM_ZUIN_PRESENT => {
             let m = Box::from_raw(lparam.0 as *mut UiMessage);
+            LAST_PRESENT.with(|t| t.set(Some(Instant::now())));
             candidate::present(hwnd, *m);
+            LRESULT(0)
+        }
+        WM_CLOSE => {
+            retire(hwnd);
+            LRESULT(0)
+        }
+        WM_TIMER if wparam.0 == RETIRE_TIMER => {
+            retire(hwnd);
             LRESULT(0)
         }
         WM_ENDSESSION | WM_DESTROY => {

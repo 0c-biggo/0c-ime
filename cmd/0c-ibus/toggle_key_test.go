@@ -35,10 +35,14 @@ func useFakeClock(e *engine) *fakeClock {
 	e.svc.clock = c.now
 	return c
 }
+
+// holdShift 按住 Shift d 之後放開，回傳注／英有沒有切換。
 func holdShift(e *engine, c *fakeClock, key uint32, d time.Duration) bool {
+	before := e.english
 	e.processKey(key, 0, 0)
 	c.advance(d)
-	return e.processKey(key, maskShift, maskRelease)
+	e.processKey(key, maskShift, maskRelease)
+	return e.english != before
 }
 
 func TestShiftKeysFrom(t *testing.T) {
@@ -115,13 +119,13 @@ func TestToggleKeySides(t *testing.T) {
 			"left_shift": boolText(c.left), "right_shift": boolText(c.right), "shift_tap_ms": "300"}, false)
 		typeKeys(e, "ji3")
 		if got := tapRightShift(e); got != c.right || e.english != c.right {
-			t.Fatalf("%s：右 Shift 單按 handled=%v english=%v", c.toggleKey, got, e.english)
+			t.Fatalf("%s：右 Shift 單按 toggled=%v english=%v", c.toggleKey, got, e.english)
 		}
 		if e.english {
 			tapRightShift(e)
 		}
 		e.processKey(keyShiftL, 0, 0)
-		if got := e.processKey(keyShiftL, maskShift, maskRelease); got != c.left || e.english != c.left {
+		if got := e.processKey(keyShiftL, maskShift, maskRelease); got || e.english != c.left {
 			t.Fatalf("%s：左 Shift 單按 handled=%v english=%v", c.toggleKey, got, e.english)
 		}
 		if e.english {
@@ -203,5 +207,40 @@ func TestSharedModeFollowsAcrossContexts(t *testing.T) {
 	focus(a, true)
 	if a.english {
 		t.Fatal("native：重新取得焦點應回到注音")
+	}
+}
+
+// #165：切換鍵的按下與放開都要交給應用程式，切換了也一樣。GNOME Wayland 下 VS Code 等 Chromium／Electron
+// 經 GNOME Shell 的 IBus 介面收鍵，只靠按鍵事件記 Shift：放開被吃掉就以為 Shift 一直按著，↑ 變成 Shift＋↑。
+func TestShiftReleaseReachesApp(t *testing.T) {
+	e, _, sock := newTestEngine(t)
+	defer serveWith(t, sock, map[string]string{"toggle_key": "both",
+		"left_shift": "true", "right_shift": "true", "shift_tap_ms": "300"}, false)()
+	typeKeys(e, "ji3")
+	for i, c := range []struct {
+		key     uint32
+		presses int // GTK4 程式把每個按放送兩次（8556892）
+		english bool
+	}{
+		{keyShiftR, 1, true}, {keyShiftR, 1, false},
+		{keyShiftL, 1, true}, {keyShiftL, 1, false},
+		{keyShiftR, 2, true}, {keyShiftL, 2, false},
+	} {
+		for n := 0; n < c.presses; n++ {
+			if e.processKey(c.key, 0, 0) {
+				t.Fatalf("%d：%#x 按下被吃掉", i, c.key)
+			}
+		}
+		for n := 0; n < c.presses; n++ {
+			if e.processKey(c.key, maskShift, maskRelease) {
+				t.Fatalf("%d：%#x 切換時放開被吃掉，應用程式會以為 Shift 沒放開", i, c.key)
+			}
+		}
+		if e.english != c.english {
+			t.Fatalf("%d：%#x 單按後 english=%v，要 %v", i, c.key, e.english, c.english)
+		}
+	}
+	if e.preedit != "我" {
+		t.Fatalf("切換應保留組字：%q", e.preedit)
 	}
 }

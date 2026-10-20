@@ -16,7 +16,7 @@ SWIFTC ?= xcrun swiftc
 SWIFTFLAGS := -swift-version 5 -O -target $(shell uname -m)-apple-macosx13.0
 SHARED := Sources/Protocol.swift Sources/MarkedText.swift Sources/EngineClient.swift Sources/KeyMapping.swift Sources/ModelStatus.swift Sources/CaretGeometry.swift Sources/RequestQueue.swift Sources/SecureInputPolicy.swift Sources/RightShift.swift
 
-.PHONY: all app server test test-request-queue test-input-source test-ui test-update-ui test-update-notification test-settings-launcher data-basic install clean icon
+.PHONY: all app server test test-request-queue test-input-source test-retire test-ui test-update-ui test-update-notification test-settings-launcher data-basic install clean icon
 all: app
 
 $(BUILD)/0c: $(wildcard Sources/*.swift)
@@ -92,7 +92,7 @@ $(BUILD)/integration-test: $(SHARED) Tests/main.swift
 	@mkdir -p $(BUILD)
 	$(SWIFTC) $(SWIFTFLAGS) -framework AppKit -framework Carbon $^ -o $@
 
-test: $(BUILD)/integration-test server test-input-source test-request-queue
+test: $(BUILD)/integration-test server test-input-source test-request-queue test-retire
 	$(BUILD)/integration-test "$(abspath $(BUILD)/0c-server)" "$(abspath $(ROOT)/testdata/toy)"
 
 $(BUILD)/request-queue-test: Sources/Protocol.swift Sources/RequestQueue.swift Tests/RequestQueue/main.swift
@@ -101,6 +101,13 @@ $(BUILD)/request-queue-test: Sources/Protocol.swift Sources/RequestQueue.swift T
 
 test-request-queue: $(BUILD)/request-queue-test
 	$(BUILD)/request-queue-test
+
+$(BUILD)/retire-test: Sources/Retire.swift Tests/Retire/main.swift
+	@mkdir -p $(BUILD)
+	$(SWIFTC) $(SWIFTFLAGS) $^ -o $@
+
+test-retire: $(BUILD)/retire-test
+	$(BUILD)/retire-test
 
 $(BUILD)/input-source-test: Sources/InputSourceLookup.swift Tests/InputSource/main.swift
 	@mkdir -p $(BUILD)

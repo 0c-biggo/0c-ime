@@ -25,6 +25,15 @@ static int failures = 0;
 
 int main(int argc, char **argv) {
     {
+        // #112：鍵標照核心給的 key；舊核心沒有時依位置 1–0（第 10 項是 0），英文模式的補字候選不畫。
+        using nlohmann::json;
+        CHECK(zuin::candidateKey(json{{"key", "q"}}, 4, false) == "q", "核心給的選字鍵");
+        CHECK(zuin::candidateKey(json{{"key", ";"}}, 9, true) == ";", "有 key 時照畫");
+        CHECK(zuin::candidateKey(json{{"text", "是"}}, 0, false) == "1" && zuin::candidateKey(json{{"text", "是"}}, 9, false) == "0",
+              "舊核心依位置 1–0");
+        CHECK(zuin::candidateKey(json{{"text", "hello"}}, 0, true).empty(), "舊核心的英文補字不畫鍵標");
+    }
+    {
         zuin::ShiftTap tap, other;
         CHECK(!tap.key(false, false, false) && !tap.key(false, true, false), "左 Shift 不應切換");
         CHECK(!tap.key(true, false, false) && tap.key(true, true, false), "右 Shift 單按應切換");
@@ -270,6 +279,8 @@ int main(int argc, char **argv) {
               snap.candidateNotes.empty() ? "" : snap.candidateNotes[0].c_str());
         CHECK(!snap.candidates.empty() && snap.candidates.back().second == "ㄘ" && snap.candidateNotes.back().empty(),
               "原樣注音應在最後且沒有附註");
+        CHECK(snap.candidateKeys.size() == snap.candidates.size() && snap.candidateKeys[0] == "1" && snap.candidateKeys[1] == "2",
+              "鍵標由核心給，預設 1–0（#112）");
         snap = s.key("1");
         CHECK(snap.text() == "吃" && snap.commit.empty(), "選近音不應提交：%s", snap.text().c_str());
         CHECK(s.key("Enter").commit == "吃", "確認近音選字");
@@ -558,6 +569,29 @@ int main(int argc, char **argv) {
               "Shift＋Delete 應刪掉反白的自訂詞：%s", snap.notices.empty() ? "（沒有通知）" : snap.notices.front().c_str());
         s.key("Escape");
         s.key("Escape");
+    }
+    {
+        // #168：ctrl_punctuation 來自 open 回覆；預設開，Ctrl+, 在中文模式插進組字區。設定關閉後重啟引擎，
+        // 重開的 session 讀到 false，外殼照舊把 Ctrl＋標點交給應用程式；引擎收到也回未處理。
+        (void)!system((std::string("pkill -f '0c-server -socket ") + argv[1] + "'").c_str());
+        usleep(300 * 1000);
+        std::ofstream(home + "/settings.json") << R"({})";
+        zuin::Session s(client, nullptr);
+        s.handle({{"type", "cancel"}}); // 斷線要等下一個請求才發現：先重連到重啟的引擎
+        CHECK(s.ctrlPunct(), "預設應回報 ctrl_punctuation");
+        auto snap = s.key("Ctrl+,");
+        CHECK(snap.handled && snap.text() == "，", "Ctrl+, 應插進組字區：%d %s", snap.handled, snap.text().c_str());
+        snap = s.key("Enter");
+        CHECK(snap.commit == "，", "Enter 送出全形逗號：%s", snap.commit.c_str());
+        (void)!system((std::string("pkill -f '0c-server -socket ") + argv[1] + "'").c_str());
+        usleep(300 * 1000);
+        std::ofstream(home + "/settings.json") << R"({"ctrl_punctuation":false})";
+        s.handle({{"type", "cancel"}});
+        CHECK(!s.ctrlPunct(), "設定關閉後重開的 session 不應回報 ctrl_punctuation");
+        CHECK(!s.key("Ctrl+.").handled, "設定關閉時引擎不處理 Ctrl+.");
+        (void)!system((std::string("pkill -f '0c-server -socket ") + argv[1] + "'").c_str());
+        usleep(300 * 1000);
+        std::ofstream(home + "/settings.json") << R"({})";
     }
     {
         // #117：預設（右 Shift）時 health 回報右 Shift 切換、左 Shift 不切換。

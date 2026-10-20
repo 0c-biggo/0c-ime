@@ -26,6 +26,7 @@ struct Snapshot: Decodable {
         let text: String
         var note: String? = nil
         var label: String? = nil // common / related / personal；舊引擎缺欄位時照常顯示
+        var key: String? = nil // 選字鍵（#112）：1、q、;；舊引擎缺欄位，英文模式的補字候選沒有
     }
     /// 中英混打時照字面顯示、按空白會組成中文的數字按鍵的讀音（20 → ㄉㄢ，#162）；舊引擎或沒有時缺欄位。
     struct ReadingHint: Decodable { let text: String }
@@ -67,6 +68,13 @@ struct Snapshot: Decodable {
     var visibleReading: String? {
         guard let text = readingHint?.text, !text.isEmpty else { return nil }
         return text
+    }
+    /// 第 index 項候選的鍵標（#112）：引擎給的選字鍵；舊引擎沒有時依位置 1–0。
+    /// 英文模式只有自動補字候選（按 Tab 接受、數字是文字），不畫鍵標。
+    func candidateKey(_ index: Int) -> String {
+        guard let items = candidates?.items, index < items.count else { return "" }
+        if let key = items[index].key, !key.isEmpty { return key }
+        return mode == "english" ? "" : String((index + 1) % 10)
     }
     /// 要顯示的提示文字（去掉空字串）。
     var visibleNotices: [String] { (notices ?? []).filter { !$0.isEmpty } }

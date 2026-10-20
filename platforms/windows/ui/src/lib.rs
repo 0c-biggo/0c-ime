@@ -3,3 +3,4 @@ pub mod candidate;
 mod color_text;
 mod palette;
 mod placement;
+pub mod retire;

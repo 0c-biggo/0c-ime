@@ -33,8 +33,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows_core::{w, PCWSTR};
 use zuin_win_common::{
-    candidate_cells, has_content, header_height, header_lines, hit_candidate, large_heading, notice_expires, notice_row,
-    UiCandidate, UiMessage, NOTICE_MS, WM_SELECT_CANDIDATE,
+    candidate_cells, candidate_key, has_content, header_height, header_lines, hit_candidate, large_heading, notice_expires,
+    notice_row, UiCandidate, UiMessage, NOTICE_MS, WM_SELECT_CANDIDATE,
 };
 
 const WM_ZUIN_REFLOW: u32 = WM_APP + 2;
@@ -217,21 +217,27 @@ fn measure(hdc: HDC, font: HFONT, text: &[u16]) -> i32 {
     }
 }
 
-/// 候選列的文字；有附註（模糊音近音）時接在候選之後。
+/// 候選列的文字：鍵標（#112，1、q、;；英文補字沒有）、候選，有附註（模糊音近音）時接在候選之後。
 fn candidate_line(i: usize, c: &UiCandidate) -> String {
+    let key = candidate_key(i, c);
+    let prefix = if key.is_empty() { String::new() } else { format!("{key}. ") };
     if c.note.is_empty() {
-        format!("{}. {}", i + 1, c.text)
+        format!("{prefix}{}", c.text)
     } else {
-        format!("{}. {}　〔{}〕", i + 1, c.text, c.note)
+        format!("{prefix}{}　〔{}〕", c.text, c.note)
     }
 }
 
+/// 補全提示列開頭的「⇥ 」：用提示色畫，後面的補全內容用一般文字色（#118）。
+const SUGGESTION_MARK: &str = "⇥ ";
+
 /// 直排候選窗的一列是什麼：提示（一般字級、強調色）、讀音提示（一般字級、一般文字色，#162）、
-/// 小字（補全提示、標題、頁碼）、候選。
+/// 補全提示（一般字級，⇥ 用提示色、內容一般文字色，#118）、小字（標題、頁碼）、候選。
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Row {
     Notice,
     Reading,
+    Suggestion,
     Small,
     Candidate { highlighted: bool },
 }
@@ -240,7 +246,7 @@ impl Row {
     /// 列高；提示列與 common::header_height 用同一個值，命中測試才對得上。
     fn height(self, t: &Theme) -> i32 {
         match self {
-            Row::Notice | Row::Reading => notice_row(t.small_row),
+            Row::Notice | Row::Reading | Row::Suggestion => notice_row(t.small_row),
             Row::Small => t.small_row,
             Row::Candidate { .. } => t.row,
         }
@@ -271,7 +277,7 @@ fn lines(m: &UiMessage) -> Vec<(Vec<u16>, Row)> {
         } else if !m.reading.is_empty() && heading == m.reading {
             out.push((heading.encode_utf16().collect(), Row::Reading));
         } else if heading == m.suggestion {
-            out.push((format!("⇥ {}", heading).encode_utf16().collect(), Row::Small));
+            out.push((format!("{SUGGESTION_MARK}{heading}").encode_utf16().collect(), Row::Suggestion));
         } else {
             out.push((heading.encode_utf16().collect(), Row::Small));
         }
@@ -639,9 +645,19 @@ unsafe fn draw(hwnd: HWND, hdc: HDC) {
             } else {
                 t.colors.text
             };
-            SetTextColor(hdc, windows::Win32::Foundation::COLORREF(color));
             let old = SelectObject(hdc, HGDIOBJ(kind.font(&t).0));
-            let _ = TextOutW(hdc, inner.left + t.pad, y + (row - kind.glyph(&t)) / 2, &text);
+            let top = y + (row - kind.glyph(&t)) / 2;
+            let mut x = inner.left + t.pad;
+            let mut body = &text[..];
+            if kind == Row::Suggestion {
+                let mark = SUGGESTION_MARK.encode_utf16().count().min(text.len());
+                SetTextColor(hdc, windows::Win32::Foundation::COLORREF(t.colors.hint));
+                let _ = TextOutW(hdc, x, top, &text[..mark]);
+                x += measure(hdc, kind.font(&t), &text[..mark]);
+                body = &text[mark..];
+            }
+            SetTextColor(hdc, windows::Win32::Foundation::COLORREF(color));
+            let _ = TextOutW(hdc, x, top, body);
             SelectObject(hdc, old);
             y += row;
         }
@@ -822,7 +838,7 @@ mod tests {
         assert_eq!(String::from_utf16(&rows[0].0).unwrap(), m.notice);
         assert_eq!(rows[0].1, Row::Notice);
         assert_eq!(String::from_utf16(&rows[1].0).unwrap(), "⇥ 補全");
-        assert_eq!(rows[1].1, Row::Small);
+        assert_eq!(rows[1].1, Row::Suggestion, "補全提示跟候選同字級（#118）");
         assert_eq!(rows[2].1, Row::Candidate { highlighted: true });
         // 收起提示後標題回來。
         let rows = lines(&without_notice(m.clone()));
@@ -858,15 +874,27 @@ mod tests {
         let plain = UiCandidate {
             id: 0,
             text: "吃".into(),
-            note: String::new(),
+            ..Default::default()
         };
         let near = UiCandidate {
             id: 1,
             text: "痴".into(),
             note: "近音 ㄔ".into(),
+            ..Default::default()
         };
         assert_eq!(candidate_line(0, &plain), "1. 吃");
-        assert_eq!(candidate_line(9, &near), "10. 痴　〔近音 ㄔ〕");
+        // 舊 DLL 沒送鍵標時第 10 項畫 0（按 0 選），不是「10」（#112）。
+        assert_eq!(candidate_line(9, &near), "0. 痴　〔近音 ㄔ〕");
+    }
+
+    #[test]
+    fn candidate_line_uses_the_engine_key() {
+        let keyed = UiCandidate { id: 4, text: "式".into(), key: Some("q".into()), ..Default::default() };
+        assert_eq!(candidate_line(4, &keyed), "q. 式");
+        let semicolon = UiCandidate { id: 9, text: "示".into(), key: Some(";".into()), ..Default::default() };
+        assert_eq!(candidate_line(9, &semicolon), ";. 示");
+        let completion = UiCandidate { id: 0, text: "hello".into(), key: Some(String::new()), ..Default::default() };
+        assert_eq!(candidate_line(0, &completion), "hello", "英文補字不畫鍵標");
     }
 }
 

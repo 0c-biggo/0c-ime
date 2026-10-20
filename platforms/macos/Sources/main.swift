@@ -23,6 +23,7 @@ guard let name = bundle.object(forInfoDictionaryKey: "InputMethodConnectionName"
       let server = IMKServer(name: name, bundleIdentifier: identifier) else {
     fatalError("Cannot initialize 0c InputMethodKit server")
 }
+RetireMonitor.shared.start { LingxiInputController.anyComposing() }
 UpdateAgentMonitor.shared.start()
 UpdateMenuMonitor.shared.start()
 ModelStatusMonitor.shared.start()

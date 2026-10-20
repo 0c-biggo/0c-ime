@@ -20,6 +20,7 @@ import (
 	"git.biggo.com/0c/ime/core/punct"
 	"git.biggo.com/0c/ime/core/rerank"
 	"git.biggo.com/0c/ime/core/suggest"
+	"git.biggo.com/0c/ime/core/zhconv"
 	"git.biggo.com/0c/ime/core/zhuyin"
 )
 
@@ -94,6 +95,9 @@ type Session struct {
 	Punct punct.Punctuator
 	// Fuzzy 由宿主依使用者設定：逐對啟用的模糊音；零值全部關閉，行為與沒有此功能時相同。
 	Fuzzy fuzzy.Config
+	// Simplified 由宿主依「輸出簡體字」設定（#118）：送出給應用程式的文字轉成簡體，nil 照原樣送出繁體。
+	// 組字區、候選、學習、補標點與前文都維持繁體，只有 Snapshot.Commit 改變。
+	Simplified *zhconv.Converter
 	// MixedInput is opt-in; English is a shared, immutable vocabulary.
 	EnglishAutocomplete   bool
 	MixedInput            bool
@@ -114,6 +118,7 @@ type Session struct {
 	mixedOrigins          map[int]mixedOrigin // literal positions: independently typed vs system-assisted
 	pendingToneKey        *toneKeyPending     // 上一鍵是單獨的聲調鍵：緊接著的空白換成聲調符號（#135）
 	toneMarkKeys          map[int]string      // 聲調鍵打出的聲調符號位置 → 原按鍵，↓ 可選回數字（#135）
+	retypeLiteral         bool                // 上一鍵剛把沒有字的音節原樣留下：緊接著的同類介音／韻母是在改它（#85）
 	// DocumentContextOff 由宿主依使用者設定：外殼送來的前文確認一律忽略，不以前文選字。
 	DocumentContextOff bool
 	// SpaceInsertsSpace 由宿主依使用者設定（關閉「空白鍵選字」）：注音打完後空白插入半形空白、↓ 選字，
@@ -123,6 +128,12 @@ type Session struct {
 	// 後方模式游標移到所選詞的結尾，前方模式往後移一個字（同新酷音 autoShiftCur），句尾時不動。
 	// 零值游標留在原處。符號、Emoji 與原樣注音本來就插入在游標處、游標停在它們後面，不受影響。
 	AdvanceAfterSelect bool
+	// SelectionKeys 由宿主依使用者設定（#112）：候選窗每一頁第 1–10 項的選字鍵，例如 1234qweras。
+	// 空字串或不合用的值為 1234567890。數字 1–0 不論設定都照位置選字。
+	SelectionKeys string
+	// CtrlPunct 由宿主依「Ctrl＋標點打全形」設定（#168，預設開）：中文模式的 Ctrl＋, . ' ; 與 Ctrl＋Shift＋/ 1
+	// 打全形標點，跟一般標點一樣插進組字區。零值時這些鍵回 handled=false，外殼照一般快捷鍵交給應用程式。
+	CtrlPunct bool
 	// Preview02 打開時處理 0.2.0 的按鍵（組字中加詞、反悔鍵、「我的片語」，#128）；0.2.0 起宿主一律打開。
 	// 零值時這些按鍵照舊回 handled=false 交還應用程式，行為與沒有此功能時相同（測試用它確認這一點）。
 	Preview02    bool
@@ -234,6 +245,7 @@ func (s *Session) Handle(r proto.Request) proto.Snapshot {
 	}
 	if r.Type != proto.Key && r.Type != proto.Context && r.Type != proto.Display {
 		s.pendingToneKey = nil // 按鍵由 key 自己取出；其他操作之後的空白不再換成聲調符號（#135）
+		s.retypeLiteral = false
 	}
 	_, keypad := proto.KeypadChar(r.Key)
 	s.allowRerank = r.Type == proto.Symbol || r.Type == proto.Backspace || r.Type == proto.Key && (len([]rune(r.Key)) == 1 || keypad || r.Key == proto.KeyBackspace)
@@ -344,6 +356,7 @@ func (s *Session) Handle(r proto.Request) proto.Snapshot {
 		s.paletteCommit = false
 		s.refresh()
 		commit = s.snapshot().Text() // direct palette output is exact; no punctuation/model rewrite.
+		commit = s.output(commit, commit, s.readingPins(commit))
 		s.reset()
 	}
 	s.refresh()
@@ -381,6 +394,8 @@ func (s *Session) key(k string) (handled bool, commit string) {
 	}
 	toneKey := s.pendingToneKey // 只對緊接著的這一鍵有效（#135）
 	s.pendingToneKey = nil
+	retype := s.retypeLiteral // 同上，只有緊接著的這一鍵能改剛留下的錯音節（#85）
+	s.retypeLiteral = false
 	// 數字鍵盤永遠不是注音鍵（#75）：英文模式與候選選號同主鍵盤數字；沒在組字交還應用程式；
 	// 組字中以半形插在游標處，未打完的注音保留成符號（同 Shift＋字母）。
 	if c, ok := proto.KeypadChar(k); ok {
@@ -397,6 +412,9 @@ func (s *Session) key(k string) (handled bool, commit string) {
 			s.insertLiteral(string(c))
 			return true, ""
 		}
+	}
+	if p, ok := proto.CtrlPunct(k); ok {
+		return s.ctrlPunct(p), ""
 	}
 	if s.english && s.EnglishAutocomplete {
 		if handled, commit, active := s.englishKey(k); active {
@@ -461,8 +479,7 @@ func (s *Session) key(k string) (handled bool, commit string) {
 		case proto.KeyTab:
 			s.nextCandidateLength() // 不必走過所有單字候選才能改選長詞
 		default:
-			if len(k) == 1 && k[0] >= '0' && k[0] <= '9' {
-				n := (int(k[0]-'0') + 9) % 10 // 1..9,0 → 第 0..9 項
+			if n := s.selectionIndex(k); n >= 0 {
 				s.selectCandidate(s.candidateID(s.cand.page()*perPage + n))
 			}
 		}
@@ -613,6 +630,9 @@ func (s *Session) key(k string) (handled bool, commit string) {
 		}
 	}
 	if sym, ok := s.layout.Symbol(runes[0]); ok {
+		if retype && s.retypeSyllableLiteral(sym) {
+			return true, ""
+		}
 		if s.symbol(sym) {
 			return true, ""
 		}
@@ -635,6 +655,22 @@ func (s *Session) key(k string) (handled bool, commit string) {
 		return true, ""
 	}
 	return false, ""
+}
+
+// ctrlPunct 處理 Ctrl＋標點（#168）：設定關閉或英文模式時不處理，外殼照一般快捷鍵先送出組字再交給應用程式。
+// 中文模式跟一般標點（Shift＋, 等）走同一條路：未打完的注音留成符號，標點插在游標處、留在組字區，沒在組字時也一樣。
+// 中英混打打到一半的英文先定案（Shift＋, 在原樣英文後是半形 <，Ctrl＋, 一律是全形）。候選開啟時同其他按鍵吃掉不動作。
+func (s *Session) ctrlPunct(p string) bool {
+	if !s.CtrlPunct || s.english {
+		return false
+	}
+	if s.cand != nil {
+		return true
+	}
+	s.flushMixed()
+	s.insertPendingLiteral()
+	s.insertLiteral(p)
+	return true
 }
 
 func (s *Session) symbol(sym rune) bool {
@@ -663,6 +699,7 @@ func (s *Session) symbol(sym rune) bool {
 			} else {
 				s.restoreSyllables(saved)
 				s.insertSyllableLiteral(before, done)
+				s.retypeLiteral = true // 多半是打錯：緊接著的同類介音／韻母改這個讀音（#85）
 			}
 		} else if decodable && len(s.path) > 0 && !s.completeDecodable() {
 			// 只能當某個更長的詞的開頭、自己沒有字的音節（ㄟ 只有「工口」的 ㄟ ㄌㄨㄛˊ，#107）：
@@ -1202,6 +1239,7 @@ func (s *Session) commit() string {
 		s.refresh()
 	} // 神經模式提交已顯示路徑；Enter 不啟動推論或接受其他欄位的模型更新。
 	text := s.snapshot().Text() // 未完成注音可能在句中，依畫面位置提交。
+	pins := s.readingPins(text)
 	ev := personal.Commit{Syls: s.syls, Rejected: s.rejected}
 	for _, g := range s.path {
 		if s.literals[g.Start] {
@@ -1226,6 +1264,7 @@ func (s *Session) commit() string {
 	if s.mixedInput() && !s.paused && !s.private && !s.localBlocked {
 		s.model.LearnEnglish(s.mixedEnglishCommits())
 	}
+	shown := text
 	text = s.punctuate(text)
 	tail := s.committedTail()
 	neural := s.neuralCommitContext(text)
@@ -1238,7 +1277,69 @@ func (s *Session) commit() string {
 		s.pendingNeural = neural
 		s.pendingContextID = uint64(s.rev + 1)
 	}
-	return text
+	return s.output(shown, text, pins) // 學習與前文都用上面的繁體
+}
+
+// readingPins 找出提交文字中讀音能決定簡體寫法的字（zhconv.Pin），以 text 的字元位置為鍵。
+// 只在 text 正好是路徑上各詞依序接起來時才找（未打完的注音夾在句中等情況位置對不上，交給 OpenCC）。
+func (s *Session) readingPins(text string) map[int]string {
+	if s.Simplified == nil || len(s.path) == 0 {
+		return nil
+	}
+	var pins map[int]string
+	var joined strings.Builder
+	at := 0
+	for _, g := range s.path {
+		runes := []rune(g.Word)
+		joined.WriteString(g.Word)
+		reading := s.syls[g.Start:min(g.End, len(s.syls))]
+		if g.Matched != "" {
+			reading = zhuyin.ParseReading(g.Matched) // 近音到達的詞，用詞庫的讀音
+		}
+		if !s.literals[g.Start] && len(reading) == len(runes) {
+			for k, c := range runes {
+				if out, ok := zhconv.Pin(c, string(reading[k])); ok {
+					if pins == nil {
+						pins = map[int]string{}
+					}
+					pins[at+k] = out
+				}
+			}
+		}
+		at += len(runes)
+	}
+	if joined.String() != text {
+		return nil
+	}
+	return pins
+}
+
+// output 是真正送出的文字：開啟「輸出簡體字」時轉成簡體。shown 是補標點前的文字（pins 的位置以它為準），
+// text 是補過標點的文字；補標點只在兩個漢字之間插入，原本的字在 text 裡依序都還在。
+func (s *Session) output(shown, text string, pins map[int]string) string {
+	if s.Simplified == nil || text == "" {
+		return text
+	}
+	if len(pins) > 0 && shown != text {
+		moved := map[int]string{}
+		a, b := []rune(shown), []rune(text)
+		j := 0
+		for i := range a {
+			for j < len(b) && b[j] != a[i] {
+				j++
+			}
+			if j == len(b) {
+				moved = nil
+				break
+			}
+			if p, ok := pins[i]; ok {
+				moved[j] = p
+			}
+			j++
+		}
+		pins = moved
+	}
+	return s.Simplified.ConvertPinned(text, pins)
 }
 
 // punctuate 在提交時補標點。學習已依原路徑完成，插入的標點只影響送出的文字與之後的前文。
@@ -1406,6 +1507,9 @@ func (s *Session) snapshot() proto.Snapshot {
 			}
 			if id < len(s.cand.labels) && s.cand.keyLiterals[id] == "" {
 				item.Label = s.cand.labels[id]
+			}
+			if !s.cand.english { // 英文補字只能按 Tab 接受（#112）
+				item.Key = string(s.selectionKeys()[id-lo])
 			}
 			cl.Items = append(cl.Items, item)
 		}

@@ -57,7 +57,7 @@ gdbus call --session --dest org.fcitx.Fcitx5 --object-path /controller --method 
 
 ## 按鍵
 
-按鍵的意義全部由核心決定，外殼只轉送按鍵、照快照畫（含候選窗的反白位置）。帶 Ctrl／Alt／Super 的組合鍵一律交還應用程式；組字中先送出組字再交還，Ctrl+Enter、Ctrl+V 才會在組字之後執行（單按修飾鍵本身不送出，#106）。
+按鍵的意義全部由核心決定，外殼只轉送按鍵、照快照畫（含候選窗的反白位置）。帶 Ctrl／Alt／Super 的組合鍵交還應用程式；組字中先送出組字再交還，Ctrl+Enter、Ctrl+V 才會在組字之後執行（單按修飾鍵本身不送出，#106）。例外是注音模式的 Ctrl＋標點（#168）：只按著 Ctrl（可加 Shift）的 , . ' ; ? ! 在引擎回報 `ctrl_punctuation=true`（設定「Ctrl＋標點打全形」，預設開）時送 `Ctrl+,` 等鍵名，核心打全形的 ，。、；？！ 插進組字區；引擎沒處理就照一般組合鍵。Ctrl+; 是 Fcitx5 剪貼簿外掛的預設熱鍵；剪貼簿在輸入法之後（`PostInputMethod`）才看按鍵，外殼吃掉就叫不出剪貼簿，所以剪貼簿外掛載入時外殼照舊放行 Ctrl+;，不打；（沒載入剪貼簿時才打；）。外殼不去改使用者的 Fcitx5 設定。注音模式不理 Caps Lock（#168）：字母照 `rawKey` 的 Shift 換回不受 Caps Lock 影響的大小寫，照打注音，Shift＋字母仍是大寫；英文模式照 Caps Lock 打大寫。
 
 | 情境 | 按鍵 | 作用 |
 |---|---|---|
@@ -114,6 +114,15 @@ python3 platforms/linux-fcitx5/test/desktop_test.py --bundle <解壓套件目錄
 需要 bubblewrap、Xvfb、D-Bus、Fcitx5 及 GTK3 輸入模組、Python GI、libXtst。工具以私有家目錄掛載、PID／網路／IPC namespace、D-Bus 與 Xvfb 執行；不變更目前的桌面或個人詞庫。結果自動寫入 `build/linux/validation/`，也可用 `--result` 指定新目錄。
 
 檢查全新設定安裝、GTK 中文提交／取消／候選／Tab／右 Shift／密碼欄位、預設關閉 trace，以及更新、回復、解除安裝保留詞庫。這是現有系統函式庫上的 X11／GTK 驗收，不代表其他發行版、Wayland 或 ARM64 已驗證。
+
+切換中英的 Shift 按下與放開都必須交還應用程式（#165：GNOME Wayland 上 VS Code 經 GNOME Shell 的 IBus 介面收鍵，放開被吃掉就以為 Shift 沒放開）。不需要套件，在拋棄式容器裡用建好的 `lib0c.so` 驗：
+
+```sh
+docker run --rm -v "$PWD":/w:ro <有 fcitx5 與 python3-gi 的映像> dbus-run-session -- \
+  sh /w/platforms/linux-fcitx5/test/shift_release_test.sh <lib0c.so> <0c-server> /w/testdata/toy
+```
+
+它在私有 session bus 起 Fcitx5（只開 DBus 與 IBus 介面）與 0c-server，從 Fcitx5 的 InputContext1 與 IBus portal 兩個入口單按左右 Shift，確認按下、放開都回 false 而且注／英確實切換。不要在日常桌面的 session bus 上執行。
 
 ### Ubuntu 26.04／GNOME 50 的 GTK 設定
 

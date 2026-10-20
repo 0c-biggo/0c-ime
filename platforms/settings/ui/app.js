@@ -5,7 +5,7 @@
 
   const tauri = window.__TAURI__;
   const invoke = (command, args) => tauri.core.invoke(command, args);
-  const PAGES = ['overview', 'input', 'vocab', 'update', 'troubleshoot', 'about'];
+  const PAGES = ['overview', 'input', 'output', 'vocab', 'update', 'troubleshoot', 'about'];
 
   const state = {
     info: null, status: null, settings: null, error: null,
@@ -84,6 +84,9 @@
   };
   // 與 internal/autoupdate 的 OldShellDetail 相同：重新登入後系統仍開著更新前留下的舊版輸入法（#98）。
   const OLD_SHELL = '已安裝，但系統仍開著更新前留下的舊版輸入法；登出再登入後改用新版';
+  // 與 internal/autoupdate 的 ShellRetiringDetail 相同：macOS 新版已裝好，舊的輸入法程式等停手後結束（#170）。
+  const SHELL_RETIRING = '已安裝，停止打字後自動換成新版，不必登出';
+  const SHELL_RETIRING_HELP = '新版已安裝。舊版的輸入法程式還在使用中，停止打字一下就會自動換成新版，不必登出。';
   const OLD_SHELL_HELP = '新版已安裝，但系統仍開著更新前留下的舊版輸入法。請先儲存工作，登出再登入一次就會改用新版；如果之後仍看到這則訊息，請到「問題排解」匯出狀態摘要回報。';
   const VALUE = { neural: '神經選字', statistical: '統計引擎', off: '關閉', select: '僅供選字', auto: '自動修正（實驗）', vertical: '直排', grid: '多排', before: '游標前方', after: '游標後方', standard: '標準', eten: '倚天 41 鍵' };
   const ERROR = {
@@ -114,6 +117,7 @@
     if (update.stage === 'pending' && update.target) {
       if (update.target.kind !== 'shell') return { text: '正在確認新版引擎是否可用。', tone: 'warn' };
       if (update.blocked?.detail === OLD_SHELL) return { text: update.target.version + ' 已安裝，仍在使用舊版輸入法。', tone: 'warn' };
+      if (update.blocked?.detail === SHELL_RETIRING) return { text: update.target.version + ' 已安裝，停止打字後自動換成新版。', tone: 'warn' };
       return { text: update.target.version + ' 等待重新登入後生效。', tone: 'warn' };
     }
     switch (update.state) {
@@ -215,7 +219,9 @@
       if (!result.ok) toast(errorText(result.error), result.error?.code === 'in_progress' ? 'warn' : 'error');
       else if (result.update?.blocked && result.update.stage !== 'pending' && !(kind === 'download' && result.update.stage === 'prepared')) toast(result.update.blocked.detail || '更新尚未完成，請再試一次。', 'warn');
       else if (kind === 'download') toast(result.update?.operation ? operationText(result.update.operation) : result.update?.stage === 'pending' ? updateSummary(result.update).text : '下載完成，可按「立即安裝」。', 'ok');
-      else toast(result.update?.stage === 'pending' ? '請先儲存工作，登出再登入以完成更新。' : '更新作業已完成。', 'ok');
+      else toast(result.update?.stage === 'pending'
+        ? (result.update.blocked?.detail === SHELL_RETIRING ? SHELL_RETIRING_HELP : '請先儲存工作，登出再登入以完成更新。')
+        : '更新作業已完成。', 'ok');
     } catch (error) {
       toast(String(error), 'error');
     } finally {
@@ -286,7 +292,9 @@
     if (problem(root)) return;
     const status = state.status;
     const settings = state.settings;
-    root.append(h('p', { class: 'lead' }, '已安裝版本 ' + (status.installed || '（尚無版本收據）')));
+    // 版本、是否仍在跑舊版的判斷在 engine-state.js：核心更新後以引擎指標為準，不只看外殼的收據。
+    const engine = window.ZcEngineState(status, state.info?.platform);
+    root.append(h('p', { class: 'lead' }, '已安裝版本 ' + (engine.expected || '（尚無版本收據）')));
     root.append(...fileNotices(settings));
     if (settings.pending_restart) {
       root.append(h('div', { class: 'notice' },
@@ -294,19 +302,17 @@
         h('div', { class: 'actions' }, h('button', { type: 'button', class: 'secondary', onclick: () => show('input') }, '查看輸入設定'))));
     }
     const runtime = status.runtime || {};
-    const shellPending = status.update?.stage === 'pending' && status.update?.target?.kind === 'shell';
-    const pendingDetail = shellPending ? (status.update?.blocked || status.blocked)?.detail : '';
-    const deferredInstall = pendingDetail === '登出再登入時自動完成安裝';
-    const oldShell = pendingDetail === OLD_SHELL;
-    const runningOld = runtime.state === 'running' && runtime.version && status.installed && runtime.version !== status.installed;
+    const deferredInstall = engine.pendingDetail === '登出再登入時自動完成安裝';
+    const oldShell = engine.pendingDetail === OLD_SHELL;
     if (oldShell) {
       root.append(h('div', { class: 'notice' }, h('p', {}, OLD_SHELL_HELP)));
-    } else if (shellPending || runningOld) {
-      const relogin = shellPending || /^(windows|macos)\//.test(state.info?.platform || '');
+    } else if (engine.retiring) {
+      root.append(h('div', { class: 'notice' }, h('p', {}, SHELL_RETIRING_HELP)));
+    } else if (engine.shellPending || engine.runningOld) {
       root.append(h('div', { class: 'notice' },
         h('p', {}, deferredInstall ? '套件已下載，等待重新登入時安裝。' : '新版已安裝；目前執行的輸入法仍未全部切換。'),
-        runningOld ? h('p', {}, '已安裝 ' + status.installed + '，目前輸入引擎使用 ' + runtime.version + '。') : null,
-        h('p', {}, relogin ? '請先儲存工作，登出再登入，讓所有應用程式載入新版輸入法。' : '請先完成組字，等待輸入引擎重新啟動以載入新版。')));
+        engine.runningOld ? h('p', {}, '已安裝 ' + engine.expected + '，目前輸入引擎使用 ' + engine.running + '。') : null,
+        h('p', {}, engine.relogin ? '請先儲存工作，登出再登入，讓所有應用程式載入新版輸入法。' : '請先完成組字，等待輸入引擎重新啟動以載入新版。')));
     }
     const rows = [
       row(labelBlock('目前執行的輸入引擎'), h('div', { class: 'value' }, (ENGINE[runtime.state] || '未知') + (runtime.version ? '（' + runtime.version + '）' : ''))),
@@ -373,8 +379,10 @@
     const emoji = items.find((item) => item.key === 'emoji-shortcut');
     const equalsFirst = items.find((item) => item.key === 'emoji-equals-first');
     const keyboard = items.find((item) => item.key === 'keyboard-layout');
-    const rest = items.filter((item) => !item.key.startsWith('fuzzy-') && item.key !== 'keyboard-layout' &&
-      (!emoji || item.key !== 'emoji-equals-first'));
+    const ctrlPunct = items.find((item) => item.key === 'ctrl-punctuation'); // #168：鍵盤卡片最後
+    const selectionKeys = items.find((item) => item.key === 'selection-keys'); // #112：跟鍵盤排列放在同一張卡
+    const rest = items.filter((item) => !item.key.startsWith('fuzzy-') && item.key !== 'keyboard-layout' && item.key !== 'selection-keys' && item.key !== 'ctrl-punctuation' &&
+      item.key !== 'output-simplified' && (!emoji || item.key !== 'emoji-equals-first'));
     const rows = rest.map((item) => {
       const parent = itemRow(item, locked ||
         (item.key === 'emoji-shortcut' && state.busy.has('emoji-equals-first')));
@@ -397,8 +405,9 @@
           onclick: () => changePairs(fuzzy.map((item) => [item.key, enabled ? 'off' : 'select'])),
         }))));
     }
-    // 鍵盤排列放在最後一張卡：前面各項的鍵盤（Tab）順序不變。
-    if (keyboard) root.append(h('h2', {}, '鍵盤'), h('div', { class: 'card' }, itemRow(keyboard, locked)));
+    // 鍵盤排列、選字鍵與 Ctrl＋標點（#168）放在最後一張卡：前面各項的鍵盤（Tab）順序不變。
+    const keys = [keyboard, selectionKeys, ctrlPunct].filter(Boolean);
+    if (keys.length) root.append(h('h2', {}, '鍵盤'), h('div', { class: 'card' }, ...keys.map((item) => itemRow(item, locked))));
     if ((settings.file.notes || []).length) {
       root.append(h('h2', {}, '注意'), h('div', { class: 'notice' }, ...settings.file.notes.map((note) => h('p', {}, note))));
     }
@@ -412,12 +421,13 @@
     const op = view.operation;
     const blocked = view.blocked || status.blocked;
     const summary = updateSummary(view);
-    root.append(h('p', { class: 'lead' }, '目前版本 ' + (status.installed || '未知')));
+    root.append(h('p', { class: 'lead' }, '目前版本 ' + (window.ZcEngineState(status, state.info?.platform).expected || '未知')));
     root.append(h('div', { class: 'notice' + (summary.tone === 'warn' ? '' : ' info') },
       h('p', {}, summary.text),
       view.target && !op ? h('p', {}, view.stage === 'pending' && view.target.kind === 'shell'
         ? (blocked?.detail === '登出再登入時自動完成安裝' ? '套件已下載，儲存工作後登出再登入，會完成安裝。'
-          : blocked?.detail === OLD_SHELL ? OLD_SHELL_HELP : '新版已安裝；請儲存工作後登出再登入，讓應用程式載入新版輸入法。')
+          : blocked?.detail === OLD_SHELL ? OLD_SHELL_HELP : blocked?.detail === SHELL_RETIRING ? SHELL_RETIRING_HELP
+          : '新版已安裝；請儲存工作後登出再登入，讓應用程式載入新版輸入法。')
         : view.stage === 'pending' ? '正在確認新版引擎是否可用。' : (STAGE[view.stage] || ('進度：' + view.stage)) + '。') : null,
       blocked && !op && view.stage !== 'pending' && !(view.stage === 'found' && ['needs_relogin', 'needs_consent'].includes(blocked.reason))
         ? h('p', {}, blocked.detail || BLOCKED[blocked.reason] || '更新暫時受阻。') : null));
@@ -493,7 +503,17 @@
     vocab.render(root);
   }
 
-  const RENDER = { overview, input, vocab: vocabPage, update, troubleshoot, about };
+  // 輸出設定：送出的文字怎麼轉換（#118 簡體字），跟打字、選字分開，左側獨立一頁。
+  function output(root) {
+    root.append(h('h1', {}, '輸出設定'), h('p', { class: 'lead' }, '決定送到應用程式的文字；組字和候選照常顯示繁體。改動會立即儲存，並在沒有組字時讓輸入法套用。'));
+    if (problem(root)) return;
+    const settings = state.settings;
+    root.append(...fileNotices(settings));
+    const items = (settings.items || []).filter((item) => item.key === 'output-simplified');
+    if (items.length) root.append(h('div', { class: 'card' }, ...items.map((item) => itemRow(item, settings.file.read_only))));
+  }
+
+  const RENDER = { overview, input, output, vocab: vocabPage, update, troubleshoot, about };
 
   function render() {
     const focused = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.focus : null;

@@ -15,6 +15,9 @@ func run() throws {
     let directory = URL(fileURLWithPath: "/tmp/zuin-mac-test-\(UUID().uuidString)")
     try fm.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
     defer { try? fm.removeItem(at: directory) }
+    let unavailable = EngineSession(connection: EngineConnection(path: directory.appendingPathComponent("absent.sock").path), inputAllowed: { true })
+    check(!unavailable.shiftToggles(left: false) && !unavailable.shiftToggles(left: true),
+          "before the engine reports settings, neither Shift key toggles on macOS")
     try Data(#"{"schema":1,"selection":"statistical","punctuation":false,"candidate_layout":"grid","emoji_shortcut":"equals","emoji_equals_first":false}"#.utf8)
         .write(to: directory.appendingPathComponent("settings.json"))
     // 較新版本寫成的詞彙檔：引擎照常輸入，但不能改自訂詞彙，open 不回報 vocab_keys（#123）。vocabKeyChecks 才移掉它。
@@ -47,6 +50,8 @@ func run() throws {
         }
     }
     var snapshot = try key("a")
+    check(!session.shiftToggles(left: false) && !session.shiftToggles(left: true),
+          "an engine without a saved toggle_key reports both Shift keys off on macOS")
     for k in ["8", "6", "q", "i", "6"] { snapshot = try key(k) }
     check(snapshot.text == "麻婆", "preedit: \(snapshot.text)")
     check(snapshot.cursor.utf16 == 2, "UTF-16 cursor")
@@ -293,13 +298,13 @@ func run() throws {
     check(!session.isOpen, "the closed engine's session is forgotten")
     check(try key("a").text == "ㄇ", "the resent key reaches a new engine in a fresh session")
     _ = try key("Escape")
-    check(!session.shiftToggles(left: true) && session.shiftToggles(left: false), "right Shift toggles and left does not by default")
+    check(!session.shiftToggles(left: true) && !session.shiftToggles(left: false), "neither Shift key toggles by default on macOS")
     check(session.shiftTapLimit == 0.3, "the engine's 300 ms tap limit")
     session.reset()
     stop()
 
     // #117：toggle-key 決定哪一側切換；改設定後引擎重啟，下一次查詢就照新設定。
-    for (value, left, right) in [("left", true, false), ("none", false, false), ("both", true, true)] {
+    for (value, left, right) in [("right", false, true), ("left", true, false), ("none", false, false), ("both", true, true)] {
         try Data(#"{"schema":1,"selection":"statistical","punctuation":false,"english_autocomplete":true,"toggle_key":"\#(value)"}"#.utf8)
             .write(to: directory.appendingPathComponent("settings.json"))
         _ = try key(" ")
@@ -375,6 +380,17 @@ func run() throws {
     check(KeyMapping.key(code: 18, characters: "1", modifiers: [.capsLock]) == "1", "Caps Lock keeps digits")
     for flags: NSEvent.ModifierFlags in [.command, .control, .option, [.capsLock, .command]] {
         check(KeyMapping.key(code: 0, characters: "a", modifiers: flags) == nil, "shortcut passes through")
+    }
+    // #168：Control＋標點的鍵名；Command／Option、少了或多了 Shift 都不是。
+    for (code, flags, want) in [(UInt16(43), NSEvent.ModifierFlags.control, "Ctrl+,"), (47, .control, "Ctrl+."), (39, .control, "Ctrl+'"),
+                                (41, .control, "Ctrl+;"), (44, [.control, .shift], "Ctrl+?"), (18, [.control, .shift], "Ctrl+!"),
+                                (43, [.control, .capsLock], "Ctrl+,")] {
+        check(KeyMapping.ctrlPunct(code: code, modifiers: flags) == want, "ctrl punct \(want)")
+        check(KeyMapping.ctrlPunctText[want] != nil, "ctrl punct text \(want)")
+    }
+    for (code, flags) in [(UInt16(43), NSEvent.ModifierFlags.command), (43, []), (43, [.control, .option]), (43, [.control, .command]),
+                          (43, [.control, .shift]), (44, .control), (18, .control), (33, .control), (0, .control)] {
+        check(KeyMapping.ctrlPunct(code: code, modifiers: flags) == nil, "not ctrl punct: \(code) \(flags.rawValue)")
     }
     check(KeyMapping.key(code: 117, characters: "\u{F728}", modifiers: []) == "Delete", "forward delete maps to core grapheme editing")
     check(KeyMapping.key(code: 0, characters: "😀", modifiers: []) == nil, "non-ASCII passes through")
@@ -525,6 +541,11 @@ func vocabKeyChecks(directory: URL, session: EngineSession, key: (String) throws
     try FileManager.default.removeItem(at: directory.appendingPathComponent("vocab.json"))
     _ = try key(" ") // 重新 open，從 info 取得 vocab_keys
     check(session.vocabKeys, "open reply carries vocab_keys=true even with the retired preview_0_2=false")
+    // #168：設定檔沒有 ctrl_punctuation 時預設開；Ctrl+, 沒在組字也插進組字區，Esc 清掉。
+    check(session.ctrlPunct, "open reply carries ctrl_punctuation=true by default")
+    let comma = try key("Ctrl+,")
+    check(comma.handled && comma.text == "，", "Ctrl+, types a full-width comma: \(comma.text)")
+    check(try key("Escape").text.isEmpty, "Escape clears the comma")
     let shiftLeft = KeyMapping.key(code: 123, characters: nil, modifiers: [.shift, .function, .numericPad], vocabKeys: session.vocabKeys)
     check(shiftLeft == "ShiftLeft", "Shift+Left maps to ShiftLeft once the engine supports it")
     // 沒在組字：引擎交還，App 照常選取文字。

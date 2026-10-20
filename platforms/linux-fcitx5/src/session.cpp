@@ -148,6 +148,12 @@ bool Session::vocabKeys() {
     return value != serverInfo_.end() && value->is_string() && value->get<std::string>() == "true";
 }
 
+bool Session::ctrlPunct() {
+    if (!client_.connect() || !ensureOpen()) { return false; }
+    auto value = serverInfo_.find("ctrl_punctuation");
+    return value != serverInfo_.end() && value->is_string() && value->get<std::string>() == "true";
+}
+
 bool Session::ensureOpen() {
     if (id_ != 0 && gen_ == client_.generation()) {
         return true;
@@ -324,6 +330,7 @@ Snapshot Session::parse(const nlohmann::json &reply) {
         s.highlight = c.value("highlight", 0);
 		s.candidateTitle = c.value("title", "");
         for (const auto &it : c["items"]) {
+            s.candidateKeys.push_back(candidateKey(it, s.candidates.size(), s.english));
             s.candidates.emplace_back(it.value("id", 0), it.value("text", ""));
             s.candidateNotes.push_back(it.value("note", ""));
         }

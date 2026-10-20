@@ -100,6 +100,14 @@ func (c *Composer) String() string {
 	return b.String()
 }
 
+// Slot 回傳目前在該類別（聲母、介音、韻母）的符號；沒有時回傳 0。
+func (c *Composer) Slot(cl Class) rune {
+	if cl < Initial || cl > Final {
+		return 0
+	}
+	return c.slot[cl]
+}
+
 // Add 加入一個符號。若符號是聲調且已有發音符號，回傳完成的音節並清空。
 func (c *Composer) Add(r rune) (done Syllable, ok bool) {
 	cl := ClassOf(r)

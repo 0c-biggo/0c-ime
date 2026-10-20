@@ -24,6 +24,9 @@ pub struct Snapshot {
     pub suggestion: String,
     pub candidates: Vec<(i64, String)>, // 目前這一頁的（ID, 文字）
     pub candidate_notes: Vec<String>, // 與 candidates 等長的低調附註（模糊音近音為「近音 ㄓ」），其餘為空字串
+    /// 與 candidates 等長的鍵標（#112）：核心給的選字鍵（1、q、;）；舊核心沒有時依位置 1–0，
+    /// 英文模式（只有自動補字候選，數字是文字）為空字串、不畫。
+    pub candidate_keys: Vec<String>,
     pub columns: usize,
     pub candidate_kind: String,
     pub candidate_title: String,
@@ -218,6 +221,14 @@ impl Session {
         self.client
             .call(&json!({"op": "health"}))
             .is_some_and(|reply| reply["ok"] == true && reply["info"]["tone_mark_keys"] == "true")
+    }
+
+    /// 引擎是否認得 Ctrl＋標點的鍵名而且設定開著（health 的 ctrl_punctuation，#168）。只在按下那六個鍵時查詢，
+    /// 設定套用（引擎重啟）後立即生效；引擎不可用或舊版引擎沒有這一項時為 false，照舊交給應用程式。
+    pub fn ctrl_punctuation(&mut self) -> bool {
+        self.client
+            .call(&json!({"op": "health"}))
+            .is_some_and(|reply| reply["ok"] == true && reply["info"]["ctrl_punctuation"] == "true")
     }
 
     /// 引擎目前載入的鍵盤排列是否為倚天 41 鍵（#83）。只在答案依排列而不同的鍵（keys::layout_dependent）查詢；
@@ -508,6 +519,12 @@ fn parse(reply: &Value) -> Snapshot {
                 ));
                 s.candidate_notes
                     .push(it["note"].as_str().unwrap_or("").to_string());
+                let index = s.candidate_keys.len();
+                s.candidate_keys.push(match it["key"].as_str() {
+                    Some(key) => key.to_string(),
+                    None if s.english => String::new(),
+                    None => ((index + 1) % 10).to_string(),
+                });
             }
         }
     }
@@ -573,6 +590,19 @@ mod parse_tests {
             s.candidate_notes,
             vec!["".to_string(), "近音 ㄔ".to_string()]
         );
+    }
+
+    // #112：鍵標照核心給的選字鍵；舊核心依位置 1–0（第 10 項是 0），英文模式的補字候選不畫。
+    #[test]
+    fn candidate_keys_follow_the_engine() {
+        let s = parse(&json!({"snapshot": {"mode": "zhuyin", "candidates": {"items": [
+            {"id": 0, "text": "是", "key": "1"}, {"id": 1, "text": "式", "key": "q"}, {"id": 2, "text": "示", "key": ";"}]}}}));
+        assert_eq!(s.candidate_keys, vec!["1", "q", ";"]);
+        let items: Vec<Value> = (0..10).map(|i| json!({"id": i, "text": "字"})).collect();
+        let old = parse(&json!({"snapshot": {"mode": "zhuyin", "candidates": {"items": items}}}));
+        assert_eq!(old.candidate_keys, vec!["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]);
+        let english = parse(&json!({"snapshot": {"mode": "english", "candidates": {"items": [{"id": 0, "text": "hello"}]}}}));
+        assert_eq!(english.candidate_keys, vec![""]);
     }
 
     #[test]

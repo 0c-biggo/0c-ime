@@ -313,6 +313,8 @@ func install(bundle string, release *update.Release) error {
 	refreshStableMCP(basePath())
 	syncUninstallEntry()
 	handOverAfterInstall(release.Version, nil) // 新引擎由 afterInstall 的 ensureEngineService 經登入工作叫起
+	// 舊版的候選窗程式不會自己換新（#159 的全螢幕檢查在 0c-ui）：閒置時請它結束，DLL 下一次需要時啟動新版。
+	handOverUI(uiWaitInstall)
 	fmt.Printf("已安裝靈犀注音至 %s\n個人詞庫保留，舊版程序不會被強制停止。請登出再登入，讓所有應用程式載入新版。\n", directory)
 	reportLeftovers(left)
 	return nil
@@ -358,6 +360,7 @@ func rollback(_ string, restoreUser bool) error {
 	syncUninstallEntry()
 	if version, err := installedVersion(); err == nil {
 		handOverAfterInstall(version, func() { ensureEngineService(basePath()) })
+		handOverUI(uiWaitInstall) // 回到的版本的 0c-ui 由 DLL 下一次需要時啟動
 	}
 	if restoreUser {
 		fmt.Println("已回復上一版註冊，並還原升級前的個人詞庫；回復前的詞庫另存於新備份。要撤回，請用本版套件的 0c-update.exe 再執行 rollback -restore-user（0.1.0-dev.15 以前的工具不支援）。請登出再登入。")
@@ -377,6 +380,7 @@ func uninstall() error {
 	}
 	// 收據已停用：移走 AI 工具用的 0c-mcp。AI 工具正在執行它時刪不掉，改名讓原路徑空出來（之後 bin 整個移除）。
 	refreshStableMCP(basePath())
+	stopUI(uiWaitInstall)
 	if errors.Is(changed, update.ErrForeignRegistration) {
 		fmt.Printf("已停用這個帳號的靈犀注音。%v（可能是其他 Windows 帳號的安裝），請在那個帳號移除。\n", changed)
 		removeSettingsEntry()

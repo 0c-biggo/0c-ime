@@ -1,5 +1,6 @@
 //! 把 Windows 的按鍵事件轉成協定的 Key（與 Fcitx 5 外殼的 toKey 對應）。
-//! 排列由核心解讀：只把可見的 ASCII 交給核心；具名鍵用協定名稱；帶 Ctrl／Alt 的組合鍵一律交還應用程式。
+//! 排列由核心解讀：只把可見的 ASCII 交給核心；具名鍵用協定名稱；帶 Ctrl／Alt 的組合鍵交還應用程式，
+//! 只有中文模式的 Ctrl＋標點（#168，見 [`ctrl_punct`]）例外。
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetKeyState, GetKeyboardState, ToUnicode, VK_BACK, VK_CAPITAL, VK_CONTROL,
     VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_HOME, VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LSHIFT,
@@ -73,16 +74,29 @@ pub fn named(vk: u32) -> Option<&'static str> {
 }
 
 /// 依目前鍵盤狀態把虛擬鍵轉成字元；只接受可見 ASCII（0x21–0x7e）。
-pub fn printable(vk: u32, lparam: isize) -> Option<String> {
-    let scan = ((lparam >> 16) & 0xff) as u32;
+/// `caps_lock` 為 false（中文模式，#168）時不理 Caps Lock：字母照沒開 Caps Lock 時的大小寫，沒按 Shift 是小寫注音鍵，
+/// Shift＋字母是大寫；英文模式傳 true，照 Caps Lock 打大寫。
+pub fn printable(vk: u32, lparam: isize, caps_lock: bool) -> Option<String> {
     let mut state = [0u8; 256];
     unsafe {
         if GetKeyboardState(&mut state).is_err() {
             return None;
         }
-        // 不讓 Ctrl／Alt 影響轉換（組合鍵已在 modifier_down 擋掉）
-        state[VK_CONTROL.0 as usize] = 0;
-        state[VK_MENU.0 as usize] = 0;
+    }
+    printable_with(vk, lparam, &mut state, caps_lock)
+}
+
+/// [`printable`] 用指定的鍵盤狀態轉換（測試走同一條路）。
+pub fn printable_with(vk: u32, lparam: isize, state: &mut [u8; 256], caps_lock: bool) -> Option<String> {
+    let scan = ((lparam >> 16) & 0xff) as u32;
+    // 不讓 Ctrl／Alt 影響轉換（組合鍵已在 modifier_down 擋掉；Ctrl＋標點要的是不按 Ctrl 時的字元）
+    for k in [VK_CONTROL, VK_LCONTROL, VK_RCONTROL, VK_MENU, VK_LMENU, VK_RMENU] {
+        state[k.0 as usize] = 0;
+    }
+    if !caps_lock {
+        state[VK_CAPITAL.0 as usize] &= !1; // 只清掉鎖定（toggle）位元
+    }
+    unsafe {
         let mut buf = [0u16; 8];
         // 0x4：不改變鍵盤的 dead-key 狀態（Windows 10 1607+）
         let n = ToUnicode(vk, scan, Some(&state), &mut buf, 0x4);
@@ -162,15 +176,45 @@ pub fn composing_wants(english: bool, protocol: Option<&str>) -> bool {
 
 /// 協定的 Key；不該交給輸入法的按鍵回傳 None。數字鍵盤送 "KP" 加上產生的字元，核心不當注音鍵（#75）。
 /// `vocab` 見 [`named_with`]；只有 Shift（沒有 Ctrl／Alt／Win，組合鍵在這裡已回 None）時才換成新鍵名。
-pub fn to_key(vk: u32, lparam: isize, vocab: bool) -> Option<String> {
+/// `caps_lock` 見 [`printable`]：英文模式傳 true，中文模式傳 false（不理 Caps Lock，#168）。
+pub fn to_key(vk: u32, lparam: isize, vocab: bool, caps_lock: bool) -> Option<String> {
     if modifier_down() || is_modifier(vk) {
         return None;
     }
     if let Some(n) = named_with(vk, shift_down(), vocab) {
         return Some(n.to_string());
     }
-    let c = printable(vk, lparam)?;
+    let c = printable(vk, lparam, caps_lock)?;
     Some(if is_keypad(vk) { format!("KP{c}") } else { c })
+}
+
+/// Ctrl＋標點（#168）：只按著 Ctrl（可以加 Shift，沒有 Alt／Win）時這一鍵的協定鍵名；不是這六個鍵回傳 None。
+/// 字元是不按 Ctrl 時這一鍵產生的字元（Ctrl+Shift+/ 是 ?）。AltGr 是 Ctrl＋Alt，不算。
+/// 要不要送由呼叫端決定（中文模式、引擎回報 ctrl_punctuation）。
+pub fn ctrl_punct(vk: u32, lparam: isize) -> Option<&'static str> {
+    let alone = unsafe {
+        GetKeyState(VK_CONTROL.0 as i32) < 0
+            && GetKeyState(VK_MENU.0 as i32) >= 0
+            && GetKeyState(VK_LWIN.0 as i32) >= 0
+            && GetKeyState(VK_RWIN.0 as i32) >= 0
+    };
+    if !alone || is_modifier(vk) || named(vk).is_some() || is_keypad(vk) {
+        return None;
+    }
+    ctrl_punct_name(&printable(vk, lparam, false)?)
+}
+
+/// 不按 Ctrl 時的字元對應的 Ctrl＋標點鍵名。
+pub fn ctrl_punct_name(c: &str) -> Option<&'static str> {
+    Some(match c {
+        "," => "Ctrl+,",
+        "." => "Ctrl+.",
+        "'" => "Ctrl+'",
+        ";" => "Ctrl+;",
+        "?" => "Ctrl+?",
+        "!" => "Ctrl+!",
+        _ => return None,
+    })
 }
 
 /// health 沒有回報 shift_tap_ms 時的單按時限（毫秒）。
@@ -532,6 +576,65 @@ mod tests {
             assert!(!differs || layout_dependent(&c), "{c} 的答案依排列而不同，必須查排列");
         }
         assert!(layout_dependent("=") && !layout_dependent("a"));
+    }
+
+    #[test]
+    fn ctrl_punct_names() {
+        // #168：六個鍵；Ctrl+/、Ctrl+1、Ctrl+Shift+,（<）、Ctrl+[ 照舊交給應用程式。
+        for (c, want) in [
+            (",", "Ctrl+,"),
+            (".", "Ctrl+."),
+            ("'", "Ctrl+'"),
+            (";", "Ctrl+;"),
+            ("?", "Ctrl+?"),
+            ("!", "Ctrl+!"),
+        ] {
+            assert_eq!(ctrl_punct_name(c), Some(want), "{c}");
+        }
+        for c in ["/", "1", "<", ">", "[", "]", "a", "A", "\"", ":"] {
+            assert_eq!(ctrl_punct_name(c), None, "{c}");
+        }
+    }
+
+    #[test]
+    fn caps_lock_follows_mode() {
+        // #168：中文模式（caps_lock=false）不理 Caps Lock；英文模式照 Caps Lock 打大寫。Shift＋字母照沒開 Caps Lock 時。
+        // 用美式排列的掃描碼（A=0x1e、逗號=0x33、1=0x02、斜線=0x35）。
+        const VK_A: u32 = 0x41;
+        let lp = |scan: isize| scan << 16;
+        let state = |caps: bool, shift: bool, ctrl: bool| {
+            let mut s = [0u8; 256];
+            if caps {
+                s[VK_CAPITAL.0 as usize] = 1;
+            }
+            if shift {
+                s[VK_SHIFT.0 as usize] = 0x80;
+                s[VK_LSHIFT.0 as usize] = 0x80;
+            }
+            if ctrl {
+                s[VK_CONTROL.0 as usize] = 0x80;
+                s[VK_LCONTROL.0 as usize] = 0x80;
+            }
+            s
+        };
+        for (caps, shift, honor, want) in [
+            (true, false, false, "a"), // 中文模式、Caps Lock：小寫注音鍵
+            (true, true, false, "A"),  // 中文模式、Caps Lock＋Shift：照沒開 Caps Lock 時，大寫
+            (true, false, true, "A"),  // 英文模式照 Caps Lock
+            (true, true, true, "a"),   // 英文模式 Caps Lock＋Shift 反轉（系統行為）
+            (false, false, false, "a"),
+            (false, true, false, "A"),
+        ] {
+            assert_eq!(
+                printable_with(VK_A, lp(0x1e), &mut state(caps, shift, false), honor).as_deref(),
+                Some(want),
+                "caps={caps} shift={shift} honor={honor}"
+            );
+        }
+        // 數字與標點不受 Caps Lock 影響；Ctrl 不影響轉換（Ctrl＋標點用不按 Ctrl 的字元）。
+        assert_eq!(printable_with(0xbc, lp(0x33), &mut state(true, false, true), false).as_deref(), Some(","));
+        assert_eq!(printable_with(0x31, lp(0x02), &mut state(true, true, true), false).as_deref(), Some("!"));
+        assert_eq!(printable_with(0xbf, lp(0x35), &mut state(false, true, true), false).as_deref(), Some("?"));
     }
 
     #[test]

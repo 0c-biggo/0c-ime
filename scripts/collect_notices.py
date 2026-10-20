@@ -71,6 +71,10 @@ def go_sections(go, goos, packages):
         out.append(section(f"Go 模組 {path} {version}", [read(p) for p in license_files(directory)]))
         if path == "github.com/clipperhouse/uax29/v2":
             out.append(section("Unicode 17 grapheme properties（uax29 產生的字元分段資料）", [read(ROOT / "legal/UNICODE-NOTICE.txt")]))
+    # 「輸出簡體字」的 OpenCC 字典編在 0c-server 裡（internal/simplified，#118），不是 Go 模組，另列。
+    out.append(section("OpenCC ver.1.4.2 字典（tw2s：TSCharacters、TSPhrases、TWVariants、TWVariantsRevPhrases、"
+                       "CJK_Compatibility_Ideographs，https://github.com/BYVoid/OpenCC）",
+                       [read(ROOT / "internal/simplified/opencc/LICENSE")]))
     return out
 
 

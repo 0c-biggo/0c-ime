@@ -30,6 +30,26 @@ int main() {
     for (const char *k : {"A", "BackTab", "Home", "End", "Up", "Down", "Enter", " ", "KP4"}) { EXPECT(zuin::vocabKey(k, true, yes) == k); }
     EXPECT(asked == 0);
 
+    // #168：中文模式不理 Caps Lock；Shift＋字母照舊大寫。
+    EXPECT(zuin::foldCaps('S', true, false) == 's');
+    EXPECT(zuin::foldCaps('s', true, true) == 'S');
+    EXPECT(zuin::foldCaps('S', false, true) == 'S');
+    EXPECT(zuin::foldCaps('s', false, false) == 's');
+    EXPECT(zuin::foldCaps('3', true, false) == '3');
+    EXPECT(zuin::foldCaps(',', true, false) == ',');
+    EXPECT(zuin::foldCaps(0xff0d, true, false) == 0xff0d); // Return
+
+    // #168：Ctrl＋標點的鍵名；其他 Ctrl 組合鍵、Ctrl+Alt、沒按 Ctrl 都不換。
+    EXPECT(zuin::ctrlPunctKey(',', true, false) == "Ctrl+,");
+    EXPECT(zuin::ctrlPunctKey('.', true, false) == "Ctrl+.");
+    EXPECT(zuin::ctrlPunctKey('\'', true, false) == "Ctrl+'");
+    EXPECT(zuin::ctrlPunctKey(';', true, false) == "Ctrl+;");
+    EXPECT(zuin::ctrlPunctKey('?', true, false) == "Ctrl+?");
+    EXPECT(zuin::ctrlPunctKey('!', true, false) == "Ctrl+!");
+    EXPECT(zuin::ctrlPunctKey(',', false, false).empty());
+    EXPECT(zuin::ctrlPunctKey(',', true, true).empty());
+    for (uint32_t c : {'/', '1', '<', '[', ']', 'A', 'v'}) { EXPECT(zuin::ctrlPunctKey(c, true, false).empty()); }
+
     if (failures) { std::fprintf(stderr, "%d failure(s)\n", failures); return 1; }
     std::puts("keys_test ok");
     return 0;

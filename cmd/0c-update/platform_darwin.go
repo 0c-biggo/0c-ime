@@ -76,6 +76,11 @@ func install(bundle string, release *update.Release) error {
 	}
 	// 簽章身分（Team ID）改變時系統會撤銷原本的輸入法核准，要在安裝後主動觸發重新核准。
 	before := installedTeam()
+	// #167：0.2.1 以前 macOS 預設單按右 Shift 切換中英，升級的人保留；全新安裝採「不用 Shift」。
+	// 在交接引擎之前寫好，新版引擎一啟動就讀到。
+	if prev, err := readMacReceiptFile(receiptPath()); (err == nil || os.IsNotExist(err)) && macKeepsRightShift(prev, before != nil) {
+		keepRightShift(basePath())
+	}
 	// 先確認兩個新舊端點都沒有組字，再正常存檔交接；交接失敗不改 App 或收據。
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -121,9 +126,11 @@ func install(bundle string, release *update.Release) error {
 		fmt.Printf("這一版的程式簽章與上一版不同（%s → %s），macOS 會再詢問一次是否允許「靈犀注音」；請在「系統設定」的詢問中按「允許」，否則無法打字。\n",
 			teamLabel(*before), teamLabel(after))
 	}
+	keepRightShiftAfterUpgrade(basePath()) // 記下這次安裝已判斷過（安裝前已寫好）
 	if err = activateInputSource(tool, installed, signatureChanged); err != nil {
 		fmt.Printf("輸入來源尚未完成啟用：%v\n", err)
-		// 保留實際失敗原因，再由登入時的排程補做啟用。
+		// 保留實際失敗原因，再由登入時的排程補做啟用。舊的輸入法程式照常能打字，留到重新登入。
+		markRelogin(basePath())
 		if e := deferInputSource(tool, installed); e != nil {
 			fmt.Printf("請登出再登入，並在「系統設定 → 鍵盤 → 文字輸入 → 編輯」加入「靈犀注音」（%v）。\n", e)
 			return nil
@@ -131,7 +138,19 @@ func install(bundle string, release *update.Release) error {
 		fmt.Println("請登出再登入；登入後會自動啟用「靈犀注音」輸入方式（系統詢問時請允許）。")
 		return nil
 	}
-	fmt.Println("已啟用「靈犀注音」輸入方式（系統詢問時請允許）；登出再登入後全面生效。")
+	if signatureChanged {
+		// 舊程式的核准還在、照常能打字；結束它之後新版要等「允許」才能用，所以留到重新登入。
+		markRelogin(basePath())
+		fmt.Println("已啟用「靈犀注音」輸入方式；按「允許」後，登出再登入即改用新版。")
+		return nil
+	}
+	os.Remove(reloginMarker(basePath()))
+	fmt.Println("已啟用「靈犀注音」輸入方式（系統詢問時請允許）。")
+	if left := retireMacShells(filepath.Join(installed, "Contents/MacOS/0c"), uiWaitInstall, macQuietInstall); len(left) > 0 {
+		fmt.Println("舊版的輸入法程式正在使用中（正在組字或打字），停止打字後會自動換成新版，不必登出。")
+	} else if before != nil {
+		fmt.Println("下一次切換到「靈犀注音」或開始打字，就是新版；不必登出。")
+	}
 	return nil
 }
 
@@ -227,9 +246,12 @@ func rollback(_ string, restoreUser bool) error {
 		}
 	}
 	// 回復後的 App 可能是舊名稱 Zuin.app（不同的輸入來源）：用剛移入備份的新版工具切換。
+	relogin := false
 	if r.App != "" {
 		if tool := filepath.Join(r.Backup, update.MacApp, "Contents/MacOS/0c"); fileExists(tool) {
 			if err = activateInputSource(tool, r.App); err != nil {
+				relogin = true
+				markRelogin(basePath())
 				if e := deferInputSource(tool, r.App); e != nil {
 					fmt.Printf("登出再登入後，請在系統設定中確認「靈犀注音」已加入（%v）。\n", e)
 				}
@@ -245,7 +267,24 @@ func rollback(_ string, restoreUser bool) error {
 	if r.Restored != nil {
 		fmt.Printf("放回的 App 有檔案被改動或缺少（%v），仍照常回復；若無法打字，請重新安裝最新版。\n", r.Restored)
 	}
-	fmt.Println("已回復上一個 App；請登出再登入。個人詞庫保留。")
+	if relogin || r.App == "" {
+		fmt.Println("已回復上一個 App；請登出再登入。個人詞庫保留。")
+		return nil
+	}
+	// 回復後仍在執行的是剛移入備份的那一版：停手後結束，系統下一次需要時開回復的 App（#170）。
+	fmt.Println("已回復上一個 App，個人詞庫保留。")
+	exe := filepath.Join(r.App, "Contents/MacOS/0c")
+	if filepath.Base(r.App) == update.LegacyMacApp {
+		exe = filepath.Join(r.App, "Contents/MacOS/Zuin")
+	}
+	if left := retireMacShells(exe, uiWaitInstall, macQuietInstall); len(left) > 0 {
+		fmt.Println("目前的輸入法程式正在使用中（正在組字或打字），停止打字後會自動換成回復的版本，不必登出。")
+	} else {
+		fmt.Println("下一次切換到「靈犀注音」或開始打字，就是回復的版本；不必登出。")
+	}
+	if filepath.Base(r.App) == update.MacApp {
+		ensureEngineService(basePath()) // 回復的引擎先起來：系統開回復的 App 後第一個按鍵不必等引擎冷啟動
+	}
 	return nil
 }
 func uninstall() error {
@@ -265,7 +304,10 @@ func uninstall() error {
 	}
 	forgetBackupApps()
 	removeSettingsEntry()
-	fmt.Println("已移除靈犀注音 App（移入備份，可用 rollback 恢復）；請登出再登入。個人詞庫、設定與備份保留。")
+	// 移入備份的 App 仍在執行：停手後結束，不留在背景跑到登出（#170）。
+	stopUI(uiWaitInstall)
+	os.Remove(reloginMarker(basePath()))
+	fmt.Println("已移除靈犀注音 App（移入備份，可用 rollback 恢復）；請在選單列的輸入方式改用其他輸入法。個人詞庫、設定與備份保留。")
 	return nil
 }
 

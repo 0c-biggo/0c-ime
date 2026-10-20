@@ -6,6 +6,6 @@
 {"revision":5,"handled":true,"preedit":[{"text":"因","style":"partial"},{"text":"ㄍㄞ","style":"pending"}],"cursor":{"rune":3,"utf16":3},"mode":"zhuyin"}
 {"revision":6,"handled":true,"preedit":[{"text":"應該","style":"corrected"}],"cursor":{"rune":2,"utf16":2},"mode":"zhuyin"}
 {"revision":7,"handled":true,"preedit":[{"text":"應該","style":"corrected"}],"cursor":{"rune":0,"utf16":0},"mode":"zhuyin"}
-{"revision":8,"handled":true,"preedit":[{"text":"應該","style":"corrected"}],"cursor":{"rune":0,"utf16":0},"candidates":{"items":[{"id":0,"text":"因","label":"common"},{"id":1,"text":"音","label":"common"},{"id":2,"text":"ㄧㄣ"}],"page":0,"pages":1,"start":0,"length":1,"highlight":0,"title":"修改「應」 · Tab 切換詞長"},"mode":"zhuyin"}
+{"revision":8,"handled":true,"preedit":[{"text":"應該","style":"corrected"}],"cursor":{"rune":0,"utf16":0},"candidates":{"items":[{"id":0,"text":"因","label":"common","key":"1"},{"id":1,"text":"音","label":"common","key":"2"},{"id":2,"text":"ㄧㄣ","key":"3"}],"page":0,"pages":1,"start":0,"length":1,"highlight":0,"title":"修改「應」 · Tab 切換詞長"},"mode":"zhuyin"}
 {"revision":9,"handled":true,"preedit":[{"text":"因","style":"locked"},{"text":"該","style":"normal"}],"cursor":{"rune":0,"utf16":0},"mode":"zhuyin"}
 {"revision":10,"handled":true,"commit":"因該","cursor":{"rune":0,"utf16":0},"mode":"zhuyin"}

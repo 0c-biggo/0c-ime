@@ -1,6 +1,7 @@
 // 按鍵名稱的轉換中不需要 Fcitx 的部分。
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 namespace zuin {
@@ -18,6 +19,27 @@ std::string vocabKey(const std::string &key, bool shiftOnly, Supported &&support
                         : key == "Delete" ? "ShiftDelete" : key == "Backspace" ? "ShiftBackspace" : nullptr;
     if (!renamed || !supported()) { return key; }
     return renamed;
+}
+
+// foldCaps：中文模式不理 Caps Lock（#168，同常見注音輸入法與 ibus-chewing），ASCII 字母換回沒開 Caps Lock 時的大小寫：
+// 沒按 Shift 是小寫注音鍵，Shift＋字母照舊是大寫。caps、shift 要看 rawKey（Fcitx 正規化按鍵時拿掉 CapsLock 與字母的 Shift）。
+// 英文模式不呼叫，照 Caps Lock 打大寫。
+inline uint32_t foldCaps(uint32_t sym, bool caps, bool shift) {
+    bool lower = sym >= 'a' && sym <= 'z', upper = sym >= 'A' && sym <= 'Z';
+    if (!caps || !(lower || upper)) { return sym; }
+    return shift ? (sym & ~0x20u) : (sym | 0x20u);
+}
+
+// ctrlPunctKey：只按著 Ctrl（可以加 Shift，沒有 Alt／Super／Hyper）的 , . ' ; ? ! 換成協定的 Ctrl＋標點鍵名（#168）。
+// unicode 是已經套用 Shift 的字元（Ctrl+Shift+/ 是 ?），其他鍵回傳空字串。
+inline std::string ctrlPunctKey(uint32_t unicode, bool ctrl, bool otherModifier) {
+    if (!ctrl || otherModifier) { return ""; }
+    switch (unicode) {
+    case ',': case '.': case '\'': case ';': case '?': case '!':
+        return std::string("Ctrl+") + static_cast<char>(unicode);
+    default:
+        return "";
+    }
 }
 
 } // namespace zuin

@@ -90,6 +90,12 @@ Windows 完整更新視窗驗收另有 `test/settings-update-test.ps1`：在沒�
 
 輸入設定的「空白鍵選字」（`space-selects`，`settings.json` 的 `space_selects`）預設開啟：注音打完按空白開候選。關閉後注音打完按空白在游標處輸入空格，改用 ↓ 選字；注音打到一半時空白仍是一聲，候選開著時空白仍換頁（#107、#110）。中英混打開啟時本來就是如此，不受這個設定影響。引擎讀設定，套用（引擎重啟）後生效，外殼不必改。
 
+輸入設定的「選字鍵」（`selection-keys`，`settings.json` 的 `selection_keys`）三選一：`1234567890`（預設，舊設定檔沒有欄位時也是）、`1234qweras`、`asdfghjkl;`，不開放自訂（#112）。候選窗依序用那一排鍵選第 1–10 個字，鍵標由引擎隨候選送給外殼；換成字母鍵時數字 1–0 仍照位置選字（舊外殼、自己畫候選窗的程式只顯示數字也能選）。沒有候選窗時這些鍵照舊是注音鍵。畫在「鍵盤」卡片、鍵盤排列之後，前面各項的 Tab 順序不變。引擎讀設定，套用（引擎重啟）後生效。
+
 輸入設定的「修改字詞的位置」（`candidate-cursor`）可選「游標前方」／「游標後方」。macOS 未指定時採前方，Linux／Windows 採後方；舊設定缺少欄位時同樣使用平台預設，明確保存的 before／after 會保留。後方模式的游標在組字尾端時後面沒有字，改選結束在游標的詞（同前方模式），說明文字也註明這個例外。設定儲存在 `settings.json` 的 `candidate_cursor`，透過既有組字保護套用；不變更個人詞庫格式。
+
+輸入設定的「Ctrl＋標點打全形」（`ctrl-punctuation`，`settings.json` 的 `ctrl_punctuation`）預設開啟，放在「鍵盤」卡片最後（鍵盤排列、選字鍵之後）（前面各項的 Tab 順序不變）。開啟時注音模式按 Ctrl＋, . ' ; 與 Ctrl＋Shift＋/ 1 打全形的 ，。、；？！；說明寫出會占用 VS Code 的 Ctrl＋, 、Ctrl＋. 等快速鍵，要保留時可以關掉。關閉後這些鍵同其他快捷鍵交給應用程式（[#168](https://git.biggo.com/0c/ime/issues/168)）。引擎讀設定，套用（引擎重啟）後生效；外殼依 health 的 `ctrl_punctuation` 決定要不要送這些鍵。
+
+輸入設定的「輸出簡體字」（`output-simplified`，`settings.json` 的 `output_simplified`）預設關閉，在設定程式左側獨立的「輸出設定」頁（`--page output`）。開啟後組字和候選仍顯示繁體，送出時才轉成簡體字（OpenCC ver.1.4.2 的 tw2s 字典，編在 `0c-server` 裡，見 `internal/simplified/opencc`）；我的詞彙與我的片語也一起轉，英文、數字、標點與 Emoji 不變，學習照常記繁體（[#118](https://git.biggo.com/0c/ime/issues/118)）。引擎讀設定，套用（引擎重啟）後生效，外殼不必改。
 
 輸入設定的「選字後游標移到下一個字」（`advance-after-select`，`settings.json` 的 `advance_after_select`）預設關閉，選字後游標留在原處。開啟後從候選窗選好字（數字鍵、Enter、滑鼠都算），游標移到所選詞的後面，可以接著按 ↓ 改下一個字；修改游標前方字詞時往後移一個字（同新酷音的 autoShiftCur），游標在句尾時不動（#133）。符號、Emoji 與原樣注音本來就插入在游標處、游標停在它們後面。引擎讀設定，套用（引擎重啟）後生效，外殼不必改。

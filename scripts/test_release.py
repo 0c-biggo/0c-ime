@@ -1331,6 +1331,13 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn('\\"$HOME/Library/Application Support/0c/bin/0c-update\\" rollback', text)
         self.assertIn("<title>靈犀注音 0.2.0</title>", text)
 
+    def test_macos_pkg_pages_do_not_ask_upgraders_to_log_out(self):
+        # #170：安裝時已結束舊的輸入法程式，升級不必登出；第一次安裝找不到輸入來源時才請使用者重新登入。
+        self.assertIn("不必登出", package_macos_pkg.WELCOME)
+        self.assertIn("從舊版升級時不必登出", package_macos_pkg.CONCLUSION)
+        self.assertNotIn("登出再登入後全面生效", package_macos_pkg.CONCLUSION)
+        self.assertIn("登出目前帳號再重新登入", package_macos_pkg.CONCLUSION)
+
     def test_macos_bundle_version_increases_with_every_release(self):
         # 舊版一律寫 1；新版號必須都比 1 新，且依 semver 順序遞增，LaunchServices 才會選最新的 App（#77）。
         order = ["0.1.0-alpha.1", "0.1.0-beta.2", "0.1.0-dev.58", "0.1.0-dev.58.1", "0.1.0-dev.59", "0.1.0-rc.1",
@@ -2034,6 +2041,8 @@ Successfully verified: 0c-update.exe
         self.assertIn("TERMS.md", text)
         self.assertIn("LICENSE", text)
         self.assertIn("legal/README.md", text)
+        self.assertIn("OpenCC ver.1.4.2", text)  # 輸出簡體字的字典編在 0c-server 裡（#118）
+        self.assertIn("Apache License", text)
 
     def test_versions_match_updater_constraints(self):
         for version in ("0.1.0", "1.2.3-beta.1", "1.0.0-rc.10"):
@@ -2383,6 +2392,15 @@ Successfully verified: 0c-update.exe
         app = Path(__file__).resolve().parents[1] / "platforms/settings/ui/app.js"
         result = subprocess.run([node, "--check", str(app)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_settings_ui_engine_state(self):
+        # 總覽「輸入法仍未全部切換」的判斷：核心更新後不誤報、外殼等重新登入時要提示（0.2.1 候選版冒煙）。
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("沒有 node")
+        test = Path(__file__).resolve().parents[1] / "platforms/settings/test/engine_state_test.js"
+        result = subprocess.run([node, "--test", str(test)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":

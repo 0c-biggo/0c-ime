@@ -19,7 +19,7 @@
     },
     "lexicon.bin": {
       "size": 8791438,
-      "sha256": "eb88389648db65db079f20346007b0a90fed393fafc64d8840ffbef6579b7889"
+      "sha256": "a9faa189604a61598206abb9a32ff0dc802890a77621eb504a0acd96f6c6c06b"
     },
     "lm.bin": {
       "size": 52766129,
@@ -27,7 +27,7 @@
     },
     "manifest.json": {
       "size": 7111,
-      "sha256": "36eecfadc7f2ab9758146560f5b0ba5f9a639d8f9e4ef35423f40de3bddec07b"
+      "sha256": "f10d85cf3fec6b7be04e3075f5d597e44767dccc03b710b70281190042d6c786"
     },
     "report.txt": {
       "size": 2134,

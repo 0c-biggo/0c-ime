@@ -259,12 +259,49 @@ func TestCandidatesAndMouseSelect(t *testing.T) {
 	}
 }
 
+// #112：候選表的鍵標照核心給的選字鍵；按 a 選第一項，數字照舊依位置選字。
+func TestSelectionKeysLabelAndSelect(t *testing.T) {
+	e, rec, sock := newTestEngine(t)
+	eng := toyEngine(t)
+	eng.SelectionKeys = "asdfghjkl;"
+	defer startServer(t, sock, eng)()
+	typeKeys(e, "ji3")
+	rec.take()
+	e.processKey(keyDown, 0, 0)
+	var lt ibusLookupTable
+	for _, s := range rec.take() {
+		if s.name == "UpdateLookupTable" {
+			lt = s.args[0].(dbus.Variant).Value().(ibusLookupTable)
+		}
+	}
+	if len(lt.Labels) < 2 || lt.Labels[0].Value().(ibusText).Text != "a" || lt.Labels[1].Value().(ibusText).Text != "s" {
+		t.Fatalf("鍵標 %#v", lt.Labels)
+	}
+	want := e.table[0]
+	typeKeys(e, "a")
+	if len(e.table) != 0 || e.preedit != want {
+		t.Fatalf("按 a 選第一項 %q：組字 %q、候選 %v", want, e.preedit, e.table)
+	}
+}
+
+func TestCandidateLabelFallback(t *testing.T) {
+	if candidateLabel(proto.CandidateItem{Key: "q"}, 4, false) != "q" || candidateLabel(proto.CandidateItem{Key: ";"}, 9, true) != ";" {
+		t.Fatal("核心給的選字鍵")
+	}
+	if candidateLabel(proto.CandidateItem{}, 0, false) != "1" || candidateLabel(proto.CandidateItem{}, 9, false) != "0" {
+		t.Fatal("舊核心依位置 1–0")
+	}
+	if candidateLabel(proto.CandidateItem{}, 0, true) != " " {
+		t.Fatal("英文補字不畫鍵標")
+	}
+}
+
 func TestRightShiftTogglesModeAndProperty(t *testing.T) {
 	e, rec, sock := newTestEngine(t)
 	defer startServer(t, sock, toyEngine(t))()
 	e.processKey(keyShiftR, 0, 0)
-	if !e.processKey(keyShiftR, 0, maskRelease) || !e.english {
-		t.Fatal("右 Shift 單按應切到英文")
+	if e.processKey(keyShiftR, 0, maskRelease) || !e.english {
+		t.Fatal("右 Shift 單按應切到英文，放開照樣交給應用程式（#165）")
 	}
 	found := false
 	for _, s := range rec.take() {
@@ -279,14 +316,17 @@ func TestRightShiftTogglesModeAndProperty(t *testing.T) {
 	// 右 Shift 與其他鍵組合不切換。
 	e.processKey(keyShiftR, 0, 0)
 	e.processKey('a', maskShift, 0)
-	if e.processKey(keyShiftR, maskShift, maskRelease) && !e.english {
+	if e.processKey(keyShiftR, maskShift, maskRelease) || !e.english {
 		t.Fatal("組合鍵不應切換")
 	}
 }
 
+// tapRightShift 單按右 Shift，回傳注／英有沒有切換（放開一律交給應用程式，見 TestShiftReleaseReachesApp）。
 func tapRightShift(e *engine) bool {
+	before := e.english
 	e.processKey(keyShiftR, 0, 0)
-	return e.processKey(keyShiftR, maskShift, maskRelease)
+	e.processKey(keyShiftR, maskShift, maskRelease)
+	return e.english != before
 }
 
 // #90：切到英文清掉未打完的注音；立即再按一次放回，中間有按鍵、快捷鍵或失焦就不放回。
@@ -344,10 +384,10 @@ func TestShiftTapSurvivesDuplicatedEvents(t *testing.T) {
 	typeKeys(e, "ji3j")
 	e.processKey(keyShiftR, 0, 0)
 	e.processKey(keyShiftR, 0, 0)
-	toggled := e.processKey(keyShiftR, maskShift, maskRelease)
-	e.processKey(keyShiftR, maskShift, maskRelease)
-	if !toggled || !e.english || e.preedit != "我" {
-		t.Fatalf("重複事件的右 Shift 單按應切到英文並保留已組好的字：toggled=%v english=%v %q", toggled, e.english, e.preedit)
+	consumed := e.processKey(keyShiftR, maskShift, maskRelease)
+	consumed = e.processKey(keyShiftR, maskShift, maskRelease) || consumed
+	if consumed || !e.english || e.preedit != "我" {
+		t.Fatalf("重複事件的右 Shift 單按應切到英文並保留已組好的字：consumed=%v english=%v %q", consumed, e.english, e.preedit)
 	}
 	// 重複事件之間夾了其他鍵（Shift＋字母），仍不切換。
 	e.processKey(keyShiftR, 0, 0)
@@ -385,7 +425,7 @@ func TestLeftShiftTogglesOnlyWhenEnabled(t *testing.T) {
 		go srv.Serve(l)
 		typeKeys(e, "ji3")
 		e.processKey(keyShiftL, 0, 0)
-		if e.processKey(keyShiftL, maskShift, maskRelease) != enabled || e.english != enabled {
+		if e.processKey(keyShiftL, maskShift, maskRelease) || e.english != enabled {
 			t.Fatalf("enabled=%v：左 Shift 單按切換=%v", enabled, e.english)
 		}
 		if enabled {
