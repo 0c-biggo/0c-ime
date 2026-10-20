@@ -34,6 +34,17 @@ Go module 相依須預先備妥，之後可用 `GOPROXY=off GOSUMDB=off` 離線�
 
 神經選字與補標點直接使用 `models/select/`、`models/punct/`；版本與配對檢查見 [模型說明](models/README.md)，worker 與系統 Python、NumPy、ONNX Runtime 的整合方式見 [神經推論](platforms/neural/README.md)。工具鏈、執行相依套件與安裝規則由發行版自行提供。
 
+## 從原始碼重建字典
+
+內附的 `lexicon.bin`、`lm.bin` 可以從公開內容重建：Git 內的詞庫與詞頻，加上 [0c-ime-data](https://github.com/0c-biggo/0c-ime-data) Release 的四個詞對統計檔（約 307 MB）。
+
+```sh
+tar -xJf 0c-ime-bigram-20261019.tar.xz
+python3 scripts/build_release_data.py --bigram-dir 0c-ime-bigram-20261019/bigram --out build/release-data
+```
+
+輸出的 `build/release-data/data/` 與 `assets/data/` 位元組相同。各版本使用的統計檔版本見 0c-ime-data 的 README。
+
 ## 組裝完整 tarball
 
 Git repo 保存 [字典 lock](data/dictionary.lock.json)、[上游模型 lock](models/models.lock.json) 與 [配對 lock](models/pairing.lock.json)；二進位字典與模型由發佈工具加入 tarball。
