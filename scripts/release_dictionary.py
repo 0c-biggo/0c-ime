@@ -36,13 +36,17 @@ def check(directory, lock):
         check_file(directory / name, entry)
 
 
-def check_assets(root, release=True):
+def check_dictionary(root, release=True):
     """release=False checks a source tree, where maintainers may keep local bigram inputs."""
-    from source_release import LOCK as MODEL_LOCK, check_models, digest, read_lock as models_lock
-    from pair_models import PAIR_LOCK
     if release and (root / "data/lm/bigram").exists():
         raise ValueError("source release must not include data/lm/bigram inputs")
     check(root / DIRECTORY, read_lock(root))
+
+
+def check_models_paired(root):
+    """The paired models under models/ match the model lock, the pairing lock and the shipped dictionary."""
+    from source_release import LOCK as MODEL_LOCK, check_models, digest, read_lock as models_lock
+    from pair_models import PAIR_LOCK
     lock = models_lock(root / MODEL_LOCK)
     pair = json.loads((root / PAIR_LOCK).read_text(encoding="utf-8"))
     if (pair.get("schema") != 1 or pair.get("models_lock_sha256") != digest(root / MODEL_LOCK)
@@ -57,3 +61,9 @@ def check_assets(root, release=True):
         if vocab.get("dictionary_sha256") != pair["dictionary_manifest_sha256"]:
             raise ValueError(f"vocabulary and dictionary binding mismatch: {role}")
     check_models(root, lock)
+
+
+def check_assets(root, release=True):
+    """release=False checks a source tree, where maintainers may keep local bigram inputs."""
+    check_dictionary(root, release)
+    check_models_paired(root)

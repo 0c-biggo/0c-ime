@@ -55,6 +55,6 @@ go run ./cmd/0c-compile -public -bigram '' -out build/public-data
 
 完整 release tarball 直接附上可使用的統計字典，位於 `assets/data/`；檔案大小與 SHA-256 固定於 [dictionary.lock.json](dictionary.lock.json)，與內附模型配對。建置輸入法不需執行 `0c-compile` 或重新產生統計資料。
 
-大型 `lm/bigram/` 不進 Git，也不附入 tarball。`sources/bigram.lock.json` 與 `scripts/build_release_data.py` 留供維護者更新字典時校驗外部統計輸入；這不是一般使用者或發行版建置的必要步驟。無 bigram 的快速開發產物不符合完整模型配對清單。
+大型 `lm/bigram/` 不進 Git，也不附入 tarball；四個詞對統計檔公開在 [0c-ime-data](https://github.com/0c-biggo/0c-ime-data) 的 Release（`bigram-20261019`，0.2.0 起使用），大小與 SHA-256 固定於 `sources/bigram.lock.json`。下載後以 `scripts/build_release_data.py --bigram-dir` 指定，即可從公開內容重建內附字典，結果與 Release 內附的位元組相同。一般建置直接使用內附字典，不需要這一步。無 bigram 的快速開發產物不符合完整模型配對清單。
 
 `curated` 的版本記錄此批詞庫快照與完整 SHA-256。雜湊按 `chars.tsv`、`words.tsv`、`corrections.tsv` 的順序，取來源欄含 `curated` 的資料列，每列以「檔名、Tab、原始資料列、LF」的 UTF-8 位元組串接計算。來源欄索引依序為 5、4、2（由 0 起算）；忽略空行與 `#` 註解。修改這些人工資料後須更新版本與雜湊，不改寫第三方來源版本。
