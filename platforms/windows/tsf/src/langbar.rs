@@ -360,13 +360,21 @@ pub struct LangBarButton {
     toggle: Box<dyn Fn()>,
     /// 選單的「輸出簡體字」：請引擎即時切換，回傳是否成功（不成功時改請 0c-ui 執行 0c-update）。
     simplify: Box<dyn Fn(bool) -> bool>,
+    /// 開選單前向引擎重新確認「輸出簡體字」（設定程式剛改過時，這個程式還沒有新的快照）；結果經 set_state 回到按鈕。
+    recheck: Box<dyn Fn()>,
     /// 最近一次交給系統的選單項目。選取時依它找 id：狀態在背景更新，「我的詞彙…」出現或消失會讓之後的 id 位移，
     /// 不能拿最新狀態重算（#125）。
     shown: RefCell<Vec<MenuItem>>,
 }
 
 impl LangBarButton {
-    pub fn create(english: bool, simplified: Option<bool>, toggle: Box<dyn Fn()>, simplify: Box<dyn Fn(bool) -> bool>) -> ITfLangBarItemButton {
+    pub fn create(
+        english: bool,
+        simplified: Option<bool>,
+        toggle: Box<dyn Fn()>,
+        simplify: Box<dyn Fn(bool) -> bool>,
+        recheck: Box<dyn Fn()>,
+    ) -> ITfLangBarItemButton {
         crate::object_created();
         let status = Arc::new(Mutex::new(UpdateStatus::default()));
         refresh(status.clone());
@@ -377,6 +385,7 @@ impl LangBarButton {
             sink: RefCell::new(None),
             toggle,
             simplify,
+            recheck,
             shown: RefCell::new(Vec::new()),
         }
         .into()
@@ -410,6 +419,7 @@ pub fn set_state(button: &ITfLangBarItemButton, english: bool, simplified: Optio
 impl LangBarButton_Impl {
     fn items(&self) -> Vec<MenuItem> {
         refresh(self.status.clone()); // 下次開啟時是最新的狀態；這次先用快取，不讓宿主等待
+        (self.recheck)(); // 本機管道一次 health（不啟動引擎），設定程式剛改過也打對勾
         let mut status = lock(&self.status).clone();
         // 引擎能即時切換時，「輸出簡體字」的勾選照引擎目前的值（比 0c-ui 快取 15 秒的狀態新）。
         if let Some(on) = self.simplified.get() {

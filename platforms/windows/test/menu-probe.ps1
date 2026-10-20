@@ -1,9 +1,9 @@
 ﻿# 輸入指示器選單探針（#13）：在已切到靈犀注音的 WPF 視窗執行緒中，經 ITfLangBarItemMgr 取得本輸入法的
 # GUID_LBI_INPUTMODE 按鈕，如同系統介面一樣呼叫 GetText／InitMenu／OnMenuSelect／OnClick，結果寫成 JSON。
 # 由 update-e2e.ps1 以互動排程工作執行；只操作自己的測試視窗。
-param([Parameter(Mandatory=$true)][string]$Out, [string]$Select = '', [switch]$Toggle, [switch]$ShiftToggle, [string]$TypeAfter = '', [string]$ToggleBackThen = '', [switch]$RightClick)
+param([Parameter(Mandatory=$true)][string]$Out, [string]$Select = '', [switch]$ShotAfterSelect, [string]$ThenSet = '', [switch]$Toggle, [switch]$ShiftToggle, [string]$TypeAfter = '', [string]$ToggleBackThen = '', [switch]$RightClick)
 $ErrorActionPreference = 'Stop'
-$result = [ordered]@{ popup = @(); alive_after_popup = $false; text_after_back = $null; typed_after_back = $null; text = $null; tooltip = $null; clsid = $null; menu = @(); selected = $null; text_after_toggle = $null; typed = $null; error = '' }
+$result = [ordered]@{ menu_after_set = @(); text_after_set = $null; tooltip_after_set = $null; text_after_select = $null; tooltip_after_select = $null; menu_after_select = @(); popup = @(); alive_after_popup = $false; text_after_back = $null; typed_after_back = $null; text = $null; tooltip = $null; clsid = $null; menu = @(); selected = $null; text_after_toggle = $null; typed = $null; error = '' }
 $win = $null
 try {
     Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms
@@ -123,6 +123,25 @@ if(`$menu){ [W.U]::PostMessage([IntPtr]`$menu.Current.NativeWindowHandle, 0x0100
         [MenuProbe]::Select([uint32](($hit -split '\|')[0]))
         $result.selected = $hit
         Pump 1500
+        if ($ShotAfterSelect) { # 選了之後的整個螢幕（游標旁的提示、工作列的指示器）
+            Add-Type -AssemblyName System.Drawing
+            $b = [Windows.Forms.Screen]::PrimaryScreen.Bounds; $m = New-Object Drawing.Bitmap $b.Width, $b.Height
+            [Drawing.Graphics]::FromImage($m).CopyFromScreen($b.Location, [Drawing.Point]::Empty, $b.Size); $m.Save($Out + '.select.png')
+        }
+        # 「輸出簡體字」等會改變指示器的項目（#169）：選了之後的字與說明。
+        $result.text_after_select = [MenuProbe]::Text()
+        $result.tooltip_after_select = [MenuProbe]::Tooltip()
+        $result.menu_after_select = @([MenuProbe]::Items())
+    }
+    if ($ThenSet) {
+        # 像設定程式一樣在別的行程改設定（例如 -ThenSet 'output-simplified off'），這個視窗沒有按鍵、沒換焦點，
+        # 再開一次選單：勾選與指示器要跟上（#169）。
+        $updater = Join-Path $env:LOCALAPPDATA 'Zuin\bin\0c-update.exe'
+        $p = Start-Process $updater -ArgumentList (@('set') + ($ThenSet -split ' ') + @('-apply')) -PassThru -WindowStyle Hidden; $p.WaitForExit()
+        Pump 500
+        $result.menu_after_set = @([MenuProbe]::Items())
+        $result.text_after_set = [MenuProbe]::Text()
+        $result.tooltip_after_set = [MenuProbe]::Tooltip()
     }
     if ($Toggle) {
         [MenuProbe]::Toggle()
