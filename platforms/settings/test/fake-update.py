@@ -418,13 +418,16 @@ def api_locked(args):
 MODELS = os.environ.get('FAKE_MODELS', '')
 MODEL_LOCK = [
     {'role': 'select', 'label': '選字', 'version': 'd512-pf512-20260926', 'size': 130723134,
-     'repository': 'Funmula/0c-sequence-d512', 'revision': '71af1f0e5b3c9d2a8e6f4b1c0d7a9e3f5b2c8d1a',
-     'url': 'https://huggingface.co/Funmula/0c-sequence-d512/tree/71af1f0e5b3c9d2a8e6f4b1c0d7a9e3f5b2c8d1a', 'license': 'MIT'},
-    {'role': 'punct', 'label': '補標點', 'version': 'punct-d512-20260930', 'size': 131276866,
-     'repository': 'Funmula/0c-punct-d512', 'revision': '4db3ed40a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6',
-     'url': 'https://huggingface.co/Funmula/0c-punct-d512/tree/4db3ed40a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6', 'license': 'MIT'},
+     'repository': 'Funmula/0c-sequence-d512', 'revision': 'df4b9f04f8aee1dd34dcb246ac2b83c4ab3d14a9',
+     'url': 'https://huggingface.co/Funmula/0c-sequence-d512/tree/df4b9f04f8aee1dd34dcb246ac2b83c4ab3d14a9', 'license': 'MIT'},
+    {'role': 'punct', 'label': '補標點', 'version': 'd512-e60k-20260930', 'size': 130584075,
+     'repository': 'Funmula/0c-punct-d512', 'revision': '105c2770e0b7cf4ce44a792b3b186000dd1727d9',
+     'url': 'https://huggingface.co/Funmula/0c-punct-d512/tree/105c2770e0b7cf4ce44a792b3b186000dd1727d9', 'license': 'MIT'},
 ]
-MODEL_SHA = {'select': '71af1f0e' + '3a5c' * 14, 'punct': '4db3ed40' + '9e1b' * 14}
+# 0.2.2 以前官網內建的匯出（models/equivalent.json）
+OLD_SHA = {'select': 'cef689f1e706537e54eaed4241a776f1ea41b4cad2b504061d1e27cd0c1ca342',
+           'punct': '2d98c7c6c75dc9d46081e967dbd2fccef67f73a1ed9b2da44d7e02002e760cf5'}
+MODEL_SHA = {'select': '71af1f0e77b2752cc71cbc04bf19c8e8f2e765662246f766e65a2822bab4e66e', 'punct': '4db3ed40df777347d9c455da01285b01de192d4c210c5f7cd9f0646c727880d8'}  # models.lock 的 model.onnx
 
 
 def models_installed(source, state='ready'):
@@ -433,7 +436,7 @@ def models_installed(source, state='ready'):
     for m in MODEL_LOCK:
         item = dict(m, state=state, source=source, path=base + '/' + m['role'], sha256=MODEL_SHA[m['role']], equivalent=False)
         if source == 'bundled':  # 0.2.2 以前官網內建的內部匯出：權重與 Hugging Face 版相同（models/equivalent.json），上游資訊照附
-            item.update(sha256=('cef689f1' if m['role'] == 'select' else '2d98c7c6') + '0b7d' * 14, equivalent=True)
+            item.update(sha256=OLD_SHA[m['role']], equivalent=True)
         out.append(item)
     return out
 

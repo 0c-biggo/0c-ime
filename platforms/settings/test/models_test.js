@@ -10,9 +10,9 @@ const L = window.ZcModelsLogic;
 
 const LOCK = [
   { role: 'select', label: '選字', state: 'not_installed', version: 'd512-pf512-20260926', path: '', sha256: '', size: 130723134,
-    repository: 'Funmula/0c-sequence-d512', revision: 'df4b9f04aa11', url: 'https://huggingface.co/Funmula/0c-sequence-d512/tree/df4b9f04aa11', license: 'MIT' },
-  { role: 'punct', label: '補標點', state: 'not_installed', version: 'punct-d512', path: '', sha256: '', size: 131276866,
-    repository: 'Funmula/0c-punct-d512', revision: '4db3ed40bb22', url: 'https://huggingface.co/Funmula/0c-punct-d512/tree/4db3ed40bb22', license: 'MIT' },
+    repository: 'Funmula/0c-sequence-d512', revision: 'df4b9f04f8aee1dd34dcb246ac2b83c4ab3d14a9', url: 'https://huggingface.co/Funmula/0c-sequence-d512/tree/df4b9f04f8aee1dd34dcb246ac2b83c4ab3d14a9', license: 'MIT' },
+  { role: 'punct', label: '補標點', state: 'not_installed', version: 'd512-e60k-20260930', path: '', sha256: '', size: 130584075,
+    repository: 'Funmula/0c-punct-d512', revision: '105c2770e0b7cf4ce44a792b3b186000dd1727d9', url: 'https://huggingface.co/Funmula/0c-punct-d512/tree/105c2770e0b7cf4ce44a792b3b186000dd1727d9', license: 'MIT' },
 ];
 function status(over) {
   return Object.assign({ schema: 1, source: 'none', can_download: true, disabled_reason: '', runtime: { ok: true, python: '/usr/bin/python3', missing: [] },
@@ -31,7 +31,7 @@ test('未安裝、可下載：只有「下載模型」，下載前寫明大小�
   const s = status();
   assert.strictEqual(L.summary(s).text, '未安裝，目前使用統計選字。');
   assert.deepStrictEqual(L.actions(s), { download: true, redownload: false, cancel: false, remove: false });
-  assert.strictEqual(L.downloadNote(s), '約 262 MB，從 Hugging Face 下載：Funmula/0c-sequence-d512（df4b9f04）、Funmula/0c-punct-d512（4db3ed40），授權 MIT。');
+  assert.strictEqual(L.downloadNote(s), '約 262 MB，從 Hugging Face 下載：Funmula/0c-sequence-d512（df4b9f04）、Funmula/0c-punct-d512（105c2770），授權 MIT。');
 });
 
 test('下載中：顯示百分比，只能取消', () => {

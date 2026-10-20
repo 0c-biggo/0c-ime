@@ -47,7 +47,7 @@ if window_up; then
   # 內建的沒有按鈕：第 9 個 Tab 是第一張卡的「複製」，第 10 個是它的 Hugging Face 連結（0.2.2 以前內建的模型與公開版
   # 權重相同，也附上游來源，卡片多一行小字）。按下去只開網址，不會送出任何 models 動作。
   mtabs 10; xdotool key space; sleep 1
-  check "0.2.2 以前內建的模型也附 Hugging Face 連結" bash -c "for i in \$(seq 20); do grep -qx 'https://huggingface.co/Funmula/0c-sequence-d512/tree/71af1f0e5b3c9d2a8e6f4b1c0d7a9e3f5b2c8d1a' '$(home_of mbundled)/opened-urls' 2>/dev/null && exit 0; sleep .2; done; exit 1"
+  check "0.2.2 以前內建的模型也附 Hugging Face 連結" bash -c "for i in \$(seq 20); do grep -qx 'https://huggingface.co/Funmula/0c-sequence-d512/tree/df4b9f04f8aee1dd34dcb246ac2b83c4ab3d14a9' '$(home_of mbundled)/opened-urls' 2>/dev/null && exit 0; sleep .2; done; exit 1"
   check "內建模型沒有下載、取消、刪除" bash -c "! grep -Eq 'models-(download|cancel|remove)' '$(home_of mbundled)/fake.log'"
   # 深色模式（GTK 的深色主題 → prefers-color-scheme: dark）
 else bad "mbundled/models 視窗沒有出現"; cat /tmp/app-mbundled-models.log; fi
@@ -90,7 +90,7 @@ mlaunch muser
 if window_up; then
   sleep 3; mshot models-user
   mtabs 11; xdotool key space             # 刪除 → 選字卡的「複製」→ 選字卡的 Hugging Face 連結
-  check "Hugging Face 連結交給 xdg-open（系統瀏覽器）" bash -c "for i in \$(seq 20); do grep -qx 'https://huggingface.co/Funmula/0c-sequence-d512/tree/71af1f0e5b3c9d2a8e6f4b1c0d7a9e3f5b2c8d1a' '$(home_of muser)/opened-urls' 2>/dev/null && exit 0; sleep .2; done; exit 1"
+  check "Hugging Face 連結交給 xdg-open（系統瀏覽器）" bash -c "for i in \$(seq 20); do grep -qx 'https://huggingface.co/Funmula/0c-sequence-d512/tree/df4b9f04f8aee1dd34dcb246ac2b83c4ab3d14a9' '$(home_of muser)/opened-urls' 2>/dev/null && exit 0; sleep .2; done; exit 1"
   xdotool key shift+Tab shift+Tab space   # 回到「刪除」
   sleep 1; mshot models-remove-confirm
   check "按「刪除」先確認，還沒送出 models remove" mlog_lacks muser remove
