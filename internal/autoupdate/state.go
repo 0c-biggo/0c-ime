@@ -13,6 +13,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"git.biggo.com/0c/ime/internal/filelock"
 )
 
 // 模式：自動保持最新（推薦）、下載後詢問、手動。
@@ -254,7 +256,7 @@ func Save(base string, s *State) error {
 }
 
 // ErrLocked：另一個程序正握著同一把鎖，短時間內拿不到。
-var ErrLocked = errors.New("另一個程序正在修改，請稍後再試")
+var ErrLocked = filelock.ErrLocked
 
 // WithLock 取得 base/update 下的命名鎖後執行 fn，用來序列化 state.json 以外的短暫讀改寫
 // （例如 settings.json）。最多等 2 秒；前一次執行被中止留下的鎖會依行程是否存活接手。
@@ -269,26 +271,7 @@ func WithLock(base, name string, fn func() error) error {
 
 // waitLock waits only on contention; filesystem errors must retain their cause.
 func waitLock(ctx context.Context, base, name string) (func(), error) {
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		unlock, err := lockFile(base, name)
-		if err == nil {
-			return unlock, nil
-		}
-		if !errors.Is(err, ErrLocked) || !time.Now().Before(deadline) {
-			return nil, err
-		}
-		timer := time.NewTimer(10 * time.Millisecond)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return nil, ctx.Err()
-		case <-timer.C:
-		}
-	}
+	return filelock.Wait(ctx, base, name)
 }
 
 // ForgetInstalled 在使用者自己完整安裝後，清掉不比已安裝版本新的待辦。背景更新已準備好 dev.54、
