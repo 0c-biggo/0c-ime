@@ -507,7 +507,7 @@
 
   // 輸出設定：送出的文字怎麼轉換（#118 簡體字），跟打字、選字分開，左側獨立一頁。
   function output(root) {
-    root.append(h('h1', {}, '輸出設定'), h('p', { class: 'lead' }, '決定送到應用程式的文字；組字和候選照常顯示繁體。改動會立即儲存，並在沒有組字時讓輸入法套用。'));
+    root.append(h('h1', {}, '輸出設定'), h('p', { class: 'lead' }, '決定送到應用程式的文字；組字和候選照常顯示繁體。改動會立即儲存並馬上套用，正在組字的字送出時也照新的設定；也可以從輸入法選單的「輸出簡體字」切換。'));
     if (problem(root)) return;
     const settings = state.settings;
     root.append(...fileNotices(settings));
