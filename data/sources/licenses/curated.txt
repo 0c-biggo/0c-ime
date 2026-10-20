@@ -1,8 +1,8 @@
 0c 人工維護的詞條（curated）
-Copyright (c) 2026 0c contributors
+Copyright (c) 2026 Funmula Co., Limited
 
 本來源的自有詞條與人工整理內容依 CC-BY-SA-4.0 授權。
-署名：0c contributors
+署名：Funmula Co., Limited
 來源：https://0c.biggo.com
 授權：https://creativecommons.org/licenses/by-sa/4.0/
 與其他來源共同標記的詞條，仍須保留該來源的署名與授權。
