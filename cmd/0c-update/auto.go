@@ -26,6 +26,10 @@ const DefaultFeed = "https://s3.biggo.com/0c-releases/feeds/public-beta.json"
 // pointerSince 是第一個認得引擎指標的完整安裝版本；更舊的外殼只能以完整安裝更新。
 const pointerSince = "0.1.0-dev.18"
 
+// unattendedInstall：這次安裝由背景自動更新執行、沒有使用者在看（macOS 的輸入法程式交接只在使用者離開時做，#178）。
+// 終端機、.pkg 與設定程式「立即安裝」（finish）都是使用者自己執行的安裝。這個程式一次只執行一個命令。
+var unattendedInstall bool
+
 // system 是真實作業系統上的 autoupdate.Platform。
 type system struct {
 	base      string
@@ -146,6 +150,8 @@ func (p *system) InstallShell(ctx context.Context, archive string) (bool, error)
 	if p.ReloadsShell() {
 		return p.installReloadableShell(ctx, root, r)
 	}
+	// 沒有使用者親自確認的安裝（背景自動更新）：macOS 只在使用者離開時交接輸入法程式（#178）。
+	unattendedInstall = !p.consent
 	if err = install(root, r); err != nil {
 		return false, err
 	}

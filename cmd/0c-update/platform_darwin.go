@@ -147,9 +147,17 @@ func install(bundle string, release *update.Release) error {
 	}
 	os.Remove(reloginMarker(basePath()))
 	fmt.Println("已啟用「靈犀注音」輸入方式（系統詢問時請允許）。")
-	if left := retireMacShells(filepath.Join(installed, "Contents/MacOS/0c"), uiWaitInstall, macQuietInstall); len(left) > 0 {
-		fmt.Println("舊版的輸入法程式正在使用中（正在組字或打字），停止打字後會自動換成新版，不必登出。")
-	} else if before != nil {
+	// 使用者自己安裝：停手後立即交接並啟動新版。背景自動安裝（unattendedInstall）只在使用者離開時交接，
+	// 沒交接的由之後的排程在使用者離開時補上（#178）。
+	retired, left := retireMacShells(filepath.Join(installed, "Contents/MacOS/0c"), uiWaitInstall, unattendedInstall)
+	switch {
+	case len(left) > 0 && unattendedInstall:
+		fmt.Println("舊版的輸入法程式會在你離開電腦（螢幕鎖定或關閉）時換成新版，不必登出；在那之前照常可以打字。")
+	case len(left) > 0:
+		fmt.Println("舊版的輸入法程式正在使用中（正在組字或打字），會在你離開電腦（螢幕鎖定或關閉）時換成新版，不必登出；在那之前照常可以打字。")
+	case retired > 0:
+		fmt.Println("已換成新版，不必登出。")
+	case before != nil:
 		fmt.Println("下一次切換到「靈犀注音」或開始打字，就是新版；不必登出。")
 	}
 	return nil
@@ -278,8 +286,10 @@ func rollback(_ string, restoreUser bool) error {
 	if filepath.Base(r.App) == update.LegacyMacApp {
 		exe = filepath.Join(r.App, "Contents/MacOS/Zuin")
 	}
-	if left := retireMacShells(exe, uiWaitInstall, macQuietInstall); len(left) > 0 {
-		fmt.Println("目前的輸入法程式正在使用中（正在組字或打字），停止打字後會自動換成回復的版本，不必登出。")
+	if retired, left := retireMacShells(exe, uiWaitInstall, false); len(left) > 0 {
+		fmt.Println("目前的輸入法程式正在使用中（正在組字或打字），會在你離開電腦（螢幕鎖定或關閉）時換成回復的版本，不必登出。")
+	} else if retired > 0 {
+		fmt.Println("已換成回復的版本，不必登出。")
 	} else {
 		fmt.Println("下一次切換到「靈犀注音」或開始打字，就是回復的版本；不必登出。")
 	}
