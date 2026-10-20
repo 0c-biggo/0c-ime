@@ -2520,5 +2520,140 @@ Successfully verified: 0c-update.exe
         self.assertNotIn("neural/pairing.lock.json\n", dry_run("PAIRING_LOCK=/nonexistent/pairing.lock.json"))
 
 
+class HFModelsTests(unittest.TestCase):
+    """#180：官網套件內建 Hugging Face 公開版模型（scripts/hf_models.py），0.2.2 以前的內部匯出視為等價。"""
+
+    OLD = {"select": "cef689f1e706537e54eaed4241a776f1ea41b4cad2b504061d1e27cd0c1ca342",
+           "punct": "2d98c7c6c75dc9d46081e967dbd2fccef67f73a1ed9b2da44d7e02002e760cf5"}
+
+    def setUp(self):
+        import hf_models
+        import pairing_lock
+        self.hf, self.pairing = hf_models, pairing_lock
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        # 小的假權重：models.lock 只換 model.onnx、LICENSE、README.md 的雜湊；manifest.json、vocab.json 仍是上游原檔。
+        lock = json.loads(hf_models.LOCK.read_bytes())
+        self.weights = self.root / "hf"
+        for role in hf_models.ROLES:
+            for name in ("model.onnx", "LICENSE", "README.md"):
+                content = f"{role} {name}\n".encode() * 100
+                (self.weights / role).mkdir(parents=True, exist_ok=True)
+                (self.weights / role / name).write_bytes(content)
+                lock["models"][role]["files"][name] = {"sha256": installer.digest(self.weights / role / name), "size": len(content)}
+        self.lock = self.root / "models.lock.json"
+        self.lock.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+        self.data = self.root / "data"
+        self.data.mkdir()
+        (self.data / "manifest.json").write_bytes(b'{"format": 2, "dictionary": "release"}\n')
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_identity_accepts_hugging_face_and_old_shipped_hashes(self):
+        lock = json.loads(self.hf.LOCK.read_bytes())
+        for role in self.hf.ROLES:
+            self.assertEqual(self.hf.model_identity(role, lock["models"][role]["files"]["model.onnx"]["sha256"]), "upstream")
+            self.assertEqual(self.hf.model_identity(role, self.OLD[role]), "equivalent")
+            self.assertIsNone(self.hf.model_identity(role, "c" * 64))
+        self.assertIsNone(self.hf.model_identity("punct", self.OLD["select"]))  # 不跨角色
+        # models.lock 換了 revision：舊的等價紀錄不再適用
+        lock["models"]["select"]["revision"] = "e" * 40
+        bumped = self.root / "bumped.lock.json"
+        bumped.write_text(json.dumps(lock), encoding="utf-8")
+        self.assertIsNone(self.hf.model_identity("select", self.OLD["select"], bumped))
+        self.assertEqual(self.hf.model_identity("punct", self.OLD["punct"], bumped), "equivalent")
+        # 等價清單與 Go 編進 0c-update 的是同一份，記的上游與 models.lock 一致
+        equivalent = json.loads(self.hf.EQUIVALENT.read_text(encoding="utf-8"))
+        real = json.loads(self.hf.LOCK.read_bytes())["models"]
+        for role, item in equivalent["models"].items():
+            self.assertEqual((item["repository"], item["revision"], item["model.onnx"]),
+                             (real[role]["repository"], real[role]["revision"], real[role]["files"]["model.onnx"]["sha256"]))
+
+    def test_fetch_verifies_source_and_caches_downloads(self):
+        weights = self.hf.fetch(self.weights, lock_path=self.lock)
+        self.assertEqual(sorted(weights["select"]), ["LICENSE", "README.md", "model.onnx"])
+        (self.weights / "punct/model.onnx").write_bytes(b"tampered")
+        with self.assertRaisesRegex(ValueError, "punct/model.onnx 與 models.lock 不符"):
+            self.hf.fetch(self.weights, lock_path=self.lock)
+        (self.weights / "punct/model.onnx").write_bytes("punct model.onnx\n".encode() * 100)
+        # 沒有 --from：從鏡像（Hugging Face 的 <repo>/resolve/<revision>/<檔名>）下載進快取，第二次不再下載
+        lock = json.loads(self.lock.read_bytes())
+        urls = []
+
+        def fake_download(url, target):
+            urls.append(url)
+            role = "select" if "/0c-sequence-d512/" in url else "punct"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(self.weights / role / url.rsplit("/", 1)[1], target)
+
+        with patch.object(self.hf, "download", fake_download):
+            cache = self.root / "cache"
+            got = self.hf.fetch(cache=cache, base_url="https://mirror.test/", lock_path=self.lock)
+            self.assertEqual(len(urls), 6)
+            self.assertIn(f"https://mirror.test/Funmula/0c-sequence-d512/resolve/{lock['models']['select']['revision']}/model.onnx", urls)
+            self.assertEqual(got["punct"]["model.onnx"], cache / "punct" / lock["models"]["punct"]["revision"] / "model.onnx")
+            self.hf.fetch(cache=cache, base_url="https://mirror.test", lock_path=self.lock)
+            self.assertEqual(len(urls), 6)
+
+    def test_replace_models_pairs_public_models_and_matches_pairing_lock(self):
+        # 0.2.2 形狀的 neural/：可攜 Python、worker、內部匯出的模型（含 export-validation.json）
+        old = self.root / "old-neural"
+        for path in ("python/bin/python3", "sequence_runtime.py", "punct_runtime.py", "README.txt",
+                     "select/model.onnx", "select/manifest.json", "select/vocab.json", "select/export-validation.json",
+                     "punct/model.onnx", "punct/manifest.json", "punct/vocab.json", "pairing.lock.json"):
+            (old / path).parent.mkdir(parents=True, exist_ok=True)
+            (old / path).write_text("old " + path)
+        weights = self.hf.fetch(self.weights, lock_path=self.lock)
+        out = self.hf.replace_models(old, self.data, self.root / "new/neural", weights, self.lock)
+        self.assertEqual((out / "python/bin/python3").read_text(), "old python/bin/python3")
+        self.assertEqual((out / "sequence_runtime.py").read_text(), "old sequence_runtime.py")
+        self.assertFalse((out / "pairing.lock.json").exists())
+        self.assertEqual(sorted(p.name for p in (out / "select").iterdir()), ["LICENSE", "README.md", "manifest.json", "model.onnx", "vocab.json"])
+        dictionary = installer.digest(self.data / "manifest.json")
+        expected = json.loads(self.pairing.pairing_lock(dictionary, self.lock))
+        for role in self.hf.ROLES:
+            self.assertEqual((out / role / "model.onnx").read_bytes(), (self.weights / role / "model.onnx").read_bytes())
+            self.assertEqual(json.loads((out / role / "vocab.json").read_bytes())["dictionary_sha256"], dictionary)
+            for name in ("manifest.json", "vocab.json"):
+                self.assertEqual(installer.digest(out / role / name), expected["packages"][role][name]["sha256"], f"{role}/{name}")
+        self.assertEqual(self.hf.check_shipped(out, self.data, self.lock), self.pairing.pairing_lock(dictionary, self.lock))
+        with self.assertRaisesRegex(ValueError, "輸出已存在"):
+            self.hf.replace_models(old, self.data, out, weights, self.lock)
+        # 內部匯出的 neural/（manifest 不是上游的）不能當公開包出貨
+        with self.assertRaisesRegex(ValueError, "不是公開版模型配對出貨字典的結果"):
+            self.hf.check_shipped(old, self.data, self.lock)
+        # 只換掉權重（例如沿用舊的 model.onnx）也擋下
+        shutil.copyfile(old / "select/model.onnx", out / "select/model.onnx")
+        with self.assertRaisesRegex(ValueError, "官網套件要內建 Hugging Face 公開版"):
+            self.hf.check_shipped(out, self.data, self.lock)
+
+    def test_shipped_repairing_keeps_the_pairing_lock_consistent(self):
+        # 打包時 prepare_data_manifest 拿掉不公開來源、把模型改配對到出貨 manifest：結果仍等於出貨字典的 pairing.lock。
+        news = {"ID": "zuin-news-stratified-20260921", "Name": "新聞", "Distributable": False}
+        (self.data / "manifest.json").write_bytes(packager.json_bytes(
+            {"format": 2, "sources": [{"ID": "zhwiki", "Distributable": True}, news]}))
+        weights = self.hf.fetch(self.weights, lock_path=self.lock)
+        neural = self.root / "neural"
+        neural.mkdir()
+        self.hf.write_packages(weights, installer.digest(self.data / "manifest.json"), neural, self.lock)
+        shipped = packager.prepare_data_manifest(self.data, neural)
+        self.assertEqual(shipped, installer.digest(self.data / "manifest.json"))
+        self.assertEqual(json.loads(self.hf.check_shipped(neural, self.data, self.lock))["dictionary_manifest_sha256"], shipped)
+
+    def test_missing_in_vocab_lists_unknown_characters(self):
+        # #172 的 18 個人名字都在公開版模型的 vocab 裡；沒有的字逐一列出（兩個模型各一）
+        self.assertEqual(self.hf.missing_in_vocab(list("凃姸晗峯鳯伃珢瀞㵢彣烱瓈慜諪琹坣佀啓")), [])
+        self.assertEqual(self.hf.missing_in_vocab(["𠀀"]), ["select:𠀀", "punct:𠀀"])
+
+    def test_prepare_neural_takes_models_from_the_lock(self):
+        import prepare_neural
+        import sys
+        parser_help = subprocess.run([sys.executable, "-B", str(Path(prepare_neural.__file__)), "--help"],
+                                     capture_output=True, text=True).stdout
+        self.assertIn("--models", parser_help)
+        self.assertNotIn("--select", parser_help)
+
+
 if __name__ == "__main__":
     unittest.main()

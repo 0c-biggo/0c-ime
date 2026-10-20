@@ -21,12 +21,14 @@ build/0c-server -data assets/data \
 
 ```sh
 python3 scripts/prepare_neural.py --platform linux-amd64 \
-  --select models/select --punct models/punct \
-  --dictionary assets/data --out build/neural-linux-amd64
+  --dictionary assets/data --models models \
+  --out build/neural-linux-amd64
 ```
 
-Windows 使用 `windows-amd64`，Apple Silicon 使用 `macos-arm64`。工具下載並校驗固定版本的 Python 與 wheel，核對模型雜湊及字典綁定；快取在 `build/cache/neural`。完整 tarball 已附上現成字典與配對模型，可直接使用上例。
+Windows 使用 `windows-amd64`，Apple Silicon 使用 `macos-arm64`（onnxruntime 需 macOS 14 以上）。工具下載並校驗固定版本的 Python 與 wheel，快取在 `build/cache/neural`。
+
+模型是 `models/models.lock.json` 記的 Hugging Face 公開版（#180，0.2.3 起；0.2.2 以前是權重相同的內部匯出，見 `models/equivalent.json`）。`--models` 指定的目錄須有 `<select|punct>/model.onnx`、`LICENSE`、`README.md`，完整 tarball 的 `models/` 即可；省略時用 `build/cache/models`，缺的從 Hugging Face 下載，一律逐檔核對 `models.lock`。`manifest.json`、`vocab.json` 由 `models/upstream` 配對到 `--dictionary`，結果等於這份字典的 `pairing.lock.json`。只換字典或只換模型、沿用現有的可攜 Python 時用 `scripts/hf_models.py neural`。
 
 以 `--neural` 將輸出目錄交給平台打包工具，並用同一份字典作為 `--data`。發行版離線建置應自行提供相依套件，不直接使用會下載 runtime 的可攜套件流程。
 
-worker 必須以 `-I -B -X utf8` 執行；安裝後檔案不得在執行時改變。換模型須同步更換配對字典並重新產生 runtime，不手動改寫 manifest。
+worker 必須以 `-I -B -X utf8` 執行；安裝後檔案不得在執行時改變。換模型須同步更換配對字典並重新產生 runtime，不手動改寫 manifest。公開包打包時核對 `neural/` 就是公開版模型配對出貨字典的結果（`hf_models.check_shipped`）。

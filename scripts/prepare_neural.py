@@ -3,11 +3,13 @@
 
 The result sits next to the paired system dictionary in a release bundle; 0c-server finds it there.
 Downloads are pinned by SHA-256 and cached; nothing is installed on this machine.
+
+模型是 models/models.lock.json 記的 Hugging Face 公開版（#180）：由 scripts/hf_models.py 取得原檔（--models 指定的
+目錄、快取或下載，逐檔核對 models.lock），依 --dictionary 配對；結果等於這份字典的 pairing.lock.json。
 """
 
 import argparse
 import hashlib
-import json
 import os
 from pathlib import Path
 import shutil
@@ -17,6 +19,8 @@ import tarfile
 import tempfile
 import urllib.request
 import zipfile
+
+import hf_models
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKERS = ROOT / "platforms/neural/runtime"
@@ -166,24 +170,10 @@ def precompile(tree, compiler):
                     "--invalidation-mode", "unchecked-hash", str(tree)], check=True)
 
 
-def check_package(path, kind):
-    manifest = json.loads((path / "manifest.json").read_text(encoding="utf-8"))
-    files = manifest.get("files", {})
-    if set(files) != {"model.onnx", "vocab.json"}:
-        raise ValueError(f"{kind} 套件缺少模型檔")
-    for name, expected in files.items():
-        if digest(path / name) != expected:
-            raise ValueError(f"{kind} 模型雜湊不符：{name}")
-    return manifest
-
-
 def build(args):
     runtime = RUNTIMES[args.platform]
-    select = check_package(args.select, "選字")
-    check_package(args.punct, "補標點")
     dictionary = digest(args.dictionary / "manifest.json")
-    if select.get("dictionary_sha256") != dictionary:
-        raise ValueError(f"選字模型配對的字典 {select.get('dictionary_sha256')} 與打包字典 {dictionary} 不同")
+    weights = hf_models.fetch(args.models, args.models_cache, log=sys.stderr)
     out = args.out
     if out.exists():
         raise ValueError(f"輸出已存在：{out}")
@@ -219,8 +209,7 @@ def build(args):
                 precompile(site, Path(temp) / "python/bin/python3")
         for name in ("sequence_runtime.py", "punct_runtime.py"):
             shutil.copy2(WORKERS / name, stage / name)
-        shutil.copytree(args.select, stage / "select")
-        shutil.copytree(args.punct, stage / "punct")
+        hf_models.write_packages(weights, dictionary, stage)
         (stage / "README.txt").write_text(
             "靈犀注音內附的神經選字與提交時補標點：可攜 Python " + PYTHON_VERSION +
             "（numpy、onnxruntime）、worker 與模型。只在本機執行，不連網。\n"
@@ -236,9 +225,10 @@ def build(args):
 def main():
     parser = argparse.ArgumentParser(description="組出套件內附的 neural/ 目錄（可攜 Python、worker、模型）")
     parser.add_argument("--platform", required=True, choices=sorted(RUNTIMES))
-    parser.add_argument("--select", required=True, type=Path, help="選字模型套件目錄")
-    parser.add_argument("--punct", required=True, type=Path, help="補標點模型套件目錄")
-    parser.add_argument("--dictionary", required=True, type=Path, help="將一起出貨的系統字典目錄（核對配對）")
+    parser.add_argument("--models", type=Path, help="Hugging Face 原檔目錄（<dir>/<select|punct>/model.onnx、LICENSE、README.md，"
+                        "例如 0c-ime 的 models/）；省略則用 --models-cache 或從 Hugging Face 下載。一律核對 models.lock")
+    parser.add_argument("--models-cache", type=Path, default=hf_models.CACHE, help="模型下載快取")
+    parser.add_argument("--dictionary", required=True, type=Path, help="將一起出貨的系統字典目錄（模型配對到它）")
     parser.add_argument("--out", required=True, type=Path, help="輸出目錄（不可已存在）")
     parser.add_argument("--cache", type=Path, default=ROOT / "build/cache/neural", help="下載快取")
     parser.add_argument("--python-archive", help="已下載的 Python 壓縮檔（仍核對雜湊）")
