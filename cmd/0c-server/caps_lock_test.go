@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"git.biggo.com/0c/ime/bridge/ipc"
@@ -17,6 +18,7 @@ import (
 
 // #173：settings.json 的 caps_lock_english（缺欄位時預設關）決定 caps_lock 請求有沒有作用；health 與 open 的 info 回報
 // 引擎載入的值，外殼據此決定要不要回報 Caps Lock 狀態，設定程式據此比較「已儲存，尚未套用」。
+// macOS 沒有這個選項：設定檔寫了也不生效（開 Caps Lock 本來就是英文，由外殼送 mode）。
 func TestCapsLockEnglishSettingInServer(t *testing.T) {
 	binary := buildServer(t)
 	dir := t.TempDir()
@@ -34,6 +36,7 @@ func TestCapsLockEnglishSettingInServer(t *testing.T) {
 		if err := server.Start(); err != nil {
 			t.Fatal(err)
 		}
+		tc.on = tc.on && settings.CapsLockEnglishSetting(runtime.GOOS)
 		func() {
 			defer func() { server.Process.Signal(os.Interrupt); server.Wait() }()
 			waitDial(t, sock)
