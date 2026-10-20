@@ -618,6 +618,42 @@ int main(int argc, char **argv) {
         std::ofstream(home + "/settings.json") << R"({})";
     }
     {
+        // #169：選單切換「輸出簡體字」即時生效：另一個輸入框已經在組字區的字照新的設定送出，設定檔跟著寫；
+        // 切換不記進重播紀錄（斷線重連後不會再切一次）。
+        auto typeScenery = [](zuin::Session &s) {
+            zuin::Snapshot snap;
+            for (const char *k : {"z", "/", " ", "r", "u", "/", "3"}) { snap = s.key(k); } // ㄈㄥ ㄐㄧㄥˇ
+            return snap;
+        };
+        auto stored = [&] {
+            std::ifstream in(home + "/settings.json");
+            auto j = nlohmann::json::parse(in, nullptr, false);
+            return j.is_object() && j.value("output_simplified", false);
+        };
+        zuin::Session menu(client, nullptr), editor(client, nullptr);
+        CHECK(menu.ensureLive() && !menu.simplifiedAtOpen(), "引擎應回報 output_simplified_live、目前是繁體");
+        auto snap = typeScenery(editor);
+        CHECK(snap.text() == "風景" && !snap.outputSimplified, "組字：%s", snap.text().c_str());
+        auto toggled = menu.outputSimplified(true);
+        CHECK(toggled.ok && toggled.handled && toggled.outputSimplified && !toggled.notices.empty() &&
+              toggled.notices.front() == "已切換為輸出簡體字", "切換：%d %d", toggled.handled, toggled.outputSimplified);
+        CHECK(stored(), "settings.json 應寫入 output_simplified=true");
+        snap = editor.key("Enter");
+        CHECK(snap.commit == "风景" && snap.outputSimplified, "組字中切換後送出 %s", snap.commit.c_str());
+        // 組字中切換：組字不動，也不進重播紀錄。引擎重啟後設定檔改回繁體，重播不能再把它切成簡體。
+        snap = typeScenery(menu);
+        toggled = menu.outputSimplified(true);
+        CHECK(toggled.text() == "風景" && toggled.commit.empty(), "切換不動組字：%s", toggled.text().c_str());
+        (void)!system((std::string("pkill -f '0c-server -socket ") + argv[1] + "'").c_str());
+        usleep(300 * 1000);
+        std::ofstream(home + "/settings.json") << R"({"output_simplified":false})";
+        snap = menu.key("Enter"); // 重連、重播組字後送出
+        CHECK(snap.commit == "風景" && !stored(), "重播不能再切換：送出 %s，設定 %d", snap.commit.c_str(), stored());
+        (void)!system((std::string("pkill -f '0c-server -socket ") + argv[1] + "'").c_str());
+        usleep(300 * 1000);
+        std::ofstream(home + "/settings.json") << R"({})";
+    }
+    {
         // #117：預設（右 Shift）時 health 回報右 Shift 切換、左 Shift 不切換。
         zuin::Session s(client, nullptr);
         auto keys = s.shiftKeys();

@@ -58,6 +58,18 @@ int main() {
     EXPECT(zuin::settingsCommand(false) == (std::vector<std::string>{"open-settings"}));
     EXPECT(zuin::settingsCommand(true) == (std::vector<std::string>{"open-settings", "vocab"}));
     EXPECT(std::string(zuin::vocabLabel) == "我的詞彙…");
+    // 「輸出簡體字」（#169）：0.2.1 以前的 0c-update 沒有 settings.output_simplified，不顯示；引擎能即時切換時
+    // 以 runtime 的值（引擎目前的狀態）為準，否則看設定檔。舊引擎退回的命令寫設定並交接重啟。
+    EXPECT(!idle.simplifiedKnown && !idle.outputSimplified && !idle.simplifiedLive);
+    auto stored = zuin::parseStatus(R"({"settings":{"output_simplified":true},"runtime":{"state":"running"}})");
+    EXPECT(stored.simplifiedKnown && stored.outputSimplified && !stored.simplifiedLive);
+    auto live = zuin::parseStatus(R"({"settings":{"output_simplified":false},"runtime":{"state":"running","output_simplified_live":true,"output_simplified":true}})");
+    EXPECT(live.simplifiedKnown && live.outputSimplified && live.simplifiedLive);
+    auto odd = zuin::parseStatus(R"({"settings":{"output_simplified":"yes"},"runtime":{"output_simplified_live":"true","output_simplified":true}})");
+    EXPECT(!odd.simplifiedKnown && !odd.simplifiedLive);
+    EXPECT(std::string(zuin::simplifiedLabel) == "輸出簡體字");
+    EXPECT(zuin::simplifiedCommand(true) == (std::vector<std::string>{"set", "output-simplified", "on", "-apply", "-notify"}));
+    EXPECT(zuin::simplifiedCommand(false)[2] == "off");
     // 以假的 0c-update 驗證參數傳遞、輸出讀取與逾時。
     char dir[] = "/tmp/zuin-menu-XXXXXX";
     if (!mkdtemp(dir)) { return 1; }

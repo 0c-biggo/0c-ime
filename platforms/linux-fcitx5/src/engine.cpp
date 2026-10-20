@@ -78,6 +78,15 @@ SetComment setCommentFunction() {
     return fn;
 }
 
+// Instance::showCustomInputMethodInformation 是 Fcitx 5.1.11 才有的（Ubuntu 24.04 的 5.1.7 沒有）；同 setCommentFunction 在執行時找，
+// 找不到回傳 nullptr，切換提示退回 showInputMethodInformation（顯示輸入法名稱與子模式「注音・簡體輸出」）。
+using ShowCustomInformation = void (*)(fcitx::Instance *, fcitx::InputContext *, const std::string &);
+ShowCustomInformation showCustomInformationFunction() {
+    static const auto fn = reinterpret_cast<ShowCustomInformation>(dlsym(RTLD_DEFAULT,
+        "_ZN5fcitx8Instance32showCustomInputMethodInformationEPNS_12InputContextERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE"));
+    return fn;
+}
+
 class ZuinCandidate : public fcitx::CandidateWord {
 public:
     // note 是低調附註（模糊音近音為「近音 ㄓ」），以 Fcitx 的 comment 顯示在候選之後；空字串不顯示。
@@ -325,7 +334,8 @@ public:
     }
 
     std::string subMode(const fcitx::InputMethodEntry &, fcitx::InputContext &ic) override {
-        return state(&ic)->session.english() ? "英文" : "注音";
+        if (state(&ic)->session.english()) { return "英文"; }
+        return simplified_ ? "注音・簡體輸出" : "注音"; // #169：送出時轉成簡體
     }
 
     std::string subModeIconImpl(const fcitx::InputMethodEntry &, fcitx::InputContext &ic) override {
@@ -334,7 +344,9 @@ public:
 
     // GNOME Kimpanel always prefers a nonempty label= hint over the supplied icon.
     // The icon itself contains 注／英; leave the text label empty on both modes.
-    std::string subModeLabelImpl(const fcitx::InputMethodEntry &, fcitx::InputContext &) override {
+    // 「輸出簡體字」開著時（#169）注音模式改用文字「注·簡」：誤開時從面板看得出來（組字和候選照樣是繁體，送出才轉）。
+    std::string subModeLabelImpl(const fcitx::InputMethodEntry &, fcitx::InputContext &ic) override {
+        if (simplified_ && !state(&ic)->session.english()) { return "注·簡"; }
         return {};
     }
 
@@ -525,6 +537,8 @@ private:
             state(ic)->shownEnglish = state(ic)->session.english();
             ic->updateUserInterface(fcitx::UserInterfaceComponent::StatusArea);
         }
+        // 「輸出簡體字」在設定程式或別的外殼切換後（#169），下一個快照就跟上；只信回報即時切換的引擎（舊引擎沒有這一項）。
+        if (state(ic)->session.simplifiedLive()) { setSimplified(snap.outputSimplified, ic); }
         state(ic)->session.presented(snap.traceSequence, zuin::Trace::monotonicMicros() - started);
     }
 
@@ -548,6 +562,10 @@ private:
         };
         openSettings_.connect<fcitx::SimpleAction::Activated>([this](fcitx::InputContext *) { openSettings(false); });
         vocab_.connect<fcitx::SimpleAction::Activated>([this](fcitx::InputContext *) { openSettings(true); });
+        simplifiedAction_.setShortText(zuin::simplifiedLabel);
+        simplifiedAction_.setCheckable(true);
+        ui.registerAction("zuin-simplified", &simplifiedAction_);
+        simplifiedAction_.connect<fcitx::SimpleAction::Activated>([this](fcitx::InputContext *ic) { toggleSimplified(ic); });
         on(status_, [this] { return zuin::statusCommand(update_); });
         applyStatus();
         runUpdater({});
@@ -585,16 +603,56 @@ private:
         }).detach();
     }
 
-    // 依 features.vocab 決定選單有沒有「我的詞彙…」，照「設定、我的詞彙、更新」的順序放進輸入法的狀態區。
+    // 依 features.vocab 決定選單有沒有「我的詞彙…」，照「設定、我的詞彙、輸出簡體字、更新」的順序放進輸入法的狀態區。
+    // 「輸出簡體字」（#169）在 0c-update 回報這項設定、或引擎能即時切換時出現。
     // 狀態區沒有「插在中間」，所以先拿掉自己的項目再依序加回。
     void placeActions(fcitx::InputContext *ic) {
         auto &area = ic->statusArea();
-        for (auto *a : {&openSettings_, &vocab_, &status_}) {
+        for (auto *a : {&openSettings_, &vocab_, &simplifiedAction_, &status_}) {
             if (shows(ic, a)) { area.removeAction(a); }
         }
         area.addAction(fcitx::StatusGroup::InputMethod, &openSettings_);
         if (update_.vocab) { area.addAction(fcitx::StatusGroup::InputMethod, &vocab_); }
+        if (simplifiedShown()) { area.addAction(fcitx::StatusGroup::InputMethod, &simplifiedAction_); }
         area.addAction(fcitx::StatusGroup::InputMethod, &status_);
+    }
+
+    bool simplifiedShown() const { return update_.simplifiedKnown || simplifiedLive_; }
+
+    // 「輸出簡體字」的狀態改變：選單打勾、注／英圖示旁的「簡」與子模式文字跟著換。
+    void setSimplified(bool on, fcitx::InputContext *ic = nullptr) {
+        simplifiedLive_ = simplifiedLive_ || (ic && state(ic)->session.simplifiedLive());
+        if (on == simplified_ && simplifiedAction_.isChecked(nullptr) == on) { return; }
+        simplified_ = on;
+        simplifiedAction_.setChecked(on);
+        if (!ic) { ic = instance_->mostRecentInputContext(); }
+        if (ic && instance_->inputMethodEngine(ic) == this) {
+            if (shows(ic, &openSettings_) && !shows(ic, &simplifiedAction_)) { placeActions(ic); }
+            if (shows(ic, &simplifiedAction_)) { simplifiedAction_.update(ic); }
+            ic->updateUserInterface(fcitx::UserInterfaceComponent::StatusArea);
+        }
+    }
+
+    // 選單的「輸出簡體字」（#169）：引擎能即時切換時直接在這個輸入框的 session 送請求（組字不動、之後送出的字立刻照新設定），
+    // 引擎寫設定檔；提示用輸入法資訊（Fcitx 5.1.11 起顯示「已切換為輸出簡體字」，較舊的版本顯示「注音・簡體輸出」）。
+    // 舊引擎退回 0c-update set output-simplified … -apply -notify（寫設定、交接重啟，0c-update 送桌面通知）。
+    void toggleSimplified(fcitx::InputContext *ic) {
+        if (!ic) { ic = instance_->mostRecentInputContext(); }
+        const bool on = !simplified_;
+        if (ic && instance_->inputMethodEngine(ic) == this && state(ic)->session.ensureLive()) {
+            auto snap = state(ic)->session.outputSimplified(on);
+            if (snap.ok && snap.handled) {
+                const std::string notice = snap.notices.empty() ? std::string() : snap.notices.front();
+                snap.notices.clear(); // 提示用輸入法資訊顯示，不留在組字面板上
+                if (!commandRunning_) { ++querySequence_; querying_ = false; } // 切換前開始的狀態查詢不得把勾選改回去
+                render(ic, snap);
+                setSimplified(snap.outputSimplified, ic);
+                if (auto *show = showCustomInformationFunction(); show && !notice.empty()) { show(instance_, ic, notice); }
+                else { instance_->showInputMethodInformation(ic); }
+                return;
+            }
+        }
+        runUpdater(zuin::simplifiedCommand(on));
     }
 
     static bool shows(fcitx::InputContext *ic, const fcitx::Action *action) {
@@ -654,6 +712,10 @@ private:
             inputSettings_.punctuation.setValue(u.punctuation);
             inputSettings_.context.setValue(u.documentContext);
         }
+        if (u.simplifiedKnown) {
+            simplifiedLive_ = simplifiedLive_ || u.simplifiedLive;
+            setSimplified(u.outputSimplified);
+        }
         const bool fallback = u.selectionState == "fallback" || u.punctuationState == "fallback";
         // 設定列：開啟失敗時顯示原因（點此重試）；否則模型退回時加註。
         std::string settings = "⚙ 靈犀注音設定";
@@ -672,7 +734,7 @@ private:
         vocab_.setShortText(vocab);
         if (auto *ic = instance_->mostRecentInputContext()) {
             // 只動目前用著靈犀注音的欄位（狀態區裡有我們的設定列）；開關改變時加上或拿掉「我的詞彙…」。
-            if (shows(ic, &openSettings_) && shows(ic, &vocab_) != u.vocab) { placeActions(ic); }
+            if (shows(ic, &openSettings_) && (shows(ic, &vocab_) != u.vocab || shows(ic, &simplifiedAction_) != simplifiedShown())) { placeActions(ic); }
             for (auto *a : {&openSettings_, &status_}) { a->update(ic); }
             if (shows(ic, &vocab_)) { vocab_.update(ic); }
             ic->updateUserInterface(fcitx::UserInterfaceComponent::StatusArea);
@@ -682,7 +744,9 @@ private:
     std::unique_ptr<zuin::UpdateGuard> updateGuard_;
     std::string pendingCommand_;
     InputSettings inputSettings_;
-    fcitx::SimpleAction openSettings_, vocab_, status_;
+    fcitx::SimpleAction openSettings_, vocab_, status_, simplifiedAction_;
+    bool simplified_ = false;     // 「輸出簡體字」目前的狀態（#169）：快照、0c-update status 與選單切換更新
+    bool simplifiedLive_ = false; // 引擎能即時切換（看過 output_simplified_live）
     std::unique_ptr<fcitx::EventSourceTime> modelTimer_;
     bool querying_ = false, commandRunning_ = false;
     uint64_t querySequence_ = 0;
