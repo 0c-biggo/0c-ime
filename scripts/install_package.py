@@ -992,6 +992,39 @@ def install(bundle, home, release):
     return backup
 
 
+# install() 建立的備份目錄（tempfile.mkdtemp 的 8 個亂數字元）；其他名稱（手動備份、make upgrade 的 upgrade-*、
+# restore-user 另存的 0c-user-*）都不是安裝工具清理的對象。
+INSTALL_BACKUP = re.compile(r"0c-install-[a-z0-9_]{8}")
+
+
+def prune_backups(home, keep):
+    """安裝成功後只留這次的備份 keep（收據 backup 指到的那一份），刪掉更早的安裝備份（#179）。
+
+    每份備份都含整個舊的神經模型目錄（約 500 MB），以前從不刪，越積越多。回復（0c-update rollback、
+    更新器核對失敗時的自動回復）只用收據記錄的這一份；macOS、Windows 也只保留上一版。
+    備份目錄是符號連結時照舊拒絕，什麼都不刪；只刪自己命名格式、真正的目錄；刪除失敗只警告，不影響安裝結果。
+    舊的備份裡沒有執行中的程式：安裝是複製檔案出去，換下的神經模型目錄在 keep 裡。
+    """
+    try:
+        backups = tree_destination(home, ".local/share/zuin/backups")
+        entries = list(backups.iterdir()) if backups.is_dir() else []
+    except (OSError, ValueError) as error:
+        print(f"警告：沒有清理舊備份（{error}）", file=sys.stderr)
+        return []
+    removed = []
+    for entry in sorted(entries):
+        if entry.name == Path(keep).name or not INSTALL_BACKUP.fullmatch(entry.name):
+            continue
+        if entry.is_symlink() or not entry.is_dir():
+            continue
+        try:
+            shutil.rmtree(entry)
+            removed.append(entry)
+        except OSError as error:
+            print(f"警告：舊備份暫不刪除 {entry}：{error}", file=sys.stderr)
+    return removed
+
+
 def icon_files(home):
     root = home / ICON_THEME
     if not root.is_dir() or root.is_symlink():
@@ -1311,6 +1344,7 @@ def main():
                 old_env = addon_env_change(args.home.resolve()) is not None
                 restore_zuin = zuin_restore_needed(args.home)  # 要在移除 90-0c.conf 的舊設定之前判斷
                 backup = install(bundle, args.home, release)
+                prune_backups(args.home.resolve(), backup)
                 if restore_zuin:
                     mark_zuin_restore(args.home.resolve(), release["version"])
                 refresh_icon_theme(args.home.resolve(), icons)

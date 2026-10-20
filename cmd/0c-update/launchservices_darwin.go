@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
 // 每次更新都把舊 0c.app 整包移入 backups/，移動後 LaunchServices 仍記著它，且與新版同一個 bundle ID。
@@ -19,7 +21,8 @@ import (
 const lsregister = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
 // lsForgotten 記下已取消登記的備份目錄，之後每次背景更新只處理新出現的備份。
-const lsForgotten = ".launchservices-forgotten"
+// 清理備份（#179）時已刪除的目錄會從紀錄中拿掉，這裡寫回時也只留還在的目錄。
+const lsForgotten = update.MacLSForgotten
 
 func backupBundles(dir string) []string {
 	var out []string
@@ -60,8 +63,15 @@ func forgetBackupApps() {
 	}
 	marker := filepath.Join(backups, lsForgotten)
 	b, _ := os.ReadFile(marker)
-	done := strings.Fields(string(b))
+	var done []string
 	changed := false
+	for _, name := range strings.Fields(string(b)) {
+		if slices.Contains(dirs, filepath.Join(backups, name)) {
+			done = append(done, name)
+		} else {
+			changed = true // 備份已刪除
+		}
+	}
 	for _, dir := range dirs {
 		name := filepath.Base(dir)
 		if slices.Contains(done, name) {
