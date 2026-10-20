@@ -165,6 +165,16 @@ bool Session::capsLockEnglish(bool spawn) {
     return value != serverInfo_.end() && value->is_string() && value->get<std::string>() == "true";
 }
 
+bool Session::simplifiedLive() const {
+    auto value = serverInfo_.find("output_simplified_live");
+    return id_ != 0 && gen_ == client_.generation() && value != serverInfo_.end() && value->is_string() && value->get<std::string>() == "true";
+}
+
+bool Session::simplifiedAtOpen() const {
+    auto value = serverInfo_.find("output_simplified");
+    return value != serverInfo_.end() && value->is_string() && value->get<std::string>() == "true";
+}
+
 bool Session::ctrlPunct() {
     if (!client_.connect() || !ensureOpen()) { return false; }
     auto value = serverInfo_.find("ctrl_punctuation");
@@ -310,7 +320,8 @@ Snapshot Session::handle(const nlohmann::json &request) {
             }
             log_.clear();
             replayView_ = nullptr;
-        } else if (type != "context" && type != "caps_lock") { // Caps Lock 狀態不重播：新 session 由下一個按鍵重新同步（#173）
+        } else if (type != "context" && type != "caps_lock" && type != "output_simplified") {
+            // Caps Lock 狀態不重播：新 session 由下一個按鍵重新同步（#173）；「輸出簡體字」是全域設定，重播會再切一次（#169）
             if (log_.empty() && type == "toggle") { log_ = std::move(cleared); }
             log_.push_back(wireRequest);
         }
@@ -335,6 +346,7 @@ Snapshot Session::parse(const nlohmann::json &reply) {
     s.english = j.value("mode", "") == "english";
     s.englishPending = j.value("english_pending", false);
     s.capsLock = j.value("caps_lock", false);
+    s.outputSimplified = j.value("output_simplified", false);
     if (j.contains("preedit")) {
         for (const auto &g : j["preedit"]) {
             s.preedit.push_back({g.value("text", ""), g.value("style", "normal")});

@@ -40,6 +40,8 @@ struct Snapshot {
     bool english = false; // true 為英文；有組字時英數留在框內，空白時放行
     bool englishPending = false;
     bool capsLock = false; // 引擎記得的 Caps Lock 狀態（caps_lock，#173）
+    // 送出的文字目前會轉成簡體（output_simplified，#169）。只有回報 output_simplified_live 的引擎才有這一項。
+    bool outputSimplified = false;
     uint64_t traceSequence = 0;
     uint64_t contextID = 0;
     bool reconnected = false;
@@ -121,6 +123,15 @@ public:
     // 按鍵帶的 Caps Lock 狀態要不要告訴引擎（#173）：跟引擎記得的不同、而且 capsLockEnglish 時才送 capsLock(on)。
     bool capsNeedsSync(bool on, bool spawn) { return on != capsLock_ && capsLockEnglish(spawn); }
     Snapshot capsLock(bool on) { return handle({{"type", "caps_lock"}, {"on", on}}); }
+    // 引擎能即時切換「輸出簡體字」（open 回覆的 output_simplified_live，#169）。不連線，只看這個 session 開啟時的回覆；
+    // 還沒開 session 時為 false，呼叫端先 ensureLive。
+    bool simplifiedLive() const;
+    // 連上引擎、開好 session 後回報 simplifiedLive；引擎不可用時 false。
+    bool ensureLive() { return client_.connect() && ensureOpen() && simplifiedLive(); }
+    // 開啟 open 回覆裡引擎當時的「輸出簡體字」（output_simplified）；之後以快照的 outputSimplified 為準。
+    bool simplifiedAtOpen() const;
+    // 切換「輸出簡體字」（#169）：引擎立即改變之後送出的文字並寫進設定檔，組字不動。這是全域設定，不記進重播紀錄。
+    Snapshot outputSimplified(bool on) { return handle({{"type", "output_simplified"}, {"on", on}}); }
     bool englishPending() const { return englishPending_; }
     void setPrivate(bool value);
     void traceEvent(const std::string &event, nlohmann::json detail = {});
