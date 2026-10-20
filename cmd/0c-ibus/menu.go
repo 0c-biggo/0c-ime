@@ -31,6 +31,22 @@ type updateStatus struct {
 	packageManaged bool
 }
 
+// packageManagedUpdater 回報選單用的 0c-update 屬於由套件管理員更新的系統安裝（#181）。與 0c-update 自己
+// 判斷的規則相同（installs.PackageManaged：程式在系統 libexec/0c、distribution.json 寫 package-manager），
+// 只看檔案，status 查詢失敗或逾時也不會變。測試替換用。
+var packageManagedUpdater = func() bool {
+	l := installs.Default()
+	return l.PackageManaged(l.Updater())
+}
+
+// readStatus 解析 0c-update status --json（text 為空：查詢失敗）。套件管理員模式另依檔案判斷，
+// 查詢失敗時更新列不會又出現。
+func readStatus(text string) updateStatus {
+	s := parseStatus(text)
+	s.packageManaged = s.packageManaged || packageManagedUpdater()
+	return s
+}
+
 func parseStatus(text string) updateStatus {
 	var j struct {
 		Installed   string `json:"installed"`

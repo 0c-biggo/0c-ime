@@ -25,6 +25,9 @@ struct UpdateStatus {
 };
 
 UpdateStatus parseStatus(const std::string &json);
+// parseStatus 再加上依檔案判斷的套件管理員模式（locate.h 的 packageManaged）：json 為空（查詢失敗、逾時）時
+// 更新列也不會又出現。
+UpdateStatus readStatus(const std::string &json);
 // 更新列：目前版本或待辦。
 std::string statusLabel(const UpdateStatus &s);
 // 點更新操作列要執行的 0c-update 參數：有待辦時完成它，否則立即檢查。

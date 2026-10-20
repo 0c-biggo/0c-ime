@@ -20,6 +20,7 @@ import (
 	"github.com/0c-biggo/0c-ime/core/lexicon"
 	"github.com/0c-biggo/0c-ime/core/lm"
 	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/internal/installs"
 	"github.com/godbus/dbus/v5"
 )
 
@@ -1032,5 +1033,39 @@ func TestPackageManagedHidesUpdateRow(t *testing.T) {
 		if s.update.packageManaged || s.updateProperty().hidden {
 			t.Fatalf("%s 要顯示更新列", text)
 		}
+	}
+	// status 查詢失敗（逾時、沒有輸出）：依檔案判斷，套件管理員模式的更新列不會又出現；官網安裝照舊顯示。
+	defer func(f func() bool) { packageManagedUpdater = f }(packageManagedUpdater)
+	for _, managed := range []bool{true, false} {
+		packageManagedUpdater = func() bool { return managed }
+		s.update = readStatus("")
+		if s.update.packageManaged != managed || s.updateProperty().hidden != managed {
+			t.Fatalf("查詢失敗、套件管理員模式 %v：%+v", managed, s.update)
+		}
+	}
+}
+
+// 依檔案判斷的規則：選單用的 0c-update 是系統 libexec 那一份，而且 distribution.json 寫 package-manager。
+func TestPackageManagedUpdaterFollowsInstalls(t *testing.T) {
+	root := t.TempDir()
+	defer func(l, d string) { installs.LibexecDir, installs.DataDir = l, d }(installs.LibexecDir, installs.DataDir)
+	installs.LibexecDir, installs.DataDir = filepath.Join(root, "libexec", "0c"), filepath.Join(root, "share", "0c")
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	os.MkdirAll(installs.LibexecDir, 0o755)
+	os.MkdirAll(installs.DataDir, 0o755)
+	os.WriteFile(filepath.Join(installs.LibexecDir, "0c-update"), []byte("#!/bin/sh\n"), 0o755)
+	if packageManagedUpdater() {
+		t.Fatal("沒有 distribution.json 不是套件管理員模式")
+	}
+	os.WriteFile(filepath.Join(installs.DataDir, "distribution.json"), []byte(`{"schema":1,"updates":"package-manager"}`), 0o644)
+	if !packageManagedUpdater() || !readStatus("").packageManaged {
+		t.Fatal("系統安裝的套件管理員模式")
+	}
+	// 帳號另有官網安裝：選單用官網的 0c-update，更新列照舊。
+	personal := filepath.Join(root, "home", ".local", "share", "zuin", "bin", "0c-update")
+	os.MkdirAll(filepath.Dir(personal), 0o755)
+	os.WriteFile(personal, []byte("#!/bin/sh\n"), 0o755)
+	if packageManagedUpdater() {
+		t.Fatal("官網安裝的 0c-update 不是套件管理員模式")
 	}
 }

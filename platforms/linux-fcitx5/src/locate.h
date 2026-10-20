@@ -34,5 +34,9 @@ struct ServerCommand {
 ServerCommand locateServer(const InstallDirs &dirs);
 // 都找不到時回傳穩定副本的位置（與以前相同，執行失敗由呼叫端顯示）。
 std::string locateUpdater(const InstallDirs &dirs);
+// 選單用的 0c-update 是不是由套件管理員更新的系統安裝（與 Go 的 installs.PackageManaged 相同）：
+// locateUpdater 找到的是系統 libexec 那一份，而且 <data>/distribution.json 寫 {"schema":1,"updates":"package-manager"}。
+// 只看檔案，status 查詢失敗也不會變（#181）。
+bool packageManaged(const InstallDirs &dirs);
 
 } // namespace zuin

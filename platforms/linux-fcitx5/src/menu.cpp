@@ -95,6 +95,12 @@ std::vector<std::string> simplifiedCommand(bool on) {
     return {"set", "output-simplified", on ? "on" : "off", "-apply", "-notify"};
 }
 
+UpdateStatus readStatus(const std::string &text) {
+    UpdateStatus s = parseStatus(text);
+    s.packageManaged = s.packageManaged || packageManaged(defaultInstallDirs());
+    return s;
+}
+
 std::string updaterPath() { return locateUpdater(defaultInstallDirs()); }
 
 bool runUpdater(const std::vector<std::string> &args, std::string *output, int timeoutSeconds) {

@@ -1,7 +1,11 @@
 #include "locate.h"
 
 #include <cstdlib>
+#include <fstream>
+#include <sstream>
 #include <sys/stat.h>
+
+#include <nlohmann/json.hpp>
 
 namespace zuin {
 
@@ -38,6 +42,25 @@ std::string locateUpdater(const InstallDirs &dirs) {
     }
     if (!dirs.libexec.empty() && executable(dirs.libexec + "/0c-update")) { return dirs.libexec + "/0c-update"; }
     return stable;
+}
+
+bool packageManaged(const InstallDirs &dirs) {
+    if (dirs.libexec.empty() || locateUpdater(dirs) != dirs.libexec + "/0c-update") { return false; }
+    std::ifstream in(dirs.data + "/distribution.json");
+    if (!in) { return false; }
+    std::stringstream text;
+    text << in.rdbuf();
+    auto j = nlohmann::json::parse(text.str(), nullptr, false);
+    if (!j.is_object()) { return false; }
+    auto schema = j.find("schema");
+    auto updates = j.find("updates");
+    if (schema == j.end() || !schema->is_number_integer() || schema->get<int>() != 1 || updates == j.end() || !updates->is_string()) {
+        return false;
+    }
+    std::string u = updates->get<std::string>();
+    const auto first = u.find_first_not_of(" \t\r\n");
+    const auto last = u.find_last_not_of(" \t\r\n");
+    return first != std::string::npos && u.substr(first, last - first + 1) == "package-manager";
 }
 
 } // namespace zuin

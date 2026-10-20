@@ -186,7 +186,7 @@ func (s *service) queryStatus(command []string) {
 		if !ok {
 			out = ""
 		}
-		s.update = parseStatus(out)
+		s.update = readStatus(out)
 		if s.update.simplifiedKnown && seq == s.simplifiedSeq {
 			s.setSimplified(s.update.outputSimplified, s.update.simplifiedLive)
 		}
@@ -566,7 +566,8 @@ func main() {
 	// 預設確認自己剛提交的文字供下一段選字（神經選字的必要條件）；
 	// ZUIN_DOCUMENT_CONTEXT=0 只供排錯時讓外殼完全不追蹤，與 Fcitx5 外殼相同。
 	s := &service{order: newOrderer(), client: newClient(), engines: map[dbus.ObjectPath]*engine{},
-		documentContext: os.Getenv("ZUIN_DOCUMENT_CONTEXT") != "0", lastKey: time.Now(), address: address}
+		documentContext: os.Getenv("ZUIN_DOCUMENT_CONTEXT") != "0", lastKey: time.Now(), address: address,
+		update: readStatus("")} // 第一次查詢前：套件管理員模式也不顯示更新列
 	conn, err := dbus.Connect(address, dbus.WithHandler(handler{s}), dbus.WithIncomingInterceptor(s.order.intercept))
 	if err != nil {
 		log.Fatalf("連不上 ibus-daemon：%v", err)
