@@ -7,9 +7,10 @@ import (
 	"github.com/0c-biggo/0c-ime/internal/models"
 )
 
-// modelRemind：沒有找到神經模型時（Linux、沒有內建、個人目錄也沒有這份字典的配對，#180），引擎在啟動時、
-// 之後送出字而且沒有組字時最多每小時檢查一次，時候到了才叫 0c-update models remind（它在升級換字典後於本機
-// 重新配對，或依排程送「下載模型」通知）。引擎這端只讀 remind.json 與一個目錄，不做網路或檔案改寫。
+// modelRemind：沒有內建神經模型時（Linux，#180；個人目錄的模型可能有、可能沒有），引擎在啟動時、之後送出字
+// 而且沒有組字時最多每小時檢查一次，時候到了才叫 0c-update models remind（它在升級換字典、或配對是舊的
+// models.lock 配的時候於本機重新配對，或依排程送「下載模型」通知）。引擎這端只讀 remind.json 與幾個目錄
+// （models.EngineShouldCheck），不做網路或檔案改寫；0c-update 處理過的狀態不再叫。
 type modelRemind struct {
 	userDir, dictionary string
 	run                 func(args ...string) // 啟動 0c-update，不等它結束

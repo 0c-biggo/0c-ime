@@ -118,7 +118,7 @@ type modelsEnv struct {
 func defaultModelsEnv() modelsEnv {
 	base := basePath()
 	return modelsEnv{base: base, data: dataPackDir(base), goos: runtime.GOOS, lock: upstream.Lock, equivalent: upstream.Equivalent, dial: dialEngine,
-		runtimeCheck: checkModelRuntime, distributionDisabled: modelDownloadDisabled, now: time.Now}
+		runtimeCheck: checkModelRuntime(base), distributionDisabled: modelDownloadDisabled, now: time.Now}
 }
 
 // newModelsEnv 測試替換用。
@@ -479,7 +479,10 @@ func (e modelsEnv) download(ctx context.Context, out io.Writer) error {
 	if err != nil {
 		return fail(err)
 	}
-	e.editRemind(func(r *models.Remind) { r.Stop(models.StopDownloaded, e.now()) })
+	e.editRemind(func(r *models.Remind) {
+		r.Stop(models.StopDownloaded, e.now())
+		r.Checked = store.EngineState(snap.dictionary) // 交接後的新引擎不必再為了重新配對叫 remind
+	})
 	reloadEngineForModels()
 	return nil
 }
@@ -554,9 +557,14 @@ func (e modelsEnv) editRemind(fn func(*models.Remind)) error {
 	})
 }
 
-// remind 由引擎呼叫（啟動時、之後送出字又沒在組字時最多每小時一次）：
-//  1. 升級換了字典、模型沒換：用已有的權重在本機重新配對，不連網，完成後請引擎交接載入；
+// remind 由引擎呼叫（啟動時、之後送出字又沒在組字時最多每小時一次；條件見 models.EngineShouldCheck）：
+//  1. 權重是目前 models.lock 的，這份字典卻沒有配對、或配對是舊的 models.lock 配的（need=repair：升級換了字典、
+//     模型沒換，或換 revision 的下載在放上配對之前中斷）：用已有的權重在本機重新配對，不連網，完成後請引擎交接
+//     載入。引擎正在用舊配對（source=user）時也一樣，設定頁不會一直停在「正在重新配對」；
 //  2. 沒有模型時依 remind.json 的排程送「下載模型」通知（最多 3 次、間隔 24 小時）。
+//
+// 處理完把個人目錄的狀態記在 remind.json 的 checked：重新配對失敗、模型換了要重新下載、字典沒有配對清單，或這邊
+// 看來不必處理時，引擎在狀態改變之前不再叫（由設定頁說明，不一直重試）。
 func (e modelsEnv) remind(committed bool) error {
 	if e.goos != "linux" {
 		return nil
@@ -565,26 +573,27 @@ func (e modelsEnv) remind(committed bool) error {
 	if err != nil {
 		return err
 	}
-	repairFailed := ""
-	if snap.source == "none" && snap.inspect.AnyUser {
-		if snap.inspect.Weights && snap.pairingOK {
-			if err := e.repair(snap); err != nil {
-				fmt.Fprintln(os.Stderr, "0c-update: 模型重新配對失敗：", err)
-				repairFailed = snap.dictionary
-			} else if snap, err = e.snapshot(); err != nil {
+	repaired, busy := false, false
+	if snap.source != neural.SourceBundled && snap.inspect.Need() == "repair" && snap.pairingOK {
+		switch err := e.repair(snap); {
+		case errors.Is(err, filelock.ErrLocked):
+			busy = true // 正在下載或另一個 remind 在配對：它完成時狀態會改變，這次不記
+		case err != nil:
+			fmt.Fprintln(os.Stderr, "0c-update: 模型重新配對失敗：", err)
+		default:
+			repaired = true
+			if snap, err = e.snapshot(); err != nil {
 				return err
 			}
-		} else {
-			repairFailed = snap.dictionary // 模型換了（要重新下載）或字典沒有配對清單：由設定頁說明，不一直重試
 		}
 	}
 	neuralSelection := true
 	if r, err := settings.Read(settings.Path(filepath.Join(e.base, "user.json"))); err == nil {
 		neuralSelection = r.Settings.Selection == settings.Neural
 	}
-	return e.editRemind(func(r *models.Remind) {
-		if repairFailed != "" {
-			r.RepairFailed = repairFailed
+	err = e.editRemind(func(r *models.Remind) {
+		if !busy {
+			r.Checked = e.store().EngineState(snap.dictionary)
 		}
 		now := e.now()
 		send := r.Decide(models.RemindInput{Now: now, Committed: committed, HasModel: snap.source == neural.SourceBundled,
@@ -600,9 +609,14 @@ func (e modelsEnv) remind(committed bool) error {
 		}
 		r.Sent(now)
 	})
+	if repaired {
+		// 記下狀態之後才交接：新引擎啟動時讀到的是處理過的狀態，不會再叫一次。
+		reloadEngineForModels()
+	}
+	return err
 }
 
-// repair 在本機重新配對（不連網）；成功後請引擎交接。
+// repair 在本機重新配對（不連網）；呼叫端成功後請引擎交接。
 func (e modelsEnv) repair(snap modelsSnapshot) error {
 	unlock, err := filelock.Acquire(e.base, modelsLockName)
 	if err != nil {
@@ -615,7 +629,6 @@ func (e modelsEnv) repair(snap modelsSnapshot) error {
 		return err
 	}
 	store.SetLastError(nil, e.now())
-	reloadEngineForModels()
 	return nil
 }
 

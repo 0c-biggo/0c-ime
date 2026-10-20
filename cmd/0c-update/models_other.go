@@ -8,7 +8,9 @@ import "errors"
 
 var errModelsLinuxOnly = errors.New("只有 Linux 提供下載模型")
 
-func checkModelRuntime(string) []string { return []string{} }
+func checkModelRuntime(string) func(string) []string {
+	return func(string) []string { return []string{} }
+}
 func modelDownloadDisabled(string) bool { return false }
 func freeSpace(string) (uint64, bool)   { return 0, false }
 func spawnModelsWorker() (int, error)   { return 0, errModelsLinuxOnly }

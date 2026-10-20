@@ -9,7 +9,7 @@ import (
 	"github.com/0c-biggo/0c-ime/internal/installs"
 )
 
-// newModelRemind 只在 Linux、沒有找到模型時建立（macOS、Windows 的安裝包一定內建模型）。
+// newModelRemind 只在 Linux、沒有內建模型時建立（macOS、Windows 的安裝包一定內建模型）。
 func newModelRemind(userDir, dictionary string, lg *log.Logger) *modelRemind {
 	if dictionary == "" {
 		return nil
