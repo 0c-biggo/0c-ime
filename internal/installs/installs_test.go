@@ -1,3 +1,6 @@
+//go:build !windows
+
+// 執行權限位元是 Unix 的規則；Windows 不用這個套件（cmd/0c-update/distribution_other.go）。
 package installs
 
 import (
