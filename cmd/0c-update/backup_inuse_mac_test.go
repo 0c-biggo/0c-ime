@@ -105,3 +105,36 @@ func TestMacBackupInUse(t *testing.T) {
 		t.Fatal("version of a missing app")
 	}
 }
+
+// 同一版重裝（.pkg 修復安裝、重跑一行安裝）每次都把同版本的 App 移入一份備份。背景項目只登記其中一份，以前只比
+// 版本，每一份都當成使用中、永遠刪不掉。現在只保留同版本裡最早的一份：登記跟著 App 移入備份之後（#178），
+// 之後的安裝再登記也不一定生效，登記停在最早移入的那一份；收據 previous 那一份由清理本身保留。
+func TestMacBackupAgentProtectsOneSameVersionBackup(t *testing.T) {
+	backups := filepath.Join(t.TempDir(), "backups")
+	first := filepath.Join(backups, "macos-20261005-010203-11")
+	second := filepath.Join(backups, "macos-20261006-010203-22")
+	third := filepath.Join(backups, "macos-20261007-010203-33")
+	older := filepath.Join(backups, "macos-20261004-010203-44")
+	for _, dir := range []string{first, second, third} {
+		writeBackupApp(t, dir, "100.2.9000000")
+	}
+	writeBackupApp(t, older, "100.2.1000000")
+	os.MkdirAll(filepath.Join(backups, ".removing-macos-20261001-010203-55", update.MacApp), 0o700) // 上次沒刪完的不算
+	writeBackupApp(t, filepath.Join(backups, ".removing-macos-20261001-010203-55"), "100.2.9000000")
+	u := backupUsage{agent: "100.2.9000000"}
+	for dir, want := range map[string]bool{first: true, second: false, third: false, older: false} {
+		if got := u.inUse(dir, appBundleVersion); got != want {
+			t.Errorf("inUse(%s) = %v, want %v", filepath.Base(dir), got, want)
+		}
+	}
+	// 最早的那一份刪掉之後（例如使用者自己刪的），下一份接著被保護：不會一份都不留。
+	os.RemoveAll(first)
+	if !u.inUse(second, appBundleVersion) || u.inUse(third, appBundleVersion) {
+		t.Fatal("剩下的同版本備份裡最早的一份要保留")
+	}
+	// 開著檔案的照舊算使用中
+	u.open = []string{third + "/0c.app/Contents/MacOS/0c"}
+	if !u.inUse(third, appBundleVersion) {
+		t.Fatal("有程序從裡面執行")
+	}
+}
