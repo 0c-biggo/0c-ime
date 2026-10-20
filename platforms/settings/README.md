@@ -43,7 +43,7 @@ UI 測試：`python3 scripts/test_settings_ui.py --settings <輸出>/0c-settings
 
 - 內建模型（`source=bundled`）只顯示資訊，沒有按鈕。
 - 可下載（`can_download`，只有沒有內建模型的 Linux 系統安裝）：頁首一句狀態（未安裝、已安裝、需要重新下載、字典更新後自動重新配對），下載中改顯示進度條與已下載大小、核對中、配對中；按鈕「下載模型」（上方寫明大小、Hugging Face 的 repo 與 revision、授權）、下載中「取消」、個人目錄的模型「刪除」（先確認，焦點在「取消」）。`runtime.ok=false` 時列出要 `apt install` 的套件（可複製），`last_error` 顯示它的 `message`。
-- 不能下載又沒有模型：依 `disabled_reason`（platform／distribution）說明原因，沒有按鈕。
+- 不能下載又沒有模型：依 `disabled_reason`（platform／distribution）說明原因，沒有按鈕。`dictionary_mismatch`（安裝的字典不在 pairing.lock 上，例如發行版自己重建字典）不論有沒有下載過的權重都說明「不能使用下載的模型」，不顯示「已安裝」、不給下載；個人目錄裡的仍可刪除。
 
 網路與檔案動作都在 `0c-update models status|download|cancel|remove -json`；畫面每秒讀一次 status 的 `operation`（只在這一頁顯示中、有進行中的作業時），同「更新」頁。Tauri 指令：
 
@@ -52,7 +52,7 @@ UI 測試：`python3 scripts/test_settings_ui.py --settings <輸出>/0c-settings
 | `models_command` | `action`：`status`／`download`／`cancel`／`remove` | 對應 `0c-update models <action> -json`，結果原樣回傳；status 逾時 20 秒，其他 60 秒（download 在背景開始、立刻回傳） |
 | `open_url` | `url` | 交給系統瀏覽器（Linux `xdg-open`、macOS `open`、Windows `rundll32 url.dll,FileProtocolHandler`）；只放行 `https://huggingface.co/` 開頭、路徑只有英數與 `/._-` 的網址。設定視窗本身照舊不離開本機頁面 |
 
-UI 測試：`python3 scripts/test_settings_ui.py --settings <輸出>/0c-settings [--only models]`，`fake-update.py --models` 依契約模擬內建、未安裝、下載中、已安裝、需要重新下載、缺推論元件、發行版關閉下載；外部網址交給 PATH 上假的 `xdg-open` 記下來。
+UI 測試：`python3 scripts/test_settings_ui.py --settings <輸出>/0c-settings [--only models]`，`fake-update.py --models` 依契約模擬內建、未安裝、下載中、已安裝、需要重新下載、缺推論元件、發行版關閉下載、字典不在配對清單上；外部網址交給 PATH 上假的 `xdg-open` 記下來。
 
 ## 建置
 

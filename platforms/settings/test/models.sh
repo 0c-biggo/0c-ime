@@ -103,11 +103,12 @@ if window_up; then
 else bad "muser/models 視窗沒有出現"; cat /tmp/app-muser-models.log; fi
 stop_app
 
-# ---- 需要重新下載、缺推論元件、發行版關閉下載：截圖 ----
-for kind in redownload runtime distribution; do
+# ---- 需要重新下載、缺推論元件、發行版關閉下載、字典不在配對清單上：截圖 ----
+for kind in redownload runtime distribution dictionary; do
   models_home "m$kind" "$kind"
   mlaunch "m$kind"
   if window_up; then sleep 3; mshot "models-$kind"; else bad "m$kind/models 視窗沒有出現"; cat "/tmp/app-m$kind-models.log"; fi
   stop_app
 done
 check "發行版關閉下載時沒有任何下載動作" mlog_lacks mdistribution download
+check "字典不在配對清單上時沒有任何下載動作" mlog_lacks mdictionary download

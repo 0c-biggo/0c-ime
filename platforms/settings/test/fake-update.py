@@ -12,7 +12,7 @@ cmd/0c-update/api.go 的 apiView 相同；其他指令（status、settings、set
   fake-update.py vocab add-as assistant 詞 讀音   模擬 AI 助手從 API 加詞（版本加一，watch 會看到）
 
 「模型」頁（#180）：設了 FAKE_MODELS 時 models status|download|cancel|remove 由這裡依契約（schema 1）回應：
-  fake-update.py --models STATE bundled|none|downloading|user|redownload|runtime|distribution
+  fake-update.py --models STATE bundled|none|downloading|user|redownload|runtime|distribution|dictionary
 downloading 的進度固定不動（截圖用）；從 none 按「下載模型」後，每讀一次 status 前進一步：下載 → 核對 → 配對 → 已安裝。
 """
 import fcntl
@@ -431,21 +431,21 @@ def models_installed(source, state='ready'):
     base = '/usr/share/0c/neural' if source == 'bundled' else '/home/u/.local/share/zuin/models/5f1c0a9e'
     out = []
     for m in MODEL_LOCK:
-        item = dict(m, state=state, path=base + '/' + m['role'], sha256=MODEL_SHA[m['role']])
+        item = dict(m, state=state, source=source, path=base + '/' + m['role'], sha256=MODEL_SHA[m['role']])
         if source == 'bundled':  # 官網內建的不是 Hugging Face 那一份：沒有上游資訊
-            item = {k: item[k] for k in ('role', 'label', 'state', 'version', 'path', 'sha256', 'size')}
+            item = {k: item[k] for k in ('role', 'label', 'state', 'source', 'version', 'path', 'sha256', 'size')}
             item['sha256'] = ('cef689f1' if m['role'] == 'select' else '2d98c7c6') + '0b7d' * 14
         out.append(item)
     return out
 
 
 def models_missing():
-    return [dict(m, state='not_installed', path='', sha256='') for m in MODEL_LOCK]
+    return [dict(m, state='not_installed', source='', path='', sha256='') for m in MODEL_LOCK]
 
 
 def models_init(path, kind):
     total = sum(m['size'] for m in MODEL_LOCK)
-    st = {'schema': 1, 'source': 'none', 'can_download': True, 'disabled_reason': '',
+    st = {'schema': 1, 'ok': True, 'dictionary_sha256': '5f1c0a9e' + '7d2b' * 14, 'source': 'none', 'can_download': True, 'disabled_reason': '',
           'runtime': {'ok': True, 'python': '/usr/bin/python3', 'missing': []},
           'need': 'download', 'download_size': total, 'models': models_missing(), 'operation': None, 'last_error': None}
     frozen = False
@@ -462,6 +462,8 @@ def models_init(path, kind):
         st['runtime'] = {'ok': False, 'python': '/usr/bin/python3', 'missing': ['python3-numpy', 'python3-onnxruntime']}
     elif kind == 'distribution':
         st.update(can_download=False, disabled_reason='distribution')
+    elif kind == 'dictionary':  # 發行版自己重建字典，不在 pairing.lock 上
+        st.update(can_download=False, disabled_reason='dictionary_mismatch')
     with open(path, 'w', encoding='utf-8') as f:
         json.dump({'status': st, 'frozen': frozen}, f, ensure_ascii=False)
 
@@ -485,6 +487,9 @@ def models(args):
         else:
             st.update(operation=None, source='user', need='none', models=models_installed('user'))
     elif action == 'download':
+        if not st['can_download']:
+            print(json.dumps({'ok': False, 'error': {'code': 'unavailable', 'message': '這個安裝不能下載模型。'}}, ensure_ascii=False))
+            return 1
         if op:
             print(json.dumps({'ok': False, 'error': {'code': 'in_progress', 'message': '模型正在下載。'}}, ensure_ascii=False))
             return 1
@@ -494,8 +499,11 @@ def models(args):
         st['operation'] = None
         st['last_error'] = {'code': 'canceled', 'message': '已取消下載，沒有留下檔案。', 'at': '2026-10-21T08:00:00Z'}
     elif action == 'remove':
+        if op:
+            print(json.dumps({'ok': False, 'error': {'code': 'in_progress', 'message': '模型正在下載，請先取消。'}}, ensure_ascii=False))
+            return 1
         if st['source'] != 'user':
-            print(json.dumps({'ok': False, 'error': {'code': 'not_user', 'message': '只能刪除下載到個人目錄的模型。'}}, ensure_ascii=False))
+            print(json.dumps({'ok': False, 'error': {'code': 'bundled', 'message': '內建的模型不能刪除。'}}, ensure_ascii=False))
             return 1
         st.update(source='none', need='download', models=models_missing(), last_error=None)
     elif action != 'status':
