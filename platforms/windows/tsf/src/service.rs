@@ -933,7 +933,8 @@ impl TextService_Impl {
                 if key == "=" && layout == keys::Layout::Standard {
                     st.session.emoji_shortcut()
                 } else if keys::tone_key(layout, &key) {
-                    // 聲調鍵（#135）：沒開中英混打時引擎先把數字留在組字區，緊接空白換成聲調符號。
+                    // 聲調鍵：沒開中英混打時引擎先把數字留在組字區，緊接空白換成聲調符號（#135）；中英混打時
+                    // 照字面留在組字區，354 才整串留數字（#175）。
                     st.session.tone_mark_keys()
                 } else {
                     keys::starts_composition(layout, &key)
