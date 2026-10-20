@@ -11,6 +11,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import fetch_assets
 import source_release as release
 
 
@@ -331,6 +332,40 @@ class SourceReleaseTests(unittest.TestCase):
             else:
                 with self.assertRaisesRegex(ValueError, "does not match version"):
                     release.verify(renamed)
+
+    def source_tree(self, name="0c-ime-0.2.0"):
+        root = self.work / name
+        for lock in fetch_assets.LOCKS:
+            (root / lock).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(self.repo / lock, root / lock)
+        return root
+
+    def test_fetch_assets_installs_matching_release(self):
+        tarball = self.build()
+        root = self.source_tree()
+        self.assertEqual(fetch_assets.default_tag(root), "v0.2.0")
+        self.assertFalse(fetch_assets.installed(root))
+        (root / "models/select").mkdir()
+        (root / "models/select/stale.onnx").write_bytes(b"old")
+        self.assertEqual(fetch_assets.install(tarball, root)["tag"], "v0.2.0")
+        self.assertTrue(fetch_assets.installed(root))
+        self.assertFalse((root / "models/select/stale.onnx").exists())
+        self.assertEqual((root / "assets/data/lm.bin").read_bytes(), (self.data / "lm.bin").read_bytes())
+        fetch_assets.install(tarball, root)  # Reinstalling the same release is harmless.
+        self.assertTrue(fetch_assets.installed(root))
+        self.assertEqual([p.name for p in root.iterdir() if p.name.startswith(".")], [])
+
+    def test_fetch_assets_rejects_a_release_with_other_locks(self):
+        tarball = self.build()
+        root = self.source_tree("checkout")
+        lock = json.loads((root / release.release_dictionary.LOCK).read_text())
+        lock["files"]["lm.bin"]["size"] += 1
+        (root / release.release_dictionary.LOCK).write_bytes(release.json_bytes(lock))
+        with self.assertRaisesRegex(ValueError, "differs from v0.2.0"):
+            fetch_assets.install(tarball, root)
+        self.assertFalse((root / "assets").exists())
+        with self.assertRaisesRegex(ValueError, "--release"):
+            fetch_assets.default_tag(root)
 
     def test_rejects_escaping_symlinks_and_traversal(self):
         (self.repo / "escape").symlink_to("../outside")

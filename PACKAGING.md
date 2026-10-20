@@ -13,7 +13,7 @@
 | `SOURCE-RELEASE.json` | 檔案清單、tag／commit 與固定清單 |
 | 其他目錄 | Go 核心、平台外殼、推論 worker、建置工具與測試 |
 
-0.2.1 以前的版本以 `ime-oss-<版本>.tar.xz` 為名，內容格式相同。GitHub 自動附上的 Source code ZIP／tar.gz 不含字典與模型，請用上面的完整 tarball。大型 bigram TSV、原始語料、checkpoint 與訓練環境不附入。
+0.2.1 以前的版本以 `ime-oss-<版本>.tar.xz` 為名，內容格式相同。從 git clone 或 Source code 壓縮檔開始時，`make assets` 會下載同版本的完整 tarball，驗證後把 `assets/data/` 與兩個模型放進原始碼目錄。大型 bigram TSV、原始語料、checkpoint 與訓練環境不附入。
 
 ## 發行版整合
 
