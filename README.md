@@ -163,4 +163,4 @@ make test-release
 
 ## 📄 授權
 
-自有程式採 AGPL-3.0-only，另可洽談商業授權；資料、模型與第三方元件依各自授權，見 [授權說明](legal/README.md)。
+自有程式採 AGPL-3.0-only，另可洽談商業授權；自有圖示與圖片採 CC BY-SA 4.0；資料、模型與第三方元件依各自授權，見 [授權說明](legal/README.md)。

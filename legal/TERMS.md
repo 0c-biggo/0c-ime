@@ -1,6 +1,6 @@
 # 靈犀注音（0c）使用與授權說明
 
-版本：2026-10-19
+版本：2026-10-20
 
 ## 1. 適用範圍
 
@@ -8,7 +8,7 @@
 
 ## 2. 自有程式
 
-除另有聲明外，本專案自有程式碼、建置腳本、測試程式與文件依 GNU Affero General Public License version 3 only（AGPL-3.0-only）授權，完整條款見隨附 LICENSE。
+除另有聲明外，本專案自有程式碼、建置腳本、測試程式與文件的著作權屬 Funmula Co., Limited，依 GNU Affero General Public License version 3 only（AGPL-3.0-only）授權，完整條款見隨附 LICENSE。自有圖示、標誌與圖片依 Creative Commons Attribution-ShareAlike 4.0 International（CC BY-SA 4.0）授權，範圍與條款見 legal/README.md 與 legal/CC-BY-SA-4.0.txt。
 
 您可以依 AGPL-3.0-only 使用、研究、修改及散布這些內容，包括商業使用。修改、散布或透過網路提供互動服務時，應依該授權的適用條件履行相應原始碼提供、授權與聲明保留等義務；完整條件以 LICENSE 為準。本文件不另行禁止修改、散布、反向工程或收費。
 
