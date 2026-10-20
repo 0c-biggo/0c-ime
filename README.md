@@ -1,17 +1,82 @@
-# 靈犀注音（0c）開源版
+# 靈犀注音（0c）開源版 ⌨️
 
-`ime-oss` 包含輸入法核心、平台外殼、設定程式、詞庫工具與回歸測試，提供 Linux 發行版維護者及自行建置的開發者使用。
+> **免選字，把話打完。** 用本機的 Transformer 語言模型看前文選字，打一整句注音，不用停下來挑同音字。
 
-支援注音組字、候選選字、個人詞彙、Tab 補全、中英混打與模糊音。統計引擎負責候選；神經選字預設開啟，模型不可用時退回統計引擎。自動補標點為 Beta，預設關閉。
+`ime-oss` 包含輸入法核心、平台外殼、設定程式、詞庫工具與回歸測試，提供 Linux 發行版維護者及自行建置的開發者使用。一般使用者請到 [官網下載](https://0c.biggo.com/download/)。
+
+## ✨ 特色
+
+- 🧠 **Transformer 選字**：自行訓練的語言模型參考整段前文與注音判斷同音字，大多數時候不必手動選字。
+- ⇥ **Tab 補全**：有把握才提示後續字詞，按 Tab 接受；補全只來自詞庫與個人片語，不生成新內容。
+- 🔒 **全在本機**：選字、補標點與個人學習都在你的電腦上以 CPU 執行，不連網、不上傳打字內容。
+- 📚 **我的詞彙**：常用人名、術語、英文指令加進來就排在前面；學到的用詞存在本機的個人詞庫。
+- 🔤 **中英混打、模糊音、Emoji 與顏文字**：ㄗ／ㄓ、ㄘ／ㄔ、ㄙ／ㄕ、ㄣ／ㄥ 近音在後備選；按 = 開 Emoji 選單。
+- ✍️ **送出時補標點**（Beta，預設關閉）：Enter 送出時在漢字之間補上 ，。？！、；，不改動你打的字。
+- 🛟 **自動退回**：模型無法啟動或回應太慢時改用統計引擎排序，打字不會卡住。
+
+## 🎯 免選字是怎麼做到的
+
+傳統注音輸入法靠詞庫與詞頻挑字，只看得到相鄰的一兩個詞。靈犀注音在統計引擎之上加了一層 Transformer 重排：
+
+```mermaid
+flowchart LR
+    K["⌨️ 注音按鍵"] --> L["📖 詞庫查詞<br/>建立詞圖"]
+    L --> V["📊 統計引擎<br/>unigram／bigram＋Viterbi<br/>N-best 前 8 名"]
+    V --> T{"🧠 Transformer 重排<br/>前文最多 64 字＋注音＋候選"}
+    C["📝 已送出的前文"] -.-> T
+    T -->|"100 ms 內完成"| P["👤 套用個人詞庫"]
+    T -.->|"逾時或模型無法使用"| F["🛟 統計排序"]
+    F --> P
+    P --> O["✅ 首選上屏"]
+    O -->|"Enter 送出"| Q["✍️ 補標點（Beta）"]
+```
+
+1. **列出可能的句子** 📖：依注音在詞庫找出所有可能的字詞，以 unigram／bigram 統計語言模型與 Viterbi 在詞圖上搜尋最可能的組合，打字時即時更新。
+2. **Transformer 重排** 🧠：讀入剛送出、游標仍緊接其後的前文（最多 64 字）、目前的注音與每個候選，替前 8 名重新評分。attention 能同時參考整段前文，不只看緊鄰的詞。
+3. **本機學習** 👤：你選過、改過的字詞記在本機個人詞庫，下次同樣的情況優先出現。
+4. **有把握才補全** ⇥：後續字詞的信心夠高時才顯示 Tab 建議。
+
+### 📈 封存測試：首選錯誤少約六成
+
+在事前凍結、模型沒看過的台灣新聞測試（2026-09-24〜26，共 6,000 例，一半是困難的同音短詞）上，首選錯誤比新酷音少約六成：
+
+| 方法 | 首選正確率 | 首選錯誤率 |
+|---|---:|---:|
+| 新酷音 0.11.0 | 64.2% | 35.8% |
+| 小麥注音 | 67.2% | 32.8% |
+| 靈犀注音（只用統計引擎） | 76.9% | 23.1% |
+| **靈犀注音（Transformer 重排）** | **86.0%／86.1%** | **14.0%** |
+
+```mermaid
+xychart-beta
+    title "首選錯誤率（越低越好）"
+    x-axis ["新酷音", "小麥注音", "靈犀・統計", "靈犀・Transformer"]
+    y-axis "錯誤率 %" 0 --> 40
+    bar [35.8, 32.8, 23.1, 14.0]
+```
+
+測試規格、成功標準與評分程式都在讀取資料前凍結，只評一次；讀音由字典合成、答案取原文，不是真人打字紀錄。外部輸入法採對它們最有利的輸入方式、無個人詞庫。靈犀注音的兩個數字來自兩個不同的訓練種子。「只用統計引擎」也就是模型無法啟動時的表現。免選字是目標而非保證：罕見人名與詞庫外的詞仍可能要手動選。
+
+### 🧩 模型
+
+| | 選字（`models/select/`） | 補標點（`models/punct/`） |
+|---|---|---|
+| 架構 | 因果 Transformer decoder：8 層、寬度 512、8 個 attention head，約 3,261 萬參數 | 雙向 Transformer encoder |
+| 輸入 | 前文（最多 64 字）＋注音＋候選 | 送出的文字，不看前文 |
+| 上游 | [Funmula/0c-sequence-d512](https://huggingface.co/Funmula/0c-sequence-d512) | [Funmula/0c-punct-d512](https://huggingface.co/Funmula/0c-punct-d512) |
+
+模型從零開始訓練，不使用通用大型語言模型的權重，採用 RoPE、GeGLU 等現代化元件。一般桌機 CPU 上選字的 P95 延遲約 7 ms（短片段）至 16 ms（長片段）；兩個模型合計約 250 MB。密碼欄位、暫停學習及英數模式下不送任何文字給模型。更多數字與方法見官網 [選字技術](https://0c.biggo.com/technology/)。
+
+## 🖥️ 支援平台
 
 | 平台 | 外殼與建置說明 |
 |---|---|
-| Linux Fcitx5 | [C++ 外殼](platforms/linux-fcitx5/README.md) |
-| Linux IBus | [Go 外殼](platforms/linux-ibus/README.md) |
-| macOS | [InputMethodKit 外殼](platforms/macos/README.md) |
-| Windows | [TSF 外殼](platforms/windows/README.md) |
+| 🐧 Linux Fcitx5 | [C++ 外殼](platforms/linux-fcitx5/README.md) |
+| 🐧 Linux IBus | [Go 外殼](platforms/linux-ibus/README.md) |
+| 🍎 macOS | [InputMethodKit 外殼](platforms/macos/README.md) |
+| 🪟 Windows | [TSF 外殼](platforms/windows/README.md) |
 
-## 開始開發
+## 🛠️ 開始開發
 
 核心需要 Go 1.26 以上；測試與發佈工具使用 Python 3.11 以上。首次建置須先備妥 `go.mod`／`go.sum` 所列模組。以下指令在 repo 根目錄執行，不安裝或重啟桌面輸入法：
 
@@ -26,7 +91,7 @@ go run ./cmd/0c-cli -data build/public-data
 
 平台外殼另需各自的 C++／Rust／Swift 工具鏈與系統函式庫。設定程式建置入口見 [設定程式](platforms/settings/README.md)。
 
-## 檢查與測試
+## ✅ 檢查與測試
 
 ```sh
 python3 scripts/check_public_tree.py
@@ -41,7 +106,7 @@ Fcitx5 測試需要 Linux 與 C++ 建置工具。設定程式和各平台原生�
 
 `check_public_tree.py` 檢查 Git 已追蹤及可加入的路徑；原始碼發佈工具也檢查 tag 的完整 Git tree。被 `export-ignore` 隱藏的私人檔案仍會被拒絕。提交前仍須審閱內容；路徑檢查不等同完整機密掃描。
 
-## 原始碼發佈
+## 📦 原始碼發佈
 
 GitHub Release 提供 `ime-oss-<版本>.tar.xz` 與 `SHA256SUMS`。tarball 交付程式原始碼、可直接使用的統計字典與兩個已配對模型，供維護者編譯同一版本的輸入法；不需要重新生成統計資料或訓練模型。
 
@@ -66,7 +131,7 @@ python3 scripts/source_release.py verify build/source-release/0.2.0/ime-oss-0.2.
 
 首次完整 tarball 在本機建立；尚未設定 `DICTIONARY_SOURCE_URL` 時，tag 的自動組裝工作會略過。發布首版後，將 repo variable `DICTIONARY_SOURCE_URL` 設為該 tarball 的 HTTPS 下載網址。後續 tag CI 取回其中的現成字典、按當前 tag 的 lock 校驗，再組裝新 tarball；解壓後離線建置輸入法並載入字典成功，才上傳 tarball 與 SHA256SUMS 至 Release 草稿。字典版本更新時，以新字典在本機建立完整 tarball，再更新網址。
 
-## 發行版整合
+## 🧰 發行版整合
 
 解壓完整 tarball，在根目錄執行：
 
@@ -82,15 +147,11 @@ Go module 相依須預先備妥，之後可用 `GOPROXY=off GOSUMDB=off` 離線�
 
 神經選字與補標點直接使用 `models/select/`、`models/punct/`；版本與配對檢查見 [模型說明](models/README.md)，worker 及系統 Python、NumPy、ONNX Runtime 整合方式見 [神經推論](platforms/neural/README.md)。發行版自行提供工具鏈、執行相依套件與暫存安裝規則。
 
-## 完整安裝包
+## 💿 下載安裝
 
-`.exe`、`.deb`、`.pkg` 等使用者安裝包由官網提供；官網上傳與索引續簽流程不在本 repo。
+Windows、macOS、Linux 安裝包請到官網下載：👉 [0c.biggo.com/download](https://0c.biggo.com/download/)
 
-本 repo 保留三平台的本機打包工具。除配對字典、模型與工具鏈外，須以 `--release-docs /path/to/package-documents` 提供一般檔案 `INSTALL.md`、`PRIVACY.md`、`UPDATING.md`。文件必須非空，會原樣附入安裝包，不會從本機私人文件目錄自動取得，也不會刪除政策狀態標記。各平台選項可用 `python3 scripts/package_release.py --help`、`package_windows.py --help` 或 `package_macos.py --help` 查詢。
-
-`--preview` 僅供測試，不代表獲准公開散布。公開資料包要求 `0c-compile -public`；打包不刪除來源、不改寫 NOTICE，也不重新綁定模型。`legal/TERMS.md` 已核可；隱私政策另行核可，一般使用者安裝包的政策核可與發布檢查由發行者負責。
-
-## 參與開發與授權
+## 🤝 參與開發與授權
 
 - [參與開發](CONTRIBUTING.md)
 - [專案範圍](REPOSITORIES.md)
