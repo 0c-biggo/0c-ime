@@ -23,7 +23,7 @@ make install PREFIX=/usr VERSION=0.2.3 DESTDIR=$PWD/debian/tmp
 | `FCITX5`、`IBUS`、`SETTINGS` | `1` | 設成 `0` 就不建、不裝那一項 |
 | `SETTINGS_BIN` | 空 | 已建好的 `0c-settings`；空的時候以 `cargo build --locked` 建置 |
 | `FCITX5_ADDONDIR` | `PREFIX=/usr` 時是 `pkg-config --variable=libdir Fcitx5Core`/fcitx5（Debian：`/usr/lib/<triplet>/fcitx5`），否則 `$(LIBDIR)/fcitx5` | 不是 Fcitx5 自己的 addon 目錄時，addon 設定的 `Library` 寫絕對路徑 |
-| `IBUS_COMPONENTDIR` | `$(DATAROOTDIR)/ibus/component` | IBus 只讀 `/usr/share/ibus/component`（及 `IBUS_COMPONENT_PATH`） |
+| `IBUS_COMPONENTDIR` | `pkg-config --variable=datadir ibus-1.0`/ibus/component（沒有 `libibus-1.0-dev` 時 `/usr/share/ibus/component`），不隨 `PREFIX` | ibus-daemon 只讀它自己的元件目錄（設了 `IBUS_COMPONENT_PATH` 才讀別處；IBus 1.5.34 容器實測 `/usr/local/share/ibus/component` 不會被讀到），所以 `PREFIX=/usr/local` 也裝到這裡。要放在 `PREFIX` 底下就自己設 `IBUS_COMPONENTDIR`，並讓 ibus-daemon 的 `IBUS_COMPONENT_PATH` 包含它與 `/usr/share/ibus/component` |
 
 `build` 建出 `build/system/` 下的 `0c-server`、`0c-update`、`0c-ibus`、`0c-mcp`、`fcitx5/lib0c.so` 與設定程式；系統目錄在建置時寫進程式（Go 的 `-ldflags -X …/internal/installs.LibexecDir=…`，C++ 的 `-DZC_SYSTEM_LIBEXECDIR`，設定程式的 `ZC_SYSTEM_LIBEXECDIR` 環境變數），所以 `build` 與 `install` 要用同樣的 `PREFIX`。直接 `go build` 的程式預設就是 `PREFIX=/usr` 的位置。
 
