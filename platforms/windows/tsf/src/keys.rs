@@ -676,8 +676,8 @@ pub fn starts_composition(layout: Layout, key: &str) -> bool {
     key.len() == 1 && keys.contains(key)
 }
 
-/// 聲調鍵（不含空白的一聲）：標準排列 3 4 6 7、倚天 1 2 3 4。沒在組字時要不要交給引擎依設定（#135，
-/// 見 Session::tone_mark_keys），不在 starts_composition 的固定集合裡。
+/// 聲調鍵（不含空白的一聲）：標準排列 3 4 6 7、倚天 1 2 3 4。沒在組字時要不要交給引擎依引擎回報（#135、#175，
+/// 見 session::idle_tone_keys），不在 starts_composition 的固定集合裡。
 pub fn tone_key(layout: Layout, key: &str) -> bool {
     let keys = match layout {
         Layout::Standard => "3467",

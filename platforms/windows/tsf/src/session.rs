@@ -357,12 +357,11 @@ impl Session {
             .is_some_and(|reply| reply["ok"] == true && reply["info"]["emoji_shortcut"] == "equals")
     }
 
-    /// 沒在組字時的聲調鍵是否交給引擎（#135：單按聲調鍵＋空白是聲調符號，數字先留在組字區）。
-    /// 中英混打時照舊交還宿主；引擎不可用或舊版引擎沒有這一項時為 false，維持原本交還宿主的行為。
+    /// 沒在組字時的聲調鍵是否交給引擎（見 idle_tone_keys）。
     pub fn tone_mark_keys(&mut self) -> bool {
         self.client
             .call(&json!({"op": "health"}))
-            .is_some_and(|reply| reply["ok"] == true && reply["info"]["tone_mark_keys"] == "true")
+            .is_some_and(|reply| reply["ok"] == true && idle_tone_keys(&reply["info"]))
     }
 
     /// 引擎是否認得 Ctrl＋標點的鍵名而且設定開著（health 的 ctrl_punctuation，#168）。只在按下那六個鍵時查詢，
@@ -835,6 +834,28 @@ mod parse_tests {
             downgrade_vocab_key(&mut r);
             assert_eq!(r, before);
         }
+    }
+}
+
+/// 沒在組字時的聲調鍵 3 4 6 7 要不要交給引擎，依 health 的 info：
+/// - 沒開中英混打（tone_mark_keys）：引擎先把數字留在組字區，緊接空白換成聲調符號（#135）。
+/// - 中英混打（mixed_input）：引擎把數字照字面留在組字區，跟 Linux／macOS 一樣，後面的 54 才知道前面是數字、
+///   354 整串留數字（#175）；以前交還宿主時「3」直接打進文件，54 就組成「至」。
+/// 引擎不可用或舊版引擎兩項都沒有時為 false，維持原本交還宿主的行為。
+fn idle_tone_keys(info: &Value) -> bool {
+    info["tone_mark_keys"] == "true" || info["mixed_input"] == "true"
+}
+
+#[cfg(test)]
+mod idle_tone_key_tests {
+    use super::*;
+
+    #[test]
+    fn idle_tone_keys_go_to_the_engine_in_mixed_input_too() {
+        assert!(idle_tone_keys(&json!({"tone_mark_keys": "true", "mixed_input": "false"})), "#135");
+        assert!(idle_tone_keys(&json!({"tone_mark_keys": "false", "mixed_input": "true"})), "#175：354");
+        assert!(!idle_tone_keys(&json!({"tone_mark_keys": "false", "mixed_input": "false"})));
+        assert!(!idle_tone_keys(&json!({})), "舊引擎");
     }
 }
 
