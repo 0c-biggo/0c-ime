@@ -187,6 +187,14 @@ type Distribution struct {
 	Schema  int    `json:"schema"`
 	Updates string `json:"updates"`
 	Version string `json:"version,omitempty"`
+	// ModelDownload 是發行版關掉模型下載與「下載模型」提醒的開關（#180）：false 時關閉，沒寫時開啟。
+	// make install MODEL_DOWNLOAD=0 寫入，維護者也可以之後改這個檔案。
+	ModelDownload *bool `json:"model_download,omitempty"`
+}
+
+// ModelDownloadDisabled 回報發行版是否關掉了模型下載與提醒。
+func (d Distribution) ModelDownloadDisabled() bool {
+	return d.ModelDownload != nil && !*d.ModelDownload
 }
 
 // Distribution 讀系統安裝的模式標記；沒有檔案時 ok 為 false。

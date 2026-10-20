@@ -2472,6 +2472,43 @@ Successfully verified: 0c-update.exe
             self.assertEqual(component_dir(empty, "IBUS_COMPONENTDIR=/usr/local/share/ibus/component"),
                              "/stage/usr/local/share/ibus/component")
 
+    def test_pairing_lock_matches_0c_ime_pair_models(self):
+        # #180：發版產生的 pairing.lock 與 0c-ime 以 scripts/pair_models.py 產生的逐位元組相同（兩份不同的字典）。
+        import pairing_lock
+        testdata = Path(__file__).resolve().parents[1] / "internal/models/testdata"
+        for name in ("0c-ime-dfsg-pairing.lock.json", "0c-ime-0.2.3-pairing.lock.json"):
+            expected = (testdata / name).read_bytes()
+            dictionary = json.loads(expected)["dictionary_manifest_sha256"]
+            self.assertEqual(pairing_lock.pairing_lock(dictionary), expected, name)
+        with tempfile.TemporaryDirectory() as temp:
+            data = Path(temp, "data")
+            data.mkdir()
+            (data / "manifest.json").write_bytes(b'{"x": 1}\n')
+            out = Path(temp, "neural/pairing.lock.json")
+            dictionary = pairing_lock.write_pairing_lock(data, out)
+            self.assertEqual(json.loads(out.read_bytes())["dictionary_manifest_sha256"], installer.digest(data / "manifest.json"))
+            self.assertEqual(dictionary, installer.digest(data / "manifest.json"))
+
+    def test_system_install_ships_pairing_lock_and_model_download_switch(self):
+        # #180：make install 把配對清單放在字典旁的 neural/；MODEL_DOWNLOAD=0 寫進 distribution.json 關掉下載與提醒。
+        if not shutil.which("make"):
+            self.skipTest("沒有 make")
+        root = Path(__file__).resolve().parents[1]
+        lock = root / "internal/models/testdata/0c-ime-dfsg-pairing.lock.json"
+
+        def dry_run(*extra):
+            result = subprocess.run(["make", "-s", "-n", "-C", str(root), "install", "PREFIX=/usr", "VERSION=0.0.0", "DESTDIR=/stage",
+                                     "FCITX5=0", "IBUS=0", "SETTINGS=0", *extra], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return result.stdout
+
+        out = dry_run(f"PAIRING_LOCK={lock}")
+        self.assertIn(f"install -Dm644 '{lock}' /stage/usr/share/0c/neural/pairing.lock.json", out)
+        self.assertIn('"version":"%s"}', out)
+        self.assertNotIn("model_download", out)
+        self.assertIn('"model_download":false}', dry_run(f"PAIRING_LOCK={lock}", "MODEL_DOWNLOAD=0"))
+        self.assertNotIn("neural/pairing.lock.json\n", dry_run("PAIRING_LOCK=/nonexistent/pairing.lock.json"))
+
 
 if __name__ == "__main__":
     unittest.main()

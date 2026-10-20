@@ -59,6 +59,12 @@ IBUS         ?= 1
 SETTINGS     ?= 1
 # 已建好的設定程式（例如 scripts/build_settings_linux.py 的輸出）；空的時候以 cargo 建置。
 SETTINGS_BIN ?=
+# 模型配對清單（#180）：0c-ime 原始碼 tarball 的 models/pairing.lock.json，綁定 assets/data。0c-update 從 Hugging Face
+# 下載模型後在本機配對，結果要等於這份清單；字典不是清單上的那一份（例如自己重建）時下載的模型不會啟用。
+PAIRING_LOCK ?= models/pairing.lock.json
+# MODEL_DOWNLOAD=0：關掉設定程式的「下載模型」與沒有模型時的提醒（distribution.json 的 model_download）。
+MODEL_DOWNLOAD ?= 1
+comma := ,
 
 ZC_LIBEXEC   := $(LIBEXECDIR)/0c
 ZC_SHARE     := $(DATAROOTDIR)/0c
@@ -110,7 +116,13 @@ install: check-version
 	chmod -R u=rwX,go=rX $(DESTDIR)$(ZC_SHARE)/data
 	install -Dm644 platforms/neural/runtime/sequence_runtime.py $(DESTDIR)$(ZC_SHARE)/neural/sequence_runtime.py
 	install -Dm644 platforms/neural/runtime/punct_runtime.py $(DESTDIR)$(ZC_SHARE)/neural/punct_runtime.py
-	printf '{"schema":1,"updates":"package-manager","version":"%s"}\n' '$(VERSION)' > $(DESTDIR)$(ZC_SHARE)/distribution.json
+ifneq ($(wildcard $(PAIRING_LOCK)),)
+	install -Dm644 '$(PAIRING_LOCK)' $(DESTDIR)$(ZC_SHARE)/neural/pairing.lock.json
+	@grep -q "$$(sha256sum '$(DATA)/manifest.json' | cut -d' ' -f1)" '$(PAIRING_LOCK)' || echo '注意：$(PAIRING_LOCK) 不是 $(DATA) 的配對清單，下載的模型不會啟用' >&2
+else
+	@echo '沒有 $(PAIRING_LOCK)，不提供下載模型（以 PAIRING_LOCK= 指定配對清單，見 scripts/pairing_lock.py）' >&2
+endif
+	printf '{"schema":1,"updates":"package-manager","version":"%s"$(if $(filter 0,$(MODEL_DOWNLOAD)),$(comma)"model_download":false)}\n' '$(VERSION)' > $(DESTDIR)$(ZC_SHARE)/distribution.json
 	chmod 644 $(DESTDIR)$(ZC_SHARE)/distribution.json
 	$(foreach i,0c-zhuyin 0c-english,install -Dm644 platforms/linux-fcitx5/icons/$(i).svg $(DESTDIR)$(DATAROOTDIR)/icons/hicolor/scalable/status/$(i).svg &&) true
 ifeq ($(FCITX5),1)
@@ -137,7 +149,7 @@ endif
 uninstall:
 	rm -f $(DESTDIR)$(ZC_LIBEXEC)/0c-server $(DESTDIR)$(ZC_LIBEXEC)/0c-update $(DESTDIR)$(ZC_LIBEXEC)/0c-ibus \
 	      $(DESTDIR)$(BINDIR)/0c-mcp $(DESTDIR)$(BINDIR)/0c-settings $(DESTDIR)$(ZC_SHARE)/distribution.json \
-	      $(DESTDIR)$(ZC_SHARE)/neural/sequence_runtime.py $(DESTDIR)$(ZC_SHARE)/neural/punct_runtime.py \
+	      $(DESTDIR)$(ZC_SHARE)/neural/sequence_runtime.py $(DESTDIR)$(ZC_SHARE)/neural/punct_runtime.py $(DESTDIR)$(ZC_SHARE)/neural/pairing.lock.json \
 	      $(DESTDIR)$(FCITX5_ADDONDIR)/lib0c.so $(DESTDIR)$(DATAROOTDIR)/fcitx5/addon/0c.conf \
 	      $(DESTDIR)$(DATAROOTDIR)/fcitx5/inputmethod/zuin.conf $(DESTDIR)$(IBUS_COMPONENTDIR)/0c.xml \
 	      $(DESTDIR)$(DATAROOTDIR)/applications/0c-settings.desktop $(DESTDIR)$(DATAROOTDIR)/icons/hicolor/128x128/apps/0c-settings.png \
