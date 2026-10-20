@@ -119,6 +119,23 @@ func (s *Server) markDrain() bool {
 	return true
 }
 
+// Drain 由宿主自己開始交接（例如系統安裝的引擎發現執行檔或字典被套件管理員換掉，#181），
+// 與收到 drain 請求相同：沒有組字時存檔、斷開連線並呼叫 OnDrained；逾時放棄。已在交接中時回傳 false。
+func (s *Server) Drain() bool {
+	if !s.markDrain() {
+		return false
+	}
+	s.runDrain()
+	return true
+}
+
+// Draining 回報交接是否進行中或已完成；逾時或存檔失敗而放棄交接後回到 false。
+func (s *Server) Draining() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.draining
+}
+
 // runDrain 在背景等待所有組字結束；成立時斷開連線並通知宿主退出，逾時則放棄交接。
 func (s *Server) runDrain() {
 	timeout := s.DrainTimeout

@@ -38,6 +38,15 @@ import (
 var buildVersion = "dev"
 
 func main() {
+	// 系統安裝的升級交接（#181）：serve 存完檔、放開端點與個人資料鎖、關掉 worker 之後才換成新的執行檔。
+	if next := serve(); next != "" {
+		err := reexec(next)
+		fmt.Fprintln(os.Stderr, "0c-server: 無法換成新的執行檔，結束（外殼下一個按鍵會重新啟動引擎）：", err)
+	}
+}
+
+// serve 執行引擎直到結束；回傳要換成的新執行檔（系統安裝的升級交接），一般結束時為空字串。
+func serve() string {
 	defaultData, defaultUser, defaultSock := defaultPaths()
 	redirectEngine(filepath.Dir(defaultUser))
 	data := flag.String("data", defaultData, "資料包目錄")
@@ -48,7 +57,11 @@ func main() {
 	lockWait := flag.Duration("lock-wait", 5*time.Second, "個人資料目錄被另一個引擎鎖住時最多等這麼久（交接時舊引擎存完檔才放鎖）；逾時照常輸入但不存檔")
 	checkData := flag.Bool("check-data", false, "僅驗證資料包能載入，不開啟管道、不讀寫個人詞庫")
 	neuralPackage := flag.String("neural-package", "", "神經選字 ONNX 包；未指定時依 settings.json 使用資料包旁內附的 neural/select")
-	neuralPython := flag.String("neural-python", "python3", "ONNX worker Python 路徑")
+	neuralPython := flag.String("neural-python", "python3", "ONNX worker Python 路徑；指定時也取代內附或系統的 Python")
+	systemPython := flag.String("system-python", neural.SystemPython(), "沒有內附 Python 時使用的系統 Python（需要 numpy、onnxruntime）；空值不使用")
+	installWatchMode := flag.String("install-watch", "auto", "執行檔或字典被套件管理員換掉時自己交接重啟：auto（Linux 系統安裝才啟用）、on、off")
+	installWatchEvery := flag.Duration("install-watch-interval", installWatchInterval, "檢查安裝檔案的間隔")
+	installWatchQuiet := flag.Duration("install-watch-idle", installWatchIdle, "最後一個按鍵之後這麼久才交接")
 	neuralWorker := flag.String("neural-worker", "", "worker 腳本路徑（encoder_runtime.py 或 sequence_runtime.py）")
 	neuralTimeout := flag.Duration("neural-timeout", 100*time.Millisecond, "模型決策期限，上限 100ms；逾時保留原排序")
 	neuralThreads := flag.Int("neural-threads", neural.DefaultThreads(), "模型 CPU threads（1–8，預設為 CPU 邏輯核心數，最多 8）")
@@ -63,7 +76,7 @@ func main() {
 			lg.Fatal(err)
 		}
 		fmt.Println("資料包可載入")
-		return
+		return ""
 	}
 
 	// 過渡期：升級當下已載入的舊外殼仍連舊名稱，因此同時服務新舊名稱。隔離測試指定 -socket 時不碰舊名稱。
@@ -196,36 +209,59 @@ func main() {
 	if config.CandidateLayout == "grid" {
 		eng.CandidateColumns = 5
 	}
-	bundled := neural.FindBundled(*data)
+	// 模型與字典配對出貨；缺 manifest 時無法核對配對，保留統計引擎，不讓輸入法停擺。
+	dictionaryManifest, manifestErr := os.ReadFile(filepath.Join(*data, "manifest.json"))
+	dictionarySHA := ""
+	if manifestErr == nil {
+		dictionarySHA = fmt.Sprintf("%x", sha256.Sum256(dictionaryManifest))
+	}
+	// Python、worker 與模型分開找（#181）：Python 內附優先，Linux 沒有時用系統的 python3；模型依
+	// 安裝包內建 → 個人目錄（#180）的順序；都沒有時統計選字。找到模型卻沒有 Python 時回報 runtime_missing。
+	bundled := neural.Find(neural.Options{DataDir: *data, UserDir: filepath.Dir(*user), DictionarySHA256: dictionarySHA, SystemPython: *systemPython})
+	python, pythonSource := bundled.Python, bundled.PythonSource
+	if explicit["neural-python"] {
+		python, pythonSource = *neuralPython, "custom"
+	}
+	if pythonSource == "" {
+		pythonSource = "missing"
+	}
 	neuralState := "disabled_by_setting"
+	var selectionSource, punctuationSource string
+	punctuationRuntimeMissing := false
 	var selectionWorker *neural.Supervisor
 	var punctuationWorker *neural.PunctWorker
 	if config.Selection == settings.Neural && !explicit["neural-package"] {
 		neuralState = "not_installed"
-		if bundled.HasSelect {
-			*neuralPackage, *neuralWorker, *neuralPython = bundled.SelectPackage, bundled.SelectWorker, bundled.Python
+		switch {
+		case bundled.SelectSource == "":
+		case python == "":
+			neuralState = "runtime_missing"
+		default:
+			*neuralPackage, *neuralWorker, *neuralPython = bundled.SelectPackage, bundled.SelectWorker, python
+			selectionSource = bundled.SelectSource
 			if !explicit["neural-threads"] {
 				*neuralThreads = neural.DefaultThreads()
 			}
 		}
 	}
-	if config.Punctuation && !explicit["punct-package"] && bundled.HasPunct {
-		*punctPackage, *punctWorker = bundled.PunctPackage, bundled.PunctWorker
-		if !explicit["neural-python"] {
-			*neuralPython = bundled.Python
-		}
-		if !explicit["punct-threads"] {
-			*punctThreads = neural.DefaultThreads()
+	if config.Punctuation && !explicit["punct-package"] && bundled.PunctSource != "" {
+		if python == "" {
+			punctuationRuntimeMissing = true
+		} else {
+			*punctPackage, *punctWorker, *neuralPython = bundled.PunctPackage, bundled.PunctWorker, python
+			punctuationSource = bundled.PunctSource
+			if !explicit["punct-threads"] {
+				*punctThreads = neural.DefaultThreads()
+			}
 		}
 	}
 	if *neuralPackage != "" {
-		// 模型與字典配對出貨；缺 manifest 時無法核對配對，保留統計引擎，不讓輸入法停擺。
-		manifest, workerErr := os.ReadFile(filepath.Join(*data, "manifest.json"))
+		workerErr := manifestErr
 		var worker *neural.Supervisor
 		if workerErr == nil {
 			// 模型在背景載入；引擎先以統計引擎服務，外殼的第一個按鍵不必等 Python。
 			worker, workerErr = neural.OpenSupervisedAsync(neural.Config{Python: *neuralPython, Script: *neuralWorker, Package: *neuralPackage,
-				DictionarySHA256: fmt.Sprintf("%x", sha256.Sum256(manifest)), Threads: *neuralThreads, Timeout: *neuralTimeout})
+				DictionarySHA256: dictionarySHA, Threads: *neuralThreads, Timeout: *neuralTimeout})
 		}
 		if workerErr != nil {
 			lg.Printf("神經模型未啟用，保留統計引擎：%v", workerErr)
@@ -341,7 +377,14 @@ func main() {
 		}
 		return e2esync.Pause(filepath.Dir(*user), "writer_saved")
 	} // 不釋放端點，直到學習存檔成功；失敗時保留原引擎供重試。
-	srv.OnDrained = closeAll
+	// 升級交接（#181）：只有自己開始的交接成功時才換成新的執行檔；0c-update 或訊號造成的結束照舊退出。
+	var watchDrain, handover atomic.Bool
+	srv.OnDrained = func() {
+		if watchDrain.Load() {
+			handover.Store(true)
+		}
+		closeAll()
+	}
 	srv.Info = map[string]string{"version": buildVersion, "protocol": fmt.Sprint(proto.Version),
 		"neural_startup_state": neuralState, "personal_store": personalState, "personal_lock": lockState,
 		"selection_setting": config.Selection, "punctuation": fmt.Sprint(eng.Punct != nil), "document_context": fmt.Sprint(config.DocumentContext),
@@ -361,6 +404,14 @@ func main() {
 		// #169：引擎認得 output_simplified 請求，「輸出簡體字」可以即時切換；目前的值在 RuntimeInfo 的 output_simplified。
 		// 舊引擎沒有這一項，外殼退回 0c-update set output-simplified … -apply（重啟引擎套用）。
 		"output_simplified_live": "true"}
+	// #181：模型從哪裡來（bundled：安裝包內建；user：個人目錄），推論用哪個 Python（bundled、system、custom、missing）。
+	srv.Info["neural_python"] = pythonSource
+	if selectionSource != "" {
+		srv.Info["selection_source"] = selectionSource
+	}
+	if punctuationSource != "" {
+		srv.Info["punctuation_source"] = punctuationSource
+	}
 	srv.Info["english_words"] = fmt.Sprint(eng.English.Len())
 	srv.Info["english_pack"] = eng.EnglishPack
 	if eng.EnglishPack == "" {
@@ -377,6 +428,8 @@ func main() {
 		punctuationState := "not_installed"
 		if !config.Punctuation {
 			punctuationState = "disabled_by_setting"
+		} else if punctuationRuntimeMissing {
+			punctuationState = "runtime_missing"
 		}
 		if punctuationWorker != nil {
 			punctuationState = punctuationWorker.State()
@@ -408,13 +461,14 @@ func main() {
 		contextWeight = *eng.DocumentContextWeight
 	}
 	srv.Info["document_context_weight"] = fmt.Sprintf("%g", contextWeight)
-	if executable, err := os.Executable(); err == nil {
+	executable, exeErr := os.Executable()
+	if exeErr == nil {
 		if binary, err := os.ReadFile(executable); err == nil {
 			srv.Info["executable_sha256"] = fmt.Sprintf("%x", sha256.Sum256(binary))
 		}
 	}
-	if manifest, err := os.ReadFile(filepath.Join(*data, "manifest.json")); err == nil {
-		srv.Info["data_sha256"] = fmt.Sprintf("%x", sha256.Sum256(manifest))
+	if dictionarySHA != "" {
+		srv.Info["data_sha256"] = dictionarySHA
 	}
 	if info, ok := debug.ReadBuildInfo(); ok {
 		srv.Info["go"] = info.GoVersion
@@ -423,6 +477,16 @@ func main() {
 				srv.Info[setting.Key] = setting.Value
 			}
 		}
+	}
+	var watch *installWatch
+	home, _ := os.UserHomeDir()
+	if exeErr == nil && (*installWatchMode == "on" || *installWatchMode == "auto" && installWatchEnabled(runtime.GOOS, executable, *data, home)) {
+		neuralDir := filepath.Join(filepath.Dir(filepath.Clean(*data)), "neural")
+		watch = newInstallWatch([]string{executable, filepath.Join(*data, "manifest.json"),
+			filepath.Join(neuralDir, "sequence_runtime.py"), filepath.Join(neuralDir, "punct_runtime.py"),
+			filepath.Join(neuralDir, "select", "manifest.json"), filepath.Join(neuralDir, "punct", "manifest.json")},
+			runningExecutable(), *installWatchEvery, time.Now())
+		lg.Printf("系統安裝：執行檔或字典被套件管理員換掉時，停手後自己交接到新版（每 %v 檢查）", *installWatchEvery)
 	}
 	go func() {
 		lastBusy := time.Now()
@@ -438,6 +502,29 @@ func main() {
 			if schedule.due(now, srv.LastKey()) {
 				save()
 			}
+			if watchDrain.Load() && !srv.Draining() {
+				watchDrain.Store(false) // 交接逾時（一直在組字）或存檔失敗：繼續服務，下一次檢查再試
+			}
+			if watch != nil && !watchDrain.Load() && !stopping.Load() && now.Sub(srv.LastKey()) >= *installWatchQuiet {
+				if _, composing := eng.Sessions(); composing == 0 {
+					ready, changed := watch.poll(now)
+					if changed {
+						lg.Printf("安裝的檔案已更新，等檔案穩定後交接")
+					}
+					if ready {
+						if err := checkNewEngine(executable, *data); err != nil {
+							lg.Printf("新的執行檔無法載入字典，暫不交接（檔案再變時重試）：%v", err)
+							watch.reject()
+						} else {
+							lg.Printf("安裝的檔案已更新，交接到新版")
+							watchDrain.Store(true)
+							if !srv.Drain() {
+								watchDrain.Store(false)
+							}
+						}
+					}
+				}
+			}
 			if srv.Conns() > 0 {
 				lastBusy = time.Now()
 			} else if *idle > 0 && time.Since(lastBusy) > *idle {
@@ -452,7 +539,8 @@ func main() {
 	// Windows 登出／關機的 CTRL_LOGOFF_EVENT／CTRL_SHUTDOWN_EVENT 由 Go 轉成 SIGTERM；前提是引擎不載入
 	// user32／gdi32（見 logoff_windows_test.go）。
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
-	go func() { <-sig; closeAll() }()
+	var signaled atomic.Bool // 交接途中收到結束訊號（例如登出）：照常結束，不換成新的執行檔
+	go func() { <-sig; signaled.Store(true); closeAll() }()
 
 	var wg sync.WaitGroup
 	for _, l := range listeners {
@@ -471,4 +559,9 @@ func main() {
 	// 最後一次存檔之後才放鎖（端點此時已關閉）：交接中等鎖的新引擎在這之後才讀個人檔。
 	// 神經 worker 等收尾在 main 返回後才執行，不佔著鎖。
 	writerLock.Release()
+	if handover.Load() && !signaled.Load() {
+		lg.Printf("換成新的執行檔：%s", executable)
+		return executable
+	}
+	return ""
 }

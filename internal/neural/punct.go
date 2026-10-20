@@ -215,7 +215,7 @@ func (p *punctProc) exchange(request []byte, timeout time.Duration) ([]byte, err
 // reviveLocked 需持有 w.mu：冷卻與每小時上限內在背景重啟；本次請求一律照原文提交。
 func (w *PunctWorker) reviveLocked() {
 	now := time.Now()
-	if w.starting || now.Sub(w.stoppedAt) < 3*time.Second {
+	if w.starting || now.Sub(w.stoppedAt) < retryCooldown(w.reason, 3*time.Second) {
 		return
 	}
 	kept := w.restarts[:0]
@@ -301,6 +301,9 @@ func (w *PunctWorker) State() string {
 	}
 	if w.starting {
 		return "loading"
+	}
+	if w.reason == ReasonRuntimeMissing {
+		return "runtime_missing"
 	}
 	return "fallback"
 }
