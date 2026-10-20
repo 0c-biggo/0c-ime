@@ -4,19 +4,19 @@
 PULL ?= 1
 
 help:
-	@echo 'make assets           下載與這份原始碼相符的字典與模型（RELEASE=vX.Y.Z 指定版本）'
+	@echo 'make assets           下載與這份原始碼相符的字典與模型（RELEASE=vX.Y.Z 指定版本，MODELS=0 只取字典）'
 	@echo 'make upgrade          更新已安裝的 Linux Fcitx5 輸入法（含 git pull）'
 	@echo 'make upgrade PULL=0   使用目前工作目錄，略過 git pull'
 	@echo 'make test-release     驗證套件檢查與隔離安裝／回復流程'
 	@echo 'make test-source-release  驗證 GitHub 原始碼與模型 tarball 流程'
-	@echo 'python3 scripts/source_release.py --help  建立含模型的原始碼發佈檔'
+	@echo 'python3 scripts/source_release.py --help  建立原始碼發佈檔與另附的模型檔'
 	@echo 'python3 scripts/package_release.py --help  建立完整 Linux 套件'
 	@echo 'python3 scripts/package_windows.py --help  建立 Windows x64 套件（在 Windows 執行）'
 	@echo 'python3 scripts/package_windows_installer.py --help  將 Windows ZIP 製成 EXE 安裝精靈'
 	@echo 'go run ./cmd/0c-update status  檢查套件版本'
 
 assets:
-	python3 scripts/fetch_assets.py $(if $(RELEASE),--release $(RELEASE),)
+	python3 scripts/fetch_assets.py $(if $(RELEASE),--release $(RELEASE),) $(if $(filter 0,$(MODELS)),--no-models,)
 
 upgrade:
 	python3 scripts/upgrade.py $(if $(filter 0,$(PULL)),--no-pull,)

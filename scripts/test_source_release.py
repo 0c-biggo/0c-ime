@@ -109,27 +109,104 @@ class SourceReleaseTests(unittest.TestCase):
         with patch.object(release.urllib.request, "urlopen", side_effect=AssertionError("network used")):
             return release.build(self.repo, tag, self.work / name, self.cache, offline=True, data_dir=self.data)
 
+    @staticmethod
+    def models_of(tarball, version="0.2.0"):
+        return tarball.parent / f"{release.MODELS_NAME}-{version}.tar.xz"
+
+    def legacy(self, tarball):
+        """A 0.2.2-style tarball: the models inside the source tarball, schema 2."""
+        stage = self.work / "legacy-stage"
+        for archive in (tarball, self.models_of(tarball)):
+            with tarfile.open(archive) as source:
+                release.extract(source, stage)
+        (root,) = stage.iterdir()
+        (root / release.MODELS_RECORD).unlink()
+        record = json.loads((root / release.RECORD).read_bytes())
+        record.update(schema=2, files=release.inventory(root))
+        (root / release.RECORD).write_bytes(release.json_bytes(record))
+        legacy = self.work / "legacy" / tarball.name
+        legacy.parent.mkdir()
+        release.pack(root, legacy, record["source_date_epoch"])
+        return legacy
+
+    def rewrite(self, tarball, target, change):
+        """Copy an archive member by member; change(member, stream) returns the replacement stream."""
+        with tarfile.open(tarball) as source, tarfile.open(target, "w:xz") as output:
+            for member in source:
+                stream = source.extractfile(member) if member.isfile() else None
+                stream = change(member, stream)
+                if stream is not None and member.isfile():
+                    data = stream.read()
+                    member.size = len(data)
+                    stream = io.BytesIO(data)
+                output.addfile(member, stream)
+        return target
+
     def test_tag_source_models_offline_and_reproducible(self):
         (self.repo / "README.md").write_text("Dirty working tree must not leak\n")
         (self.repo / release.LOCK).write_text("invalid working tree lock")
         (self.repo / "untracked.txt").write_text("local note")
         first = self.build()
         record = release.verify(first)
+        self.assertEqual(record["schema"], 3)
         self.assertEqual(record["commit"], self.git("rev-parse", "v0.2.0"))
         self.assertEqual(record["files"]["tool.sh"]["mode"], 0o755)
         self.assertEqual(record["files"]["alias"], {"link": "README.md"})
         self.assertNotIn("private/note.txt", record["files"])
         self.assertNotIn("untracked.txt", record["files"])
-        self.assertIn("models/select/model.onnx", record["files"])
-        self.assertIn("models/punct/LICENSE", record["files"])
+        # The source tarball is DFSG-free: the paired models ship in their own tarball.
+        self.assertFalse(any(p.startswith(("models/select/", "models/punct/")) for p in record["files"]))
+        self.assertIn("models/models.lock.json", record["files"])
         self.assertIn("assets/data/lm.bin", record["files"])
         self.assertFalse(any("data/lm/bigram/" in p for p in record["files"]))
         with tarfile.open(first) as archive:
             self.assertEqual(archive.extractfile("0c-ime-0.2.0/README.md").read(), b"Tagged source\n")
+        models = self.models_of(first)
+        self.assertEqual(release.verify(first, models)["tag"], "v0.2.0")
+        with tarfile.open(models) as archive:
+            names = archive.getnames()
+            models_record = json.loads(archive.extractfile("0c-ime-0.2.0/" + release.MODELS_RECORD).read())
+        self.assertIn("0c-ime-0.2.0/models/select/model.onnx", names)
+        self.assertIn("0c-ime-0.2.0/models/punct/LICENSE", names)
+        self.assertFalse(any(n.startswith("0c-ime-0.2.0/assets") for n in names))
+        self.assertEqual(set(models_record["files"]), {f"models/{role}/{name}" for role in release.ROLES
+                                                      for name in release.MODEL_FILES})
         other = self.build("repeat")
         self.assertEqual(release.digest(first), release.digest(other))
+        self.assertEqual(release.digest(models), release.digest(self.models_of(other)))
         self.assertEqual((first.parent / "SHA256SUMS").read_text(),
-                         f"{release.digest(first)}  {first.name}\n")
+                         f"{release.digest(first)}  {first.name}\n{release.digest(models)}  {models.name}\n")
+
+    def test_models_tarball_must_match_its_release(self):
+        first = self.build()
+        models = self.models_of(first)
+        tampered = self.rewrite(models, self.work / "tampered.tar.xz", lambda member, stream:
+                                io.BytesIO(b"tampered") if member.name.endswith("select/model.onnx") else stream)
+        with self.assertRaisesRegex(ValueError, "models tarball file inventory mismatch"):
+            release.verify(first, tampered)
+        def outside(member, stream):
+            if member.name.endswith("punct/README.md"):
+                member.name = "0c-ime-0.2.0/README.md"
+            return stream
+        with self.assertRaisesRegex(ValueError, "unexpected models archive member"):
+            release.verify(first, self.rewrite(models, self.work / "outside.tar.xz", outside))
+        (self.repo / "README.md").write_text("Next release\n")
+        self.commit_tag("v0.2.1")
+        second = self.build("second", "v0.2.1")
+        def renamed(member, stream):
+            member.name = member.name.replace("0.2.0", "0.2.1")
+            return stream
+        with self.assertRaisesRegex(ValueError, "another release"):
+            release.verify(second, self.rewrite(models, self.work / "renamed.tar.xz", renamed))
+
+    def test_legacy_bundled_release_still_verifies(self):
+        tarball = self.build()
+        legacy = self.legacy(tarball)
+        record = release.verify(legacy)
+        self.assertEqual(record["schema"], 2)
+        self.assertIn("models/select/model.onnx", record["files"])
+        with self.assertRaisesRegex(ValueError, "bundles its models"):
+            release.verify(legacy, self.models_of(tarball))
 
     def test_dictionary_reuse_and_corruption(self):
         tarball = self.build()
@@ -352,18 +429,53 @@ class SourceReleaseTests(unittest.TestCase):
 
     def test_fetch_assets_installs_matching_release(self):
         tarball = self.build()
+        models = self.models_of(tarball)
         root = self.source_tree()
         self.assertEqual(fetch_assets.default_tag(root), "v0.2.0")
         self.assertFalse(fetch_assets.installed(root))
+        with self.assertRaisesRegex(ValueError, "ships its models separately"):
+            fetch_assets.install(tarball, root)
         (root / "models/select").mkdir()
         (root / "models/select/stale.onnx").write_bytes(b"old")
-        self.assertEqual(fetch_assets.install(tarball, root)["tag"], "v0.2.0")
+        self.assertEqual(fetch_assets.install(tarball, root, models)["tag"], "v0.2.0")
         self.assertTrue(fetch_assets.installed(root))
         self.assertFalse((root / "models/select/stale.onnx").exists())
         self.assertEqual((root / "assets/data/lm.bin").read_bytes(), (self.data / "lm.bin").read_bytes())
-        fetch_assets.install(tarball, root)  # Reinstalling the same release is harmless.
+        fetch_assets.install(tarball, root, models)  # Reinstalling the same release is harmless.
         self.assertTrue(fetch_assets.installed(root))
         self.assertEqual([p.name for p in root.iterdir() if p.name.startswith(".")], [])
+
+    def test_fetch_assets_dictionary_only_and_legacy_release(self):
+        tarball = self.build()
+        root = self.source_tree()
+        fetch_assets.install(tarball, root, with_models=False)
+        self.assertTrue(fetch_assets.installed(root, models=False))
+        self.assertFalse(fetch_assets.installed(root))
+        self.assertFalse((root / "models/select").exists())
+        legacy = self.legacy(tarball)
+        other = self.source_tree("0c-ime-legacy")
+        fetch_assets.install(legacy, other)
+        self.assertTrue(fetch_assets.installed(other))
+
+    def test_fetch_assets_downloads_both_tarballs_against_sha256sums(self):
+        tarball = self.build()
+        models = self.models_of(tarball)
+        sums = (tarball.parent / "SHA256SUMS").read_bytes()
+        served = {"SHA256SUMS": sums, tarball.name: tarball.read_bytes(), models.name: models.read_bytes()}
+        def urlopen(url, timeout):
+            return io.BytesIO(served[url.rsplit("/", 1)[1]])
+        cache = self.work / "downloads"
+        with patch.object(fetch_assets.urllib.request, "urlopen", side_effect=urlopen) as request:
+            source, fetched = fetch_assets.download("v0.2.0", cache)
+            self.assertEqual((release.digest(source), release.digest(fetched)), (release.digest(tarball), release.digest(models)))
+            self.assertEqual(fetch_assets.download("v0.2.0", cache, models=False), (source, None))
+        self.assertTrue(all("/releases/download/v0.2.0/" in call.args[0] for call in request.call_args_list))
+        served[models.name] = b"corrupt"
+        fetched.unlink()
+        with patch.object(fetch_assets.urllib.request, "urlopen", side_effect=urlopen):
+            with self.assertRaisesRegex(ValueError, "SHA-256 mismatch"):
+                fetch_assets.download("v0.2.0", cache)
+        self.assertEqual(list(cache.glob(".download-*")), [])
 
     def test_fetch_assets_rejects_a_release_with_other_locks(self):
         tarball = self.build()
@@ -372,7 +484,7 @@ class SourceReleaseTests(unittest.TestCase):
         lock["files"]["lm.bin"]["size"] += 1
         (root / release.release_dictionary.LOCK).write_bytes(release.json_bytes(lock))
         with self.assertRaisesRegex(ValueError, "differs from v0.2.0"):
-            fetch_assets.install(tarball, root)
+            fetch_assets.install(tarball, root, self.models_of(tarball))
         self.assertFalse((root / "assets").exists())
         with self.assertRaisesRegex(ValueError, "--release"):
             fetch_assets.default_tag(root)
