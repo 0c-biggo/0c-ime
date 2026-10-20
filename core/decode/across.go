@@ -1,6 +1,6 @@
 package decode
 
-import "git.biggo.com/0c/ime/core/input"
+import "github.com/0c-biggo/0c-ime/core/input"
 
 // CompleteAcross 找從 path[from] 起、跨過後面幾個分段的補全：畫面上 path[from:] 的字是某個詞的開頭（#143）。
 // Completion 與 Complete 相同，只在「從這裡開始的詞」之間比較；解碼器把這段切開，表示切開的讀法可能比較好，

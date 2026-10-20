@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"git.biggo.com/0c/ime/core/english"
-	"git.biggo.com/0c/ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/english"
+	"github.com/0c-biggo/0c-ime/core/proto"
 )
 
 // 具名鍵（Backspace、Enter…）是協定裡的按鍵名稱，不是文字。不論英文模式、英文自動補完、

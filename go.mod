@@ -1,4 +1,4 @@
-module git.biggo.com/0c/ime
+module github.com/0c-biggo/0c-ime
 
 go 1.26.0
 

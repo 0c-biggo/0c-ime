@@ -4,10 +4,10 @@ import (
 	"strings"
 	"testing"
 
-	"git.biggo.com/0c/ime/core/layout"
-	"git.biggo.com/0c/ime/core/proto"
-	"git.biggo.com/0c/ime/core/rerank"
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/layout"
+	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/rerank"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // longRerankReading 是 32 音節的長句：多處「什麼」與「為什麼」讓使用者選過的詞、更正與 neuralKeeps 都要檢查（#101）。

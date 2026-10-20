@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	"git.biggo.com/0c/ime/internal/userlock"
+	"github.com/0c-biggo/0c-ime/internal/userlock"
 )
 
 // 個人資料寫入者鎖的狀態，health 以 personal_lock 回報。

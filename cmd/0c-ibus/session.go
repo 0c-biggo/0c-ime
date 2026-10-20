@@ -16,8 +16,8 @@ import (
 	"syscall"
 	"time"
 
-	"git.biggo.com/0c/ime/bridge/ipc"
-	"git.biggo.com/0c/ime/core/proto"
+	"github.com/0c-biggo/0c-ime/bridge/ipc"
+	"github.com/0c-biggo/0c-ime/core/proto"
 )
 
 // requestTimeout 是單次請求的上限；超過就放棄，按鍵交還應用程式，不得卡住宿主。

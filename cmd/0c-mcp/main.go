@@ -16,7 +16,7 @@ import (
 	"os"
 	"time"
 
-	"git.biggo.com/0c/ime/internal/vocabapi"
+	"github.com/0c-biggo/0c-ime/internal/vocabapi"
 )
 
 func main() {

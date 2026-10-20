@@ -3,7 +3,7 @@ package personal
 import (
 	"bytes"
 	"fmt"
-	"git.biggo.com/0c/ime/core/emoji"
+	"github.com/0c-biggo/0c-ime/core/emoji"
 	"reflect"
 	"testing"
 )

@@ -7,8 +7,8 @@ import (
 	"runtime"
 	"time"
 
-	"git.biggo.com/0c/ime/internal/autoupdate"
-	"git.biggo.com/0c/ime/internal/update"
+	"github.com/0c-biggo/0c-ime/internal/autoupdate"
+	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
 // inputSetupFollows：安裝後由 0c-update 設定輸入法框架（一行安裝），Linux 安裝器不另外提示下一步。

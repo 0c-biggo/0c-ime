@@ -14,10 +14,10 @@ import (
 	"strings"
 	"time"
 
-	"git.biggo.com/0c/ime/core/fuzzy"
-	"git.biggo.com/0c/ime/internal/autoupdate"
-	"git.biggo.com/0c/ime/internal/settings"
-	"git.biggo.com/0c/ime/internal/update"
+	"github.com/0c-biggo/0c-ime/core/fuzzy"
+	"github.com/0c-biggo/0c-ime/internal/autoupdate"
+	"github.com/0c-biggo/0c-ime/internal/settings"
+	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
 // DefaultFeed 是正式發布的已簽章索引（S3 bucket 0c-releases，公開路徑 https://s3.biggo.com/0c-releases/<key>）。

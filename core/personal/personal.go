@@ -10,12 +10,12 @@ import (
 	"slices"
 	"strings"
 
-	"git.biggo.com/0c/ime/core/emoji"
-	"git.biggo.com/0c/ime/core/english"
-	"git.biggo.com/0c/ime/core/lexicon"
-	"git.biggo.com/0c/ime/core/lm"
-	"git.biggo.com/0c/ime/core/vocab"
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/emoji"
+	"github.com/0c-biggo/0c-ime/core/english"
+	"github.com/0c-biggo/0c-ime/core/lexicon"
+	"github.com/0c-biggo/0c-ime/core/lm"
+	"github.com/0c-biggo/0c-ime/core/vocab"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // Params 控制個人學習、補全與系統模型的混合權重。

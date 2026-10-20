@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"git.biggo.com/0c/ime/internal/update"
+	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
 func fakeLauncher(t *testing.T) (string, map[string]string) {

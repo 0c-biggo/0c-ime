@@ -3,8 +3,8 @@ package session
 import (
 	"testing"
 
-	"git.biggo.com/0c/ime/core/lm"
-	"git.biggo.com/0c/ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/lm"
+	"github.com/0c-biggo/0c-ime/core/proto"
 )
 
 func pickText(t *testing.T, s *Session, text string) proto.Snapshot {

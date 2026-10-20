@@ -15,11 +15,11 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"git.biggo.com/0c/ime/bridge/ipc"
-	core "git.biggo.com/0c/ime/core/engine"
-	"git.biggo.com/0c/ime/core/lexicon"
-	"git.biggo.com/0c/ime/core/lm"
-	"git.biggo.com/0c/ime/core/proto"
+	"github.com/0c-biggo/0c-ime/bridge/ipc"
+	core "github.com/0c-biggo/0c-ime/core/engine"
+	"github.com/0c-biggo/0c-ime/core/lexicon"
+	"github.com/0c-biggo/0c-ime/core/lm"
+	"github.com/0c-biggo/0c-ime/core/proto"
 	"github.com/godbus/dbus/v5"
 )
 

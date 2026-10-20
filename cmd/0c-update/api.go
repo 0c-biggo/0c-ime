@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"git.biggo.com/0c/ime/internal/autoupdate"
-	"git.biggo.com/0c/ime/internal/vocabapi"
+	"github.com/0c-biggo/0c-ime/internal/autoupdate"
+	"github.com/0c-biggo/0c-ime/internal/vocabapi"
 )
 
 // api 指令（#126）：設定程式「讓 AI 幫你加詞」的開關、token 與測試連線都經由這裡，WebView 不自己連線。

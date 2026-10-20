@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 const armstrong = "新阿姆斯特朗回旋加速噴氣式阿姆斯特朗砲"

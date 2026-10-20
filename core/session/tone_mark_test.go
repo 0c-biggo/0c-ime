@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"git.biggo.com/0c/ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/proto"
 )
 
 // #135：沒開中英混打時，注音暫存是空的、單按聲調鍵再按空白，輸出聲調符號（同新酷音：

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"git.biggo.com/0c/ime/internal/update"
+	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
 // scratchRoot 是下載與解開套件用的暫存根目錄。Linux 的 /tmp 常是 tmpfs，有大小或使用者配額（更新會以

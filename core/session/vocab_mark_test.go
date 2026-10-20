@@ -5,13 +5,13 @@ import (
 	"strings"
 	"testing"
 
-	"git.biggo.com/0c/ime/core/fuzzy"
-	"git.biggo.com/0c/ime/core/lexicon"
-	"git.biggo.com/0c/ime/core/lm"
-	"git.biggo.com/0c/ime/core/personal"
-	"git.biggo.com/0c/ime/core/proto"
-	"git.biggo.com/0c/ime/core/vocab"
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/fuzzy"
+	"github.com/0c-biggo/0c-ime/core/lexicon"
+	"github.com/0c-biggo/0c-ime/core/lm"
+	"github.com/0c-biggo/0c-ime/core/personal"
+	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/vocab"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // markSession：「是結」會贏過沒有加入的「世傑」，用來驗證加詞後立刻打得出。

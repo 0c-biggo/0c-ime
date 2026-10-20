@@ -12,12 +12,12 @@ import (
 	"sync"
 	"time"
 
-	"git.biggo.com/0c/ime/core/engine"
-	"git.biggo.com/0c/ime/core/fuzzy"
-	"git.biggo.com/0c/ime/core/proto"
-	"git.biggo.com/0c/ime/core/zhuyin"
-	"git.biggo.com/0c/ime/internal/eval"
-	"git.biggo.com/0c/ime/internal/neural"
+	"github.com/0c-biggo/0c-ime/core/engine"
+	"github.com/0c-biggo/0c-ime/core/fuzzy"
+	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/internal/eval"
+	"github.com/0c-biggo/0c-ime/internal/neural"
 )
 
 // Case 是一個評測句：參考文字、參考注音與斷詞（每字一音節，斷詞只用來量詞級候選可達）。

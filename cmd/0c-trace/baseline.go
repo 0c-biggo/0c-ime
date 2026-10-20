@@ -9,7 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"git.biggo.com/0c/ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/proto"
 )
 
 // 不保存文字的觀察基線。只有完整、連續且版本一致的組字進入操作分母。

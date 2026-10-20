@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // Entry 是一筆（詞面, 讀音）。

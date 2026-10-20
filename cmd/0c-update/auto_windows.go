@@ -18,8 +18,8 @@ import (
 	"unicode/utf16"
 	"unsafe"
 
-	"git.biggo.com/0c/ime/internal/autoupdate"
-	"git.biggo.com/0c/ime/internal/enginedir"
+	"github.com/0c-biggo/0c-ime/internal/autoupdate"
+	"github.com/0c-biggo/0c-ime/internal/enginedir"
 	"github.com/Microsoft/go-winio"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"

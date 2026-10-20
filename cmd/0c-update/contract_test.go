@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"git.biggo.com/0c/ime/bridge/ipc"
-	"git.biggo.com/0c/ime/internal/autoupdate"
-	"git.biggo.com/0c/ime/internal/enginedir"
-	"git.biggo.com/0c/ime/internal/settings"
-	"git.biggo.com/0c/ime/internal/update"
+	"github.com/0c-biggo/0c-ime/bridge/ipc"
+	"github.com/0c-biggo/0c-ime/internal/autoupdate"
+	"github.com/0c-biggo/0c-ime/internal/enginedir"
+	"github.com/0c-biggo/0c-ime/internal/settings"
+	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
 func noEngine(time.Duration) (net.Conn, error) { return nil, errors.New("no engine") }

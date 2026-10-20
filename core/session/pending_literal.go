@@ -1,10 +1,10 @@
 package session
 
 import (
-	"git.biggo.com/0c/ime/core/decode"
-	"git.biggo.com/0c/ime/core/fuzzy"
-	"git.biggo.com/0c/ime/core/personal"
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/decode"
+	"github.com/0c-biggo/0c-ime/core/fuzzy"
+	"github.com/0c-biggo/0c-ime/core/personal"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // 英數／標點插入時先讓未完成注音占住原本的顯示位置，並保留組音順序。

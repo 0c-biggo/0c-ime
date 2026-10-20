@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"git.biggo.com/0c/ime/internal/update"
+	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
 // macOS 的設定程式是輸入法 App 內的一個巢狀 App（Contents/Helpers/0c-settings.app），整個 0c.app 是一個

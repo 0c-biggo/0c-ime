@@ -12,14 +12,14 @@ import (
 	"strconv"
 	"time"
 
-	"git.biggo.com/0c/ime/core/decode"
-	"git.biggo.com/0c/ime/core/input"
-	"git.biggo.com/0c/ime/core/layout"
-	"git.biggo.com/0c/ime/core/lm"
-	"git.biggo.com/0c/ime/core/proto"
-	"git.biggo.com/0c/ime/core/zhuyin"
-	"git.biggo.com/0c/ime/internal/datadir"
-	"git.biggo.com/0c/ime/internal/eval"
+	"github.com/0c-biggo/0c-ime/core/decode"
+	"github.com/0c-biggo/0c-ime/core/input"
+	"github.com/0c-biggo/0c-ime/core/layout"
+	"github.com/0c-biggo/0c-ime/core/lm"
+	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/internal/datadir"
+	"github.com/0c-biggo/0c-ime/internal/eval"
 )
 
 func main() {

@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"strings"
 
-	"git.biggo.com/0c/ime/core/engine"
-	"git.biggo.com/0c/ime/core/vocab"
+	"github.com/0c-biggo/0c-ime/core/engine"
+	"github.com/0c-biggo/0c-ime/core/vocab"
 )
 
 // Doer 執行詞彙指令；0c-server 傳入引擎本身。

@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"git.biggo.com/0c/ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/proto"
 )
 
 // #118：中文模式 Shift＋6（^）打刪節號「……」、Shift＋-（_）打破折號「——」，兩種排列都一樣；

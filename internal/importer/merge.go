@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"git.biggo.com/0c/ime/core/zhuyin"
-	"git.biggo.com/0c/ime/internal/compile"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/internal/compile"
 )
 
 // Kind 是主詞庫檔的種類：決定哪幾欄構成一筆的鍵、等級與來源在哪一欄。

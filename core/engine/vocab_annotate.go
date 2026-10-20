@@ -5,9 +5,9 @@ import (
 	"slices"
 	"strings"
 
-	"git.biggo.com/0c/ime/core/lexicon"
-	"git.biggo.com/0c/ime/core/vocab"
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/lexicon"
+	"github.com/0c-biggo/0c-ime/core/vocab"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // VocabAnnotate（指令 annotate）：依詞庫幫一串詞標注音，標出破音字讓使用者點選，不悄悄猜。

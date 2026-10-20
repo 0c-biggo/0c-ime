@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"git.biggo.com/0c/ime/internal/update"
+	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
 func TestDiskSpaceFailureKeepsTargetAndRecoversWithoutFailedVersion(t *testing.T) {

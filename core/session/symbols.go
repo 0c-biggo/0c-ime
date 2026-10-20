@@ -4,10 +4,10 @@ import (
 	"slices"
 	"unicode/utf8"
 
-	"git.biggo.com/0c/ime/core/decode"
-	"git.biggo.com/0c/ime/core/lexicon"
-	"git.biggo.com/0c/ime/core/suggest"
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/decode"
+	"github.com/0c-biggo/0c-ime/core/lexicon"
+	"github.com/0c-biggo/0c-ime/core/suggest"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // 同組符號可用 ↓ 重選；左右括號分組，避免把開括號換成閉括號。每一項是一個符號，可以是多個字元

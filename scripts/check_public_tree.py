@@ -8,6 +8,8 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parent.parent
 RULES = ".public-source-excludes"
+# The private development host; public code imports github.com/0c-biggo/0c-ime.
+PRIVATE_HOSTS = ("git.biggo.com",)
 
 
 def read_rules(text):
@@ -27,6 +29,22 @@ def check_paths(paths, patterns):
         raise ValueError("private paths in public source:\n" + "\n".join(blocked))
 
 
+def check_hosts(git, ref=None):
+    found = []
+    for host in PRIVATE_HOSTS:
+        args = ["grep", "-I", "-l", "-F", host, ref] if ref else \
+            ["grep", "--untracked", "-I", "-l", "-F", host]
+        args += ["--", ".", ":!scripts/check_public_tree.py"]
+        try:
+            found += [path.removeprefix(ref + ":") if ref else path
+                      for path in git(*args).splitlines()]
+        except subprocess.CalledProcessError as error:
+            if error.returncode != 1:  # 1 means no match
+                raise
+    if found:
+        raise ValueError("private host in public source:\n" + "\n".join(sorted(set(found))))
+
+
 def check_repo(repo, ref=None):
     def git(*args):
         return subprocess.check_output(["git", "-C", str(repo), *args], text=True)
@@ -39,6 +57,7 @@ def check_repo(repo, ref=None):
         patterns = read_rules((Path(repo) / RULES).read_text(encoding="utf-8"))
         paths = git("ls-files", "--cached", "--others", "--exclude-standard", "-z").split("\0")
     check_paths(paths, patterns)
+    check_hosts(git, ref)
 
 
 def main():

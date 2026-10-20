@@ -6,13 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	"git.biggo.com/0c/ime/core/fuzzy"
-	"git.biggo.com/0c/ime/core/lexicon"
-	"git.biggo.com/0c/ime/core/lm"
-	"git.biggo.com/0c/ime/core/personal"
-	"git.biggo.com/0c/ime/core/proto"
-	"git.biggo.com/0c/ime/core/rerank"
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/fuzzy"
+	"github.com/0c-biggo/0c-ime/core/lexicon"
+	"github.com/0c-biggo/0c-ime/core/lm"
+	"github.com/0c-biggo/0c-ime/core/personal"
+	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/rerank"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 func allPairs() fuzzy.Config {

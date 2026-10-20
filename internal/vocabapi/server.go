@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"git.biggo.com/0c/ime/core/vocab"
+	"github.com/0c-biggo/0c-ime/core/vocab"
 )
 
 // maxBody 是請求內容的上限：500 個詞或 200 則片語都遠小於它。

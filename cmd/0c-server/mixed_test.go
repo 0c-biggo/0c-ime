@@ -10,10 +10,10 @@ import (
 	"strconv"
 	"testing"
 
-	"git.biggo.com/0c/ime/bridge/ipc"
-	"git.biggo.com/0c/ime/core/proto"
-	"git.biggo.com/0c/ime/internal/englishpack"
-	"git.biggo.com/0c/ime/internal/settings"
+	"github.com/0c-biggo/0c-ime/bridge/ipc"
+	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/internal/englishpack"
+	"github.com/0c-biggo/0c-ime/internal/settings"
 )
 
 // Restart the isolated product server with the saved on/off setting. This checks

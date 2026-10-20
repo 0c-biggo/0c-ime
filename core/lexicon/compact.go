@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"git.biggo.com/0c/ime/core/binfmt"
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/binfmt"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // Compact 是緊湊的唯讀詞庫。詞條依讀音（音節 ID 序列）排序，讀音以某前綴開頭的詞條

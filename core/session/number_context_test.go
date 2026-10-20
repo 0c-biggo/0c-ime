@@ -4,12 +4,12 @@ import (
 	"strings"
 	"testing"
 
-	"git.biggo.com/0c/ime/core/lexicon"
-	"git.biggo.com/0c/ime/core/lm"
-	"git.biggo.com/0c/ime/core/personal"
-	"git.biggo.com/0c/ime/core/proto"
-	"git.biggo.com/0c/ime/core/rerank"
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/lexicon"
+	"github.com/0c-biggo/0c-ime/core/lm"
+	"github.com/0c-biggo/0c-ime/core/personal"
+	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/rerank"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // numberContextSession 模擬真實資料包的情況：句首時量詞的常用同音字（為、原、各、越、典）比較常見，

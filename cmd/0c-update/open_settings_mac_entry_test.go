@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"git.biggo.com/0c/ime/internal/settingsapp"
-	"git.biggo.com/0c/ime/internal/update"
+	"github.com/0c-biggo/0c-ime/internal/settingsapp"
+	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
 func macLauncherBundle(t *testing.T, version string) string {

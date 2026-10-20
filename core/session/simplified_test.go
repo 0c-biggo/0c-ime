@@ -4,15 +4,15 @@ import (
 	"strings"
 	"testing"
 
-	"git.biggo.com/0c/ime/core/lexicon"
-	"git.biggo.com/0c/ime/core/lm"
-	"git.biggo.com/0c/ime/core/personal"
-	"git.biggo.com/0c/ime/core/proto"
-	"git.biggo.com/0c/ime/core/punct"
-	"git.biggo.com/0c/ime/core/vocab"
-	"git.biggo.com/0c/ime/core/zhconv"
-	"git.biggo.com/0c/ime/core/zhuyin"
-	"git.biggo.com/0c/ime/internal/simplified"
+	"github.com/0c-biggo/0c-ime/core/lexicon"
+	"github.com/0c-biggo/0c-ime/core/lm"
+	"github.com/0c-biggo/0c-ime/core/personal"
+	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/punct"
+	"github.com/0c-biggo/0c-ime/core/vocab"
+	"github.com/0c-biggo/0c-ime/core/zhconv"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/internal/simplified"
 )
 
 // #118 第 2 點「輸出簡體字」：組字與候選照樣是繁體，送出時才用 OpenCC tw2s 轉成簡體。

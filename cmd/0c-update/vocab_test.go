@@ -10,13 +10,13 @@ import (
 	"testing"
 	"time"
 
-	"git.biggo.com/0c/ime/bridge/ipc"
-	"git.biggo.com/0c/ime/core/engine"
-	"git.biggo.com/0c/ime/core/lexicon"
-	"git.biggo.com/0c/ime/core/lm"
-	"git.biggo.com/0c/ime/core/vocab"
-	"git.biggo.com/0c/ime/internal/autoupdate"
-	"git.biggo.com/0c/ime/internal/userlock"
+	"github.com/0c-biggo/0c-ime/bridge/ipc"
+	"github.com/0c-biggo/0c-ime/core/engine"
+	"github.com/0c-biggo/0c-ime/core/lexicon"
+	"github.com/0c-biggo/0c-ime/core/lm"
+	"github.com/0c-biggo/0c-ime/core/vocab"
+	"github.com/0c-biggo/0c-ime/internal/autoupdate"
+	"github.com/0c-biggo/0c-ime/internal/userlock"
 )
 
 // engineDial 把每個連線交給同一個行程內的引擎回答詞彙指令，模擬執行中的 0c-server。

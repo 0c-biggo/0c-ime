@@ -1,7 +1,7 @@
 package main
 
 import (
-	"git.biggo.com/0c/ime/internal/corpus"
+	"github.com/0c-biggo/0c-ime/internal/corpus"
 	"testing"
 )
 

@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"git.biggo.com/0c/ime/core/proto"
-	"git.biggo.com/0c/ime/core/punct"
+	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/punct"
 )
 
 type punctFunc func(string) ([]punct.Edit, error)

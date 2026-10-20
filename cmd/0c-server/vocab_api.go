@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"time"
 
-	"git.biggo.com/0c/ime/core/engine"
-	"git.biggo.com/0c/ime/internal/vocabapi"
+	"github.com/0c-biggo/0c-ime/core/engine"
+	"github.com/0c-biggo/0c-ime/internal/vocabapi"
 )
 
 // startVocabAPI 在「讓 AI 幫你加詞」開啟時（api.json，預設關閉）於 127.0.0.1 監聽本機 API（#126）。

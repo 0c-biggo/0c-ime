@@ -8,8 +8,8 @@ import (
 	"runtime"
 	"time"
 
-	"git.biggo.com/0c/ime/internal/enginedir"
-	"git.biggo.com/0c/ime/internal/update"
+	"github.com/0c-biggo/0c-ime/internal/enginedir"
+	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
 // 0c-mcp 是只支援 stdio 的 AI 工具用的轉接（#126）。使用者把它的路徑貼進 AI 工具的設定檔後就不會再改，

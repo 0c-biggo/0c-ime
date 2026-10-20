@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"git.biggo.com/0c/ime/internal/autoupdate"
+	"github.com/0c-biggo/0c-ime/internal/autoupdate"
 )
 
 func TestNoticeProtocolBindsBothActions(t *testing.T) {

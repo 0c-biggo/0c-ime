@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"git.biggo.com/0c/ime/core/punct"
+	"github.com/0c-biggo/0c-ime/core/punct"
 )
 
 // PunctSchema 是提交時補標點 worker 的套件契約（models punct_runtime.py）。

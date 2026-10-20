@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"git.biggo.com/0c/ime/internal/enginedir"
-	"git.biggo.com/0c/ime/internal/update"
+	"github.com/0c-biggo/0c-ime/internal/enginedir"
+	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
 // program 在 dir 寫一個可執行的假設定程式（殼腳本），回傳路徑與雜湊。

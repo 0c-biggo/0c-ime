@@ -4,10 +4,10 @@ import (
 	"math"
 	"testing"
 
-	"git.biggo.com/0c/ime/core/input"
-	"git.biggo.com/0c/ime/core/lexicon"
-	"git.biggo.com/0c/ime/core/lm"
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/input"
+	"github.com/0c-biggo/0c-ime/core/lexicon"
+	"github.com/0c-biggo/0c-ime/core/lm"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // bigramScore 以 0.7 內插系統 bigram 與 unigram，同 personal.Model 沒有個人資料時的 SystemProb。

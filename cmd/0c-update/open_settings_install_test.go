@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"git.biggo.com/0c/ime/internal/settingsapp"
-	"git.biggo.com/0c/ime/internal/update"
+	"github.com/0c-biggo/0c-ime/internal/settingsapp"
+	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
 // macBundle 造一個含巢狀設定程式的 macOS 套件。withSettings 為假時是沒有設定程式的舊式套件。

@@ -12,8 +12,8 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"git.biggo.com/0c/ime/internal/enginedir"
-	"git.biggo.com/0c/ime/internal/update"
+	"github.com/0c-biggo/0c-ime/internal/enginedir"
+	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
 // hiddenPages 是開發中、還沒列進用法的頁面（0.2.0 的「我的詞彙」，#125）。舊版設定程式不認得時開總覽。
