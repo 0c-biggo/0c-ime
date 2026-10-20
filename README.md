@@ -2,7 +2,7 @@
 
 > **免選字，把話打完。** 用本機的 Transformer 語言模型看前文選字，打一整句注音，不用停下來挑同音字。
 
-`ime-oss` 包含輸入法核心、平台外殼、設定程式、詞庫工具與回歸測試，提供 Linux 發行版維護者及自行建置的開發者使用。一般使用者的安裝包與介紹見官網 [0c.biggo.com](https://0c.biggo.com)。
+`ime-oss` 包含輸入法核心、平台外殼、設定程式、詞庫工具與回歸測試，提供 Linux 發行版維護者及自行建置的開發者使用。一般使用者請到 [官網下載](https://0c.biggo.com/download/)。
 
 ## ✨ 特色
 
@@ -147,13 +147,9 @@ Go module 相依須預先備妥，之後可用 `GOPROXY=off GOSUMDB=off` 離線�
 
 神經選字與補標點直接使用 `models/select/`、`models/punct/`；版本與配對檢查見 [模型說明](models/README.md)，worker 及系統 Python、NumPy、ONNX Runtime 整合方式見 [神經推論](platforms/neural/README.md)。發行版自行提供工具鏈、執行相依套件與暫存安裝規則。
 
-## 💿 完整安裝包
+## 💿 下載安裝
 
-`.exe`、`.deb`、`.pkg` 等使用者安裝包由官網提供；官網上傳與索引續簽流程不在本 repo。
-
-本 repo 保留三平台的本機打包工具。除配對字典、模型與工具鏈外，須以 `--release-docs /path/to/package-documents` 提供一般檔案 `INSTALL.md`、`PRIVACY.md`、`UPDATING.md`。文件必須非空，會原樣附入安裝包，不會從本機私人文件目錄自動取得，也不會刪除政策狀態標記。各平台選項可用 `python3 scripts/package_release.py --help`、`package_windows.py --help` 或 `package_macos.py --help` 查詢。
-
-`--preview` 僅供測試，不代表獲准公開散布。公開資料包要求 `0c-compile -public`；打包不刪除來源、不改寫 NOTICE，也不重新綁定模型。`legal/TERMS.md` 已核可；隱私政策另行核可，一般使用者安裝包的政策核可與發布檢查由發行者負責。
+Windows、macOS、Linux 安裝包請到官網下載：👉 [0c.biggo.com/download](https://0c.biggo.com/download/)
 
 ## 🤝 參與開發與授權
 
