@@ -35,3 +35,4 @@ test-release:
 test-source-release:
 	python3 scripts/check_public_tree.py
 	python3 -m unittest discover -s scripts -p 'test_source_release.py'
+	python3 -m unittest discover -s scripts -p 'test_copyright.py'
