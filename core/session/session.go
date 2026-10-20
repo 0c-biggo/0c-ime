@@ -236,6 +236,11 @@ func (s *Session) Composing() bool { return s.composing() || s.cand != nil }
 
 // Handle 處理一個請求並回傳完整快照。
 func (s *Session) Handle(r proto.Request) proto.Snapshot {
+	if r.Type == proto.OutputSimplified {
+		// #169：引擎已換好所有 session 的 Simplified。切換是全域設定、不是對這個輸入框的操作：
+		// 不能清掉下面這些只跟著按鍵的狀態（Shift 誤觸還原、Tab 修正的撤銷、加詞標示……）。
+		return s.View()
+	}
 	s.paletteChanged = false
 	// 前文確認與欄數不是使用者操作；其他任何請求都表示切到英文後已有動作，不再還原注音。
 	stash := s.toggleStash
@@ -346,8 +351,6 @@ func (s *Session) Handle(r proto.Request) proto.Snapshot {
 		s.setMode(english, r.Type == proto.Toggle && r.Restore, stash)
 	case proto.CapsLock:
 		handled, commit = s.capsLockChanged(r.On)
-	case proto.OutputSimplified:
-		// #169：引擎（engine.Do）已換好所有 session 的 Simplified；這裡只回目前的畫面，組字不動。
 	default:
 		handled = false
 	}
@@ -379,13 +382,29 @@ func (s *Session) Handle(r proto.Request) proto.Snapshot {
 	if commit != "" {
 		snap.ContextID = s.pendingContextID
 	}
+	s.status(&snap)
+	return snap
+}
+
+// View 回傳目前的畫面，不改任何狀態（不算一次操作、Revision 不變）。給不屬於組字的全域切換用（#169 輸出簡體字）。
+func (s *Session) View() proto.Snapshot {
+	snap := s.snapshot()
+	snap.Handled = true
+	if hint := s.markHint(); hint != "" {
+		snap.Notices = []string{hint}
+	}
+	s.status(&snap)
+	return snap
+}
+
+// status 填入快照裡不屬於組字的狀態，Handle 與 View 共用。
+func (s *Session) status(snap *proto.Snapshot) {
 	snap.Mode = proto.ModeZhuyin
 	if s.english {
 		snap.Mode = proto.ModeEnglish
 	}
 	snap.CapsLock, snap.CapsEnglish = s.capsLock, s.capsEnglish
 	snap.OutputSimplified = s.Simplified != nil // #169：外殼的狀態顯示跟著
-	return snap
 }
 
 // setMode 切換中英模式（單按 Shift、外殼設定模式、Caps Lock）。切到英文清掉未打完的注音（#90），已組好的字與游標保留；
