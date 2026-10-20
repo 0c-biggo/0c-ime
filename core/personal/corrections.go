@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // 更正是有界的條件偏好，不刪除不同語境的歷史計數。8 是工程初值，

@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"git.biggo.com/0c/ime/internal/update"
+	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
 const (

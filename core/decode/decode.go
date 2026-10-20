@@ -6,10 +6,10 @@ import (
 	"sort"
 	"unicode/utf8"
 
-	"git.biggo.com/0c/ime/core/input"
-	"git.biggo.com/0c/ime/core/lexicon"
-	"git.biggo.com/0c/ime/core/lm"
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/input"
+	"github.com/0c-biggo/0c-ime/core/lexicon"
+	"github.com/0c-biggo/0c-ime/core/lm"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // Scorer 提供 P(w | left)。personal.Model 實作它。

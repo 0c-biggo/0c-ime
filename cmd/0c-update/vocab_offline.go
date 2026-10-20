@@ -6,12 +6,12 @@ import (
 	"path/filepath"
 	"time"
 
-	"git.biggo.com/0c/ime/core/engine"
-	"git.biggo.com/0c/ime/core/vocab"
-	"git.biggo.com/0c/ime/internal/autoupdate"
-	"git.biggo.com/0c/ime/internal/datadir"
-	"git.biggo.com/0c/ime/internal/enginedir"
-	"git.biggo.com/0c/ime/internal/userlock"
+	"github.com/0c-biggo/0c-ime/core/engine"
+	"github.com/0c-biggo/0c-ime/core/vocab"
+	"github.com/0c-biggo/0c-ime/internal/autoupdate"
+	"github.com/0c-biggo/0c-ime/internal/datadir"
+	"github.com/0c-biggo/0c-ime/internal/enginedir"
+	"github.com/0c-biggo/0c-ime/internal/userlock"
 )
 
 // 引擎沒有執行時的詞彙指令（#120 的退路）：引擎服務化之前（或服務管理員不可用時），設定程式、

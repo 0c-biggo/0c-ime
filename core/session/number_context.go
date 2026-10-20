@@ -3,8 +3,8 @@ package session
 import (
 	"unicode"
 
-	"git.biggo.com/0c/ime/core/lm"
-	"git.biggo.com/0c/ime/core/personal"
+	"github.com/0c-biggo/0c-ime/core/lm"
+	"github.com/0c-biggo/0c-ime/core/personal"
 )
 
 // numberLefts 代表「某個數字」的左語境。字面文字是解碼邊界，數字後面的音節原本從句首重新解碼；

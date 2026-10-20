@@ -3,8 +3,8 @@ package main
 import (
 	"encoding/json"
 
-	"git.biggo.com/0c/ime/core/proto"
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // 只判斷一次明確選取的區間，不把其餘未改文字或普通提交標成正確答案。

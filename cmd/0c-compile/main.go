@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"os"
 
-	"git.biggo.com/0c/ime/internal/compile"
-	"git.biggo.com/0c/ime/internal/datadir"
+	"github.com/0c-biggo/0c-ime/internal/compile"
+	"github.com/0c-biggo/0c-ime/internal/datadir"
 )
 
 func main() {

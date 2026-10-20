@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"git.biggo.com/0c/ime/core/proto"
-	"git.biggo.com/0c/ime/internal/englishpack"
+	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/internal/englishpack"
 )
 
 func toyWithEnglish(t testing.TB) string {

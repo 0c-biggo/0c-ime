@@ -11,9 +11,9 @@ import (
 	"syscall"
 	"time"
 
-	"git.biggo.com/0c/ime/internal/e2esync"
-	"git.biggo.com/0c/ime/internal/filelock"
-	"git.biggo.com/0c/ime/internal/update"
+	"github.com/0c-biggo/0c-ime/internal/e2esync"
+	"github.com/0c-biggo/0c-ime/internal/filelock"
+	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
 // ErrNeedsConsent：平台需要使用者前景確認（例如 Windows 外殼更新的系統管理員權限）。

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"unicode"
 
-	"git.biggo.com/0c/ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/proto"
 )
 
 // #162：中英混打時照字面顯示的數字按鍵，按空白會組成中文時，快照附上讀音提示（20 → ㄉㄢ），

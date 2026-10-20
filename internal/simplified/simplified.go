@@ -9,7 +9,7 @@ import (
 	"embed"
 	"sync"
 
-	"git.biggo.com/0c/ime/core/zhconv"
+	"github.com/0c-biggo/0c-ime/core/zhconv"
 )
 
 //go:embed opencc/*.txt opencc/LICENSE

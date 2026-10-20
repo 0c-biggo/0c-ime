@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"git.biggo.com/0c/ime/core/english"
+	"github.com/0c-biggo/0c-ime/core/english"
 )
 
 var benchmarkCandidates []english.Candidate

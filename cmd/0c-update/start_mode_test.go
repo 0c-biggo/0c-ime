@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"git.biggo.com/0c/ime/internal/settings"
+	"github.com/0c-biggo/0c-ime/internal/settings"
 )
 
 // #160：引擎回報的開始時中英模式對回設定的寫法，設定程式才知道改了之後是否已套用；舊引擎沒有回報時不出現。

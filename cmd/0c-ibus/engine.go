@@ -11,7 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"git.biggo.com/0c/ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/proto"
 	"github.com/godbus/dbus/v5"
 )
 

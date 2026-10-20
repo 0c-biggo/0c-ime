@@ -3,7 +3,7 @@ package session
 import (
 	"sort"
 
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // localEvidence 只從目前仍有效的手選鎖定重建證據，不寫入 model。

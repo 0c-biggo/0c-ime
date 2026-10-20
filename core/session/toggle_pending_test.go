@@ -3,7 +3,7 @@ package session
 import (
 	"testing"
 
-	"git.biggo.com/0c/ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/proto"
 )
 
 // #90：切到英文清掉未打完的注音；外殼確認中間沒有任何操作、立即切回注音時放回。

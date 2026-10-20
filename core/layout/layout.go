@@ -1,7 +1,7 @@
 // Package layout 把實體按鍵對應到注音符號。新增排列只需新增一個實作。
 package layout
 
-import "git.biggo.com/0c/ime/core/zhuyin"
+import "github.com/0c-biggo/0c-ime/core/zhuyin"
 
 // Layout 是一種鍵盤排列。
 type Layout interface {

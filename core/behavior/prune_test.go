@@ -3,8 +3,8 @@ package behavior
 import (
 	"testing"
 
-	"git.biggo.com/0c/ime/core/personal"
-	"git.biggo.com/0c/ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/personal"
+	"github.com/0c-biggo/0c-ime/core/proto"
 )
 
 // 清理（#129）之後，同一份個人資料打出來的字與沒清理時相同；之後照常被動使用，

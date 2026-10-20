@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"git.biggo.com/0c/ime/internal/update"
+	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
 // 原生驗收時提供已簽署／公證的產物；一般 Go 測試不自行取憑證、連 Apple 或登記桌面入口。

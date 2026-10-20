@@ -3,7 +3,7 @@ package session
 import (
 	"testing"
 
-	"git.biggo.com/0c/ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/proto"
 )
 
 // #107、#110：關閉「空白鍵選字」時，一般注音模式的注音打完後空白插入半形空白，↓ 選字。

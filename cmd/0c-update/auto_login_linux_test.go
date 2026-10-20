@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"git.biggo.com/0c/ime/internal/autoupdate"
+	"github.com/0c-biggo/0c-ime/internal/autoupdate"
 )
 
 // 登入單元擋在桌面啟動前：-login 不得查詢索引或下載，即使帶 -now；這些交給 0c-update.timer。

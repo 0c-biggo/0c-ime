@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"git.biggo.com/0c/ime/internal/filelock"
+	"github.com/0c-biggo/0c-ime/internal/filelock"
 )
 
 // #169：引擎從選單切換「輸出簡體字」時照 0c-update set 的寫法寫設定檔：在同一把寫入鎖內讀改寫，保留不認得的欄位，

@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"git.biggo.com/0c/ime/bridge/ipc"
+	"github.com/0c-biggo/0c-ime/bridge/ipc"
 )
 
 // 真引擎先載入舊設定，再經真更新器修改；重啟後必須載入新路徑。

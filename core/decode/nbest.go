@@ -5,8 +5,8 @@ import (
 	"sort"
 	"unicode/utf8"
 
-	"git.biggo.com/0c/ime/core/input"
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/input"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // Hypothesis 是完整顯示字串及其最高分路徑；不是逐位置候選的拼接。

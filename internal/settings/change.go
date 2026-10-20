@@ -3,7 +3,7 @@ package settings
 import (
 	"path/filepath"
 
-	"git.biggo.com/0c/ime/internal/filelock"
+	"github.com/0c-biggo/0c-ime/internal/filelock"
 )
 
 // WriteLock 是讀改寫設定檔時持有的鎖（個人資料目錄的 update/settings-write.lock）。0c-update set 與

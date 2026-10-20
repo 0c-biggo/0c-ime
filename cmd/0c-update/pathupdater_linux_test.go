@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"git.biggo.com/0c/ime/internal/enginedir"
-	"git.biggo.com/0c/ime/internal/update"
+	"github.com/0c-biggo/0c-ime/internal/enginedir"
+	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
 // 以真正的 install_package.py 完整安裝 dev.18，模擬核心更新到 dev.19 後對齊 ~/.local/bin/0c-update，

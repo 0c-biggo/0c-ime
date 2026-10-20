@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"git.biggo.com/0c/ime/core/fuzzy"
+	"github.com/0c-biggo/0c-ime/core/fuzzy"
 )
 
 func TestDefaultsMissingFieldsAndRoundTrip(t *testing.T) {

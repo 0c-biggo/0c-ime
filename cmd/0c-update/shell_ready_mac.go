@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"git.biggo.com/0c/ime/internal/update"
+	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
 // macOS 外殼生效的判斷只讀文字與檔案，放在這裡讓 Linux 上也跑得到單元測試；查詢系統的部分在 shell_ready_darwin.go。

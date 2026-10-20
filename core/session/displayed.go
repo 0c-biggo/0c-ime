@@ -1,8 +1,8 @@
 package session
 
 import (
-	"git.biggo.com/0c/ime/core/proto"
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 func (s *Session) shiftDisplayed(at, delta int) {

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"git.biggo.com/0c/ime/internal/settings"
+	"github.com/0c-biggo/0c-ime/internal/settings"
 )
 
 func settingsMigrationBase(t *testing.T) (base, path string) {

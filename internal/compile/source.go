@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // Grade 是讀音等級（docs/13）。

@@ -3,9 +3,9 @@ package session
 import (
 	"testing"
 
-	"git.biggo.com/0c/ime/core/emoji"
-	"git.biggo.com/0c/ime/core/proto"
-	"git.biggo.com/0c/ime/core/punct"
+	"github.com/0c-biggo/0c-ime/core/emoji"
+	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/punct"
 )
 
 func TestPaletteStableSelectionAcrossRecentChangesAndPartialPage(t *testing.T) {

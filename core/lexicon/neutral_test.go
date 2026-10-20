@@ -3,7 +3,7 @@ package lexicon
 import (
 	"testing"
 
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 func TestNeutralParticles(t *testing.T) {

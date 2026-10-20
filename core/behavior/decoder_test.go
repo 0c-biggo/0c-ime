@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"git.biggo.com/0c/ime/core/personal"
-	"git.biggo.com/0c/ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/personal"
+	"github.com/0c-biggo/0c-ime/core/proto"
 )
 
 // replay 逐音節打字，回傳每一步的顯示、自第幾個音節起一路正確、已顯示的字被回改幾次。

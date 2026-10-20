@@ -5,8 +5,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"git.biggo.com/0c/ime/core/decode"
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/decode"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // 手選重新計算鎖定與當次更正證據，但不能把未選取的字換回統計首選。

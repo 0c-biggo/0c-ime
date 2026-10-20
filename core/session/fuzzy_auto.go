@@ -6,10 +6,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"git.biggo.com/0c/ime/core/decode"
-	"git.biggo.com/0c/ime/core/fuzzy"
-	"git.biggo.com/0c/ime/core/input"
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/decode"
+	"github.com/0c-biggo/0c-ime/core/fuzzy"
+	"github.com/0c-biggo/0c-ime/core/input"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // AutoChange 說明目前顯示的一處自動近音修正，供診斷與評測；不進快照、不進學習，也不影響行為。

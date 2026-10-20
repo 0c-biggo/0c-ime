@@ -9,7 +9,7 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	"git.biggo.com/0c/ime/core/binfmt"
+	"github.com/0c-biggo/0c-ime/core/binfmt"
 )
 
 // Compact 是緊湊的唯讀語言模型。詞依字串排序，unigram 以二分搜尋查詢。

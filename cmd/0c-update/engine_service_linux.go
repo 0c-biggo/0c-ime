@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"git.biggo.com/0c/ime/internal/autoupdate"
+	"github.com/0c-biggo/0c-ime/internal/autoupdate"
 )
 
 // 引擎服務（#120，Linux）。三個平台一致：不新增自動啟動項目，沿用既有的——Linux 是 0c-update-login.service

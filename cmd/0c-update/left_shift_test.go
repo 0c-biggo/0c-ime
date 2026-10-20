@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"git.biggo.com/0c/ime/internal/settings"
+	"github.com/0c-biggo/0c-ime/internal/settings"
 )
 
 // #117：中英切換鍵取代「左 Shift 切換中英」。舊檔的 left_shift=true 讀成「左右 Shift」；設定契約回報引擎實際載入的值。

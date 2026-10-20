@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"git.biggo.com/0c/ime/core/lexicon"
-	"git.biggo.com/0c/ime/core/lm"
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/lexicon"
+	"github.com/0c-biggo/0c-ime/core/lm"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // 混淆後的字典可被引擎載入；manifest 與其雜湊維持明文，不重複混淆，舊的明文資料包照常可讀。

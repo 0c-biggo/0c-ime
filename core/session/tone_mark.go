@@ -5,7 +5,7 @@ import (
 	"strings"
 	"unicode"
 
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // 聲調符號（#135）：沒開中英混打時，注音暫存是空的、單按聲調鍵（標準排列 3 4 6 7、倚天 1 2 3 4）

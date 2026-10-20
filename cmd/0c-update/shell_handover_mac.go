@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"git.biggo.com/0c/ime/internal/update"
+	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
 // macOS 的輸入法程式交接（#170）只讀文字與檔案的部分，放在這裡讓 Linux 上也跑得到單元測試；查詢與操作系統的

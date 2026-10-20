@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"git.biggo.com/0c/ime/internal/enginedir"
+	"github.com/0c-biggo/0c-ime/internal/enginedir"
 )
 
 type Registrar interface {

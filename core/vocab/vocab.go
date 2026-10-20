@@ -13,7 +13,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // Format 是 vocab.json 的格式版本，與 user.json 的 personal.StoreFormat 各自獨立。

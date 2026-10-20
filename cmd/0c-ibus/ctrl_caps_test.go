@@ -6,8 +6,8 @@ import (
 	"net"
 	"testing"
 
-	"git.biggo.com/0c/ime/bridge/ipc"
-	core "git.biggo.com/0c/ime/core/engine"
+	"github.com/0c-biggo/0c-ime/bridge/ipc"
+	core "github.com/0c-biggo/0c-ime/core/engine"
 )
 
 func serveEngine(t *testing.T, sock string, eng *core.Engine, info map[string]string) func() {

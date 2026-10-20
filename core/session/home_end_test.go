@@ -3,7 +3,7 @@ package session
 import (
 	"testing"
 
-	"git.biggo.com/0c/ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/proto"
 )
 
 // #106：組字中 Home／End 移到組字區頭尾，不交給應用程式；沒在組字時照常交還。

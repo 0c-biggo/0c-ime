@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"git.biggo.com/0c/ime/internal/settings"
+	"github.com/0c-biggo/0c-ime/internal/settings"
 )
 
 // 0.2.0 正式開放（#128）：設定契約與狀態一律回報 features.vocab（舊外殼與設定程式才顯示入口），
