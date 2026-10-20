@@ -481,28 +481,22 @@ func (e *engine) render(snap snapshot) {
 	// 優先於候選標題；標題在下一個按鍵就回來。兩者接在同一列會太長，GNOME 的提示列也不換行。
 	// 讀音提示（中英混打時數字按空白會組成的注音，#162）只有讀音本身（ㄉㄢ），比照常見注音輸入法在數字下方附注音；
 	// 開候選時核心不送，實際上也不會和補全提示同時出現。
-	aux := ""
-	if len(snap.Notices) > 0 {
-		aux = snap.Notices[0]
-	} else if h := snap.ReadingHint; h != nil && h.Text != "" {
-		aux = h.Text
+	// rest 是沒有通知時的提示列；切換「輸出簡體字」的提示收起後換回它（#169）。頁碼兩種都帶。
+	rest, page := "", ""
+	if h := snap.ReadingHint; h != nil && h.Text != "" {
+		rest = h.Text
 	} else if snap.Suggestion != "" { // Tab 補全：在提示列顯示，不塞進應用程式的組字區
-		aux = "⇥ " + snap.Suggestion
+		rest = "⇥ " + snap.Suggestion
 	}
 	var items, labels []string
 	var ids []int
 	highlight := 0
 	if c := snap.candidates(); len(c) > 0 {
-		if snap.Candidates.Title != "" && len(snap.Notices) == 0 {
-			aux = snap.Candidates.Title
+		if snap.Candidates.Title != "" {
+			rest = snap.Candidates.Title
 		}
 		if snap.Candidates.Pages > 1 {
-			page := strconv.Itoa(snap.Candidates.Page+1) + "/" + strconv.Itoa(snap.Candidates.Pages)
-			if aux == "" {
-				aux = page
-			} else {
-				aux += "　" + page
-			}
+			page = strconv.Itoa(snap.Candidates.Page+1) + "/" + strconv.Itoa(snap.Candidates.Pages)
 		}
 		for i, it := range c {
 			text := it.Text
@@ -516,9 +510,10 @@ func (e *engine) render(snap snapshot) {
 		highlight = snap.Candidates.Highlight
 	}
 	e.ids = ids
-	e.auxRest = aux
+	e.auxRest = joinAux(rest, page)
+	aux := e.auxRest
 	if len(snap.Notices) > 0 {
-		e.auxRest = auxWithoutNotice(snap)
+		aux = joinAux(snap.Notices[0], page)
 	}
 	e.setAux(aux)
 	e.setTable(items, labels, highlight)
@@ -529,29 +524,12 @@ func (e *engine) render(snap snapshot) {
 	}
 }
 
-// auxWithoutNotice 是沒有提示時的提示列：讀音提示、Tab 補全或候選標題與頁碼（同 render）。
-func auxWithoutNotice(snap snapshot) string {
-	snap.Notices = nil
-	aux := ""
-	if h := snap.ReadingHint; h != nil && h.Text != "" {
-		aux = h.Text
-	} else if snap.Suggestion != "" {
-		aux = "⇥ " + snap.Suggestion
+// joinAux 把提示列的兩段接起來，中間隔一個全形空白；空的那段省略。
+func joinAux(a, b string) string {
+	if a == "" || b == "" {
+		return a + b
 	}
-	if c := snap.candidates(); len(c) > 0 {
-		if snap.Candidates.Title != "" {
-			aux = snap.Candidates.Title
-		}
-		if snap.Candidates.Pages > 1 {
-			page := strconv.Itoa(snap.Candidates.Page+1) + "/" + strconv.Itoa(snap.Candidates.Pages)
-			if aux == "" {
-				aux = page
-			} else {
-				aux += "　" + page
-			}
-		}
-	}
-	return aux
+	return a + "　" + b
 }
 
 // simplifiedNoticeFor 是切換「輸出簡體字」的提示留在提示列上的時間；之後換回原本的內容（測試時縮短）。
@@ -568,11 +546,11 @@ func (e *engine) toggleSimplified() {
 			e.render(snap)
 			e.svc.setSimplified(snap.OutputSimplified, true)
 			if len(snap.Notices) > 0 {
-				notice := snap.Notices[0]
+				shown := e.aux // 提示（候選有多頁時後面接著頁碼）；之後的按鍵換掉了就不動
 				time.AfterFunc(simplifiedNoticeFor, func() {
 					e.svc.mu.Lock()
 					defer e.svc.mu.Unlock()
-					if e.aux == notice {
+					if e.aux == shown {
 						e.setAux(e.auxRest)
 					}
 				})
