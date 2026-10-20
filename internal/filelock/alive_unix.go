@@ -1,6 +1,6 @@
 //go:build !windows
 
-package autoupdate
+package filelock
 
 import (
 	"errors"
@@ -8,7 +8,8 @@ import (
 	"syscall"
 )
 
-func processAlive(pid int) bool {
+// ProcessAlive 回報 pid 的行程是否仍在執行。
+func ProcessAlive(pid int) bool {
 	p, err := os.FindProcess(pid)
 	if err != nil {
 		return false
