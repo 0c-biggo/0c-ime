@@ -615,7 +615,7 @@ private:
         area.addAction(fcitx::StatusGroup::InputMethod, &openSettings_);
         if (update_.vocab) { area.addAction(fcitx::StatusGroup::InputMethod, &vocab_); }
         if (simplifiedShown()) { area.addAction(fcitx::StatusGroup::InputMethod, &simplifiedAction_); }
-        area.addAction(fcitx::StatusGroup::InputMethod, &status_);
+        if (!update_.packageManaged) { area.addAction(fcitx::StatusGroup::InputMethod, &status_); } // 套件管理員更新時沒有更新列（#181）
     }
 
     bool simplifiedShown() const { return update_.simplifiedKnown || simplifiedLive_; }
@@ -735,8 +735,10 @@ private:
         vocab_.setShortText(vocab);
         if (auto *ic = instance_->mostRecentInputContext()) {
             // 只動目前用著靈犀注音的欄位（狀態區裡有我們的設定列）；開關改變時加上或拿掉「我的詞彙…」。
-            if (shows(ic, &openSettings_) && (shows(ic, &vocab_) != u.vocab || shows(ic, &simplifiedAction_) != simplifiedShown())) { placeActions(ic); }
-            for (auto *a : {&openSettings_, &status_}) { a->update(ic); }
+            if (shows(ic, &openSettings_) && (shows(ic, &vocab_) != u.vocab || shows(ic, &simplifiedAction_) != simplifiedShown() ||
+                                              shows(ic, &status_) == u.packageManaged)) { placeActions(ic); }
+            openSettings_.update(ic);
+            if (shows(ic, &status_)) { status_.update(ic); }
             if (shows(ic, &vocab_)) { vocab_.update(ic); }
             ic->updateUserInterface(fcitx::UserInterfaceComponent::StatusArea);
         }

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component>
+    <name>org.biggo.ime.IBus</name>
+    <description>靈犀注音</description>
+    <exec>@LIBEXECDIR@/0c-ibus --ibus</exec>
+    <author>BigGo</author>
+    <engines>
+        <engine>
+            <name>0c</name>
+            <language>zh_TW</language>
+            <author>BigGo</author>
+            <icon>@DATAROOTDIR@/icons/hicolor/scalable/status/0c-zhuyin.svg</icon>
+            <layout>us</layout>
+            <longname>靈犀注音</longname>
+            <description>靈犀注音</description>
+            <rank>80</rank>
+            <symbol>注</symbol>
+            <setup>@LIBEXECDIR@/0c-update open-settings</setup>
+        </engine>
+    </engines>
+</component>

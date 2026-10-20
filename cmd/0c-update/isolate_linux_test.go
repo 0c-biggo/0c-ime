@@ -12,6 +12,6 @@ func isolateResidentEngine() func() {
 	}
 	os.Setenv("XDG_RUNTIME_DIR", runtimeDir) // dialEngine 連不到真的引擎，也就不會交接它
 	runSystemdRun = func(context.Context, string, []string) ([]byte, error) { return nil, nil }
-	spawnEngineDirect = func(string) error { return nil }
+	spawnEngineDirect = func(string, ...string) error { return nil }
 	return func() { os.RemoveAll(runtimeDir) }
 }

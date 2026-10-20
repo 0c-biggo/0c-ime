@@ -1006,3 +1006,31 @@ func TestStyleOnlyChangeRedraws(t *testing.T) {
 		t.Fatal("畫面沒變不應重送")
 	}
 }
+
+// 系統安裝的元件檔由 make install 從範本產生（#181），內容要跟 0c-ibus 自己產生的一致。
+func TestSystemComponentTemplateMatches(t *testing.T) {
+	b, err := os.ReadFile("../../platforms/linux-ibus/0c.xml.in")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.NewReplacer("@LIBEXECDIR@", "/usr/libexec/0c", "@DATAROOTDIR@", "/usr/share").Replace(string(b))
+	want := componentXML("/usr/libexec/0c/0c-ibus", "/usr/share/icons/hicolor/scalable/status/0c-zhuyin.svg", "/usr/libexec/0c/0c-update")
+	if got != want {
+		t.Fatalf("範本與 componentXML 不同：\n%s\n---\n%s", got, want)
+	}
+}
+
+// 由系統套件管理員更新（#181）：更新列一律登錄但隱藏，舊版 0c-update（沒有 updates）照舊顯示。
+func TestPackageManagedHidesUpdateRow(t *testing.T) {
+	s := &service{}
+	s.update = parseStatus(`{"installed":"0.2.3","updates":"package-manager"}`)
+	if !s.update.packageManaged || !s.updateProperty().hidden {
+		t.Fatalf("套件管理員模式要隱藏更新列：%+v", s.update)
+	}
+	for _, text := range []string{`{"installed":"0.2.3","updates":"self"}`, `{"installed":"0.2.2"}`} {
+		s.update = parseStatus(text)
+		if s.update.packageManaged || s.updateProperty().hidden {
+			t.Fatalf("%s 要顯示更新列", text)
+		}
+	}
+}

@@ -112,3 +112,29 @@ func Verify(path, want string) error {
 	}
 	return nil
 }
+
+// SourceSystem：系統套件安裝的設定程式（#181，Linux 的 /usr/bin/0c-settings）。
+const SourceSystem = "system"
+
+// LocateSystem 核對系統套件安裝的設定程式：沒有安裝收據可比對雜湊（檔案由套件管理員核對），改成確認是
+// root 擁有、其他人不能改的一般可執行檔（不接受符號連結）。不存在時回傳 ErrNotFound。
+func LocateSystem(path string) (Location, error) {
+	st, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return Location{}, ErrNotFound
+		}
+		return Location{}, err
+	}
+	switch {
+	case !st.Mode().IsRegular():
+		return Location{}, errors.New("系統的設定程式不是一般檔案")
+	case st.Mode().Perm()&0o111 == 0:
+		return Location{}, errors.New("系統的設定程式沒有執行權限")
+	case st.Mode().Perm()&0o022 != 0:
+		return Location{}, errors.New("系統的設定程式群組或其他人可以修改")
+	case !ownedBy(st, systemOwner):
+		return Location{}, errors.New("系統的設定程式不屬於 root")
+	}
+	return Location{Path: path, Source: SourceSystem}, nil
+}

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=靈犀注音設定
+Comment=設定靈犀注音輸入法
+Exec=@BINDIR@/0c-settings
+Icon=0c-settings
+Terminal=false
+Categories=Settings;
+StartupNotify=false
+StartupWMClass=0c-settings

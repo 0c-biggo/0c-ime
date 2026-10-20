@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/0c-biggo/0c-ime/internal/installs"
 	"github.com/godbus/dbus/v5"
 )
 
@@ -132,7 +133,8 @@ func (s *service) updateProperty() property {
 	case s.updateFailure != "":
 		row = s.updateFailure + "（點此重試）"
 	}
-	return property{key: propUpdate, typ: propNormal, sensitive: true, label: row}
+	// 由系統套件管理員更新時（#181）沒有更新列：一律登錄、只改 visible（同「我的詞彙…」）。
+	return property{key: propUpdate, typ: propNormal, sensitive: true, label: row, hidden: s.update.packageManaged}
 }
 
 // refreshMenu 在鎖內呼叫：把設定、我的詞彙與更新列送給目前焦點的 engine（GNOME 只顯示它的屬性）。
@@ -379,7 +381,9 @@ func (s *service) engineMethod(e *engine, member string, body []interface{}) ([]
 		case propSimplified:
 			e.toggleSimplified()
 		case propUpdate:
-			s.queryStatus(statusCommand(s.update))
+			if !s.update.packageManaged {
+				s.queryStatus(statusCommand(s.update))
+			}
 		}
 	case "SetCursorLocation", "PropertyShow", "PropertyHide", "ProcessHandWritingEvent", "CancelHandWriting",
 		"PanelExtensionReceived", "PanelExtensionRegisterKeys":
@@ -448,14 +452,24 @@ func ibusAddressFile() (string, error) {
 }
 
 // component 是 ibus-daemon 讀的元件描述檔；路徑都是絕對路徑（ibus-daemon 不搜尋 PATH）。
+// component 是元件描述檔：官網安裝寫到 ~/.local/share/ibus/component（register），系統安裝由 make install 從
+// platforms/linux-ibus/0c.xml.in 產生（測試核對兩者一致）。
 func component(exe, home string) string {
+	icon := filepath.Join(home, ".local/share/icons/hicolor/scalable/status/0c-zhuyin.svg")
+	setup := updaterPath()
+	if l := installs.Default(); l.InSystem(exe) {
+		icon = filepath.Join(filepath.Dir(l.Data), "icons/hicolor/scalable/status/0c-zhuyin.svg")
+		setup = filepath.Join(l.Libexec, "0c-update")
+	}
+	return componentXML(exe, icon, setup)
+}
+
+func componentXML(exe, icon, setup string) string {
 	esc := func(s string) string {
 		var b strings.Builder
 		xml.EscapeText(&b, []byte(s))
 		return b.String()
 	}
-	icon := filepath.Join(home, ".local/share/icons/hicolor/scalable/status/0c-zhuyin.svg")
-	setup := updaterPath()
 	return `<?xml version="1.0" encoding="utf-8"?>
 <component>
     <name>` + componentName + `</name>

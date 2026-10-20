@@ -20,6 +20,9 @@ import (
 )
 
 func installedVersion() (string, error) {
+	if packageManaged() { // 系統套件（#181）：版本記在 distribution.json，沒有收據
+		return distributionVersion(), nil
+	}
 	b, err := os.ReadFile(receiptPath())
 	if os.IsNotExist(err) {
 		return "", nil
@@ -174,6 +177,9 @@ func run(args []string) error {
 		return fmt.Errorf("用法：0c-update status|settings|set|vocab|api|open-settings|engine|auto|finish|mode|pause|resume|snooze|schedule|verify|check|download|download-now|apply|install|rollback|uninstall [選項]")
 	}
 	action := args[0]
+	if err := refusePackageManaged(action, args[1:]); err != nil {
+		return err
+	}
 	switch action {
 	case "settings":
 		return settingsCommand(args[1:])
@@ -184,6 +190,7 @@ func run(args []string) error {
 	case "api": // AI 助手的本機 API（#126）
 		return apiCommand(args[1:])
 	case "open-settings":
+		delegateOpenSettings(args[1:]) // 系統安裝的 0c-update、而官網安裝也在時，交給官網那一份（成功時不會返回）
 		return openSettings(args[1:])
 	case "download-now":
 		return downloadNowCommand(args[1:])
@@ -238,6 +245,15 @@ func run(args []string) error {
 		if *asJSON {
 			return statusJSON(version, *diagnostics)
 		}
+		if packageManaged() {
+			if version == "" {
+				version = "（版本未知）"
+			}
+			fmt.Printf("靈犀注音（0c）：%s\n平台：%s/%s\n更新：由系統套件管理員更新\n", version, runtime.GOOS, runtime.GOARCH)
+			printInstalls(os.Stdout, installList())
+			printModelStatus(os.Stdout, modelStatus(dialEngine))
+			return nil
+		}
 		if version == "" {
 			version = "尚未有版本收據"
 		}
@@ -252,6 +268,7 @@ func run(args []string) error {
 			printState(s)
 		}
 		fmt.Println(scheduleStatus())
+		printInstalls(os.Stdout, installList())
 		printModelStatus(os.Stdout, modelStatus(dialEngine))
 		return nil
 	case "rollback":

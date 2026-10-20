@@ -1,12 +1,16 @@
 # 靈犀注音的 Fcitx 5 薄殼（docs/19）。
 #   make test      以真的 0c-server 測試用戶端（不需要 Fcitx 開發套件）
 #   make           建出 lib0c.so（需要 libfcitx5core-dev、libfcitx5utils-dev、libfcitx5config-dev）
-#   make install   安裝到家目錄（不需要 sudo），見 README
+#   make install   安裝到家目錄（不需要 sudo），見 README；發行版的系統安裝用 repo 根目錄的 make install PREFIX=/usr（#181）
 ROOT     := ../..
 CXX      ?= g++
 CXXFLAGS ?= -O2 -g
 SHELL_VERSION ?= development
-CXXFLAGS += -DZC_SHELL_VERSION=\"$(SHELL_VERSION)\" -std=c++20 -fPIC -pthread -Wall -Wextra -Ithird_party
+# 系統安裝的位置（src/locate.h）：外殼先找家目錄的官網安裝，再找這裡。根目錄的 make install 依 PREFIX 傳入。
+ZC_SYSTEM_LIBEXECDIR ?= /usr/libexec/0c
+ZC_SYSTEM_DATADIR    ?= /usr/share/0c
+CXXFLAGS += -DZC_SHELL_VERSION=\"$(SHELL_VERSION)\" -DZC_SYSTEM_LIBEXECDIR=\"$(ZC_SYSTEM_LIBEXECDIR)\" -DZC_SYSTEM_DATADIR=\"$(ZC_SYSTEM_DATADIR)\"
+CXXFLAGS += -std=c++20 -fPIC -pthread -Wall -Wextra -Ithird_party
 FCITX    := Fcitx5Core Fcitx5Utils Fcitx5Config
 BUILD    := build
 PREFIX   ?= $(HOME)/.local
@@ -18,7 +22,7 @@ ICON_DIR := $(PREFIX)/share/icons/hicolor/scalable/status
 LEGACY   := $(PREFIX)/bin/zuin-server $(PREFIX)/bin/zuin-trace $(PREFIX)/lib/fcitx5/libzuin.so $(PREFIX)/share/fcitx5/addon/zuin.conf \
             $(HOME)/.config/environment.d/90-zuin.conf
 
-CLIENT_SRC := src/client.cpp src/session.cpp src/trace.cpp src/menu.cpp
+CLIENT_SRC := src/client.cpp src/session.cpp src/trace.cpp src/menu.cpp src/locate.cpp
 ENGINE_SRC := src/engine.cpp
 
 .PHONY: all test install install-data uninstall clean
@@ -49,9 +53,13 @@ $(BUILD)/legacy_socket_test: $(CLIENT_SRC) test/legacy_socket_test.cpp src/*.h
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) -o $@ $(CLIENT_SRC) test/legacy_socket_test.cpp
 
-$(BUILD)/menu_test: src/menu.cpp src/menu.h test/menu_test.cpp
+$(BUILD)/menu_test: src/menu.cpp src/menu.h src/locate.cpp src/locate.h test/menu_test.cpp
 	@mkdir -p $(BUILD)
-	$(CXX) $(CXXFLAGS) -o $@ src/menu.cpp test/menu_test.cpp
+	$(CXX) $(CXXFLAGS) -o $@ src/menu.cpp src/locate.cpp test/menu_test.cpp
+
+$(BUILD)/locate_test: src/locate.cpp src/locate.h test/locate_test.cpp
+	@mkdir -p $(BUILD)
+	$(CXX) $(CXXFLAGS) -o $@ src/locate.cpp test/locate_test.cpp
 
 $(BUILD)/panel_test: test/panel_test.cpp src/panel.h src/session.h
 	@mkdir -p $(BUILD)
@@ -65,8 +73,9 @@ $(BUILD)/replay_guard_test: $(CLIENT_SRC) test/replay_guard_test.cpp src/*.h
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) -o $@ $(CLIENT_SRC) test/replay_guard_test.cpp
 
-test: $(BUILD)/session_test $(BUILD)/0c-server $(BUILD)/trace_test $(BUILD)/replay_guard_test $(BUILD)/legacy_socket_test $(BUILD)/menu_test $(BUILD)/panel_test $(BUILD)/keys_test
+test: $(BUILD)/session_test $(BUILD)/0c-server $(BUILD)/trace_test $(BUILD)/replay_guard_test $(BUILD)/legacy_socket_test $(BUILD)/menu_test $(BUILD)/locate_test $(BUILD)/panel_test $(BUILD)/keys_test
 	$(BUILD)/menu_test
+	$(BUILD)/locate_test
 	$(BUILD)/panel_test
 	$(BUILD)/keys_test
 	$(BUILD)/replay_guard_test

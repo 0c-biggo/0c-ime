@@ -719,7 +719,17 @@ func statusJSON(installed string, diagnostics bool) error {
 func statusMap(base, installed string, dial autoupdate.Dialer) map[string]any {
 	out := map[string]any{"schema": contractSchema, "installed": installed, "engine": autoupdate.PointerVersion(base)}
 	out["runtime"] = modelStatus(dial)
-	if s, err := autoupdate.Load(base); err == nil {
+	// #181：怎麼更新（self／package-manager），以及這台電腦上找得到的安裝（Linux；外殼用的那一份 active）。
+	managed := packageManaged()
+	out["updates"] = updatesMode()
+	if list := installList(); len(list) > 0 {
+		out["installs"] = list
+	}
+	if managed {
+		// 系統套件的引擎不跟官網安裝的核心更新指標（外殼以 -data 指定系統字典）；更新狀態也是官網安裝的。
+		out["engine"] = ""
+	}
+	if s, err := autoupdate.Load(base); err == nil && !managed {
 		appendUpdateStateStatus(out, s, time.Now())
 		if p := updaterProblem(base, s, platformRepair); p != "" {
 			out["updater"] = p

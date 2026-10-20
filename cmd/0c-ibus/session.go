@@ -18,6 +18,7 @@ import (
 
 	"github.com/0c-biggo/0c-ime/bridge/ipc"
 	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/internal/installs"
 )
 
 // requestTimeout 是單次請求的上限；超過就放棄，按鍵交還應用程式，不得卡住宿主。
@@ -25,6 +26,7 @@ const requestTimeout = 2 * time.Second
 
 type client struct {
 	socket, legacy, server string
+	serverArgs             []string // 系統安裝的引擎帶 -data（internal/installs）
 	conn                   net.Conn
 	generation             uint64
 	startWait              time.Duration // 啟動 0c-server 後等它接受連線的上限
@@ -38,16 +40,11 @@ func runtimeDir() string {
 }
 
 func newClient() *client {
-	server := "0c-server"
-	if home := os.Getenv("HOME"); home != "" {
-		p := filepath.Join(home, ".local/bin/0c-server")
-		if st, err := os.Stat(p); err == nil && st.Mode().IsRegular() && st.Mode()&0o111 != 0 {
-			server = p
-		}
-	}
+	// 共用規則（#181）：先找官網安裝的 ~/.local/bin/0c-server，再找系統安裝，都沒有時用 PATH。
+	server, args := installs.Default().Server()
 	// 升級過渡期：舊版 zuin-server 仍在執行時它是個人詞庫唯一的寫入者，先接上它。
 	return &client{socket: filepath.Join(runtimeDir(), "0c/0c.sock"),
-		legacy: filepath.Join(runtimeDir(), "zuin/zuin.sock"), server: server, startWait: 2 * time.Second}
+		legacy: filepath.Join(runtimeDir(), "zuin/zuin.sock"), server: server, serverArgs: args, startWait: 2 * time.Second}
 }
 
 func (c *client) connectOnce() bool {
@@ -65,7 +62,7 @@ func (c *client) connectOnce() bool {
 }
 
 func (c *client) spawnServer() {
-	cmd := exec.Command(c.server)
+	cmd := exec.Command(c.server, c.serverArgs...)
 	cmd.Stdin, cmd.Stdout = nil, nil
 	cmd.Stderr = os.Stderr
 	// 自成工作階段，不隨 ibus-daemon 的行程群組收到訊號。
