@@ -11,7 +11,7 @@ use windows::Win32::Storage::FileSystem::{
     OPEN_EXISTING,
 };
 use windows::Win32::System::LibraryLoader::GetModuleFileNameW;
-use windows::Win32::System::Pipes::WaitNamedPipeW;
+use windows::Win32::System::Pipes::{PeekNamedPipe, WaitNamedPipeW};
 use windows::Win32::System::Threading::{
     CreateEventW, CreateProcessW, WaitForSingleObject, CREATE_NO_WINDOW, DETACHED_PROCESS, PROCESS_INFORMATION,
     STARTUPINFOW,
@@ -204,6 +204,21 @@ impl Client {
     /// 目前是否持有連線（不代表引擎仍在；下一次呼叫才會發現斷線）。
     pub fn connected(&self) -> bool {
         self.handle.is_some()
+    }
+
+    /// 連線是否還在：不送請求、不等待，只看管道另一端關了沒有（引擎退出後 PeekNamedPipe 失敗）。斷了，或有不該有的
+    /// 殘留資料（訊框會錯位），就關掉連線，下一次呼叫照常重連。
+    pub fn alive(&mut self) -> bool {
+        let Some(h) = self.handle else {
+            return false;
+        };
+        let mut available = 0u32;
+        let ok = unsafe { PeekNamedPipe(h, None, 0, None, Some(&mut available), None) }.is_ok();
+        if !ok || available != 0 {
+            self.close();
+            return false;
+        }
+        true
     }
 
     /// 只連已經在執行的引擎，不啟動 0c-server、不等待（Activate 時查開始時的模式，#160）。
