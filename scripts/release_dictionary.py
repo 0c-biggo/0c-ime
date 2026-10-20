@@ -36,10 +36,11 @@ def check(directory, lock):
         check_file(directory / name, entry)
 
 
-def check_assets(root):
+def check_assets(root, release=True):
+    """release=False checks a source tree, where maintainers may keep local bigram inputs."""
     from source_release import LOCK as MODEL_LOCK, check_models, digest, read_lock as models_lock
     from pair_models import PAIR_LOCK
-    if (root / "data/lm/bigram").exists():
+    if release and (root / "data/lm/bigram").exists():
         raise ValueError("source release must not include data/lm/bigram inputs")
     check(root / DIRECTORY, read_lock(root))
     lock = models_lock(root / MODEL_LOCK)
