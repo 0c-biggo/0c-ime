@@ -10,6 +10,8 @@
   const DISABLED = {
     platform: '這個平台沒有可下載的模型，目前使用統計選字。',
     distribution: '這個發行版的套件關閉了模型下載，目前使用統計選字。',
+    // 安裝的字典不在 pairing.lock 上（例如發行版自己重建字典）：下載的模型配不上，不能用。
+    dictionary_mismatch: '目前安裝的字典沒有對應的模型配對清單，不能使用下載的模型。',
   };
   const HF = /^https:\/\/huggingface\.co\/[A-Za-z0-9._\/-]+$/;
 
@@ -33,9 +35,10 @@
     if (!status) return { text: '讀取中…', tone: 'muted' };
     if (status.operation) return { text: operationText(status.operation), tone: 'warn' };
     if (status.source === 'bundled') return { text: '隨安裝包內附。', tone: 'ok' };
+    if (status.disabled_reason === 'dictionary_mismatch') return { text: DISABLED.dictionary_mismatch, tone: 'warn' };
     if (status.source === 'user') {
       if (status.need === 'redownload') return { text: '模型有新版，舊的已不能用，需要重新下載。', tone: 'warn' };
-      if (status.need === 'repair') return { text: '字典已更新，會自動重新配對，不必重新下載。', tone: 'warn' };
+      if (status.need === 'repair') return { text: '字典已更新，正在重新配對，不必重新下載。', tone: 'warn' };
       return { text: '已安裝。', tone: 'ok' };
     }
     if (!status.can_download) return { text: DISABLED[status.disabled_reason] || '沒有模型，目前使用統計選字。', tone: 'muted' };

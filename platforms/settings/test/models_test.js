@@ -55,7 +55,7 @@ test('上游模型換了：提示重新下載；字典換了只重新配對，�
   assert.match(L.summary(re).text, /需要重新下載/);
   assert.deepStrictEqual(L.actions(re), { download: true, redownload: true, cancel: false, remove: true });
   const repair = status({ source: 'user', need: 'repair' });
-  assert.match(L.summary(repair).text, /不必重新下載/);
+  assert.strictEqual(L.summary(repair).text, '字典已更新，正在重新配對，不必重新下載。');
   assert.strictEqual(L.actions(repair).download, false);
 });
 
@@ -72,6 +72,16 @@ test('不能下載又沒有模型：說明原因，不給按鈕', () => {
   assert.match(L.summary(dist).text, /發行版/);
   assert.deepStrictEqual(L.actions(dist), { download: false, redownload: false, cancel: false, remove: false });
   assert.match(L.summary(status({ can_download: false, disabled_reason: 'platform' })).text, /平台/);
+});
+
+test('字典不在配對清單上（發行版自己重建字典）：說明不能用下載的模型，不給下載', () => {
+  const none = status({ can_download: false, disabled_reason: 'dictionary_mismatch' });
+  assert.deepStrictEqual(L.summary(none), { text: '目前安裝的字典沒有對應的模型配對清單，不能使用下載的模型。', tone: 'warn' });
+  assert.deepStrictEqual(L.actions(none), { download: false, redownload: false, cancel: false, remove: false });
+  // 之前下載的權重還在：同樣說明，不說「已安裝」；仍可刪除。
+  const user = status({ source: 'user', need: 'none', can_download: false, disabled_reason: 'dictionary_mismatch' });
+  assert.match(L.summary(user).text, /配對清單/);
+  assert.deepStrictEqual(L.actions(user), { download: false, redownload: false, cancel: false, remove: true });
 });
 
 test('SHA-256 截斷顯示，網址只放行 Hugging Face', () => {
