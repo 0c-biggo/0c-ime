@@ -29,9 +29,19 @@ var ErrTimeout = errors.New("neural deadline exceeded")
 
 // StartupError 是 worker 沒有回報就緒的原因，給狀態摘要與設定程式顯示（#80：精簡版 Windows 缺 C++ 執行階段時，
 // 使用者原本只看到「模型無法使用」）。Reason 是固定代碼，不含輸出內容。
-type StartupError struct{ Reason, what string }
+type StartupError struct {
+	Reason, what string
+	err          error // 啟動行程本身的錯誤（例如 Python 不存在）；只給紀錄，不含 worker 的輸出
+}
 
-func (e *StartupError) Error() string { return e.what + " startup failed: " + e.Reason }
+func (e *StartupError) Error() string {
+	if e.err != nil {
+		return e.what + " startup failed: " + e.Reason + ": " + e.err.Error()
+	}
+	return e.what + " startup failed: " + e.Reason
+}
+
+func (e *StartupError) Unwrap() error { return e.err }
 
 const (
 	ReasonMissingRuntime = "missing_runtime" // Python 擴充模組載入失敗：缺少系統 DLL
@@ -81,23 +91,30 @@ func awaitExit(done <-chan struct{}) {
 func startupError(what string, err error, stderr string) *StartupError {
 	switch {
 	case strings.Contains(stderr, "DLL load failed"):
-		return &StartupError{ReasonMissingRuntime, what}
+		return &StartupError{Reason: ReasonMissingRuntime, what: what}
 	case strings.Contains(stderr, "No module named 'numpy'") || strings.Contains(stderr, "No module named 'onnxruntime'"):
-		return &StartupError{ReasonRuntimeMissing, what}
+		return &StartupError{Reason: ReasonRuntimeMissing, what: what}
 	case errors.Is(err, ErrTimeout):
-		return &StartupError{ReasonTimeout, what}
+		return &StartupError{Reason: ReasonTimeout, what: what}
 	}
-	return &StartupError{ReasonFailed, what}
+	return &StartupError{Reason: ReasonFailed, what: what}
 }
 
-// startupReason 回傳 StartupError 的代碼；找不到 Python 執行檔是 runtime_missing，其他錯誤歸為 failed。
+// launchError 分類啟動 worker 行程本身（exec）的錯誤：Python 執行檔不存在（Linux 系統安裝沒裝 python3，
+// 或還沒裝好）是 runtime_missing；其他錯誤照原樣回傳，歸為 failed。只用在 cmd.Start：manifest、model.onnx、
+// vocab.json 讀不到同樣是 fs.ErrNotExist，那是模型檔的問題，不是缺推論環境（#181）。
+func launchError(what string, err error) error {
+	if errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist) {
+		return &StartupError{Reason: ReasonRuntimeMissing, what: what, err: err}
+	}
+	return err
+}
+
+// startupReason 回傳 StartupError 的代碼；其他錯誤（含模型檔讀不到）歸為 failed。
 func startupReason(err error) string {
 	var startup *StartupError
 	if errors.As(err, &startup) {
 		return startup.Reason
-	}
-	if errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist) {
-		return ReasonRuntimeMissing
 	}
 	return ReasonFailed
 }
@@ -261,7 +278,7 @@ func start(cmd *exec.Cmd, m Manifest, timeout time.Duration) (*Worker, error) {
 	if err = cmd.Start(); err != nil {
 		input.Close()
 		output.Close()
-		return nil, err
+		return nil, launchError("neural worker", err)
 	}
 	w := &Worker{cmd: cmd, input: input, output: bufio.NewScanner(output), manifest: m, timeout: timeout, done: make(chan struct{})}
 	w.output.Buffer(make([]byte, 4096), frameLimit)

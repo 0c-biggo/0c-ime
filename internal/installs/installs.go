@@ -214,6 +214,20 @@ func (l Layout) InSystem(exe string) bool {
 	return dir == resolve(l.Libexec)
 }
 
+// InPersonal 回報 exe 是不是官網安裝的程式（~/.local/bin 或 ~/.local/share/zuin 底下，例如核心更新後的
+// 版本目錄）。比對前兩邊都解開符號連結：Fedora Silverblue 的 /home 是 /var/home 的連結。
+func (l Layout) InPersonal(exe string) bool {
+	if l.Home == "" || exe == "" {
+		return false
+	}
+	path := resolve(exe)
+	if filepath.Dir(path) == resolve(filepath.Join(l.Home, ".local/bin")) {
+		return true
+	}
+	base := resolve(filepath.Join(l.Home, ".local/share/zuin"))
+	return strings.HasPrefix(path, base+string(filepath.Separator))
+}
+
 func resolve(p string) string {
 	if r, err := filepath.EvalSymlinks(p); err == nil {
 		p = r

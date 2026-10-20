@@ -61,7 +61,8 @@
       case 'fallback': return '模型無法使用，已退回' + fallback;
       case 'disabled_by_setting': return '依設定關閉';
       case 'not_installed': return '未附模型，使用' + fallback;
-      case 'runtime_missing': return '缺少推論元件（請安裝 python3-numpy、python3-onnxruntime），使用' + fallback;
+      // #181：只有 Linux 的系統安裝用系統的 python3，才提示 Debian 套件名；macOS、Windows 的推論元件內附在安裝包裡。
+      case 'runtime_missing': return '缺少推論元件' + (/^linux\//.test(state.info?.platform || '') ? '（請安裝 python3-numpy、python3-onnxruntime）' : '') + '，使用' + fallback;
       case 'closed': return '已停止，使用' + fallback;
       default: return '未知（引擎未提供即時狀態）';
     }

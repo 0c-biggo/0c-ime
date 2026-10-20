@@ -97,18 +97,31 @@ func TestFindSystemPythonAndUserModels(t *testing.T) {
 	}
 }
 
-// 有模型與 worker，卻沒有 Python：不啟動 worker，回報缺少推論環境。
+// 有模型與 worker，Linux 卻沒有 python3：照樣以系統 Python 的路徑啟動 worker（啟動失敗是 runtime_missing，
+// 10 分鐘重試，之後裝好 python3 不必重啟引擎）。macOS、Windows 沒有系統 Python 的退路：內附 Python 不見是
+// 安裝損毀，不啟動、不報 runtime_missing（引擎照舊報 not_installed）。
 func TestFindRuntimeMissing(t *testing.T) {
 	l := newFindLayout(t)
 	touch(t, filepath.Join(l.neural, "sequence_runtime.py"))
 	touch(t, filepath.Join(l.user, "models", testDictionary, "select", "manifest.json"))
 	b := l.find()
-	if b.HasSelect || b.Python != "" || b.PythonSource != "" || b.SelectSource != SourceUser || !b.RuntimeMissing(false) {
+	if !b.HasSelect || b.Python != l.python || b.PythonSource != "" || b.SelectSource != SourceUser || !b.RuntimeMissing(false) || b.RuntimeMissing(true) {
 		t.Fatalf("missing python: %+v", b)
+	}
+	// 裝好 python3 之後同一個路徑就是系統 Python。
+	touch(t, l.python)
+	if b := l.find(); !b.HasSelect || b.PythonSource != SourceSystem || b.RuntimeMissing(false) {
+		t.Fatalf("installed python: %+v", b)
+	}
+	os.Remove(l.python)
+	// 沒有系統 Python 的退路（macOS、Windows：SystemPython 為空）。
+	nosys := Find(Options{DataDir: l.data, UserDir: l.user, DictionarySHA256: testDictionary})
+	if nosys.HasSelect || nosys.Python != "" || nosys.RuntimeMissing(false) {
+		t.Fatalf("no system python fallback: %+v", nosys)
 	}
 	// 沒有 worker 腳本時模型也用不了：視同沒有安裝，不是缺 Python。
 	os.Remove(filepath.Join(l.neural, "sequence_runtime.py"))
-	if b := l.find(); b.SelectSource != "" || b.RuntimeMissing(false) {
+	if b := l.find(); b.SelectSource != "" || b.HasSelect || b.RuntimeMissing(false) {
 		t.Fatalf("missing worker: %+v", b)
 	}
 }
@@ -119,7 +132,7 @@ func TestSupervisorRuntimeMissingStateAndSlowRetry(t *testing.T) {
 	attempts := 0
 	s, err := openSupervisedAsync(Config{}, load, func(c Config) (*Worker, error) {
 		attempts++
-		return nil, &StartupError{ReasonRuntimeMissing, "neural worker"}
+		return nil, &StartupError{Reason: ReasonRuntimeMissing, what: "neural worker"}
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -183,5 +196,60 @@ func TestPunctRuntimeMissingState(t *testing.T) {
 	}
 	if w.State() != "runtime_missing" {
 		t.Fatalf("retried before RuntimeMissingRetry: %s", w.State())
+	}
+}
+
+// Linux 系統安裝沒有 python3：worker 照樣以系統 Python 的路徑啟動，失敗是 runtime_missing；之後裝好 python3，
+// 下一次重試（10 分鐘後）就用上，不必重啟引擎（#181）。
+func TestSupervisorPicksUpPythonInstalledLater(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("系統 Python 只在 Linux")
+	}
+	python := filepath.Join(t.TempDir(), "usr", "bin", "python3")
+	m := Manifest{Schema: "zuin-encoder-runtime-v1", DictionarySHA256: "dictionary", Files: map[string]string{"model.onnx": "model"}}
+	load := func(Config) (Manifest, error) { return m, nil }
+	open := func(c Config) (*Worker, error) {
+		return start(pythonCommand(c.Python, "worker.py"), m, 200*time.Millisecond)
+	}
+	s, err := openSupervisedAsync(Config{Python: python}, load, open)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	retry := func(want string) {
+		t.Helper()
+		s.mu.Lock()
+		s.lastFailure = time.Now().Add(-RuntimeMissingRetry) // 十分鐘後
+		s.mu.Unlock()
+		s.Score(request())
+		for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+			s.mu.Lock()
+			reason, starting := s.reason, s.starting
+			s.mu.Unlock()
+			if reason == want && !starting {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("reason %q, want %q", reason, want)
+			}
+		}
+	}
+	for deadline := time.Now().Add(5 * time.Second); s.State() != "runtime_missing"; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("state %q reason %q", s.State(), s.Reason())
+		}
+	}
+	// 裝好 python3（假的：python3-onnxruntime 還沒裝）：重試啟動得了，原因換成 import 失敗，仍是 runtime_missing。
+	os.MkdirAll(filepath.Dir(python), 0o755)
+	os.WriteFile(python, []byte("#!/bin/sh\necho \"ModuleNotFoundError: No module named 'onnxruntime'\" >&2\nexit 1\n"), 0o755)
+	retry(ReasonRuntimeMissing)
+	if s.Restarts() != 0 || s.State() != "runtime_missing" {
+		t.Fatalf("state %q", s.State())
+	}
+	// python3 在、但 worker 就是起不來：這是模型或程式的問題，回到 failed（3 秒冷卻）。
+	os.WriteFile(python, []byte("#!/bin/sh\nexit 1\n"), 0o755)
+	retry(ReasonFailed)
+	if s.State() != "fallback" {
+		t.Fatalf("state %q", s.State())
 	}
 }
