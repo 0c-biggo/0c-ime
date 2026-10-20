@@ -30,6 +30,8 @@
 
 ## 逐項說明
 
+逐檔的著作權人與授權以 DEP-5 格式列在 [copyright](copyright)，可作為 `debian/copyright` 的基礎。
+
 ### 自有程式
 
 著作權屬 Funmula Co., Limited，[LICENSE](../LICENSE) 為 AGPL-3.0-only，[TERMS.md](TERMS.md) 的另議商業授權不限制 AGPL 已授予的權利。
@@ -114,6 +116,6 @@ go-winio 只用於 Windows 的 named pipe，Linux 與 macOS 的執行檔不含�
 
 ## 維持方式
 
-- 新增相依套件、第三方程式碼或資料來源前，確認授權在「判斷標準」的範圍內，並更新本文件與 `data/sources/ledger.tsv`。
+- 新增相依套件、第三方程式碼或資料來源前，確認授權在「判斷標準」的範圍內，並更新本文件、`data/sources/ledger.tsv` 與 [copyright](copyright)。`scripts/test_copyright.py`（`make test-source-release`）檢查 copyright 的每個路徑都存在、每個授權都附全文，圖檔與第三方檔案都有自己的段落。
 - Release 內每個編譯產物都要能從同一個 Release 公開的內容重建。
 - 模型更新時，訓練程式與訓練資料的公開狀態一併記錄在模型卡與本文件。
