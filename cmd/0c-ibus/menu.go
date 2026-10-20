@@ -23,6 +23,9 @@ type updateStatus struct {
 	pausedUntil, lastSuccess, lastError, selectionState, punctuationState string
 	// vocab 是 features.vocab：0.2.0「我的詞彙」的入口（0.2.0 起恆為 true）。舊版 0c-update 沒有這個欄位，視為關閉。
 	vocab bool
+	// 「輸出簡體字」（#169）：settings.output_simplified 是設定檔的值（0.2.1 起的 0c-update 才有，沒有時 simplifiedKnown 為 false）；
+	// runtime.output_simplified_live 時以 runtime.output_simplified（引擎目前的值）為準。
+	simplifiedKnown, outputSimplified, simplifiedLive bool
 }
 
 func parseStatus(text string) updateStatus {
@@ -69,7 +72,28 @@ func parseStatus(text string) updateStatus {
 	if json.Unmarshal(j.Features, &features) == nil {
 		s.vocab, _ = features["vocab"].(bool)
 	}
+	// 「輸出簡體字」逐項另外解析，型別不對時只有這一項當成不知道。
+	var loose struct{ Settings, Runtime map[string]any }
+	if json.Unmarshal([]byte(text), &loose) == nil {
+		if v, ok := loose.Settings["output_simplified"].(bool); ok {
+			s.simplifiedKnown, s.outputSimplified = true, v
+		}
+		if live, _ := loose.Runtime["output_simplified_live"].(bool); live {
+			if v, ok := loose.Runtime["output_simplified"].(bool); ok {
+				s.simplifiedKnown, s.simplifiedLive, s.outputSimplified = true, true, v
+			}
+		}
+	}
 	return s
+}
+
+// simplifiedCommand 是舊引擎（不能即時切換）時「輸出簡體字」退回的命令：寫設定、交接重啟套用，0c-update 送桌面通知。
+func simplifiedCommand(on bool) []string {
+	value := "off"
+	if on {
+		value = "on"
+	}
+	return []string{"set", "output-simplified", value, "-apply", "-notify"}
 }
 
 func (s updateStatus) current() string {

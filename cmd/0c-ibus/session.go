@@ -235,6 +235,22 @@ func (s *session) capsLockEnglish(spawn bool) bool {
 	return s.client.connect() && s.ensureOpen() && s.info["caps_lock_english"] == "true"
 }
 
+// simplifiedLive 回報引擎能即時切換「輸出簡體字」（open 回覆的 output_simplified_live，#169）。不連線，只看目前這個
+// session 開啟時的回覆；還沒開 session 或連線已換過時為 false。
+func (s *session) simplifiedLive() bool {
+	return s.id != 0 && s.generation == s.client.generation && s.info["output_simplified_live"] == "true"
+}
+
+// ensureLive 連上引擎、開好 session 後回報 simplifiedLive；引擎不可用時 false。
+func (s *session) ensureLive() bool {
+	return s.client.connect() && s.ensureOpen() && s.info["output_simplified_live"] == "true"
+}
+
+// outputSimplified 切換「輸出簡體字」（#169）：引擎立即改變之後送出的文字並寫進設定檔，組字不動；不記進重播紀錄。
+func (s *session) outputSimplified(on bool) snapshot {
+	return s.handle(proto.Request{Type: proto.OutputSimplified, On: on})
+}
+
 func (s *session) contextAllowed() bool {
 	return s.documentContextEnabled && !s.private && !s.english
 }
@@ -421,7 +437,8 @@ func (s *session) handle(req proto.Request) snapshot {
 				s.cleared = append(s.log, wire)
 			}
 			s.log, s.view = nil, nil
-		} else if req.Type != proto.Context && req.Type != proto.CapsLock { // Caps Lock 狀態不重播：新 session 由下一個按鍵重新同步
+		} else if req.Type != proto.Context && req.Type != proto.CapsLock && req.Type != proto.OutputSimplified {
+			// Caps Lock 狀態不重播：新 session 由下一個按鍵重新同步；「輸出簡體字」是全域設定，重播會再切一次（#169）
 			if len(s.log) == 0 && req.Type == proto.Toggle {
 				s.log = cleared
 			}

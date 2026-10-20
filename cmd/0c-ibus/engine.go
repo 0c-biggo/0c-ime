@@ -8,6 +8,7 @@ package main
 import (
 	"slices"
 	"strconv"
+	"time"
 	"unicode/utf8"
 
 	"git.biggo.com/0c/ime/core/proto"
@@ -52,6 +53,8 @@ const (
 	propSettings   = "settings"
 	propVocab      = "vocab"
 	propUpdate     = "update"
+	propSimplified = "simplified"
+	simplifiedText = "輸出簡體字"
 	recoveryNotice = "連線恢復，請確認組字後再繼續。"
 )
 
@@ -200,6 +203,7 @@ type engine struct {
 	preCursor uint32
 	preSegs   []proto.Segment
 	aux       string
+	auxRest   string // aux 去掉這次快照的提示之後的內容；切換「輸出簡體字」的提示收起後換回它（#169）
 	table     []string
 	tableAt   int
 	ids       []int // 目前候選頁的候選 ID
@@ -512,9 +516,71 @@ func (e *engine) render(snap snapshot) {
 		highlight = snap.Candidates.Highlight
 	}
 	e.ids = ids
+	e.auxRest = aux
+	if len(snap.Notices) > 0 {
+		e.auxRest = auxWithoutNotice(snap)
+	}
 	e.setAux(aux)
 	e.setTable(items, labels, highlight)
 	e.updateMode(snap.english())
+	// 「輸出簡體字」在設定程式或別的外殼切換後（#169），下一個快照就跟上；只信回報即時切換的引擎（舊引擎沒有這一項）。
+	if e.session.simplifiedLive() {
+		e.svc.setSimplified(snap.OutputSimplified, true)
+	}
+}
+
+// auxWithoutNotice 是沒有提示時的提示列：讀音提示、Tab 補全或候選標題與頁碼（同 render）。
+func auxWithoutNotice(snap snapshot) string {
+	snap.Notices = nil
+	aux := ""
+	if h := snap.ReadingHint; h != nil && h.Text != "" {
+		aux = h.Text
+	} else if snap.Suggestion != "" {
+		aux = "⇥ " + snap.Suggestion
+	}
+	if c := snap.candidates(); len(c) > 0 {
+		if snap.Candidates.Title != "" {
+			aux = snap.Candidates.Title
+		}
+		if snap.Candidates.Pages > 1 {
+			page := strconv.Itoa(snap.Candidates.Page+1) + "/" + strconv.Itoa(snap.Candidates.Pages)
+			if aux == "" {
+				aux = page
+			} else {
+				aux += "　" + page
+			}
+		}
+	}
+	return aux
+}
+
+// simplifiedNoticeFor 是切換「輸出簡體字」的提示留在提示列上的時間；之後換回原本的內容（測試時縮短）。
+var simplifiedNoticeFor = 3 * time.Second
+
+// toggleSimplified 是選單的「輸出簡體字」（#169）：引擎能即時切換時直接在這個輸入框的 session 送請求，組字不動、
+// 之後送出的字立刻照新設定，引擎寫設定檔；提示「已切換為輸出簡體字／繁體字」在提示列顯示幾秒。
+// 舊引擎退回 0c-update set output-simplified … -apply -notify（寫設定、交接重啟，0c-update 送桌面通知）。
+func (e *engine) toggleSimplified() {
+	on := !e.svc.simplified
+	if e.session.ensureLive() {
+		if snap := e.session.outputSimplified(on); snap.ok && snap.Handled {
+			e.svc.simplifiedSeq++ // 切換前開始的狀態查詢不得把勾選改回去
+			e.render(snap)
+			e.svc.setSimplified(snap.OutputSimplified, true)
+			if len(snap.Notices) > 0 {
+				notice := snap.Notices[0]
+				time.AfterFunc(simplifiedNoticeFor, func() {
+					e.svc.mu.Lock()
+					defer e.svc.mu.Unlock()
+					if e.aux == notice {
+						e.setAux(e.auxRest)
+					}
+				})
+			}
+			return
+		}
+	}
+	e.svc.queryStatus(simplifiedCommand(on))
 }
 
 // candidateLabel 是候選第 i 項的鍵標（#112）：核心給的選字鍵（1、q、;）；舊核心沒有時依位置 1–0。
@@ -536,6 +602,8 @@ func (e *engine) modeProperty() property {
 	p := property{key: propInputMode, typ: propNormal, sensitive: true, symbol: "注", label: "注音"}
 	if e.english {
 		p.symbol, p.label = "英", "英文"
+	} else if e.svc.simplified { // #169：送出時轉成簡體，誤開時從面板看得出來
+		p.symbol, p.label = "注·簡", "注音・簡體輸出"
 	}
 	if hint != "" {
 		other := "英文"
@@ -557,10 +625,10 @@ func (e *engine) updateMode(english bool) {
 	}
 }
 
-// properties 是輸入法選單的內容：注／英、設定、我的詞彙、更新狀態。「我的詞彙…」一律登錄，
-// 只用 visible 跟著 features.vocab 顯示或隱藏（見 refreshMenu）。
+// properties 是輸入法選單的內容：注／英、設定、我的詞彙、輸出簡體字、更新狀態。「我的詞彙…」與「輸出簡體字」一律登錄，
+// 只用 visible 跟著 features.vocab 與這項設定是否已知顯示或隱藏（見 refreshMenu）。
 func (e *engine) properties() []property {
-	return []property{e.modeProperty(), e.svc.settingsProperty(), e.svc.vocabProperty(), e.svc.updateProperty()}
+	return []property{e.modeProperty(), e.svc.settingsProperty(), e.svc.vocabProperty(), e.svc.simplifiedProperty(), e.svc.updateProperty()}
 }
 
 func (e *engine) registerProperties() {

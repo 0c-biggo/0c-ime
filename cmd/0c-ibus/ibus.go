@@ -58,6 +58,9 @@ const (
 	orientationVertical = 1
 
 	propNormal = 0
+	propToggle = 1 // 可以打勾的項目（IBusProperty 的 PROP_TYPE_TOGGLE）
+
+	propStateChecked = 1
 )
 
 type attribute struct{ typ, value, start, end uint32 }
@@ -143,12 +146,20 @@ type property struct {
 	typ                uint32
 	sensitive          bool
 	hidden             bool // IBusProperty 的 visible 取反：零值是看得到
+	checked            bool // propToggle 的勾選狀態
 }
 
 func (p property) variant() dbus.Variant {
 	return dbus.MakeVariant(ibusProperty{Name: "IBusProperty", Attach: map[string]dbus.Variant{},
 		Key: p.key, Type: p.typ, Label: newText(p.label), Tooltip: newText(""), Sensitive: p.sensitive,
-		Visible: !p.hidden, SubProps: newPropList(nil), Symbol: newText(p.symbol)})
+		Visible: !p.hidden, State: p.state(), SubProps: newPropList(nil), Symbol: newText(p.symbol)})
+}
+
+func (p property) state() uint32 {
+	if p.checked {
+		return propStateChecked
+	}
+	return 0
 }
 
 func newPropList(props []property) dbus.Variant {
