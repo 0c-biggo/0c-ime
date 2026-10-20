@@ -471,7 +471,6 @@ func InstallWindows(bundle, base, arch string, reg Registrar) (string, []string,
 			}
 		}
 		left := removeLegacy(base, next, previous)
-		pruneWindows(base, previous)
 		return destination, left, nil
 	}
 	next.Previous, err = savePrevious(base, previous)
@@ -481,8 +480,8 @@ func InstallWindows(bundle, base, arch string, reg Registrar) (string, []string,
 	if err = switchRegistration(base, previous, next, reg); err != nil {
 		return "", nil, fmt.Errorf("registration failed; attempted to restore previous registration: %w", err)
 	}
+	// 舊版本目錄與備份不在這裡清：由呼叫端啟動的背景行程以 PruneWindows 清（#179）。
 	left := removeLegacy(base, next, previous)
-	pruneWindows(base, next)
 	return destination, left, nil
 }
 
@@ -596,7 +595,6 @@ func RollbackWindows(base string, reg Registrar, restoreUser bool) ([]string, er
 		}
 	}
 	left := removeLegacy(base, previous, current)
-	pruneWindows(base, previous)
 	return left, nil
 }
 
@@ -621,7 +619,7 @@ func legacyRollbackStore(file string) error {
 	return nil
 }
 
-// UninstallWindows 取消註冊並停用收據；個人詞庫、回復用的備份與版本目錄保留，更早的清掉（#179）。
+// UninstallWindows 取消註冊並停用收據；個人詞庫、回復用的備份與版本目錄保留，更早的由背景的 PruneWindows 清掉（#179）。
 // 解除安裝只取消註冊，不需要檔案完好：已安裝的檔案被改動或移除（例如防毒軟體隔離 DLL）時照常完成，
 // 否則使用者永遠移除不了（#82）。回傳的 changed 是核對失敗的原因（沒有則為 nil），由呼叫端提示。
 func UninstallWindows(base string, reg Registrar) (changed error, err error) {
@@ -656,6 +654,5 @@ func UninstallWindows(base string, reg Registrar) (changed error, err error) {
 	if err = switchRegistration(base, current, &next, reg); err != nil {
 		return changed, err
 	}
-	pruneWindows(base, &next)
 	return changed, nil
 }

@@ -309,6 +309,7 @@ func install(bundle string, release *update.Release) error {
 	}
 	if _, ok := release.Files[updaterName()]; ok {
 		bundleUpdater = filepath.Join(directory, updaterName())
+		pruneFrom = bundleUpdater // 剛裝好的版本一定保留；不用安裝程式暫存目錄裡的那一份（#179）
 	}
 	refreshStableMCP(basePath())
 	syncUninstallEntry()
@@ -358,6 +359,7 @@ func rollback(_ string, restoreUser bool) error {
 	ensureSettingsEntry()        // 回到沒有設定程式的舊版時移除開始功能表項目；回到有的版本則留著
 	refreshStableMCP(basePath()) // 回到沒有附 0c-mcp 的舊版時移走，設定程式照實註明
 	syncUninstallEntry()
+	pruneFrom = pruneExecutable() // #179：舊版在背景清，不讓回復等它
 	if version, err := installedVersion(); err == nil {
 		handOverAfterInstall(version, func() { ensureEngineService(basePath()) })
 		handOverUI(uiWaitInstall) // 回到的版本的 0c-ui 由 DLL 下一次需要時啟動
@@ -378,6 +380,7 @@ func uninstall() error {
 	if err != nil {
 		return err
 	}
+	pruneFrom = pruneExecutable() // #179：回復用的那一份之外，更早的在背景清
 	// 收據已停用：移走 AI 工具用的 0c-mcp。AI 工具正在執行它時刪不掉，改名讓原路徑空出來（之後 bin 整個移除）。
 	refreshStableMCP(basePath())
 	stopUI(uiWaitInstall)

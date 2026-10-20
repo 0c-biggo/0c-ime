@@ -544,6 +544,12 @@ func autoCommand(action string, args []string) (resultErr error) {
 		return co.Run(ctx)
 	}()
 	refreshPathUpdater(base)
+	if action == "auto" && !*asJSON && !*report {
+		// #179：安裝後啟動的背景清理沒做完（關機、被結束）時由排程補做；這次裝了新版就在這裡一起清，不另外啟動。
+		// 只在背景排程做，選單、設定程式等著結果的呼叫不做。
+		pruneInstalls(base)
+		pruneFrom = ""
+	}
 	if *report {
 		notifyOutcome(s, err)
 	}
