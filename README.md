@@ -51,11 +51,11 @@
 傳統注音輸入法靠詞庫與詞頻挑字，只看得到相鄰的一兩個詞。靈犀注音在統計引擎之上多了一層 Transformer 重排：
 
 ```mermaid
-flowchart LR
-    K["⌨️ 注音按鍵"] --> L["📖 詞庫查詞<br/>建立詞圖"]
-    L --> V["📊 統計引擎<br/>unigram／bigram＋Viterbi<br/>N-best 前 8 名"]
-    V --> T{"🧠 Transformer 重排<br/>前文最多 64 字＋注音＋候選"}
-    C["📝 已送出的前文"] -.-> T
+flowchart TD
+    K["⌨️ 注音按鍵"] --> L["📖 詞庫查詞，建立詞圖"]
+    L --> V["📊 統計引擎：unigram／bigram＋Viterbi<br/>取 N-best 前 8 名"]
+    C["📝 已送出的前文<br/>最多 64 字"] -.-> T
+    V --> T{"🧠 Transformer 重排<br/>前文＋注音＋候選"}
     T -->|"100 ms 內完成"| P["👤 套用個人詞庫"]
     T -.->|"逾時或模型無法使用"| F["🛟 統計排序"]
     F --> P
