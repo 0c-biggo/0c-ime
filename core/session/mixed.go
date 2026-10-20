@@ -599,6 +599,7 @@ func (s *Session) digitWord(raw string, tone rune) bool {
 //   - 帶調讀音在詞庫沒有字，要靠 #69 的輕聲退回一聲才組得成（57 ㄓ˙→之、107 ㄅㄢ˙→班、07 ㄢ˙→安）；
 //   - 按鍵順序顛倒（813 的 ㄚㄅ、017 的 ㄢㄅ），真的在打注音時不會這樣打；
 //   - 前面緊接著字面數字或數字標點（354 的 3 已照字面送出），是更長的數字的一部分。
+//
 // 其餘（53 只、54 至、84 阿、104 辦）照舊，跟常見注音輸入法的混打一樣按下聲調就出字。
 func (s *Session) digitToneNumber(raw string, tone rune) bool {
 	if raw == "" || strings.Trim(raw, "0123456789") != "" {
