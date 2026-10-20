@@ -351,6 +351,18 @@ impl TextService_Impl {
         self.present(ctx, &snapshot);
     }
 
+    /// 開輸入指示器選單前重新確認「輸出簡體字」（#169）：設定程式或別的程式剛切換過、這個程式還沒有新快照時，
+    /// 勾選與「简」／「中」也要對。只用已經在執行的引擎；宿主正在處理別的事（狀態借用中）時略過。
+    pub(crate) fn recheck_simplified(&self) {
+        let changed = match self.state.try_borrow_mut() {
+            Ok(mut st) => st.session.refresh_simplified(),
+            Err(_) => false,
+        };
+        if changed {
+            self.sync_langbar();
+        }
+    }
+
     fn sync_langbar(&self) {
         let st = self.state.borrow();
         if let Some((_, button)) = st.langbar.as_ref() {
@@ -997,11 +1009,13 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
                 if let Some(Ok(mgr)) = tm.map(|tm| tm.cast::<ITfLangBarItemMgr>()) {
                     let service = self.to_object();
                     let simplify = self.to_object();
+                    let recheck = self.to_object();
                     let button = crate::langbar::LangBarButton::create(
                         english,
                         simplified,
                         Box::new(move || service.toggle_mode()),
                         Box::new(move |on| simplify.set_output_simplified(on)),
+                        Box::new(move || recheck.recheck_simplified()),
                     );
                     if let Ok(item) = button.cast::<ITfLangBarItem>() {
                         if mgr.AddItem(&item).is_ok() {
