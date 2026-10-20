@@ -46,6 +46,7 @@ func main() {
 	workers := flag.Int("workers", runtime.NumCPU()-1, "平行處理的執行緒數")
 	taiwanOnly := flag.Bool("taiwan-only", true, "跳過日文、簡體與粵語句子（#172；false 可重跑舊的計數）")
 	rareSources := flag.String("rare-sources", "cns11643,mcbopomofo-rare", "只來自這些來源的字不算台灣用字（-taiwan-only 判斷簡化字用）")
+	source := flag.String("source", "data", "詞庫來源目錄（-taiwan-only 判斷台灣用字；與輸出目錄 -data 分開）")
 	flag.Parse()
 
 	var conv corpus.Converter
@@ -65,7 +66,7 @@ func main() {
 	if *taiwanOnly {
 		simplified, err := corpus.SimplifiedOnly(filepath.Join(*occ, "STCharacters.txt"))
 		check(err)
-		common, err := taiwanChars(*out, *rareSources)
+		common, err := taiwanChars(*source, *rareSources)
 		check(err)
 		filter = corpus.NewScriptFilter(simplified, func(r rune) bool { return common[r] })
 		fmt.Fprintf(os.Stderr, "台灣用字 %d 個；簡化字與粵語用字標記 %d 個\n", len(common), filter.Markers())
