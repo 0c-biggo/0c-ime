@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "about": "與 models.lock.json 的 Hugging Face 公開版等價的其他 model.onnx。0.2.2 以前官網套件內建的模型是同一次訓練的內部匯出：權重、計算圖與推論參數和公開版逐位相同，只差 ONNX 節點裡 torch 的除錯 metadata（stack trace 含內部路徑），以及模型 manifest 中執行時不讀的內部欄位。models.lock 是上游原檔，不改它；凡是以 model.onnx 的雜湊判斷「是不是上游那一份」的地方（0c-update models status、發版檢查）也認這裡的雜湊。只在 models.lock 的 repository、revision 與 model.onnx 都跟這裡記的一樣時才成立，上游換版後自動失效。",
+  "evidence": "#180（2026-10-21）：兩份 ONNX 的初始化張量、計算圖與 manifest 的推論參數逐位比對相同；全量神經 A/B（cv 19,536 句、field 54 句、target 18 句，0.2.2 字典 4687abed）逐句相同，補標點機率逐位相同。",
+  "models": {
+    "select": {
+      "repository": "Funmula/0c-sequence-d512",
+      "revision": "df4b9f04f8aee1dd34dcb246ac2b83c4ab3d14a9",
+      "model.onnx": "71af1f0e77b2752cc71cbc04bf19c8e8f2e765662246f766e65a2822bab4e66e",
+      "equivalent": [
+        {
+          "sha256": "cef689f1e706537e54eaed4241a776f1ea41b4cad2b504061d1e27cd0c1ca342",
+          "size": 131469769,
+          "source": "官網套件內建（0.2.2 以前）"
+        }
+      ]
+    },
+    "punct": {
+      "repository": "Funmula/0c-punct-d512",
+      "revision": "105c2770e0b7cf4ce44a792b3b186000dd1727d9",
+      "model.onnx": "4db3ed40df777347d9c455da01285b01de192d4c210c5f7cd9f0646c727880d8",
+      "equivalent": [
+        {
+          "sha256": "2d98c7c6c75dc9d46081e967dbd2fccef67f73a1ed9b2da44d7e02002e760cf5",
+          "size": 131387936,
+          "source": "官網套件內建（0.2.2 以前）"
+        }
+      ]
+    }
+  }
+}

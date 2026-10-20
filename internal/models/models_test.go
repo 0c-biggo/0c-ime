@@ -101,6 +101,49 @@ func TestEmbeddedLockMatchesUpstream(t *testing.T) {
 	}
 }
 
+// equivalent.json：0.2.2 以前官網套件內建的 model.onnx 與 models.lock 等價；models.lock 換了 revision 就不再成立。
+func TestEquivalentHashesFollowTheLock(t *testing.T) {
+	l, err := ParseLock(upstream.Lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eq, err := ParseEquivalents(upstream.Equivalent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const oldSelect = "cef689f1e706537e54eaed4241a776f1ea41b4cad2b504061d1e27cd0c1ca342"
+	const oldPunct = "2d98c7c6c75dc9d46081e967dbd2fccef67f73a1ed9b2da44d7e02002e760cf5"
+	for _, c := range []struct{ role, sha, want string }{
+		{RoleSelect, l.Models[RoleSelect].Files["model.onnx"].SHA256, MatchUpstream},
+		{RolePunct, l.Models[RolePunct].Files["model.onnx"].SHA256, MatchUpstream},
+		{RoleSelect, oldSelect, MatchEquivalent},
+		{RolePunct, oldPunct, MatchEquivalent},
+		{RolePunct, oldSelect, MatchNone}, // 不跨角色
+		{RoleSelect, strings.Repeat("c", 64), MatchNone},
+		{RoleSelect, "", MatchNone},
+	} {
+		if got := l.Match(c.role, c.sha, eq); got != c.want {
+			t.Fatalf("%s %s：%q，預期 %q", c.role, c.sha[:min(8, len(c.sha))], got, c.want)
+		}
+	}
+	// 沒有等價清單時只認 models.lock 本身
+	if l.Match(RoleSelect, oldSelect, Equivalents{}) != MatchNone {
+		t.Fatal("沒有等價清單也認了舊雜湊")
+	}
+	// 上游換了 revision：舊的等價紀錄不再適用
+	bumped := l
+	bumped.Models = map[string]Model{RoleSelect: l.Models[RoleSelect], RolePunct: l.Models[RolePunct]}
+	m := bumped.Models[RoleSelect]
+	m.Revision = strings.Repeat("e", 40)
+	bumped.Models[RoleSelect] = m
+	if bumped.Match(RoleSelect, oldSelect, eq) != MatchNone || bumped.Match(RolePunct, oldPunct, eq) != MatchEquivalent {
+		t.Fatal("換了 revision 的角色仍認舊雜湊")
+	}
+	if _, err := ParseEquivalents([]byte(`{"schema":1,"models":{"select":{"repository":"r","revision":"abcdef0","model.onnx":"x"}}}`)); err == nil {
+		t.Fatal("不正確的雜湊沒有被拒絕")
+	}
+}
+
 // Go 版配對的結果等於 0c-ime 以 scripts/pair_models.py 產生的 pairing.lock（兩份不同的字典）。
 func TestPairMatchesPythonPairingLocks(t *testing.T) {
 	l, _ := ParseLock(upstream.Lock)

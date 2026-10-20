@@ -431,16 +431,15 @@ def models_installed(source, state='ready'):
     base = '/usr/share/0c/neural' if source == 'bundled' else '/home/u/.local/share/zuin/models/5f1c0a9e'
     out = []
     for m in MODEL_LOCK:
-        item = dict(m, state=state, source=source, path=base + '/' + m['role'], sha256=MODEL_SHA[m['role']])
-        if source == 'bundled':  # 官網內建的不是 Hugging Face 那一份：沒有上游資訊
-            item = {k: item[k] for k in ('role', 'label', 'state', 'source', 'version', 'path', 'sha256', 'size')}
-            item['sha256'] = ('cef689f1' if m['role'] == 'select' else '2d98c7c6') + '0b7d' * 14
+        item = dict(m, state=state, source=source, path=base + '/' + m['role'], sha256=MODEL_SHA[m['role']], equivalent=False)
+        if source == 'bundled':  # 0.2.2 以前官網內建的內部匯出：權重與 Hugging Face 版相同（models/equivalent.json），上游資訊照附
+            item.update(sha256=('cef689f1' if m['role'] == 'select' else '2d98c7c6') + '0b7d' * 14, equivalent=True)
         out.append(item)
     return out
 
 
 def models_missing():
-    return [dict(m, state='not_installed', source='', path='', sha256='') for m in MODEL_LOCK]
+    return [dict(m, state='not_installed', source='', path='', sha256='', equivalent=False) for m in MODEL_LOCK]
 
 
 def models_init(path, kind):

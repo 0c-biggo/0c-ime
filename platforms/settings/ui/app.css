@@ -266,6 +266,7 @@ input.port { width: 8em; }
 .model-card > .row { border-bottom: 1px solid var(--line); }
 .model-card dl.facts { font-size: 14px; }
 .model-card dd { overflow-wrap: anywhere; }
+.model-card .model-note { margin: 0 0 12px; }
 .model-card .sha { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .model-card .sha code { background: var(--accent-soft); padding: 1px 6px; border-radius: 6px; }
 .model-card .path { word-break: break-all; }
