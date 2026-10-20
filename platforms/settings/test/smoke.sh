@@ -43,8 +43,8 @@ shoot() { # 場景 頁面
 }
 run_update() { local name=$1; shift; HOME=$(home_of "$name") "$UPDATE_BIN" "$@"; }
 
-# SMOKE_ONLY=vocab：只跑「我的詞彙」（vocab.sh），開發時省時間。
-if [ "${SMOKE_ONLY:-}" != vocab ]; then
+# SMOKE_ONLY=vocab／models：只跑「我的詞彙」（vocab.sh）或「模型」（models.sh），開發時省時間。
+if [ -z "${SMOKE_ONLY:-}" ]; then
 
 # ---- 場景 A：全新安裝，沒有設定檔也沒有引擎 ----
 new_home fresh
@@ -56,8 +56,8 @@ mkdir -p "$(home_of export)/Downloads"
 launch export troubleshoot
 if window_up; then
   sleep 2.5
-  # 7 個導覽（含我的詞彙、輸出設定）→ 匯出按鈕（第 8 個）。
-  xdotool key --delay 150 Tab Tab Tab Tab Tab Tab Tab Tab space
+  # 8 個導覽（含我的詞彙、輸出設定、模型）→ 匯出按鈕（第 9 個）。
+  xdotool key --delay 150 Tab Tab Tab Tab Tab Tab Tab Tab Tab space
   sleep 3
   import -window root "$OUT/export-troubleshoot.png"
   check "匯出的狀態摘要寫進「下載」資料夾" bash -c "ls '$(home_of export)'/Downloads/0c-status-*.json >/dev/null 2>&1"
@@ -114,8 +114,8 @@ launch live input
 if window_up; then
   sleep 2.5
   import -window root "$OUT/live-input-before.png"
-  # 鍵盤路徑：7 個導覽按鈕（含我的詞彙、輸出設定）→ 選字方式（一組單選）→ 「提交時補標點（Beta）」開關，按空白鍵開啟。
-  xdotool key --delay 150 Tab Tab Tab Tab Tab Tab Tab Tab Tab space
+  # 鍵盤路徑：8 個導覽按鈕（含我的詞彙、輸出設定、模型）→ 選字方式（一組單選）→ 「提交時補標點（Beta）」開關，按空白鍵開啟。
+  xdotool key --delay 150 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab space
   sleep 6
   import -window root "$OUT/live-input-after.png"
   check "自行開啟後新路徑 settings.json 的 punctuation 為 true" grep -q '"punctuation": true' "$(settings_of live)"
@@ -197,11 +197,11 @@ import -window root "$OUT/live-second-instance.png"
 stop_app
 unset HOME
 
-# 輸出設定是左側獨立一頁（#118）：7 個導覽 → 輸出簡體字開關（第 8 個），預設關閉。
+# 輸出設定是左側獨立一頁（#118）：8 個導覽 → 輸出簡體字開關（第 9 個），預設關閉。
 launch live output
 if window_up; then
   sleep 2.5
-  xdotool key --delay 150 Tab Tab Tab Tab Tab Tab Tab Tab space
+  xdotool key --delay 150 Tab Tab Tab Tab Tab Tab Tab Tab Tab space
   sleep 3
   check "輸出簡體字開關可保存 on" grep -q '"output_simplified": true' "$(settings_of live)"
   import -window root "$OUT/output-simplified-on.png"
@@ -268,7 +268,7 @@ live_runtime() { # 期望值 → 引擎回報能即時切換，而且目前的�
 }
 if window_up; then
   sleep 2.5
-  xdotool key --delay 150 Tab Tab Tab Tab Tab Tab Tab Tab space
+  xdotool key --delay 150 Tab Tab Tab Tab Tab Tab Tab Tab Tab space
   sleep 3
   check "輸出簡體字：引擎在執行時開啟，寫入設定" grep -q '"output_simplified": true' "$(settings_of outputlive)"
   check "輸出簡體字：引擎沒有重啟（同一個行程）" kill -0 "$ENGINE_PID"
@@ -317,9 +317,9 @@ launch toggles input
 if window_up; then
   sleep 2.5
   import -window root "$OUT/toggles-before.png"
-  # 7 個導覽（含我的詞彙、輸出設定）、選字方式、補標點、前文、混打、英文補字、中英切換鍵、開始時的中英模式、切換視窗後的中英模式、Esc、空白選字、修改位置、選字後游標、排列 → Emoji（第20個）。
+  # 8 個導覽（含我的詞彙、輸出設定、模型）、選字方式、補標點、前文、混打、英文補字、中英切換鍵、開始時的中英模式、切換視窗後的中英模式、Esc、空白選字、修改位置、選字後游標、排列 → Emoji（第21個）。
   # 輸出簡體字在後面的「輸出設定」一節（模糊音之後），不在這段。
-  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab space
+  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab space
   check "預設啟用的 Emoji 開關可以關閉，保留未知設定" toggle_value emoji_off
   sleep 1
   xdotool key space
@@ -386,8 +386,8 @@ PY_CURSOR
 launch cursor input
 if window_up; then
   sleep 2.5
-  # 7 個導覽（含我的詞彙、輸出設定）、選字方式、補標點、前文、混打、英文補字、中英切換鍵、開始時的中英模式、切換視窗後的中英模式、Esc、空白選字 → 修改字詞的位置（第17個）。
-  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Left
+  # 8 個導覽（含我的詞彙、輸出設定、模型）、選字方式、補標點、前文、混打、英文補字、中英切換鍵、開始時的中英模式、切換視窗後的中英模式、Esc、空白選字 → 修改字詞的位置（第18個）。
+  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Left
   check "游標前方單選儲存 before，保留未知設定" cursor_value before
   sleep 1
   import -window root "$OUT/cursor-before.png"
@@ -396,7 +396,7 @@ stop_app
 launch cursor input
 if window_up; then
   sleep 2.5
-  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Right
+  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Right
   check "重新開啟設定後可改回游標後方，保留未知設定" cursor_value after
   sleep 1
   import -window root "$OUT/cursor-after.png"
@@ -429,9 +429,9 @@ launch eten input
 if window_up; then
   sleep 2.5
   import -window root "$OUT/eten-input.png"
-  # 停用的混打、Emoji、等號首項不在 Tab 順序裡：7 個導覽（含我的詞彙、輸出設定）、選字方式、補標點、前文、英文補字、中英切換鍵、開始時的中英模式、
-  # 切換視窗後的中英模式、Esc、空白選字、修改位置、選字後游標、排列、模糊音 → 鍵盤排列（第21個；輸出簡體字在輸出設定頁），← 選標準。
-  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab
+  # 停用的混打、Emoji、等號首項不在 Tab 順序裡：8 個導覽（含我的詞彙、輸出設定、模型）、選字方式、補標點、前文、英文補字、中英切換鍵、開始時的中英模式、
+  # 切換視窗後的中英模式、Esc、空白選字、修改位置、選字後游標、排列、模糊音 → 鍵盤排列（第22個；輸出簡體字在輸出設定頁），← 選標準。
+  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab
   sleep 1
   import -window root "$OUT/eten-input-keyboard.png"
   xdotool key Left
@@ -474,7 +474,7 @@ check "背景更新期間仍可儲存輸入設定" run_update checking set punct
 launch checking update
 if window_up; then
   sleep 2.5
-  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab space
+  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab space
   sleep 3
   import -window root "$OUT/checking-in-progress.png"
   check "背景更新忙碌時設定視窗仍正常執行" kill -0 "$APP_PID"
@@ -540,7 +540,10 @@ sed -i 's/^/ /' /tmp/open4.log; cat /tmp/open4.log
 fi # SMOKE_ONLY
 
 # ---- 我的詞彙（#125）----
-. "$(dirname "$0")/vocab.sh"
+if [ "${SMOKE_ONLY:-vocab}" = vocab ]; then . "$(dirname "$0")/vocab.sh"; fi
+
+# ---- 模型（#180）----
+if [ "${SMOKE_ONLY:-models}" = models ]; then . "$(dirname "$0")/models.sh"; fi
 
 echo "SMOKE_RESULT=$([ $fail -eq 0 ] && echo PASS || echo FAIL)"
 exit $fail

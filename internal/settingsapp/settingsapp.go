@@ -20,7 +20,7 @@ import (
 var hiddenPages = []string{"vocab"}
 
 // Pages 是可以指定開啟的頁面；不認得的名稱開總覽。
-var Pages = []string{"overview", "input", "update", "troubleshoot", "about", "output"}
+var Pages = []string{"overview", "input", "update", "troubleshoot", "about", "output", "models"}
 
 // Page 回傳白名單內的頁面名稱。
 func Page(name string) string {

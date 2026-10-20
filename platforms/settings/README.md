@@ -9,8 +9,8 @@
 | `src/updater.rs` | 找出並啟動 `0c-update`、逾時、解析 JSON、匯出摘要；附單元測試 |
 | `src/main.rs` | 指令白名單、視窗、單一實例 |
 | `src/watch.rs` | 「我的詞彙」的即時同步：常駐 `0c-update vocab watch`、轉成 `vocab-changed` 事件、意外結束時重新連上 |
-| `ui/` | `index.html`、`app.css`、`app.js`；設定項目依契約動態產生。`vocab.js` 是「我的詞彙」頁 |
-| `test/` | `smoke.sh`（容器 Xvfb 冒煙測試）、`vocab.sh`（我的詞彙）、`fake-update.py`（測試用的 0c-update 替身，只模擬 vocab 與 api） |
+| `ui/` | `index.html`、`app.css`、`app.js`；設定項目依契約動態產生。`vocab.js` 是「我的詞彙」頁，`models.js` 是「模型」頁 |
+| `test/` | `smoke.sh`（容器 Xvfb 冒煙測試）、`vocab.sh`（我的詞彙）、`models.sh`（模型）、`fake-update.py`（測試用的 0c-update 替身，只模擬 vocab、api 與 models）、`*_test.js`（`node --test`，不碰畫面的判斷） |
 | `build.rs`、`capabilities/main.json` | 只有 `build.rs` 列出的指令能被前端呼叫，capability 只授權這些指令與事件監聽 |
 | `tauri.linux.conf.json` | Linux 的 identifier 改為 `com.biggo.zc.settings`：外掛用它組 D-Bus 服務名，而服務名的每一段不能以數字開頭，`com.biggo.0c.settings` 會讓程式一啟動就 panic。macOS 與 Windows 維持 `com.biggo.0c.settings` |
 | `tauri.conf.json` | CSP：`default-src 'none'; script-src 'self'; style-src 'self'`；不載入任何遠端內容 |
@@ -36,6 +36,23 @@ Emoji 選單以一個開關控制（`emoji-shortcut`：off／equals），預設�
 `0c-mcp` 三平台的套件都內附，放在不隨版本變動的位置：Linux `~/.local/bin/0c-mcp`、Windows `%LOCALAPPDATA%\Zuin\bin\0c-mcp.exe`（版本目錄那份的穩定副本）、macOS 輸入法 App 的 `Contents/MacOS/0c-mcp`。那個位置沒有檔案（較舊的版本）時範例下方註明「這個版本還沒附 0c-mcp」。
 
 UI 測試：`python3 scripts/test_settings_ui.py --settings <輸出>/0c-settings [--only vocab]`。前半用 `test/fake-update.py` 模擬詞彙與 AI 助手的回應（其他命令轉給真的 `0c-update`；`--init … old` 模擬沒有 `features.vocab` 的舊版，入口要藏起來），檢查畫面送出的指令與結果；後半用真的 `0c-update`＋`0c-server`（`testdata/toy`）從畫面加詞、命令列以 AI 助手身分加詞後畫面跟上，以及強制結束設定程式後 watch 跟著結束。
+
+## 模型（#180）
+
+側欄「模型」在「更新」上面（`--page models`、`0c-update open-settings models`），總覽的「神經選字」列有「查看」連過來。選字、補標點各一張卡片：引擎回報的狀態（文字同總覽）、版本、路徑、`model.onnx` 的 SHA-256（等寬字型、截斷顯示、可複製）；`0c-update models status` 給了 Hugging Face 網址（本機雜湊等於 `models.lock.json` 時才有）就顯示連結與授權。
+
+- 內建模型（`source=bundled`）只顯示資訊，沒有按鈕。
+- 可下載（`can_download`，只有沒有內建模型的 Linux 系統安裝）：頁首一句狀態（未安裝、已安裝、需要重新下載、字典更新後自動重新配對），下載中改顯示進度條與已下載大小、核對中、配對中；按鈕「下載模型」（上方寫明大小、Hugging Face 的 repo 與 revision、授權）、下載中「取消」、個人目錄的模型「刪除」（先確認，焦點在「取消」）。`runtime.ok=false` 時列出要 `apt install` 的套件（可複製），`last_error` 顯示它的 `message`。
+- 不能下載又沒有模型：依 `disabled_reason`（platform／distribution）說明原因，沒有按鈕。
+
+網路與檔案動作都在 `0c-update models status|download|cancel|remove -json`；畫面每秒讀一次 status 的 `operation`（只在這一頁顯示中、有進行中的作業時），同「更新」頁。Tauri 指令：
+
+| 指令 | 參數 | 說明 |
+|---|---|---|
+| `models_command` | `action`：`status`／`download`／`cancel`／`remove` | 對應 `0c-update models <action> -json`，結果原樣回傳；status 逾時 20 秒，其他 60 秒（download 在背景開始、立刻回傳） |
+| `open_url` | `url` | 交給系統瀏覽器（Linux `xdg-open`、macOS `open`、Windows `rundll32 url.dll,FileProtocolHandler`）；只放行 `https://huggingface.co/` 開頭、路徑只有英數與 `/._-` 的網址。設定視窗本身照舊不離開本機頁面 |
+
+UI 測試：`python3 scripts/test_settings_ui.py --settings <輸出>/0c-settings [--only models]`，`fake-update.py --models` 依契約模擬內建、未安裝、下載中、已安裝、需要重新下載、缺推論元件、發行版關閉下載；外部網址交給 PATH 上假的 `xdg-open` 記下來。
 
 ## 建置
 
