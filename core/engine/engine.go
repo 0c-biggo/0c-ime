@@ -63,6 +63,7 @@ type Engine struct {
 	sharedEnglish bool              // SharedMode 時大家共用的模式
 	modeGen       uint64            // sharedEnglish 每次改變時加一
 	modeSeen      map[uint64]uint64 // session → 它跟上的 modeGen
+	modeLocal     map[uint64]bool   // 「設成英文」帶來、只屬於這個輸入框的英文（macOS 的 Caps Lock）；設成中文或切換時結束
 
 	switchMu sync.Mutex // 「輸出簡體字」的即時切換一次一個（simplified.go）
 
@@ -140,6 +141,7 @@ func (e *Engine) initShared() {
 	}
 	if e.modeSeen == nil {
 		e.modeSeen = map[uint64]uint64{}
+		e.modeLocal = map[uint64]bool{}
 	}
 }
 
@@ -183,6 +185,7 @@ func (e *Engine) CloseSession(id uint64) {
 	defer e.mu.Unlock()
 	delete(e.sessions, id)
 	delete(e.modeSeen, id)
+	delete(e.modeLocal, id)
 }
 
 // Do 處理一個已解碼的請求。
@@ -204,9 +207,24 @@ func (e *Engine) Do(id uint64, req proto.Request) (proto.Snapshot, error) {
 	// Windows／Linux 的 caps_lock（#173）同理：開啟只影響這個輸入框，關閉回到共用的模式。
 	// 舊外殼不必改。
 	e.initShared()
-	if req.Type == proto.Mode && !req.On {
+	// 暫時的英文（Caps Lock 開著：#173 的 caps_lock、macOS 的「設成英文」）期間不跟上別的輸入框切回的注音，
+	// 不然 Caps Lock 還開著，下一個字母就打成注音；關掉 Caps Lock 時才回到共用的模式（下面與「設成中文」）。
+	// 共用的模式已經是英文時的「設成英文」（Windows 重開 session 還原共用的英文）不算暫時的，照常跟上。
+	temporary := !e.sharedEnglish && (s.CapsLockOn() || e.modeLocal[id])
+	switch {
+	case req.Type == proto.Mode && !req.On:
 		req.On = e.sharedEnglish
-	} else if seen, ok := e.modeSeen[id]; (!ok || seen != e.modeGen) && s.EnglishMode() != e.sharedEnglish && req.Type != proto.Mode {
+		delete(e.modeLocal, id)
+	case req.Type == proto.Mode:
+		if !e.sharedEnglish {
+			e.modeLocal[id] = true
+		} else {
+			delete(e.modeLocal, id)
+		}
+	case req.Type == proto.Toggle:
+		delete(e.modeLocal, id)
+	}
+	if seen, ok := e.modeSeen[id]; (!ok || seen != e.modeGen) && s.EnglishMode() != e.sharedEnglish && req.Type != proto.Mode && !temporary {
 		s.Handle(proto.Request{Type: proto.Mode, On: e.sharedEnglish}) // 跟上別的輸入框切換後的模式
 	}
 	snap := s.Handle(req)
