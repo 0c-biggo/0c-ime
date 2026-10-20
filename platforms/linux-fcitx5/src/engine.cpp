@@ -79,7 +79,7 @@ SetComment setCommentFunction() {
 }
 
 // Instance::showCustomInputMethodInformation 是 Fcitx 5.1.11 才有的（Ubuntu 24.04 的 5.1.7 沒有）；同 setCommentFunction 在執行時找，
-// 找不到回傳 nullptr，切換提示退回 showInputMethodInformation（顯示輸入法名稱與子模式「注音・簡體輸出」）。
+// 找不到回傳 nullptr，切換提示退回 showInputMethodInformation（顯示子模式的標籤「注·簡」）。
 using ShowCustomInformation = void (*)(fcitx::Instance *, fcitx::InputContext *, const std::string &);
 ShowCustomInformation showCustomInformationFunction() {
     static const auto fn = reinterpret_cast<ShowCustomInformation>(dlsym(RTLD_DEFAULT,
@@ -634,7 +634,7 @@ private:
     }
 
     // 選單的「輸出簡體字」（#169）：引擎能即時切換時直接在這個輸入框的 session 送請求（組字不動、之後送出的字立刻照新設定），
-    // 引擎寫設定檔；提示用輸入法資訊（Fcitx 5.1.11 起顯示「已切換為輸出簡體字」，較舊的版本顯示「注音・簡體輸出」）。
+    // 引擎寫設定檔；提示用輸入法資訊（Fcitx 5.1.11 起顯示「已切換為輸出簡體字」，較舊的版本顯示標籤「注·簡」）。
     // 舊引擎退回 0c-update set output-simplified … -apply -notify（寫設定、交接重啟，0c-update 送桌面通知）。
     void toggleSimplified(fcitx::InputContext *ic) {
         if (!ic) { ic = instance_->mostRecentInputContext(); }

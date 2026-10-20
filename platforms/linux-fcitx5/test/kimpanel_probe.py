@@ -92,6 +92,28 @@ def run(report, entry, pump, key, type_text, expect):
         for gone in ('自動更新：','暫停自動更新','神經選字（','提交時補標點（','依前文選字（','操作結果：','檢查並準備更新'):
             if any(gone in label for label in props.values()): raise RuntimeError('Old submenu item is still there: '+gone)
         check('kimpanel_old_submenu_items_are_gone')
+        # #169：「輸出簡體字」在 Kimpanel 的屬性列；點了切換，開著時注音模式的標籤是「注·簡」（GNOME Kimpanel 用文字取代
+        # 「注」圖示），提示「已切換為輸出簡體字」；再點一次回到「注」圖示、沒有標籤。
+        wait('輸出簡體字')
+        def im_label():
+            fields = icon_props.get('/Fcitx/im', [])
+            return next((h[len('label='):] for h in (fields[4].split(',') if len(fields) > 4 else []) if h.startswith('label=')), '')
+        def wait_label(text, seconds=5):
+            deadline = time.monotonic()+seconds
+            while time.monotonic()<deadline:
+                if im_label() == text: return
+                pump(.1)
+            raise RuntimeError(f'Kimpanel label did not become {text!r}: {icon_props.get("/Fcitx/im")}')
+        switch_messages.clear()
+        click('輸出簡體字'); wait_label('注·簡')
+        report['kimpanel_simplified_on'] = {'im': icon_props.get('/Fcitx/im'), 'messages': list(switch_messages)}
+        # Fcitx 5.1.11 起是自訂提示；5.1.7 沒有 showCustomInputMethodInformation，退回輸入法資訊（顯示標籤「注·簡」）。
+        if not any('已切換為輸出簡體字' in m or '注·簡' in m for m in switch_messages):
+            raise RuntimeError('Kimpanel did not show the switch notice: '+str(switch_messages))
+        check('kimpanel_simplified_label_and_notice')
+        entry.set_text(''); type_text('su3'); key('Return'); expect('你','kimpanel_simplified_typing')
+        click('輸出簡體字'); wait_label('')
+        check('kimpanel_simplified_off_restores_icon')
         updater = menu_stub.Updater()
         try:
             updater.stub()

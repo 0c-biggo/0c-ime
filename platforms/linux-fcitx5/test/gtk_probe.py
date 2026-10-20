@@ -261,6 +261,56 @@ try:
         if not order[0]<order[1]<update_row: raise RuntimeError('Vocab entry is not between settings and update rows: '+str(labels))
         report['menu_vocab']=labels
         report['checks'].append('tray_vocab_entry_between_settings_and_update')
+        # #169：可以打勾的「輸出簡體字」在「我的詞彙…」與更新列之間；點了引擎即時切換（不重啟）、寫 settings.json，
+        # 之後送出的字是簡體，再點一次回到繁體。
+        simplified_label='輸出簡體字'
+        def simplified_item(): return next(i for i in menu_items() if i['label']==simplified_label)
+        def wait_checked(on, seconds=10):
+            until=time.monotonic()+seconds
+            while time.monotonic()<until:
+                if simplified_item()['checked']==on: return
+                pump(.2)
+            raise RuntimeError(f'輸出簡體字 check did not become {on}: {simplified_item()}')
+        def engine_health():
+            out=subprocess.check_output([str(Path.home()/'.local/bin/0c-update'),'status','--json'],text=True)
+            return json.loads(out).get('runtime',{})
+        def stored_simplified():
+            path=Path.home()/'.local/share/0c/settings.json'
+            return json.loads(path.read_text()).get('output_simplified') if path.exists() else None
+        def type_scenery(): # ㄈㄥ ㄐㄧㄥˇ
+            for k in ('z','slash','space','r','u','slash','3'): key(k)
+        def screenshot(name):
+            root=Gdk.get_default_root_window()
+            shot=Gdk.pixbuf_get_from_window(root,0,0,root.get_width(),root.get_height())
+            if shot: shot.savev(str(Path(sys.argv[1]).parent/name),'png',[],[])
+        labels=[i['label'] for i in wait_menu(simplified_label,15)]
+        at=labels.index(simplified_label)
+        update_at=next(k for k,l in enumerate(labels) if '（點此' in l or '正在' in l)
+        if not labels.index(vocab_label)<at<update_at or simplified_item()['toggle'] not in ('checkmark','radio') or simplified_item()['checked']:
+            raise RuntimeError('輸出簡體字 entry is not an unchecked toggle (Fcitx exports checkable actions as radio) between vocab and update rows: '+str(menu_items()))
+        report['menu_simplified']=menu_items()
+        report['checks'].append('tray_simplified_entry_checkable_between_vocab_and_update')
+        focus(entry); entry.set_text('')
+        before=engine_health()
+        type_scenery() # 組字中切換
+        click_menu(simplified_label); wait_checked(True)
+        pump(.3); screenshot('simplified-on-info.png')
+        if stored_simplified() is not True: raise RuntimeError('settings.json was not written: '+str(stored_simplified()))
+        report['checks'].append('tray_simplified_click_checks_and_saves_settings')
+        if tray_menu.icon_name('/tmp/0c-tray')!='0c-zhuyin': raise RuntimeError('Tray icon changed: '+tray_menu.icon_name('/tmp/0c-tray'))
+        focus(entry); key('Return')
+        report['simplified_commit']=entry.get_text()
+        expect('风景','tray_simplified_composition_commits_simplified')
+        after=engine_health()
+        if not after.get('output_simplified') or before.get('version')!=after.get('version'):
+            raise RuntimeError(f'Engine did not switch live: {before} → {after}')
+        report['simplified_runtime']={'before':before,'after':after}
+        click_menu(simplified_label); wait_checked(False)
+        if stored_simplified() is not False: raise RuntimeError('settings.json was not written back: '+str(stored_simplified()))
+        entry.set_text(''); focus(entry); type_scenery(); key('Return')
+        expect('風景','tray_simplified_off_commits_traditional')
+        report['checks'].append('tray_simplified_toggles_back_to_traditional')
+        entry.set_text('')
         updater=menu_stub.Updater()
         try:
             updater.stub()
