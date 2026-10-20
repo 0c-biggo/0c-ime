@@ -34,11 +34,13 @@ var ErrOldShellLoaded = errors.New("仍在執行舊版外殼")
 // OldShellDetail 是 ErrOldShellLoaded 的受阻說明；設定程式以這段文字辨識，改動時要一起改 app.js。
 const OldShellDetail = "已安裝，但系統仍開著更新前留下的舊版輸入法；登出再登入後改用新版"
 
-// ErrShellRetiring：新版外殼已裝好、不必重新登入，舊版的輸入法程式還在執行，使用者停手後才結束（macOS，#170）。
-var ErrShellRetiring = errors.New("舊版輸入法程式等停手後結束")
+// ErrShellRetiring：新版外殼已裝好、不必重新登入，舊版的輸入法程式還在執行（macOS，#170）。背景安裝的交接只在
+// 使用者離開電腦（螢幕鎖定或關閉）時做，以免已開著的 App 漏字（#178）。
+var ErrShellRetiring = errors.New("舊版輸入法程式等使用者離開時結束")
 
-// ShellRetiringDetail 是 ErrShellRetiring 的受阻說明；設定程式以這段文字辨識，改動時要一起改 app.js 與 engine-state.js。
-const ShellRetiringDetail = "已安裝，停止打字後自動換成新版，不必登出"
+// ShellRetiringDetail 是 ErrShellRetiring 的受阻說明；設定程式以這段文字辨識，改動時要一起改 app.js 與 engine-state.js
+// （舊的說明文字也要留著認得：狀態檔可能還是 0.2.1／0.2.2 寫的）。
+const ShellRetiringDetail = "已安裝，離開電腦（螢幕鎖定或關閉）時自動換成新版，不必登出"
 
 // A notification is consent for one verified asset, not for a later release.
 var ErrTargetChanged = errors.New("待辦版本已變更，請從更新選單確認目前版本")
@@ -705,7 +707,7 @@ func recordOnce(s *State, now time.Time, kind, version, detail string) {
 
 func (c *Coordinator) awaitShell(s *State, now time.Time, err error) {
 	if errors.Is(err, ErrShellRetiring) {
-		// 不必登出：下一次喚起時舊程式多半已結束，confirm 就會生效。不算要使用者處理的事，不發通知。
+		// 不必登出：使用者離開電腦時的排程喚起會交接，之後 confirm 就會生效。不算要使用者處理的事，不發通知。
 		s.block(now, "waiting_idle", ShellRetiringDetail)
 		return
 	}

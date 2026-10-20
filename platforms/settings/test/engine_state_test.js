@@ -58,12 +58,14 @@ test('外殼更新等重新登入：提示登出再登入', () => {
   }
 });
 
-test('macOS 舊的輸入法程式等停手後結束：不提示登出（#170）', () => {
-  const update = { stage: 'pending', state: 'update_available', target: { version: '0.2.1', kind: 'shell' },
-    blocked: { reason: 'waiting_idle', detail: '已安裝，停止打字後自動換成新版，不必登出' } };
-  const got = state(status({ installed: '0.2.1', running: '0.2.1', update }), 'macos/aarch64');
-  assert.deepStrictEqual([got.shellPending, got.retiring, got.relogin], [true, true, false]);
-  assert.strictEqual(got.pendingDetail, '已安裝，停止打字後自動換成新版，不必登出');
+test('macOS 舊的輸入法程式等使用者離開時才換：不提示登出（#170、#178）', () => {
+  for (const detail of ['已安裝，離開電腦（螢幕鎖定或關閉）時自動換成新版，不必登出', '已安裝，停止打字後自動換成新版，不必登出']) {
+    const update = { stage: 'pending', state: 'update_available', target: { version: '0.2.1', kind: 'shell' },
+      blocked: { reason: 'waiting_idle', detail } };
+    const got = state(status({ installed: '0.2.1', running: '0.2.1', update }), 'macos/aarch64');
+    assert.deepStrictEqual([got.shellPending, got.retiring, got.relogin], [true, true, false], detail);
+    assert.strictEqual(got.pendingDetail, detail);
+  }
 });
 
 test('macOS 延後到登入才安裝：保留待辦原因，提示登出再登入', () => {

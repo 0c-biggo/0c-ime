@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/0c-biggo/0c-ime/internal/update"
 )
@@ -16,10 +17,18 @@ import (
 // 部分在 shell_handover_darwin.go。
 //
 // 0c.app 是 IMK 輸入法程式，系統在第一次用到時啟動、常駐到登出；安裝只換掉磁碟上的 App，執行中的那一份不會換新，
-// 外殼的新功能要重新登入才生效。安裝、回復、解除安裝與每次排程喚起時，請本帳號執行中、不是目前安裝的那一份
-// 0c.app（含 0.1.0-dev.21 以前的 Zuin.app）在使用者沒有組字、停手之後結束；新版不由這裡啟動，系統下一次需要
-// 靈犀注音時（切換輸入法或在文字欄位打字）照原本的方式從 ~/Library/Input Methods 啟動新的 App。做法同鼠鬚管
-// 安裝時結束舊的 Squirrel，再由系統重新啟動。
+// 外殼的新功能要重新登入才生效。安裝、回復、解除安裝與排程喚起時，請本帳號執行中、不是目前安裝的那一份
+// 0c.app（含 0.1.0-dev.21 以前的 Zuin.app）在使用者沒有組字、停手之後結束，再以不搶前景的方式（open -g -j）
+// 啟動新的 App。做法同鼠鬚管安裝時結束舊的 Squirrel，但鼠鬚管與威注音都只在使用者自己執行安裝程式時做。
+//
+// 結束舊程式時，已經連著它的 App 不會自己換到新版：要等到焦點改變（切換 App、鎖定後解鎖、螢幕關閉後喚醒、
+// 螢幕保護程式結束）才連上新的；在那之前按的第一個鍵會以英文字母直接交給 App，沒有先啟動新版時整批按鍵都會
+// 漏成英文或被吃掉（#178，macOS 14／15／26 實測）。所以：
+//   - 使用者自己安裝、回復（終端機、.pkg、設定程式「立即安裝」）時，使用者正看著安裝程式，之後回到原本的 App
+//     就是一次焦點改變：停手後立即交接並啟動新版。
+//   - 背景（排程、背景自動安裝）只在使用者離開時交接：這個帳號的螢幕已鎖定、螢幕保護程式或螢幕關閉中，或已切換
+//     到別的使用者（macConsoleAway）。回來時的解鎖、喚醒就是焦點改變，一個字都不會漏。使用中停手多久都不交接，
+//     舊程式搭新版引擎照常能打字，等下一次離開或重新登入。
 
 // macShellHelper：同一個執行檔帶參數執行的是一次性工具（--activate-input-source、--update-agent、--update-notice
 // 等），不是輸入法程式本身，不能結束。
@@ -58,6 +67,110 @@ func retirableMacShells(procs []macShellProcess, args map[string]string, roots [
 		out = append(out, uiProcess{PID: pid, Path: p.Exe})
 	}
 	return out
+}
+
+// awayOnly 讓交接只在使用者離開時進行：人在的時候一律當成剛按過鍵（停手 0 秒），不會送出結束要求。
+// 每一輪都重新判斷：等待中途使用者解鎖回來就停下。
+func awayOnly(c uiControl, away func() bool) uiControl {
+	idle := c.idle
+	c.idle = func() time.Duration {
+		if !away() {
+			return 0
+		}
+		return idle()
+	}
+	return c
+}
+
+// handOverShells 請過期的輸入法程式結束；全部結束後呼叫 relaunch 啟動新版，縮短系統自己帶起新版之前的空窗。
+// 還有舊程式沒結束時不啟動：同一個 bundle ID 的兩份 App 會搶同一個 IMK 連線名稱。
+func handOverShells(c uiControl, pending func() []uiProcess, wait time.Duration, relaunch func()) (retired int, left []uiProcess) {
+	retired, left = retireProcesses(c, pending, wait)
+	if retired > 0 && len(left) == 0 && relaunch != nil {
+		relaunch()
+	}
+	return retired, left
+}
+
+// macConsoleSessions 解析 `ioreg -n Root -d1` 輸出裡的 IOConsoleUsers：每個登入工作階段一個 key → value（去掉引號）。
+// 值裡可能有逗號、大括號（例如全名），引號內的字元一律照抄；巢狀的值整段保留、不再展開。
+func macConsoleSessions(ioreg string) []map[string]string {
+	_, rest, ok := strings.Cut(ioreg, `"IOConsoleUsers" = (`)
+	if !ok {
+		return nil
+	}
+	var (
+		out     []map[string]string
+		cur     map[string]string
+		tok     strings.Builder
+		key     string
+		haveKey bool
+		depth   int // 0：陣列裡、字典之間；1：字典的 key=value 層；更深：巢狀的值
+		quoted  bool
+	)
+	pair := func() {
+		if haveKey && cur != nil {
+			cur[key] = strings.Trim(strings.TrimSpace(tok.String()), `"`)
+		}
+		tok.Reset()
+		key, haveKey = "", false
+	}
+	for _, r := range rest {
+		if quoted {
+			if r == '"' {
+				quoted = false
+			}
+			tok.WriteRune(r)
+			continue
+		}
+		switch {
+		case r == '"':
+			quoted = true
+			tok.WriteRune(r)
+		case r == '{' || r == '(':
+			depth++
+			if depth == 1 {
+				cur, key, haveKey = map[string]string{}, "", false
+				tok.Reset()
+			} else {
+				tok.WriteRune(r)
+			}
+		case (r == '}' || r == ')') && depth == 0:
+			return out // 陣列結束
+		case r == '}' || r == ')':
+			if depth == 1 {
+				pair()
+				out = append(out, cur)
+				cur = nil
+			} else {
+				tok.WriteRune(r)
+			}
+			depth--
+		case r == '=' && depth == 1 && !haveKey:
+			key, haveKey = strings.Trim(strings.TrimSpace(tok.String()), `"`), true
+			tok.Reset()
+		case r == ',' && depth == 1:
+			pair()
+		case r == '\n' && depth == 0:
+			return out
+		case depth >= 1:
+			tok.WriteRune(r)
+		}
+	}
+	return nil // 沒有正常結束：格式看不懂
+}
+
+// macConsoleAway：uid 這個帳號的使用者是不是離開了電腦——自己的工作階段標示螢幕已鎖定（CGSSessionScreenIsLocked：
+// 鎖定畫面、螢幕保護程式、螢幕關閉時都會設，macOS 15 實測），或不在主控台（快速切換到別的使用者）。
+// 找不到自己的工作階段、或輸出看不懂時回 false：無法確認就當成人還在，不交接。
+func macConsoleAway(ioreg string, uid int) bool {
+	for _, s := range macConsoleSessions(ioreg) {
+		if s["kCGSSessionUserIDKey"] != strconv.Itoa(uid) {
+			continue
+		}
+		return s["CGSSessionScreenIsLocked"] == "Yes" || s["kCGSSessionOnConsoleKey"] == "No"
+	}
+	return false
 }
 
 func parsePID(s string) (uint32, error) {
