@@ -405,6 +405,9 @@ func (s *Session) finishMixedTone(key string) bool {
 			return true
 		}
 	}
+	if key != " " && s.mixed.choice == 0 && s.digitToneNumber(raw, sym) {
+		return false
+	}
 	if done, ok := s.mixedReading(raw, sym); ok {
 		s.clearMixed()
 		s.insertMixedTyped(done, raw+key)
@@ -591,12 +594,41 @@ func (s *Session) digitWord(raw string, tone rune) bool {
 	return ok && done.ToneOf() == 1 && len(s.model.Source().Exact([]zhuyin.Syllable{done})) > 0
 }
 
-// digitWordKeys：at 是只用數字鍵加空白打出的中文字（#134 的 5 之、#162 的 20 單），↓ 的原按鍵排第二個。
+// digitToneNumber（#175，方案 b）：只用數字鍵、最後一鍵是聲調鍵（3 4 6 7）的待定按鍵，在下面三種情況照字面
+// 留成數字，不組成中文：
+//   - 帶調讀音在詞庫沒有字，要靠 #69 的輕聲退回一聲才組得成（57 ㄓ˙→之、107 ㄅㄢ˙→班、07 ㄢ˙→安）；
+//   - 按鍵順序顛倒（813 的 ㄚㄅ、017 的 ㄢㄅ），真的在打注音時不會這樣打；
+//   - 前面緊接著字面數字或數字標點（354 的 3 已照字面送出），是更長的數字的一部分。
+// 其餘（53 只、54 至、84 阿、104 辦）照舊，跟常見注音輸入法的混打一樣按下聲調就出字。
+func (s *Session) digitToneNumber(raw string, tone rune) bool {
+	if raw == "" || strings.Trim(raw, "0123456789") != "" {
+		return false
+	}
+	if s.literalNumberBefore() != "" || !s.keysInSyllableOrder(raw) {
+		return true
+	}
+	c, ok := s.mixedComposer(raw)
+	if !ok {
+		return false
+	}
+	done, ok := c.Add(tone)
+	if !ok {
+		return false
+	}
+	return done.ToneOf() == 5 && !s.readingReachable(done)
+}
+
+// digitWordKeys：at 是只用數字鍵加空白打出的中文字（#134 的 5 之、#162 的 20 單），或只用數字鍵加聲調鍵打出的字
+// （#175：54 至、53 只），↓ 的原按鍵排第二個。
 func (s *Session) digitWordKeys(at int) bool {
 	if at < 0 || at >= len(s.syls) || s.literals[at] {
 		return false
 	}
-	digits, ok := strings.CutSuffix(s.mixedKeys[at], " ")
+	keys := s.mixedKeys[at]
+	digits, ok := strings.CutSuffix(keys, " ")
+	if !ok && len(keys) > 1 && strings.ContainsAny(keys[len(keys)-1:], "3467") {
+		digits, ok = keys, true
+	}
 	return ok && digits != "" && strings.Trim(digits, "0123456789") == ""
 }
 
