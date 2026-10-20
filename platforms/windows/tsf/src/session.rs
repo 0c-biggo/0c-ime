@@ -114,6 +114,9 @@ pub struct Session {
     // 引擎認得 caps_lock 請求而且「Caps Lock 開著時直接打英文」開著（health／open 的 caps_lock_english，#173）。
     // 跟著最近一次 health（learn_mode）或 open 快取：新開的程式第一個按鍵前就知道，換欄位（session 關掉）也沿用。
     caps_lock_english: bool,
+    // caps_lock_english 是在哪一代連線上問到的（#173）。設定一改，0c-update 就請引擎存檔退出、再以新設定啟動，
+    // 舊連線跟著斷；連線還在而且是同一代時快取一定是新的，Caps Lock 鍵不必再問 health（refresh_caps_lock_english）。
+    caps_generation: u32,
     // 最近一次快照的 caps_english（#173），換欄位清掉 english_state 後仍保留：重開 session 還原模式時，
     // Caps Lock 帶來的英文以 caps_lock 還原（關掉 Caps Lock 才回得到注音），不當成使用者切的英文。
     caps_english: bool,
@@ -129,6 +132,27 @@ pub struct Session {
 /// 當成注音，跟以前只在英文時還原相同。
 fn restore_mode(known: bool, want_english: bool, start_english: bool) -> Option<bool> {
     (known && want_english != start_english).then_some(want_english)
+}
+
+/// 重開 session 時依序送出的還原請求。Caps Lock 帶來的英文（#173，caps_english）底下是注音：模式照注音還原
+/// （開始時英文就先設回注音），設定還開著時再以 caps_lock 還原暫時的英文，新 session 也記得是暫時的，關掉 Caps Lock
+/// 才回到注音。設定剛關掉（引擎以新設定重啟）時就是注音。不這樣的話，暫時的英文會變成這個程式自己的英文。
+fn restore_requests(
+    known: bool,
+    want_english: bool,
+    caps_english: bool,
+    caps_lock_english: bool,
+    start_english: bool,
+) -> Vec<Value> {
+    let caps = want_english && caps_english;
+    let mut out: Vec<Value> = restore_mode(known, want_english && !caps, start_english)
+        .map(|english| json!({"type": "mode", "on": english}))
+        .into_iter()
+        .collect();
+    if caps && caps_lock_english {
+        out.push(json!({"type": "caps_lock", "on": true}));
+    }
+    out
 }
 
 /// health 回報的新 session 開始時的模式（#160 的 initial_mode；全部共用時是目前共用的模式）。舊引擎沒有這一項時為 None。
@@ -160,6 +184,7 @@ impl Session {
             mode_known: false,
             shared: false,
             caps_lock_english: false,
+            caps_generation: 0,
             caps_english: false,
             simplified_live: false,
             simplified: false,
@@ -218,6 +243,7 @@ impl Session {
             return false;
         }
         let reply = self.client.call(&json!({"op": "health"}));
+        let generation = self.client.generation();
         if probe && self.id == 0 {
             self.client.release();
         }
@@ -227,6 +253,7 @@ impl Session {
         self.mode_known = true;
         self.shared = reply["info"]["mode_memory"] == "shared";
         self.caps_lock_english = reply["info"]["caps_lock_english"] == "true";
+        self.caps_generation = generation;
         let simplified = self.learn_simplified(&reply["info"]);
         let before = self.english;
         if let Some(english) = initial_english(&reply["info"]) {
@@ -279,17 +306,27 @@ impl Session {
         self.caps_lock_english && (self.english_state.caps_lock || self.caps_english) != on
     }
 
-    /// Caps Lock 鍵本身（#173）：以 health 重新確認 caps_lock_english。剛在設定程式打開這一項時引擎重啟了，
-    /// open／health 的快取還是舊的，不重新確認的話第一個字母會照注音打、下一個才切英文。舊連線這一次才發現斷了，
-    /// 重連再問一次。沒有連線而且引擎沒在執行時不為此啟動，沿用快取。
+    /// Caps Lock 鍵本身（#173）：確認 caps_lock_english 的快取還是新的。剛在設定程式打開這一項時引擎重啟了，
+    /// open／health 的快取是舊的，不重新確認的話第一個字母會照注音打、下一個才切英文。設定改了一定會重啟引擎，
+    /// 所以連線還在（不送請求，只看管道另一端關了沒有）而且快取是這一代連線上問到的就沿用，不在 UI 執行緒上問引擎；
+    /// 連線斷了或還沒問過才以 health 重新確認。沒有連線而且引擎沒在執行時不為此啟動，沿用快取；
+    /// 沒有 session 時查完不留連線（同 learn_mode），只按過 Caps Lock、沒打過字的程式不佔著一條連線。
     pub fn refresh_caps_lock_english(&mut self) {
-        if !self.client.connected() && !self.client.connect_existing() {
+        if self.client.connected() && self.caps_generation == self.client.generation() && self.client.alive() {
             return;
         }
-        let health = json!({"op": "health"});
-        let reply = self.client.call(&health).or_else(|| self.client.call(&health));
+        let probe = !self.client.connected(); // alive() 發現斷線時已經關掉，這裡重連
+        if probe && !self.client.connect_existing() {
+            return;
+        }
+        let reply = self.client.call(&json!({"op": "health"}));
+        let generation = self.client.generation();
+        if probe && self.id == 0 {
+            self.client.release();
+        }
         if let Some(reply) = reply.filter(|r| r["ok"] == true) {
             self.caps_lock_english = reply["info"]["caps_lock_english"] == "true";
+            self.caps_generation = generation;
         }
     }
 
@@ -370,6 +407,7 @@ impl Session {
         self.vocab_keys = reply["info"]["vocab_keys"] == "true";
         self.shared = reply["info"]["mode_memory"] == "shared";
         self.caps_lock_english = reply["info"]["caps_lock_english"] == "true";
+        self.caps_generation = self.generation;
         self.learn_simplified(&reply["info"]);
         let start_english = reply["info"]["start_mode"] == "english";
         self.pending_context = None; // 新 session 不認得舊代號
@@ -398,14 +436,13 @@ impl Session {
         } else {
             self.replay_english
         };
-        // Caps Lock 帶來的英文（#173）以 caps_lock 還原：新 session 也記得是暫時的，關掉 Caps Lock 才回到注音。
-        let restore = if want && self.caps_english && self.caps_lock_english && !start_english {
-            Some(json!({"type": "caps_lock", "on": true}))
-        } else {
-            restore_mode(self.mode_known, want, start_english)
-                .map(|english| json!({"type": "mode", "on": english}))
-        };
-        if let Some(req) = restore {
+        for req in restore_requests(
+            self.mode_known,
+            want,
+            self.caps_english,
+            self.caps_lock_english,
+            start_english,
+        ) {
             let restored = self
                 .client
                 .call(&json!({"op": "handle", "session": self.id, "req": req}));
@@ -683,6 +720,25 @@ mod parse_tests {
         assert_eq!(initial_english(&json!({"initial_mode": "english"})), Some(true));
         assert_eq!(initial_english(&json!({"initial_mode": "zhuyin"})), Some(false));
         assert_eq!(initial_english(&json!({"version": "old"})), None, "舊引擎沒有回報");
+    }
+
+    // #173：Caps Lock 帶來的英文重開 session 時以 caps_lock 還原；設定關掉或開始時英文都不能變成這個程式自己的英文。
+    #[test]
+    fn caps_english_is_restored_as_temporary() {
+        let caps_on = json!({"type": "caps_lock", "on": true});
+        let zhuyin = json!({"type": "mode", "on": false});
+        let english = json!({"type": "mode", "on": true});
+        assert_eq!(restore_requests(true, true, true, true, false), vec![caps_on.clone()], "跟以前一樣");
+        assert_eq!(
+            restore_requests(true, true, true, true, true),
+            vec![zhuyin.clone(), caps_on.clone()],
+            "開始時英文：先設回注音，Caps Lock 的英文才是暫時的"
+        );
+        assert_eq!(restore_requests(true, true, true, false, false), Vec::<Value>::new(), "設定剛關掉：照注音開始");
+        assert_eq!(restore_requests(true, true, true, false, true), vec![zhuyin.clone()], "設定剛關掉、開始時英文：設回注音");
+        assert_eq!(restore_requests(true, true, false, true, false), vec![english.clone()], "Shift 切的英文照舊還原");
+        assert_eq!(restore_requests(true, false, false, true, true), vec![zhuyin.clone()]);
+        assert_eq!(restore_requests(false, true, true, true, false), vec![caps_on], "還沒問過模式：仍還原 Caps Lock");
     }
 
     #[test]
@@ -988,6 +1044,44 @@ mod tests {
         let snap = s.caps_lock(false);
         assert!(snap.ok && snap.english, "Shift 切的英文不受 Caps Lock 影響");
         s.toggle();
+    }
+
+    // #173 code review：引擎重啟後重開 session 時，Caps Lock 帶來的英文不能變成這個程式自己的英文。
+    // (a) Caps Lock 英文中在設定程式關掉這一項：以 ZUIN_TEST_PIPE（設定關閉）的引擎當作重啟後的新引擎。
+    // (b) ZUIN_TEST_CAPS_START_ENGLISH_PIPE：start_mode=english、caps_lock_english=true、mode_memory=native。
+    #[test]
+    fn caps_english_stays_temporary_after_engine_restart() {
+        if let (Ok(caps), Ok(plain)) = (std::env::var("ZUIN_TEST_CAPS_PIPE"), std::env::var("ZUIN_TEST_PIPE")) {
+            let mut s = Session::with_client(Client::with_pipe(&caps));
+            s.learn_mode(true);
+            assert!(s.caps_lock(true).caps_english);
+            s.client = Client::with_pipe(&plain); // 引擎以新設定（關閉）重啟
+            s.id = 0;
+            let snap = s.key("j");
+            assert!(snap.ok && !snap.english && snap.handled, "設定關掉後照注音：{snap:?}");
+            assert_eq!(snap.text(), "ㄨ");
+            s.key("Escape");
+        }
+        let Ok(pipe) = std::env::var("ZUIN_TEST_CAPS_START_ENGLISH_PIPE") else {
+            return;
+        };
+        let mut s = Session::with_client(Client::with_pipe(&pipe));
+        s.learn_mode(true);
+        assert!(s.english(), "開始時英文");
+        assert!(!s.toggle().english, "這個程式切到注音");
+        let snap = s.caps_lock(true);
+        assert!(snap.english && snap.caps_english);
+        s.client.disconnect_for_test();
+        let snap = s.key("A");
+        assert!(snap.ok && snap.english && snap.caps_english && !snap.handled, "重開後仍是暫時的英文：{snap:?}");
+        let snap = s.caps_lock(false);
+        assert!(snap.ok && !snap.english, "關掉 Caps Lock 回到這個程式的注音：{snap:?}");
+        // 開始時的英文（不是 Caps Lock 帶來的）照舊：開關 Caps Lock 都是英文。
+        assert!(s.toggle().english);
+        s.caps_lock(true);
+        s.client.disconnect_for_test();
+        assert!(s.key("A").english);
+        assert!(s.caps_lock(false).english, "使用者的英文不受 Caps Lock 影響");
     }
 
     #[test]
@@ -1315,5 +1409,197 @@ mod tests {
         assert!(start.elapsed() < std::time::Duration::from_millis(500));
         drop(s);
         assert_eq!(server.finish(), 0);
+    }
+
+    /// #173 的假引擎：health／open 回報 caps_lock_english，記下 health 次數與 handle 請求。`test_restart` 模擬套用設定時
+    /// 引擎存檔退出、以新設定再起來：回覆讀完後關掉這條連線、caps_lock_english 換成另一個值（start_mode 不變），
+    /// 下一條連線是「新的引擎」。永遠有一個管道在等連線。
+    struct CapsServer {
+        name: String,
+        health: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        requests: std::sync::Arc<std::sync::Mutex<Vec<Value>>>,
+        restarted: std::sync::mpsc::Receiver<()>,
+    }
+
+    impl CapsServer {
+        fn new(caps: bool, start_english: bool) -> Self {
+            use std::io::{Read, Write};
+            use std::os::windows::io::FromRawHandle;
+            use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+            use std::sync::{Arc, Mutex};
+            use windows::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
+            use windows::Win32::System::Pipes::{
+                ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES,
+                PIPE_WAIT,
+            };
+            use windows_core::PCWSTR;
+            let name = format!(
+                r"\\.\pipe\0c-tsf-caps-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            );
+            let health = Arc::new(AtomicUsize::new(0));
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            let caps = Arc::new(AtomicBool::new(caps));
+            let (restart_tx, restarted) = std::sync::mpsc::channel();
+            let (ready, wait) = std::sync::mpsc::channel();
+            let pipe_name = zuin_win_common::wide(&name);
+            let (h, r) = (health.clone(), requests.clone());
+            std::thread::spawn(move || {
+                let create = || unsafe {
+                    CreateNamedPipeW(
+                        PCWSTR::from_raw(pipe_name.as_ptr()),
+                        PIPE_ACCESS_DUPLEX,
+                        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                        PIPE_UNLIMITED_INSTANCES,
+                        65536,
+                        65536,
+                        0,
+                        None,
+                    )
+                };
+                let mut next = create();
+                ready.send(()).unwrap();
+                loop {
+                    let handle = next;
+                    let _ = unsafe { ConnectNamedPipe(handle, None) };
+                    next = create(); // 先開好下一個，客戶端重連時一定有管道
+                    let (health, requests, caps, restart_tx) = (h.clone(), r.clone(), caps.clone(), restart_tx.clone());
+                    let mut file = unsafe { std::fs::File::from_raw_handle(handle.0) };
+                    std::thread::spawn(move || {
+                        loop {
+                            let mut header = [0; 4];
+                            if file.read_exact(&mut header).is_err() {
+                                return;
+                            }
+                            let mut body = vec![0; u32::from_le_bytes(header) as usize];
+                            file.read_exact(&mut body).unwrap();
+                            let request: Value = serde_json::from_slice(&body).unwrap();
+                            let info = json!({
+                                "caps_lock_english": caps.load(Ordering::SeqCst).to_string(),
+                                "start_mode": if start_english { "english" } else { "zhuyin" },
+                                "initial_mode": if start_english { "english" } else { "zhuyin" },
+                                "mode_memory": "native",
+                            });
+                            let reply = match request["op"].as_str() {
+                                Some("health") => {
+                                    health.fetch_add(1, Ordering::SeqCst);
+                                    json!({"ok": true, "info": info})
+                                }
+                                Some("open") => json!({"ok": true, "session": 1, "info": info}),
+                                Some("handle") => {
+                                    let req = request["req"].clone();
+                                    requests.lock().unwrap().push(req.clone());
+                                    let caps_on = req["type"] == "caps_lock" && req["on"] == true;
+                                    json!({"ok": true, "snapshot": {"handled": req["type"] != "key",
+                                        "mode": if caps_on { "english" } else { "zhuyin" },
+                                        "caps_lock": caps_on, "caps_english": caps_on}})
+                                }
+                                _ => json!({"ok": true}),
+                            };
+                            if file.write_all(&zuin_win_common::frame(&reply).unwrap()).is_err() {
+                                return;
+                            }
+                            if request["op"] == "test_restart" {
+                                let _ = file.sync_all(); // 等客戶端讀完回覆
+                                drop(file);
+                                caps.store(!caps.load(Ordering::SeqCst), Ordering::SeqCst);
+                                restart_tx.send(()).unwrap();
+                                return;
+                            }
+                        }
+                    });
+                }
+            });
+            wait.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+            CapsServer {
+                name,
+                health,
+                requests,
+                restarted,
+            }
+        }
+
+        fn health(&self) -> usize {
+            self.health.load(std::sync::atomic::Ordering::SeqCst)
+        }
+
+        fn restart(&self, s: &mut Session) {
+            let restart = json!({"op": "test_restart"});
+            // 上一次重啟後這條連線已經斷了：第一次呼叫才發現，重連再送。
+            assert!(s.client.call(&restart).or_else(|| s.client.call(&restart)).is_some());
+            self.restarted.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+        }
+    }
+
+    // #173 code review：Caps Lock 鍵本身確認 caps_lock_english 時，沒有 session 的程式查完不留連線；連線還在、
+    // 快取是這條連線上問到的就不問引擎；引擎以新設定重啟（舊連線斷了）照樣在第一次 Caps Lock 就生效。
+    #[test]
+    fn caps_lock_key_checks_the_setting_without_holding_or_repeating() {
+        let server = CapsServer::new(false, false);
+        let mut s = Session::with_client(Client::with_pipe(&server.name));
+        s.refresh_caps_lock_english();
+        assert_eq!(server.health(), 1);
+        assert!(!s.client.connected(), "只按過 Caps Lock、沒打過字的程式不留連線");
+        assert!(!s.caps_needs_sync(true), "設定關閉");
+        s.refresh_caps_lock_english();
+        assert_eq!(server.health(), 2, "沒有連線時只能再問一次");
+        assert!(!s.client.connected());
+
+        // 打過字（有 session）：open 回覆的值就是這條連線上的，Caps Lock 鍵不再問 health。
+        s.key("j");
+        let before = server.health();
+        for _ in 0..3 {
+            s.refresh_caps_lock_english();
+        }
+        assert_eq!(server.health(), before, "連線還在時沿用 open 的值");
+        assert!(s.client.connected());
+
+        // 在設定程式打開這一項：引擎存檔退出、以新設定再起來。第一次 Caps Lock 就知道要切英文。
+        server.restart(&mut s);
+        s.refresh_caps_lock_english();
+        assert_eq!(server.health(), before + 1, "舊連線斷了才重新確認");
+        assert!(s.caps_needs_sync(true), "設定剛打開：這次 Caps Lock 就送 caps_lock");
+        s.refresh_caps_lock_english();
+        assert_eq!(server.health(), before + 1, "新連線上問到的值沿用");
+        assert!(s.client.connected(), "有 session 的程式照舊保留連線");
+    }
+
+    // #173 code review：Caps Lock 帶來的英文在引擎重啟後重開 session 時不能變成這個程式自己的英文。
+    #[test]
+    fn reopened_session_keeps_caps_english_temporary() {
+        let modes_after = |server: &CapsServer, from: usize| -> Vec<Value> {
+            server.requests.lock().unwrap()[from..]
+                .iter()
+                .filter(|r| r["type"] == "mode" || r["type"] == "caps_lock")
+                .cloned()
+                .collect()
+        };
+        // (a) Caps Lock 英文中在設定程式關掉這一項（引擎以新設定重啟）：照注音重開，不送「設成英文」。
+        let server = CapsServer::new(true, false);
+        let mut s = Session::with_client(Client::with_pipe(&server.name));
+        s.key("j");
+        assert!(s.caps_lock(true).caps_english);
+        server.restart(&mut s);
+        let from = server.requests.lock().unwrap().len();
+        s.key("a");
+        assert_eq!(modes_after(&server, from), Vec::<Value>::new(), "設定關掉後照注音開始");
+
+        // (b) 開始時英文：先設回注音，再以 caps_lock 還原暫時的英文（關掉 Caps Lock 才回得到注音）。
+        let server = CapsServer::new(true, true);
+        let mut s = Session::with_client(Client::with_pipe(&server.name));
+        s.key("j");
+        assert!(s.caps_lock(true).caps_english);
+        server.restart(&mut s); // 換成關閉
+        server.restart(&mut s); // 再換回開啟：引擎重啟過、設定仍開著
+        let from = server.requests.lock().unwrap().len();
+        s.key("A");
+        assert_eq!(
+            modes_after(&server, from),
+            vec![json!({"type": "mode", "on": false}), json!({"type": "caps_lock", "on": true})]
+        );
     }
 }
