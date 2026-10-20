@@ -230,6 +230,14 @@ func serve() string {
 	if pythonSource == "" {
 		pythonSource = "missing"
 	}
+	// #180：沒有找到選字模型時，在 Linux 檢查要不要重新配對（升級換了字典）或提醒下載。只看安裝的字典（官網安裝的
+	// 預設位置或系統安裝的 share/0c/data，與 0c-update 找的同一份）；隔離測試（指定 -user、-socket）與開發時指定
+	// 別的字典不碰使用者的 0c-update 與個人目錄。
+	var remind *modelRemind
+	if bundled.SelectSource == "" && !explicit["neural-package"] && !explicit["user"] && !explicit["socket"] &&
+		(filepath.Clean(*data) == filepath.Clean(defaultData) || filepath.Clean(*data) == filepath.Clean(installs.Default().SystemData())) {
+		remind = newModelRemind(filepath.Dir(*user), dictionarySHA, lg)
+	}
 	neuralState := "disabled_by_setting"
 	var selectionSource, punctuationSource string
 	var selectionWorker *neural.Supervisor
@@ -360,7 +368,7 @@ func serve() string {
 		return nil
 	}
 	srv := &ipc.Server{Engine: eng, Log: lg, VocabDisabled: vocabDisabled, OnVocab: func() { saveVocab() },
-		OnCommit: func() { schedule.changed(time.Now(), false) },
+		OnCommit: func() { schedule.changed(time.Now(), false); remind.markCommitted() },
 		OnForget: func() { schedule.changed(time.Now(), true) }}
 	srv.BeforeDrain = func() error {
 		if err := save(); err != nil {
@@ -486,6 +494,7 @@ func serve() string {
 			runningExecutable(), *installWatchEvery, time.Now())
 		lg.Printf("系統安裝：執行檔或字典被套件管理員換掉時，停手後自己交接到新版（每 %v 檢查）", *installWatchEvery)
 	}
+	remind.startup(time.Now())
 	go func() {
 		lastBusy := time.Now()
 		for now := range time.Tick(saveTick) {
@@ -499,6 +508,10 @@ func serve() string {
 			}
 			if schedule.due(now, srv.LastKey()) {
 				save()
+			}
+			if remind != nil && !stopping.Load() {
+				_, composing := eng.Sessions()
+				remind.tick(now, composing)
 			}
 			if watchDrain.Load() && !srv.Draining() {
 				watchDrain.Store(false) // 交接逾時（一直在組字）或存檔失敗：繼續服務，下一次檢查再試

@@ -174,7 +174,7 @@ func onOff(v bool) string {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("用法：0c-update status|settings|set|vocab|api|open-settings|engine|auto|finish|mode|pause|resume|snooze|schedule|verify|check|download|download-now|apply|install|rollback|uninstall [選項]")
+		return fmt.Errorf("用法：0c-update status|settings|set|models|vocab|api|open-settings|engine|auto|finish|mode|pause|resume|snooze|schedule|verify|check|download|download-now|apply|install|rollback|uninstall [選項]")
 	}
 	action := args[0]
 	delegateToPersonal(args) // 系統安裝的 0c-update、而官網安裝也在時，交給官網那一份（成功時不會返回）
@@ -186,6 +186,8 @@ func run(args []string) error {
 		return settingsCommand(args[1:])
 	case "set":
 		return setCommand(args[1:])
+	case "models": // 個人目錄的神經模型（#180）
+		return modelsCommand(args[1:])
 	case "vocab": // 自訂詞彙（#122）
 		return vocabCommand(args[1:])
 	case "api": // AI 助手的本機 API（#126）

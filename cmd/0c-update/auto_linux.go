@@ -258,6 +258,12 @@ func notify(n autoupdate.Notice) error {
 // notifyWithAction 顯示有「立即安裝／稍後」按鈕的通知，等到使用者按下（回傳動作名稱）、
 // 關閉通知或逾時（回傳空字串）。
 func notifyWithAction(ctx context.Context, n autoupdate.Notice) (string, error) {
+	return noticeWithActions(ctx, n, []string{n.Action, "立即安裝", "later", "稍後 1 小時"})
+}
+
+// noticeWithActions 顯示帶按鈕的通知（actions 是 D-Bus 的「動作代碼, 按鈕文字」成對清單），等使用者按下
+// （回傳動作代碼）、關閉通知或逾時（回傳空字串）。ZC_NOTIFY_ACK_FD=3 時在通知服務接受後回報父行程。
+func noticeWithActions(ctx context.Context, n autoupdate.Notice, actions []string) (string, error) {
 	conn, obj, err := notifyBus()
 	if err != nil {
 		return "", err
@@ -268,7 +274,7 @@ func notifyWithAction(ctx context.Context, n autoupdate.Notice) (string, error) 
 	}
 	signals := make(chan *dbus.Signal, 16)
 	conn.Signal(signals)
-	id, err := sendNotice(obj, n, []string{n.Action, "立即安裝", "later", "稍後 1 小時"})
+	id, err := sendNotice(obj, n, actions)
 	if err != nil {
 		return "", err
 	}
