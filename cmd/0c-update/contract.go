@@ -369,10 +369,28 @@ func runSet(base string, dial autoupdate.Dialer, o setOptions, notice func(strin
 		return res, err
 	}
 	if o.apply {
+		if on, ok := liveSimplified(res.Changes); ok && autoupdate.SetOutputSimplified(dial, on) == nil {
+			res.Apply = applyView{Requested: true, State: applyApplied}
+			return res, nil
+		}
 		res.Apply = applySettings(dial, notice)
 		ensureEngineService(base) // 引擎交接退出後立刻叫起常駐引擎（#120）
 	}
 	return res, nil
+}
+
+// liveSimplified：這次只改了「輸出簡體字」，引擎可以即時切換、不必交接重啟（#169，設定程式的開關與舊外殼的選單都走這裡）。
+// 舊引擎、引擎沒在執行或切換失敗時，呼叫端照舊以交接重啟套用。
+func liveSimplified(changes []changeView) (on, ok bool) {
+	if len(changes) == 0 {
+		return false, false
+	}
+	for _, c := range changes {
+		if c.Key != "output-simplified" {
+			return false, false
+		}
+	}
+	return changes[len(changes)-1].To == "on", true
 }
 
 // applySettings 請引擎在沒有組字時存檔退出；外殼的下一個按鍵會以新設定重新啟動引擎。

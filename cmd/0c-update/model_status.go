@@ -29,6 +29,12 @@ func modelStatus(dial autoupdate.Dialer) map[string]any {
 			state[key] = info[key]
 		}
 	}
+	// #169：引擎可以即時切換「輸出簡體字」時附上它目前的值；外殼的選單據此打勾（比設定檔新：剛從別處切換過）。
+	// 舊引擎沒有這兩項，外殼看 settings.output_simplified。
+	if info["output_simplified_live"] == "true" {
+		state["output_simplified_live"] = true
+		state["output_simplified"] = info["output_simplified"] == "true"
+	}
 	return state
 }
 

@@ -51,6 +51,9 @@ type Engine struct {
 	// SharedMode：所有輸入框共用同一個中英模式（#115，settings 的 mode_memory=shared）。一個輸入框切換後，
 	// 其他輸入框在下一個請求時跟上；零值照外殼原本的做法（每個 session 各自的模式）。
 	SharedMode bool
+	// SimplifiedSwitch：宿主支援從輸入法選單即時切換「輸出簡體字」時設定（#169，見 simplified.go）；零值時
+	// output_simplified 請求回 handled=false。
+	SimplifiedSwitch SimplifiedSwitch
 	// StartEnglish：開始時是英文模式（#160，settings 的 start_mode=english）。新 session 從英文開始；
 	// SharedMode 時是引擎啟動（登入）後第一個共用的模式。零值從注音開始，跟以前一樣。
 	StartEnglish  bool
@@ -60,6 +63,8 @@ type Engine struct {
 	sharedEnglish bool              // SharedMode 時大家共用的模式
 	modeGen       uint64            // sharedEnglish 每次改變時加一
 	modeSeen      map[uint64]uint64 // session → 它跟上的 modeGen
+
+	switchMu sync.Mutex // 「輸出簡體字」的即時切換一次一個（simplified.go）
 
 	supportOnce sync.Once // 標音用的字讀音詞頻（vocab_annotate.go），第一次用到才建
 	support     map[rune]map[zhuyin.Syllable]float64
@@ -182,6 +187,9 @@ func (e *Engine) CloseSession(id uint64) {
 
 // Do 處理一個已解碼的請求。
 func (e *Engine) Do(id uint64, req proto.Request) (proto.Snapshot, error) {
+	if req.Type == proto.OutputSimplified {
+		return e.outputSimplified(id, req) // 全域設定：自己管鎖（simplified.go）
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	s, ok := e.sessions[id]
