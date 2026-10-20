@@ -42,7 +42,8 @@ func paths() update.MacPaths {
 			}
 		}
 	})
-	return update.MacPaths{InputMethods: filepath.Join(home, "Library/Input Methods"), Support: supportDir}
+	// 清理舊備份時跳過仍在使用的（#179，見 backup_inuse_mac.go）。
+	return update.MacPaths{InputMethods: filepath.Join(home, "Library/Input Methods"), Support: supportDir, InUse: macBackupInUse()}
 }
 func basePath() string    { return paths().Support }
 func receiptPath() string { return filepath.Join(basePath(), "install-receipt.json") }

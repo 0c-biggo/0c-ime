@@ -1,5 +1,7 @@
 """Check release rejection, tampering and installation recovery in temporary directories."""
 
+from contextlib import redirect_stderr, redirect_stdout
+import io
 import json
 import os
 import shutil
@@ -786,6 +788,50 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "符號連結"):
             installer.install(self.bundle, self.home, self.release)
         self.assertFalse((self.home / ".local/share/zuin/backups").exists())
+
+    def test_install_keeps_only_the_new_backup(self):
+        # #179：每份安裝備份都含整個舊神經模型，以前從不刪。安裝成功後只留收據記錄的這一份，回復照常。
+        backups = self.home / ".local/share/zuin/backups"
+        first = installer.install(self.bundle, self.home, self.release)
+        installer.install(self.bundle, self.home, self.release)
+        (backups / "0c-install-old_old1" / "neural").mkdir(parents=True)
+        (backups / "0c-install-old_old1" / "neural/model.onnx").write_text("old model")
+        for name in ("upgrade-20261011-025419-t7yd75aw", "manual-dev39-20261003", "0c-user-abcd1234", "0c-install-notours"):
+            (backups / name).mkdir()
+        (backups / "user.json.pre-hint").write_text("hand-made copy")
+        elsewhere = self.root / "elsewhere"
+        elsewhere.mkdir()
+        (elsewhere / "keep").write_text("not ours")
+        (backups / "0c-install-linked01").symlink_to(elsewhere)
+        (self.bundle / "bin/0c-server").write_text("next engine")
+        self.release["files"]["bin/0c-server"] = installer.digest(self.bundle / "bin/0c-server")
+        self.release["channel"] = "internal-preview"
+        self.save_release()
+        with patch.object(installer.sys, "argv", ["install.py", "install", "--bundle", str(self.bundle), "--home", str(self.home)]), \
+                patch.object(installer.os, "getuid", return_value=1000), \
+                patch.dict(installer.os.environ, {"ZC_MANAGED_RELOAD": "1"}), \
+                patch.object(installer, "runtime_check"), patch.object(installer, "require_desktop_stopped"), \
+                patch.object(installer, "clear_session_addon_dirs"), patch.object(installer, "settings_dependencies"), \
+                patch.object(installer, "first_install", return_value=True), redirect_stdout(io.StringIO()):
+            installer.main()
+        backup = Path(json.loads((self.home / installer.RECEIPT).read_text())["backup"])
+        self.assertEqual(sorted(p.name for p in backups.iterdir()), sorted([
+            backup.name, "upgrade-20261011-025419-t7yd75aw", "manual-dev39-20261003", "0c-user-abcd1234",
+            "0c-install-notours", "user.json.pre-hint", "0c-install-linked01"]))
+        self.assertFalse(first.exists())
+        self.assertEqual((elsewhere / "keep").read_text(), "not ours")
+        installer.rollback(self.home, backup)
+        self.assertEqual((self.home / ".local/bin/0c-server").read_text(), "new bin/0c-server")
+        self.assertEqual(self.user.read_text(), "private learning")
+
+    def test_backup_pruning_refuses_a_linked_backup_directory(self):
+        real = self.root / "external"
+        (real / "0c-install-abcdefgh").mkdir(parents=True)
+        backups = self.home / ".local/share/zuin/backups"
+        backups.symlink_to(real)
+        with redirect_stderr(io.StringIO()):
+            self.assertEqual(installer.prune_backups(self.home, backups / "0c-install-new12345"), [])
+        self.assertTrue((real / "0c-install-abcdefgh").exists())
 
     def test_rollback_restores_paired_data_and_keeps_learning(self):
         first = installer.install(self.bundle, self.home, self.release)

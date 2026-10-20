@@ -48,6 +48,9 @@ func (r *MacReceipt) appName() string {
 type MacPaths struct {
 	InputMethods, Support string
 	SessionASID           uint64 // 由平台觀察，與收據一起原子保存；不讀寫個人詞庫。
+	// InUse 回報備份目錄（絕對路徑）是否仍在使用：有程式從裡面執行或開著其中的檔案，或系統的背景項目登記指向裡面的 App。
+	// 使用中的備份不清理（#179）；nil 表示都沒有在用（測試）。
+	InUse func(dir string) bool
 }
 
 func (p MacPaths) app() string                 { return filepath.Join(p.InputMethods, MacApp) }
@@ -268,6 +271,7 @@ func readMacReceipt(file string) (*MacReceipt, error) {
 func validMacApp(name string) bool { return name == "" || name == MacApp || name == LegacyMacApp }
 
 // backupApp 把目前的 App 與收據移入新的備份目錄，回傳相對於支援目錄的路徑。
+// 收據寫好之後由 pruneMacBackups 只留收據 previous 指到的那一份（#179）。
 func backupApp(p MacPaths, current *MacReceipt) (string, error) {
 	backups := filepath.Join(p.Support, "backups")
 	if err := noLinks(backups); err != nil {
@@ -371,6 +375,7 @@ func InstallMac(bundle, arch string, p MacPaths) (app string, changed error, err
 		_ = os.RemoveAll(p.app())
 		return "", nil, restore(err)
 	}
+	pruneMacBackups(p, previous)
 	return p.app(), changed, nil
 }
 
@@ -475,6 +480,8 @@ func RollbackMac(p MacPaths) (MacRollback, error) {
 	if err = writeJSON(p.receipt(), next); err != nil {
 		return result, err
 	}
+	// 剛放回的那份備份只剩收據，連同更早的一起清掉；留下剛移入的目前版本，可再回復。
+	pruneMacBackups(p, back)
 	result.Backup = filepath.Join(p.Support, filepath.FromSlash(back))
 	result.Changed, result.Restored = changed, restored
 	if c, ok := restored.(*MacAppChanges); ok {
@@ -530,7 +537,11 @@ func UninstallMac(p MacPaths) (changed error, err error) {
 	next := *current
 	next.Active = false
 	next.Previous = back
-	return changed, writeJSON(p.receipt(), &next)
+	if err = writeJSON(p.receipt(), &next); err != nil {
+		return changed, err
+	}
+	pruneMacBackups(p, back)
+	return changed, nil
 }
 
 // MigrateMacSupport 把 0.1.0-dev.21 以前的支援目錄 legacy（Application Support/Zuin）改名為 current，
