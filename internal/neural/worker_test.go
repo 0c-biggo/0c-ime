@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +27,10 @@ func TestWorkerProcess(t *testing.T) {
 		os.Exit(1)
 	}
 	if mode == "silent_exit" {
+		os.Exit(1)
+	}
+	if mode == "module_missing" { // 模擬系統 Python 沒裝 python3-onnxruntime（#181）
+		fmt.Fprintln(os.Stderr, "Traceback (most recent call last):\nModuleNotFoundError: No module named 'onnxruntime'")
 		os.Exit(1)
 	}
 	schema := os.Getenv("ZUIN_TEST_NEURAL_SCHEMA")
@@ -213,7 +218,7 @@ func TestPythonCommandIsIsolatedAndReadOnly(t *testing.T) {
 
 func TestStartupFailureReason(t *testing.T) {
 	m := Manifest{Schema: "zuin-encoder-runtime-v1", DictionarySHA256: "dictionary", Files: map[string]string{"model.onnx": "model"}}
-	for mode, want := range map[string]string{"dll_missing": ReasonMissingRuntime, "silent_exit": ReasonFailed} {
+	for mode, want := range map[string]string{"dll_missing": ReasonMissingRuntime, "silent_exit": ReasonFailed, "module_missing": ReasonRuntimeMissing} {
 		cmd := exec.Command(os.Args[0], "-test.run=^TestWorkerProcess$")
 		cmd.Env = append(os.Environ(), "ZUIN_TEST_NEURAL_CHILD="+mode)
 		_, err := start(cmd, m, 20*time.Millisecond)
@@ -223,6 +228,11 @@ func TestStartupFailureReason(t *testing.T) {
 	}
 	if got := startupReason(errors.New("exec: python.exe not found")); got != ReasonFailed {
 		t.Fatalf("plain error reason %q", got)
+	}
+	// 找不到 Python 執行檔（系統沒有 python3）也是缺少推論環境。
+	_, err := start(exec.Command(filepath.Join(t.TempDir(), "python3")), m, 20*time.Millisecond)
+	if got := startupReason(err); got != ReasonRuntimeMissing {
+		t.Fatalf("missing python: reason %q (%v)", got, err)
 	}
 }
 

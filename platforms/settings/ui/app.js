@@ -61,6 +61,7 @@
       case 'fallback': return '模型無法使用，已退回' + fallback;
       case 'disabled_by_setting': return '依設定關閉';
       case 'not_installed': return '未附模型，使用' + fallback;
+      case 'runtime_missing': return '缺少推論元件（請安裝 python3-numpy、python3-onnxruntime），使用' + fallback;
       case 'closed': return '已停止，使用' + fallback;
       default: return '未知（引擎未提供即時狀態）';
     }

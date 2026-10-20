@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"math"
 	"os"
 	"os/exec"
@@ -36,6 +37,9 @@ const (
 	ReasonMissingRuntime = "missing_runtime" // Python 擴充模組載入失敗：缺少系統 DLL
 	ReasonTimeout        = "timeout"         // 沒有在時限內回報就緒
 	ReasonFailed         = "failed"          // 其他原因：結束、回應不符
+	// ReasonRuntimeMissing：找不到 Python，或 Python 匯入不到 numpy、onnxruntime（Linux 系統安裝沒裝
+	// python3-numpy、python3-onnxruntime，#181）。health 的狀態直接報 runtime_missing，不當成模型故障。
+	ReasonRuntimeMissing = "runtime_missing"
 )
 
 // startupStderr 只收集 worker 回報就緒前的 stderr：此時還沒送出任何輸入文字，內容只會是載入錯誤；
@@ -78,19 +82,36 @@ func startupError(what string, err error, stderr string) *StartupError {
 	switch {
 	case strings.Contains(stderr, "DLL load failed"):
 		return &StartupError{ReasonMissingRuntime, what}
+	case strings.Contains(stderr, "No module named 'numpy'") || strings.Contains(stderr, "No module named 'onnxruntime'"):
+		return &StartupError{ReasonRuntimeMissing, what}
 	case errors.Is(err, ErrTimeout):
 		return &StartupError{ReasonTimeout, what}
 	}
 	return &StartupError{ReasonFailed, what}
 }
 
-// startupReason 回傳 StartupError 的代碼；其他錯誤（例如找不到 python.exe）歸為 failed。
+// startupReason 回傳 StartupError 的代碼；找不到 Python 執行檔是 runtime_missing，其他錯誤歸為 failed。
 func startupReason(err error) string {
 	var startup *StartupError
 	if errors.As(err, &startup) {
 		return startup.Reason
 	}
+	if errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist) {
+		return ReasonRuntimeMissing
+	}
 	return ReasonFailed
+}
+
+// RuntimeMissingRetry 是缺少推論環境時重試啟動 worker 的間隔：使用者裝好 python3-onnxruntime 後
+// 不必重啟引擎，下一次重試就會載入；間隔夠長，缺套件時不會每幾秒啟動一次 Python。
+const RuntimeMissingRetry = 10 * time.Minute
+
+// retryCooldown 是啟動失敗後到下一次重試的冷卻。
+func retryCooldown(reason string, normal time.Duration) time.Duration {
+	if reason == ReasonRuntimeMissing {
+		return RuntimeMissingRetry
+	}
+	return normal
 }
 
 type Config struct {

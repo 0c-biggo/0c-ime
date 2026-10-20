@@ -86,3 +86,19 @@ func TestModelStatusExplainsFallbackReason(t *testing.T) {
 		t.Fatalf("missing runtime not explained: %s", text.String())
 	}
 }
+
+// #181：系統安裝找到模型卻缺 numpy／onnxruntime，或模型放在個人目錄時，狀態要說清楚。
+func TestModelStatusExplainsRuntimeMissingAndUserModel(t *testing.T) {
+	got := modelStatus(modelStatusDial(map[string]string{"version": "dev", "selection_state": "runtime_missing",
+		"punctuation_state": "ready", "punctuation_source": "user"}, true))
+	if got["selection_state"] != "runtime_missing" || got["punctuation_source"] != "user" || got["selection_source"] != nil {
+		t.Fatalf("runtime status: %v", got)
+	}
+	var text bytes.Buffer
+	printModelStatus(&text, got)
+	for _, want := range []string{"神經選字：缺少推論元件（請安裝 python3-numpy、python3-onnxruntime），使用統計引擎", "補標點：已就緒（個人目錄的模型）"} {
+		if !strings.Contains(text.String(), want) {
+			t.Fatalf("missing %q: %s", want, text.String())
+		}
+	}
+}

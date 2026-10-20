@@ -24,7 +24,7 @@ func modelStatus(dial autoupdate.Dialer) map[string]any {
 		}
 		state[key] = value
 	}
-	for _, key := range []string{"selection_reason", "punctuation_reason"} {
+	for _, key := range []string{"selection_reason", "punctuation_reason", "selection_source", "punctuation_source"} {
 		if info[key] != "" {
 			state[key] = info[key]
 		}
@@ -46,8 +46,8 @@ func printModelStatus(w io.Writer, state map[string]any) {
 		fmt.Fprintln(w, "暫時無法查詢模型運作狀態。")
 	default:
 		fmt.Fprintf(w, "模型運作狀態（引擎 %s）：\n神經選字：%s\n補標點：%s\n",
-			state["version"], modelStateLabel(state["selection_state"], "統計引擎")+reasonLabel(state["selection_reason"]),
-			modelStateLabel(state["punctuation_state"], "原文提交")+reasonLabel(state["punctuation_reason"]))
+			state["version"], modelStateLabel(state["selection_state"], "統計引擎")+reasonLabel(state["selection_reason"])+sourceLabel(state["selection_source"]),
+			modelStateLabel(state["punctuation_state"], "原文提交")+reasonLabel(state["punctuation_reason"])+sourceLabel(state["punctuation_source"]))
 	}
 }
 
@@ -63,11 +63,21 @@ func modelStateLabel(value any, fallback string) string {
 		return "依設定關閉"
 	case "not_installed":
 		return "未附模型，使用" + fallback
+	case "runtime_missing": // #181：找到模型，但系統的 python3 缺 numpy 或 onnxruntime
+		return "缺少推論元件（請安裝 python3-numpy、python3-onnxruntime），使用" + fallback
 	case "closed":
 		return "已停止，使用" + fallback
 	default:
 		return "未知（引擎未提供即時狀態）"
 	}
+}
+
+// sourceLabel 說明模型從哪裡載入（#181）；安裝包內建的不另外註明。
+func sourceLabel(value any) string {
+	if value == "user" {
+		return "（個人目錄的模型）"
+	}
+	return ""
 }
 
 // reasonLabel 說明模型退回的原因（引擎的 *_reason 代碼）；沒有原因時為空字串。
