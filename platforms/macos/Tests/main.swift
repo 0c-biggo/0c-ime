@@ -546,6 +546,23 @@ func vocabKeyChecks(directory: URL, session: EngineSession, key: (String) throws
     let comma = try key("Ctrl+,")
     check(comma.handled && comma.text == "，", "Ctrl+, types a full-width comma: \(comma.text)")
     check(try key("Escape").text.isEmpty, "Escape clears the comma")
+    // #169：open 的 info 回報能即時切換「輸出簡體字」；切換後組字照樣是繁體、送出是簡體，快照帶狀態與提示，設定檔跟著寫。
+    check(EngineSession.simplifiedLive && !EngineSession.outputSimplified, "open reply carries output_simplified_live and the traditional state")
+    var scenery = try key("z")
+    for k in ["/", " ", "r", "u", "/", "3"] { scenery = try key(k) } // ㄈㄥ ㄐㄧㄥˇ
+    check(scenery.text == "風景" && scenery.outputSimplified != true, "traditional composition before switching: \(scenery.text)")
+    let switched = try session.handle(Request(type: "output_simplified", on: true))
+    check(switched.handled && switched.outputSimplified == true && switched.text == "風景" && switched.visibleNotices == ["已切換為輸出簡體字"],
+          "switch keeps the composition and reports the new state: \(switched.visibleNotices)")
+    EngineSession.note(switched)
+    check(EngineSession.outputSimplified, "the menu check follows the snapshot")
+    let settingsText = (try? String(contentsOf: directory.appendingPathComponent("settings.json"), encoding: .utf8)) ?? ""
+    check(settingsText.contains("\"output_simplified\": true") && settingsText.contains("\"selection\": \"statistical\""),
+          "the engine writes the switch into settings.json and keeps the rest: \(settingsText)")
+    check(try key("Enter").commit == "风景", "text already composing is sent simplified")
+    let back = try session.handle(Request(type: "output_simplified", on: false))
+    EngineSession.note(back)
+    check(back.outputSimplified != true && !EngineSession.outputSimplified && back.visibleNotices == ["已切換為輸出繁體字"], "switch back")
     let shiftLeft = KeyMapping.key(code: 123, characters: nil, modifiers: [.shift, .function, .numericPad], vocabKeys: session.vocabKeys)
     check(shiftLeft == "ShiftLeft", "Shift+Left maps to ShiftLeft once the engine supports it")
     // 沒在組字：引擎交還，App 照常選取文字。
