@@ -69,6 +69,8 @@ type Install struct {
 	Data     string `json:"data"`
 	Updater  string `json:"updater,omitempty"`
 	Settings string `json:"settings,omitempty"`
+	// IBus 是官網安裝的 IBus 外殼；系統的 0c-ibus 被 ibus-daemon 帶起時交給它（兩個元件同名，誰先被掃到不一定）。
+	IBus string `json:"ibus,omitempty"`
 	// Active：外殼目前會用這一份的 0c-server（官網安裝優先）。
 	Active bool `json:"active"`
 	// Updates 是這一份怎麼更新（self／package-manager）。
@@ -113,6 +115,9 @@ func (l Layout) Personal() (Install, bool) {
 	}
 	if p := filepath.Join(l.Home, ".local/bin/0c-settings"); executable(p) {
 		in.Settings = p
+	}
+	if p := filepath.Join(l.Home, ".local/bin/0c-ibus"); executable(p) {
+		in.IBus = p
 	}
 	return in, true
 }

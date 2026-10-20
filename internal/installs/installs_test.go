@@ -150,3 +150,20 @@ func TestPackageManagedNeedsSystemExecutableAndMarker(t *testing.T) {
 		t.Fatal("no marker should not be package-managed")
 	}
 }
+
+// 系統的 0c-ibus 被 ibus-daemon 帶起時交給官網安裝的 0c-ibus（#181，.13 實測兩個同名元件常是系統那份先被掃到）。
+func TestPersonalIBusForHandOff(t *testing.T) {
+	l := layout(t)
+	personal(t, l)
+	system(t, l, `{"schema":1,"updates":"package-manager"}`)
+	if p, _ := l.Personal(); p.IBus != "" {
+		t.Fatalf("ibus without ~/.local/bin/0c-ibus = %q", p.IBus)
+	}
+	touch(t, filepath.Join(l.Home, ".local/bin/0c-ibus"), 0o755)
+	if p, _ := l.Personal(); p.IBus != filepath.Join(l.Home, ".local/bin/0c-ibus") {
+		t.Fatalf("ibus = %q", p.IBus)
+	}
+	if !l.InSystem(filepath.Join(l.Libexec, "0c-ibus")) || l.InSystem(filepath.Join(l.Home, ".local/bin/0c-ibus")) {
+		t.Fatal("InSystem must tell the system 0c-ibus from the personal one, or the hand-off would loop")
+	}
+}
