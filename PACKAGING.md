@@ -4,7 +4,7 @@
 
 ## 完整 tarball
 
-每個版本的 [GitHub Release](https://github.com/0c-biggo/ime-oss/releases) 提供 `ime-oss-<版本>.tar.xz` 與 `SHA256SUMS`。tarball 交付程式原始碼、可直接使用的統計字典與兩個已配對模型，可編譯出與官網同版本的輸入法，不需要重新產生統計資料或訓練模型。
+每個版本的 [GitHub Release](https://github.com/0c-biggo/0c-ime/releases) 提供 `0c-ime-<版本>.tar.xz` 與 `SHA256SUMS`。tarball 交付程式原始碼、可直接使用的統計字典與兩個已配對模型，可編譯出與官網同版本的輸入法，不需要重新產生統計資料或訓練模型。
 
 | tarball 路徑 | 內容 |
 |---|---|
@@ -13,7 +13,7 @@
 | `SOURCE-RELEASE.json` | 檔案清單、tag／commit 與固定清單 |
 | 其他目錄 | Go 核心、平台外殼、推論 worker、建置工具與測試 |
 
-GitHub 自動附上的 Source code ZIP／tar.gz 不含字典與模型，請用上面的完整 tarball。大型 bigram TSV、原始語料、checkpoint 與訓練環境不附入。
+0.2.1 以前的版本以 `ime-oss-<版本>.tar.xz` 為名，內容格式相同。GitHub 自動附上的 Source code ZIP／tar.gz 不含字典與模型，請用上面的完整 tarball。大型 bigram TSV、原始語料、checkpoint 與訓練環境不附入。
 
 ## 發行版整合
 
@@ -21,8 +21,8 @@ GitHub 自動附上的 Source code ZIP／tar.gz 不含字典與模型，請用�
 
 ```sh
 sha256sum -c SHA256SUMS
-tar -xJf ime-oss-<版本>.tar.xz
-cd ime-oss-<版本>
+tar -xJf 0c-ime-<版本>.tar.xz
+cd 0c-ime-<版本>
 mkdir -p build
 go build -trimpath -ldflags '-X main.buildVersion=<版本>' -o build/0c-server ./cmd/0c-server
 go build -trimpath -o build/0c-cli ./cmd/0c-cli
@@ -43,7 +43,7 @@ Git repo 保存 [字典 lock](data/dictionary.lock.json)、[上游模型 lock](m
 ```sh
 python3 scripts/source_release.py build --tag v<版本> --data-dir /path/to/compiled-data \
   --out build/source-release/<版本>
-python3 scripts/source_release.py verify build/source-release/<版本>/ime-oss-<版本>.tar.xz
+python3 scripts/source_release.py verify build/source-release/<版本>/0c-ime-<版本>.tar.xz
 (cd build/source-release/<版本> && sha256sum -c SHA256SUMS)
 ```
 

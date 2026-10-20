@@ -48,7 +48,7 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           python3 scripts/source_release.py build --tag "$RELEASE_TAG" --data-dir build/dictionary --out build/source-release
-          python3 scripts/source_release.py verify "build/source-release/ime-oss-${RELEASE_TAG#v}.tar.xz"
+          python3 scripts/source_release.py verify "build/source-release/0c-ime-${RELEASE_TAG#v}.tar.xz"
           cd build/source-release
           sha256sum -c SHA256SUMS
       - name: Build the input method against the bundled dictionary before uploading
@@ -58,8 +58,8 @@ jobs:
           GOSUMDB: 'off'
         run: |
           mkdir build/extracted
-          tar -xJf "build/source-release/ime-oss-${RELEASE_TAG#v}.tar.xz" -C build/extracted
-          SOURCE_DIR="$PWD/build/extracted/ime-oss-${RELEASE_TAG#v}"
+          tar -xJf "build/source-release/0c-ime-${RELEASE_TAG#v}.tar.xz" -C build/extracted
+          SOURCE_DIR="$PWD/build/extracted/0c-ime-${RELEASE_TAG#v}"
           BUILD_DIR="$PWD/build/rebuilt"
           mkdir "$BUILD_DIR"
           cd "$SOURCE_DIR"
@@ -77,17 +77,17 @@ jobs:
           from pathlib import Path
           tag = os.environ['RELEASE_TAG']
           notes = (
-              f'請下載 `ime-oss-{tag[1:]}.tar.xz` 與 `SHA256SUMS`。\n\n'
+              f'請下載 `0c-ime-{tag[1:]}.tar.xz` 與 `SHA256SUMS`。\n\n'
               '完整 tarball 包含程式碼、現成統計字典、兩個已配對模型與各自授權。'
               '解壓後可離線建置輸入法，直接使用內附字典與模型（須備妥建置相依）。'
               'GitHub 自動附的 Source code 壓縮檔不含現成字典與模型。\n\n'
-              '發行版整合的系統字典配對與建置相依需求，請見包內 `README.md` 的發行版整合說明。'
+              '發行版整合的系統字典配對與建置相依需求，請見包內 `PACKAGING.md`。'
               '使用者安裝包由[官網](https://0c.biggo.com)提供。\n'
           )
           (Path(os.environ['RUNNER_TEMP']) / 'source-release-notes.md').write_text(notes, encoding='utf-8')
           PY
           gh release create "$RELEASE_TAG" \
-            "build/source-release/ime-oss-${RELEASE_TAG#v}.tar.xz" \
+            "build/source-release/0c-ime-${RELEASE_TAG#v}.tar.xz" \
             build/source-release/SHA256SUMS \
-            --verify-tag --draft --title "$RELEASE_TAG" \
+            --verify-tag --draft --title "靈犀注音 ${RELEASE_TAG#v}" \
             --notes-file "$RUNNER_TEMP/source-release-notes.md"
