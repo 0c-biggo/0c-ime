@@ -88,7 +88,8 @@
   // 第二個是 0.2.1／0.2.2 寫進狀態檔的舊說明。
   const SHELL_RETIRING = ['已安裝，離開電腦（螢幕鎖定或關閉）時自動換成新版，不必登出', '已安裝，停止打字後自動換成新版，不必登出'];
   const retiringDetail = (detail) => SHELL_RETIRING.includes(detail);
-  const SHELL_RETIRING_HELP = '新版已安裝。為了不打斷打字，舊版的輸入法程式會在你離開電腦（螢幕鎖定或關閉）時自動換成新版，不必登出；在那之前照常可以打字。';
+  const SHELL_RETIRING_HELP = '新版已安裝，鎖定螢幕或離開電腦時換上，不必登出；在那之前照常可以打字。';
+  const SHELL_RETIRING_NOTE = '不必登出，在那之前照常可以打字。';
   const OLD_SHELL_HELP = '新版已安裝，但系統仍開著更新前留下的舊版輸入法。請先儲存工作，登出再登入一次就會改用新版；如果之後仍看到這則訊息，請到「問題排解」匯出狀態摘要回報。';
   const VALUE = { neural: '神經選字', statistical: '統計引擎', off: '關閉', select: '僅供選字', auto: '自動修正（實驗）', vertical: '直排', grid: '多排', before: '游標前方', after: '游標後方', standard: '標準', eten: '倚天 41 鍵' };
   const ERROR = {
@@ -119,7 +120,7 @@
     if (update.stage === 'pending' && update.target) {
       if (update.target.kind !== 'shell') return { text: '正在確認新版引擎是否可用。', tone: 'warn' };
       if (update.blocked?.detail === OLD_SHELL) return { text: update.target.version + ' 已安裝，仍在使用舊版輸入法。', tone: 'warn' };
-      if (retiringDetail(update.blocked?.detail)) return { text: update.target.version + ' 已安裝，離開電腦（螢幕鎖定或關閉）時換成新版。', tone: 'warn' };
+      if (retiringDetail(update.blocked?.detail)) return { text: update.target.version + ' 已安裝，鎖定螢幕或離開電腦時換上。', tone: 'warn' };
       return { text: update.target.version + ' 等待重新登入後生效。', tone: 'warn' };
     }
     switch (update.state) {
@@ -430,7 +431,7 @@
       h('p', {}, summary.text),
       view.target && !op ? h('p', {}, view.stage === 'pending' && view.target.kind === 'shell'
         ? (blocked?.detail === '登出再登入時自動完成安裝' ? '套件已下載，儲存工作後登出再登入，會完成安裝。'
-          : blocked?.detail === OLD_SHELL ? OLD_SHELL_HELP : retiringDetail(blocked?.detail) ? SHELL_RETIRING_HELP
+          : blocked?.detail === OLD_SHELL ? OLD_SHELL_HELP : retiringDetail(blocked?.detail) ? SHELL_RETIRING_NOTE
           : '新版已安裝；請儲存工作後登出再登入，讓應用程式載入新版輸入法。')
         : view.stage === 'pending' ? '正在確認新版引擎是否可用。' : (STAGE[view.stage] || ('進度：' + view.stage)) + '。') : null,
       blocked && !op && view.stage !== 'pending' && !(view.stage === 'found' && ['needs_relogin', 'needs_consent'].includes(blocked.reason))
