@@ -1,10 +1,10 @@
 0c 自有詞頻與語言模型統計資料：0c_collect-ss（單字詞配對 bigram 統計）
-Copyright (c) 2026 0c contributors
+Copyright (c) 2026 Funmula Co., Limited
 
 本來源由 0c 收集、分類、斷詞與計數的統計資料依
 Creative Commons Attribution-ShareAlike 4.0 International
 （CC-BY-SA-4.0）授權，可依該授權使用、修改與散布。
-署名：0c contributors
+署名：Funmula Co., Limited
 來源：https://0c.biggo.com
 授權：https://creativecommons.org/licenses/by-sa/4.0/
 

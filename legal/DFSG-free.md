@@ -1,6 +1,6 @@
 # DFSG 檢查
 
-本 repo（[github.com/0c-biggo/0c-ime](https://github.com/0c-biggo/0c-ime)）與每個版本 Release 的原始碼 tarball `0c-ime-<版本>.tar.xz` 都必須符合 [Debian 自由軟體指導方針](https://www.debian.org/social_contract#guidelines)（DFSG），可以整包放進 Debian main。本文件記錄逐項檢查的結果與尚待處理的項目；新增程式、資料、素材或相依套件時，照本文件的標準檢查並更新。
+本 repo（[github.com/0c-biggo/0c-ime](https://github.com/0c-biggo/0c-ime)）與每個版本 Release 的原始碼 tarball `0c-ime-<版本>.tar.xz` 都必須符合 [Debian 自由軟體指導方針](https://www.debian.org/social_contract#guidelines)（DFSG），可以整包放進 Debian main。本文件記錄逐項檢查的結果；新增程式、資料、素材或相依套件時，照本文件的標準檢查並更新。
 
 檢查日期：2026-10-20；對象：`main`（module path 改為 `github.com/0c-biggo/0c-ime` 之後）與 Release v0.2.2 tarball。
 
@@ -20,7 +20,7 @@
 | Rust 相依 crate（設定程式、Windows 外殼） | MIT、Apache-2.0、MPL-2.0、Unicode-3.0 等 | 符合 |
 | 內附第三方程式碼：nlohmann/json | MIT | 符合 |
 | 推論執行環境：NumPy、ONNX Runtime | BSD-3-Clause、MIT | 符合（Debian main 已收錄） |
-| 詞庫來源（`data/`） | CC BY-SA 4.0、CC BY 4.0、MIT、政府資料開放授權條款第 1 版 | 授權符合；自有來源的著作權聲明**待處理**：見下方 1 |
+| 詞庫來源（`data/`） | CC BY-SA 4.0、CC BY 4.0、MIT、政府資料開放授權條款第 1 版 | 符合 |
 | 簡體轉換字典（`internal/simplified/opencc`） | Apache-2.0 | 符合 |
 | 英文詞表（`data/english`） | SCOWL 授權 | 符合 |
 | 測試資料（`testdata/`） | AGPL-3.0-only | 符合 |
@@ -81,7 +81,7 @@ go-winio 只用於 Windows 的 named pipe，Linux 與 macOS 的執行檔不含�
 
 0c_collect 系列與 mcbopomofo 的 `phrase.occ` 都是從語料統計出的詞頻；授權的是統計表，不含原始文章，統計表本身就是修改時使用的形式。Debian main 已有同類前例（`rime-essay` 的詞頻、`libtabe` 的詞庫）。mcbopomofo 的 `BPMFMappings` 源自 libtabe 的 `tsi.src`（BSD 授權，`libtabe` 在 Debian main）。
 
-`curated` 與三筆 `0c_collect` 的著作權屬 Funmula Co., Limited（見 [legal/README.md](README.md)），但 `data/sources/ledger.tsv` 與 `data/sources/licenses/` 仍寫「0c contributors」，見下方 1。
+`curated` 與三筆 `0c_collect` 的著作權屬 Funmula Co., Limited，署名寫在 `data/sources/ledger.tsv` 與 `data/sources/licenses/`，隨字典的 manifest 與 `NOTICE.txt` 出貨。
 
 ### 統計字典
 
@@ -100,12 +100,6 @@ go-winio 只用於 Windows 的 named pipe，Linux 與 macOS 的執行檔不含�
 ### 圖示與圖片
 
 `.github/assets/`、`internal/settingsapp/`、`platforms/settings/icons/`、`platforms/settings/ui/icon.png`、`platforms/linux-fcitx5/icons/`、`platforms/macos/Icon/` 的圖示與截圖為專案自有。SVG 只以名稱指定字型，沒有內嵌字型檔。依 [legal/README.md](README.md) 採 CC BY-SA 4.0，著作權屬 Funmula Co., Limited，條款全文在 [CC-BY-SA-4.0.txt](CC-BY-SA-4.0.txt)。原始檔都在 repo 內：App 圖示的設計原檔是 `.github/assets/logo.svg`（與官網 favicon 相同）；macOS 的 `0c.tiff`、`AppIcon.icns` 由 `platforms/macos/Icon/make_icon.swift`、`make_app_icon.swift` 繪製產生；設定程式與 `internal/settingsapp` 的 PNG、ICO 是同一設計的點陣輸出；fcitx5 狀態列圖示本身就是 SVG。
-
-## 待處理
-
-1. **自有詞庫的著作權聲明**：`data/sources/ledger.tsv` 的署名與 `data/sources/licenses/curated.txt`、`0c_collect*.txt` 的「Copyright (c) 2026 0c contributors」要改為 Funmula Co., Limited。署名寫在字典 manifest、授權全文寫在 `NOTICE.txt`，改了就要重建字典、更新 `data/dictionary.lock.json` 並重新配對模型，與下一次字典重建一起處理。
-
-這一項不影響授權是否自由，但 `debian/copyright` 需要正確的著作權人，送 Debian 前要完成。
 
 ## 送 Debian 前的其他事項
 
