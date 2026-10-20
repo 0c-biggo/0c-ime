@@ -602,8 +602,10 @@ func (e *engine) modeProperty() property {
 	p := property{key: propInputMode, typ: propNormal, sensitive: true, symbol: "注", label: "注音"}
 	if e.english {
 		p.symbol, p.label = "英", "英文"
-	} else if e.svc.simplified { // #169：送出時轉成簡體，誤開時從面板看得出來
-		p.symbol, p.label = "注·簡", "注音・簡體輸出"
+	} else if e.svc.simplified {
+		// #169：送出時轉成簡體，誤開時從頂列看得出來。GNOME Shell 的頂列只採用不到 3 個字的 symbol（keyboard.js
+		// 的 _propertyUpdated），「注·簡」會被丟掉、照舊顯示「注」，所以用兩個字。
+		p.symbol, p.label = "注簡", "注音・簡體輸出"
 	}
 	if hint != "" {
 		other := "英文"

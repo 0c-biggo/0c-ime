@@ -103,7 +103,7 @@ func (s *service) simplifiedProperty() property {
 		hidden: !s.update.simplifiedKnown && !s.simplifiedLive}
 }
 
-// setSimplified 在鎖內呼叫：「輸出簡體字」的狀態改變時，選單的勾選與注／英指示（注·簡）跟著換。
+// setSimplified 在鎖內呼叫：「輸出簡體字」的狀態改變時，選單的勾選與注／英指示（注簡）跟著換。
 // live 為真表示來源是回報即時切換的引擎。
 func (s *service) setSimplified(on, live bool) {
 	s.simplifiedLive = s.simplifiedLive || live

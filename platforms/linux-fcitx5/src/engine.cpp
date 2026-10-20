@@ -79,7 +79,7 @@ SetComment setCommentFunction() {
 }
 
 // Instance::showCustomInputMethodInformation 是 Fcitx 5.1.11 才有的（Ubuntu 24.04 的 5.1.7 沒有）；同 setCommentFunction 在執行時找，
-// 找不到回傳 nullptr，切換提示退回 showInputMethodInformation（顯示子模式的標籤「注·簡」）。
+// 找不到回傳 nullptr，切換提示退回 showInputMethodInformation（顯示子模式的標籤「注簡」）。
 using ShowCustomInformation = void (*)(fcitx::Instance *, fcitx::InputContext *, const std::string &);
 ShowCustomInformation showCustomInformationFunction() {
     static const auto fn = reinterpret_cast<ShowCustomInformation>(dlsym(RTLD_DEFAULT,
@@ -344,9 +344,10 @@ public:
 
     // GNOME Kimpanel always prefers a nonempty label= hint over the supplied icon.
     // The icon itself contains 注／英; leave the text label empty on both modes.
-    // 「輸出簡體字」開著時（#169）注音模式改用文字「注·簡」：誤開時從面板看得出來（組字和候選照樣是繁體，送出才轉）。
+    // 「輸出簡體字」開著時（#169）注音模式改用文字「注簡」：誤開時從面板看得出來（組字和候選照樣是繁體，送出才轉）。
+    // 跟 IBus 外殼同樣兩個字（GNOME 頂列的 IBus 指示只採用不到 3 個字的 symbol），換框架時看到的一樣。
     std::string subModeLabelImpl(const fcitx::InputMethodEntry &, fcitx::InputContext &ic) override {
-        if (simplified_ && !state(&ic)->session.english()) { return "注·簡"; }
+        if (simplified_ && !state(&ic)->session.english()) { return "注簡"; }
         return {};
     }
 
@@ -634,7 +635,7 @@ private:
     }
 
     // 選單的「輸出簡體字」（#169）：引擎能即時切換時直接在這個輸入框的 session 送請求（組字不動、之後送出的字立刻照新設定），
-    // 引擎寫設定檔；提示用輸入法資訊（Fcitx 5.1.11 起顯示「已切換為輸出簡體字」，較舊的版本顯示標籤「注·簡」）。
+    // 引擎寫設定檔；提示用輸入法資訊（Fcitx 5.1.11 起顯示「已切換為輸出簡體字」，較舊的版本顯示標籤「注簡」）。
     // 舊引擎退回 0c-update set output-simplified … -apply -notify（寫設定、交接重啟，0c-update 送桌面通知）。
     void toggleSimplified(fcitx::InputContext *ic) {
         if (!ic) { ic = instance_->mostRecentInputContext(); }
