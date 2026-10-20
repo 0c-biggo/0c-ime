@@ -59,9 +59,13 @@ type service struct {
 	openingSettings bool
 	querying        bool
 	refreshed       time.Time
-	lastKey         time.Time        // 最近一次按鍵；更新器據此判斷閒置
-	address         string           // ibus-daemon 的位址，交給更新器在更新後重新叫起外殼
-	clock           func() time.Time // 單按 Shift 計時用；nil 為 time.Now，測試時換成假時鐘
+	lastKey         time.Time // 最近一次按鍵；更新器據此判斷閒置
+	// 「輸出簡體字」（#169）：目前的狀態（快照、0c-update status 與選單切換更新）、引擎能不能即時切換，
+	// 以及選單切換的次數（切換前開始的狀態查詢回來時不得把勾選改回去）。
+	simplified, simplifiedLive bool
+	simplifiedSeq              uint64
+	address                    string           // ibus-daemon 的位址，交給更新器在更新後重新叫起外殼
+	clock                      func() time.Time // 單按 Shift 計時用；nil 為 time.Now，測試時換成假時鐘
 }
 
 func (s *service) now() time.Time {
@@ -93,6 +97,26 @@ func (s *service) vocabProperty() property {
 	return property{key: propVocab, typ: propNormal, sensitive: true, label: label, hidden: !s.update.vocab}
 }
 
+// simplifiedProperty 是可以打勾的「輸出簡體字」（#169）：0c-update 回報這項設定、或引擎能即時切換時才顯示。
+func (s *service) simplifiedProperty() property {
+	return property{key: propSimplified, typ: propToggle, sensitive: true, label: simplifiedText, checked: s.simplified,
+		hidden: !s.update.simplifiedKnown && !s.simplifiedLive}
+}
+
+// setSimplified 在鎖內呼叫：「輸出簡體字」的狀態改變時，選單的勾選與注／英指示（注簡）跟著換。
+// live 為真表示來源是回報即時切換的引擎。
+func (s *service) setSimplified(on, live bool) {
+	s.simplifiedLive = s.simplifiedLive || live
+	if on == s.simplified {
+		return
+	}
+	s.simplified = on
+	if e := s.focused; e != nil {
+		e.emit("UpdateProperty", e.modeProperty().variant())
+		e.emit("UpdateProperty", s.simplifiedProperty().variant())
+	}
+}
+
 func (s *service) updateProperty() property {
 	row := statusLabel(s.update)
 	if s.update.action == "finish" {
@@ -119,6 +143,7 @@ func (s *service) refreshMenu() {
 	if e := s.focused; e != nil {
 		e.emit("UpdateProperty", s.settingsProperty().variant())
 		e.emit("UpdateProperty", s.vocabProperty().variant())
+		e.emit("UpdateProperty", s.simplifiedProperty().variant())
 		e.emit("UpdateProperty", s.updateProperty().variant())
 	}
 }
@@ -137,6 +162,7 @@ func (s *service) queryStatus(command []string) {
 	}
 	s.querying = true
 	s.refreshed = time.Now()
+	seq := s.simplifiedSeq
 	go func() {
 		failure := ""
 		if command != nil {
@@ -158,6 +184,9 @@ func (s *service) queryStatus(command []string) {
 			out = ""
 		}
 		s.update = parseStatus(out)
+		if s.update.simplifiedKnown && seq == s.simplifiedSeq {
+			s.setSimplified(s.update.outputSimplified, s.update.simplifiedLive)
+		}
 		s.refreshMenu()
 	}()
 }
@@ -347,6 +376,8 @@ func (s *service) engineMethod(e *engine, member string, body []interface{}) ([]
 			s.openSettings(false)
 		case propVocab:
 			s.openSettings(true)
+		case propSimplified:
+			e.toggleSimplified()
 		case propUpdate:
 			s.queryStatus(statusCommand(s.update))
 		}

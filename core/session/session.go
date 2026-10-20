@@ -134,6 +134,11 @@ type Session struct {
 	// CtrlPunct 由宿主依「Ctrl＋標點打全形」設定（#168，預設開）：中文模式的 Ctrl＋, . ' ; 與 Ctrl＋Shift＋/ 1
 	// 打全形標點，跟一般標點一樣插進組字區。零值時這些鍵回 handled=false，外殼照一般快捷鍵交給應用程式。
 	CtrlPunct bool
+	// CapsLockEnglish 由宿主依「Caps Lock 開著時直接打英文」設定（#173，預設關）：外殼送來的 caps_lock 請求才有作用，
+	// 開啟時暫時切到英文、關閉時回到原本的模式。零值時 caps_lock 回 handled=false，注音模式照舊不理 Caps Lock（#168）。
+	CapsLockEnglish bool
+	capsLock        bool // 最近一次 caps_lock 請求的狀態；mode 請求清掉
+	capsEnglish     bool // 目前的英文模式是 Caps Lock 帶來的：關掉 Caps Lock 回到注音
 	// Preview02 打開時處理 0.2.0 的按鍵（組字中加詞、反悔鍵、「我的片語」，#128）；0.2.0 起宿主一律打開。
 	// 零值時這些按鍵照舊回 handled=false 交還應用程式，行為與沒有此功能時相同（測試用它確認這一點）。
 	Preview02    bool
@@ -231,6 +236,11 @@ func (s *Session) Composing() bool { return s.composing() || s.cand != nil }
 
 // Handle 處理一個請求並回傳完整快照。
 func (s *Session) Handle(r proto.Request) proto.Snapshot {
+	if r.Type == proto.OutputSimplified {
+		// #169：引擎已換好所有 session 的 Simplified。切換是全域設定、不是對這個輸入框的操作：
+		// 不能清掉下面這些只跟著按鍵的狀態（Shift 誤觸還原、Tab 修正的撤銷、加詞標示……）。
+		return s.View()
+	}
 	s.paletteChanged = false
 	// 前文確認與欄數不是使用者操作；其他任何請求都表示切到英文後已有動作，不再還原注音。
 	stash := s.toggleStash
@@ -332,24 +342,19 @@ func (s *Session) Handle(r proto.Request) proto.Snapshot {
 		english := !s.english
 		if r.Type == proto.Mode {
 			english = r.On
+			// 外殼重設模式（換欄位、重開 session、macOS 的 Caps Lock）：忘掉記得的 Caps Lock 狀態，
+			// 下一個按鍵的鎖定狀態跟快照不同時外殼重新送 caps_lock（#173）。
+			s.capsLock = false
 		}
-		// 切到英文清掉未打完的注音（#90），已組好的字與游標保留；切換本身也關閉候選。
-		if english && !s.english {
-			s.toggleStash = s.clearPendingZhuyin()
-		}
-		s.flushMixed()
-		s.clearDocumentContext()
-		s.cand = nil
-		// 防誤觸：外殼確認中間沒有任何操作就立即切回注音時，把剛清掉的注音放回原處。
-		if !english && s.english && r.Type == proto.Toggle && r.Restore && stash != nil {
-			s.comp, s.mixed = stash.comp, stash.mixed
-		}
-		s.english = english
-		s.englishWord, s.englishDismissed, s.englishTokenBlocked = false, false, false
+		// 使用者自己切換或外殼設定模式之後，關掉 Caps Lock 不再改變模式（#173）。
+		s.capsEnglish = false
+		s.setMode(english, r.Type == proto.Toggle && r.Restore, stash)
+	case proto.CapsLock:
+		handled, commit = s.capsLockChanged(r.On)
 	default:
 		handled = false
 	}
-	if r.Type == proto.Toggle || r.Type == proto.Mode || !handled && r.Type == proto.Key {
+	if r.Type == proto.Toggle || r.Type == proto.Mode || r.Type == proto.CapsLock || !handled && r.Type == proto.Key {
 		s.clearDocumentContext()
 	}
 	if s.paletteCommit {
@@ -377,12 +382,76 @@ func (s *Session) Handle(r proto.Request) proto.Snapshot {
 	if commit != "" {
 		snap.ContextID = s.pendingContextID
 	}
+	s.status(&snap)
+	return snap
+}
+
+// View 回傳目前的畫面，不改任何狀態（不算一次操作、Revision 不變）。給不屬於組字的全域切換用（#169 輸出簡體字）。
+func (s *Session) View() proto.Snapshot {
+	snap := s.snapshot()
+	snap.Handled = true
+	if hint := s.markHint(); hint != "" {
+		snap.Notices = []string{hint}
+	}
+	s.status(&snap)
+	return snap
+}
+
+// status 填入快照裡不屬於組字的狀態，Handle 與 View 共用。
+func (s *Session) status(snap *proto.Snapshot) {
 	snap.Mode = proto.ModeZhuyin
 	if s.english {
 		snap.Mode = proto.ModeEnglish
 	}
-	return snap
+	snap.CapsLock, snap.CapsEnglish = s.capsLock, s.capsEnglish
+	snap.OutputSimplified = s.Simplified != nil // #169：外殼的狀態顯示跟著
 }
+
+// setMode 切換中英模式（單按 Shift、外殼設定模式、Caps Lock）。切到英文清掉未打完的注音（#90），已組好的字與游標保留；
+// 切換本身也關閉候選。restore 是外殼確認中間沒有任何操作就立即切回注音：把剛清掉的注音放回原處（防誤觸）。
+func (s *Session) setMode(english, restore bool, stash *pendingStash) {
+	if english && !s.english {
+		s.toggleStash = s.clearPendingZhuyin()
+	}
+	s.flushMixed()
+	s.clearDocumentContext()
+	s.cand = nil
+	if !english && s.english && restore && stash != nil {
+		s.comp, s.mixed = stash.comp, stash.mixed
+	}
+	s.english = english
+	s.englishWord, s.englishDismissed, s.englishTokenBlocked = false, false, false
+}
+
+// capsLockChanged 處理外殼回報的 Caps Lock 狀態（#173，設定「Caps Lock 開著時直接打英文」）。設定關閉時回 handled=false、
+// 什麼都不改，跟沒有這個功能時一樣。開啟 Caps Lock：注音模式先送出組字（同 macOS 的 #84），暫時切到英文；
+// 已經是英文模式（單按 Shift 切的）就只記下狀態。關閉：Caps Lock 帶來的英文回到注音，使用者自己切的英文不動。
+// 開著 Caps Lock 時單按 Shift 照常切換（capsEnglish 清掉），之後關掉 Caps Lock 不再改模式。
+func (s *Session) capsLockChanged(on bool) (bool, string) {
+	if !s.CapsLockEnglish {
+		return false, ""
+	}
+	if on == s.capsLock {
+		return true, ""
+	}
+	s.capsLock = on
+	var commit string
+	switch {
+	case on && !s.english:
+		commit = s.commit()
+		s.setMode(true, false, nil)
+		s.toggleStash = nil // 組字已送出，沒有可放回的注音
+		s.capsEnglish = true
+	case !on && s.capsEnglish:
+		s.setMode(false, false, nil)
+		s.capsEnglish = false
+	}
+	return true, commit
+}
+
+// CapsLockOn 回報外殼最近一次 caps_lock 請求是開啟（#173；設定關閉時一律 false）。全部共用時引擎據此讓 Caps Lock
+// 開著的輸入框不跟上別的輸入框切回的注音。
+func (s *Session) CapsLockOn() bool { return s.capsLock }
 
 // EnglishMode 回報目前是否為英文模式（引擎在「全部共用」時用來同步各輸入框，#115）。
 func (s *Session) EnglishMode() bool { return s.english }

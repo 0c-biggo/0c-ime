@@ -38,7 +38,7 @@
 - 🔒 **全在本機**：選字、補標點與個人學習都在你的電腦上以 CPU 執行，不連網、不上傳打字內容。
 - 📚 **我的詞彙**：人名、術語、英文指令加進來就排在前面，也看得到靈犀學到了什麼。
 - 🔤 **中英混打、模糊音、Emoji 與顏文字**：ㄗ／ㄓ、ㄘ／ㄔ、ㄙ／ㄕ、ㄣ／ㄥ 近音放在後面備選；按 = 開 Emoji 選單。
-- 🔁 **輸出簡體字、自訂選字鍵**：看繁體打字、送出時才轉簡體；選字鍵可用 1–0 或 asdfghjkl;。
+- 🔁 **輸出簡體字、自訂選字鍵**：看繁體打字、送出時才轉簡體，可從輸入法選單一鍵切換；選字鍵可用 1–0 或 asdfghjkl;。
 - ✍️ **送出時補標點**（Beta）：Enter 送出時在漢字之間補上 ，。？！、；，不改動你打的字。
 - 🛟 **自動退回**：模型無法啟動或回應太慢時改用統計引擎排序，打字不會卡住。
 
@@ -117,7 +117,7 @@ go test ./...
 go run ./cmd/0c-cli -data assets/data
 ```
 
-`make assets` 從同版本的 [Release](https://github.com/0c-biggo/0c-ime/releases) 取得完整 tarball（約 275 MB），驗證後把現成字典放到 `assets/data/`、已配對模型放到 `models/select/` 與 `models/punct/`，和出貨內容相同；0.2.2 起 Release 附的 Source code 壓縮檔也適用。要指定版本用 `make assets RELEASE=v0.2.1`。
+`make assets` 從同版本的 [Release](https://github.com/0c-biggo/0c-ime/releases) 取得完整 tarball（約 275 MB），驗證後把現成字典放到 `assets/data/`、已配對模型放到 `models/select/` 與 `models/punct/`，和出貨內容相同；0.2.2 起 Release 附的 Source code 壓縮檔也適用。要指定版本用 `make assets RELEASE=v0.2.2`。
 
 各平台外殼另需各自的工具鏈與系統函式庫：
 

@@ -566,16 +566,16 @@ func TestVocabMenuFollowsFeatureFlag(t *testing.T) {
 	e, rec, _ := newTestEngine(t)
 	svc := e.svc
 	e.registerProperties()
-	if got := strings.Join(propVisibility(t, rec.take()[0]), ","); got != "InputMode:true,settings:true,vocab:false,update:true" {
+	if got := strings.Join(propVisibility(t, rec.take()[0]), ","); got != "InputMode:true,settings:true,vocab:false,simplified:false,update:true" {
 		t.Fatalf("開關關閉：%s", got)
 	}
 	svc.update = parseStatus(`{"installed":"x","features":{"vocab":true}}`)
 	svc.refreshMenu()
-	if keys, visible := vocabUpdate(t, rec.take()); keys != "settings,vocab,update" || !visible {
+	if keys, visible := vocabUpdate(t, rec.take()); keys != "settings,vocab,simplified,update" || !visible {
 		t.Fatalf("開關打開：%s visible=%v", keys, visible)
 	}
 	e.registerProperties() // 換焦點時重新登錄：已經是看得到的
-	if got := strings.Join(propVisibility(t, rec.take()[0]), ","); got != "InputMode:true,settings:true,vocab:true,update:true" {
+	if got := strings.Join(propVisibility(t, rec.take()[0]), ","); got != "InputMode:true,settings:true,vocab:true,simplified:false,update:true" {
 		t.Fatalf("開關打開後重新登錄：%s", got)
 	}
 
@@ -630,7 +630,7 @@ func TestVocabMenuFollowsFeatureFlag(t *testing.T) {
 	svc.update = parseStatus(`{"installed":"x"}`)
 	svc.refreshMenu()
 	svc.mu.Unlock()
-	if keys, visible := vocabUpdate(t, rec.take()); keys != "settings,vocab,update" || visible {
+	if keys, visible := vocabUpdate(t, rec.take()); keys != "settings,vocab,simplified,update" || visible {
 		t.Fatalf("開關關回：%s visible=%v", keys, visible)
 	}
 }

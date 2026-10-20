@@ -46,6 +46,16 @@ func TestCompactMatchesMem(t *testing.T) {
 			t.Errorf("HasLeft(%q)", l)
 		}
 	}
+	n := 0
+	c.EachBigram(func(l, w string, p float64) {
+		n++
+		if p != c.Bi(l, w) {
+			t.Errorf("EachBigram(%q,%q) = %g，Bi 為 %g", l, w, p, c.Bi(l, w))
+		}
+	})
+	if n != len(bi) || n != c.Bigrams() {
+		t.Errorf("EachBigram 列出 %d 筆，應為 %d", n, len(bi))
+	}
 	if c.Uni("不存在") != Unseen {
 		t.Error("未登錄詞")
 	}

@@ -6,13 +6,13 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
 	"git.biggo.com/0c/ime/internal/e2esync"
+	"git.biggo.com/0c/ime/internal/filelock"
 	"git.biggo.com/0c/ime/internal/update"
 )
 
@@ -871,46 +871,8 @@ func lock(base string) (func(), error) {
 	return lockFile(base, "coordinator.lock")
 }
 
-func lockFile(base, name string) (func(), error) {
-	dir := filepath.Join(base, "update")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, err
-	}
-	file := filepath.Join(dir, name)
-	f, err := os.OpenFile(file, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		if !errors.Is(err, os.ErrExist) {
-			return nil, err
-		}
-		// 前一次執行被中止時會留下鎖：記錄的行程已不存在（或鎖超過一小時）即接手。
-		if st, e := os.Stat(file); e == nil {
-			var pid int
-			b, e := os.ReadFile(file)
-			if e != nil {
-				if errors.Is(e, os.ErrNotExist) {
-					return lockFile(base, name)
-				}
-				return nil, e
-			}
-			fmt.Sscan(string(b), &pid)
-			if (pid > 0 && pid != os.Getpid() && !processAlive(pid)) || time.Since(st.ModTime()) > time.Hour {
-				if e := os.Remove(file); e != nil && !errors.Is(e, os.ErrNotExist) {
-					return nil, e
-				}
-				return lockFile(base, name)
-			}
-		} else if errors.Is(e, os.ErrNotExist) {
-			return lockFile(base, name)
-		} else {
-			return nil, e
-		}
-		return nil, fmt.Errorf("%s: %w", name, ErrLocked)
-	}
-	_, writeErr := fmt.Fprintln(f, os.Getpid())
-	closeErr := f.Close()
-	if err := errors.Join(writeErr, closeErr); err != nil {
-		os.Remove(file)
-		return nil, err
-	}
-	return func() { os.Remove(file) }, nil
-}
+// lockFile 是 base/update 下的命名鎖；規則在 internal/filelock，0c-server 寫設定時也用同一套（#169）。
+func lockFile(base, name string) (func(), error) { return filelock.Acquire(base, name) }
+
+// processAlive 回報 pid 的行程是否仍在執行。
+func processAlive(pid int) bool { return filelock.ProcessAlive(pid) }

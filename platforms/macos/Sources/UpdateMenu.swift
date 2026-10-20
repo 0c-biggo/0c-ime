@@ -15,6 +15,17 @@ struct UpdateMenuStatus: Decodable {
     var notice_snoozed_until: String?
     /// features.vocab：0.2.0「我的詞彙」的入口（0.2.0 起恆為 true）。舊版 0c-update 沒有這個欄位，視為關閉。
     var features: Features?
+    /// settings.output_simplified（#169，0.2.1 起的 0c-update）：引擎不能即時切換時，選單的「輸出簡體字」照設定檔打勾。
+    var settings: Settings?
+
+    /// 寬鬆解析：output_simplified 不是布林時當成不知道，不能讓整份狀態解析失敗。
+    struct Settings: Decodable {
+        var outputSimplified: Bool?
+        private enum CodingKeys: String, CodingKey { case outputSimplified = "output_simplified" }
+        init(from decoder: Decoder) throws {
+            outputSimplified = try? decoder.container(keyedBy: CodingKeys.self).decodeIfPresent(Bool.self, forKey: .outputSimplified)
+        }
+    }
 
     /// 寬鬆解析：features 不是物件、vocab 不是布林都當成關閉，不能讓整份狀態解析失敗。
     struct Features: Decodable {
@@ -26,6 +37,7 @@ struct UpdateMenuStatus: Decodable {
     }
 
     var vocab: Bool { features?.vocab ?? false }
+    var outputSimplified: Bool? { settings?.outputSimplified ?? nil }
 
     /// 外殼自己的完整版本：打包時寫進 Info.plist 的 ZCBuildVersion；開發建置沒有。
     static let shellVersion = Bundle.main.object(forInfoDictionaryKey: "ZCBuildVersion") as? String
@@ -175,6 +187,24 @@ final class UpdateMenuMonitor {
         }
     }
 
+    /// 「輸出簡體字」退回 0c-update 時的命令（#169，舊引擎）：寫設定、請引擎套用（交接重啟），並送通知。
+    static func simplifiedCommand(_ on: Bool) -> [String] { ["set", "output-simplified", on ? "on" : "off", "-apply", "-notify"] }
+
+    /// 引擎不能即時切換時的「輸出簡體字」：照 0c-update 執行，完成後重新讀狀態（勾選跟著設定檔）。
+    func setSimplified(_ on: Bool) {
+        let args = Self.simplifiedCommand(on)
+        guard Self.allowed(args), !busy else { return }
+        busy = true
+        operationFailed = false
+        runner(args) { result in
+            DispatchQueue.main.async {
+                self.busy = false
+                if case .failure = result { self.operationFailed = true }
+                self.refresh()
+            }
+        }
+    }
+
     static let settingsCommand = ["open-settings"]
     static let vocabCommand = ["open-settings", "vocab"]
     static func opensSettings(_ args: [String]) -> Bool { args == settingsCommand || args == vocabCommand }
@@ -194,7 +224,8 @@ final class UpdateMenuMonitor {
             return finishCommand(version: args[3], sha256: args[5]) == args
         }
         return [settingsCommand, vocabCommand, ["auto", "-now", "-notify"], ["mode", "auto"],
-                ["mode", "ask"], ["mode", "manual"], ["pause", "7"], ["resume"]].contains(args)
+                ["mode", "ask"], ["mode", "manual"], ["pause", "7"], ["resume"],
+                simplifiedCommand(true), simplifiedCommand(false)].contains(args)
     }
 
     static func finishCommand(version: String, sha256: String) -> [String]? {

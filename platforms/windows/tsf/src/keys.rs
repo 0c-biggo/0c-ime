@@ -12,6 +12,13 @@ pub fn shift_down() -> bool {
     unsafe { GetKeyState(VK_SHIFT.0 as i32) < 0 }
 }
 
+/// Caps Lock 是否鎖定（這個執行緒收到按鍵當下的狀態，#173）。不看鍵盤燈號。
+pub fn caps_lock_on() -> bool {
+    unsafe { GetKeyState(VK_CAPITAL.0 as i32) & 1 != 0 }
+}
+
+pub const VK_CAPS_LOCK: u32 = VK_CAPITAL.0 as u32;
+
 /// 系統的輸入法開關熱鍵（Ctrl＋Space）是否按著：鍵盤開關 compartment 改變時用來分辨使用者按的熱鍵，
 /// 與 TIP 啟用、換程式時系統的重設（#117）。Ctrl 看這個執行緒的按鍵狀態（只有前景、收到按鍵的執行緒才是按著），
 /// Space 在熱鍵觸發時執行緒狀態可能還沒更新，所以也看實體按鍵狀態。
@@ -669,8 +676,8 @@ pub fn starts_composition(layout: Layout, key: &str) -> bool {
     key.len() == 1 && keys.contains(key)
 }
 
-/// 聲調鍵（不含空白的一聲）：標準排列 3 4 6 7、倚天 1 2 3 4。沒在組字時要不要交給引擎依設定（#135，
-/// 見 Session::tone_mark_keys），不在 starts_composition 的固定集合裡。
+/// 聲調鍵（不含空白的一聲）：標準排列 3 4 6 7、倚天 1 2 3 4。沒在組字時要不要交給引擎依引擎回報（#135、#175，
+/// 見 session::idle_tone_keys），不在 starts_composition 的固定集合裡。
 pub fn tone_key(layout: Layout, key: &str) -> bool {
     let keys = match layout {
         Layout::Standard => "3467",

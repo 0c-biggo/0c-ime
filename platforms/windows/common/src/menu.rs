@@ -33,6 +33,9 @@ pub struct UpdateStatus {
     pub document_context: bool,
     /// `features.vocab`：0.2.0 的「我的詞彙」入口（0.2.0 起恆為 true）。舊版 0c-update 沒有這個欄位，視為關閉。
     pub vocab: bool,
+    /// 「輸出簡體字」（#169）：`settings.output_simplified`（0.2.1 起的 0c-update 才有，沒有時 None，選單不顯示這一項）；
+    /// `runtime.output_simplified_live` 時以 `runtime.output_simplified`（引擎目前的值）為準。
+    pub output_simplified: Option<bool>,
 }
 
 impl Default for UpdateStatus {
@@ -55,6 +58,7 @@ impl Default for UpdateStatus {
             punctuation: false,
             document_context: true,
             vocab: false,
+            output_simplified: None,
         }
     }
 }
@@ -95,6 +99,7 @@ pub fn parse_status(json: &str) -> UpdateStatus {
         if let Some(x) = c.get("document_context").and_then(Value::as_bool) {
             s.document_context = x;
         }
+        s.output_simplified = c.get("output_simplified").and_then(Value::as_bool);
     }
     if let Some(f) = v.get("features") {
         s.vocab = f.get("vocab").and_then(Value::as_bool).unwrap_or(false);
@@ -103,8 +108,27 @@ pub fn parse_status(json: &str) -> UpdateStatus {
         s.runtime = text(r, "state");
         s.selection_state = text(r, "selection_state");
         s.punctuation_state = text(r, "punctuation_state");
+        if r.get("output_simplified_live").and_then(Value::as_bool) == Some(true) {
+            if let Some(x) = r.get("output_simplified").and_then(Value::as_bool) {
+                s.output_simplified = Some(x);
+            }
+        }
     }
     s
+}
+
+/// 「輸出簡體字」退回 0c-update 時的命令（#169）：寫設定、請引擎套用（能即時切換就不重啟），並送通知。
+/// DLL 能直接請引擎切換時不用它（見 tsf 的 langbar）。
+pub fn simplified_command(on: bool) -> Vec<String> {
+    args(&["set", "output-simplified", if on { "on" } else { "off" }, "-apply", "-notify"])
+}
+
+/// 選單項目是不是「輸出簡體字」；是的話回傳要切換成的值。
+pub fn simplified_target(a: &[String]) -> Option<bool> {
+    match a.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+        ["set", "output-simplified", v @ ("on" | "off"), "-apply", "-notify"] => Some(*v == "on"),
+        _ => None,
+    }
 }
 
 pub fn model_label(state: &str, runtime: &str, fallback: &str) -> String {
@@ -209,6 +233,10 @@ pub fn menu_items(s: &UpdateStatus) -> Vec<MenuItem> {
         (format!("補標點：{}", model_label(&s.punctuation_state, &s.runtime, "原文提交")), s.punctuation, false, args(&["set", "punctuation", onoff(s.punctuation), "-apply"])),
         ("依前文選字".into(), s.document_context, false, args(&["set", "document-context", onoff(s.document_context), "-apply"])),
     ]);
+    // 「輸出簡體字」（#169）：0c-update 回報這項設定時才有；DLL 能直接請引擎即時切換時改用 IPC（langbar）。
+    if let Some(on) = s.output_simplified {
+        v.push(("輸出簡體字".into(), on, false, simplified_command(!on)));
+    }
     v.drain(..)
         .enumerate()
         .map(|(i, (label, checked, separator, args))| MenuItem { id: i as u32 + 1, label, checked, separator, args })
@@ -230,6 +258,7 @@ pub fn allowed_command(a: &[String]) -> bool {
             | ["schedule", "repair", "-notify"]
             | ["set", "selection", "neural" | "statistical", "-apply"]
             | ["set", "punctuation" | "document-context", "on" | "off", "-apply"]
+            | ["set", "output-simplified", "on" | "off", "-apply", "-notify"]
     )
 }
 
@@ -327,14 +356,41 @@ mod tests {
     }
 
     #[test]
+    fn simplified_entry_follows_the_setting() {
+        // 0.2.1 以前的 0c-update 沒有這項設定：不顯示，其他項目不變。
+        let old = parse_status(r#"{"settings":{"selection":"neural"}}"#);
+        assert_eq!(old.output_simplified, None);
+        assert!(menu_items(&old).iter().all(|i| i.label != "輸出簡體字"));
+        // 設定檔的值；放在「依前文選字」下面，打勾表示開著，點了切成相反的值。
+        let stored = parse_status(r#"{"settings":{"output_simplified":true,"document_context":true}}"#);
+        let items = menu_items(&stored);
+        let at = items.iter().position(|i| i.label == "輸出簡體字").unwrap();
+        assert_eq!(items[at - 1].label, "依前文選字");
+        assert!(items[at].checked);
+        assert_eq!(items[at].args, vec!["set", "output-simplified", "off", "-apply", "-notify"]);
+        assert_eq!(simplified_target(&items[at].args), Some(false));
+        assert_eq!(items.len(), menu_items(&old).len() + 1);
+        // 引擎能即時切換時以 runtime 的值為準（剛從別處切換、設定檔還沒讀到也一樣）。
+        let live = parse_status(r#"{"settings":{"output_simplified":false},"runtime":{"state":"running","output_simplified_live":true,"output_simplified":true}}"#);
+        assert_eq!(live.output_simplified, Some(true));
+        let off = parse_status(r#"{"settings":{"output_simplified":false},"runtime":{"output_simplified":true}}"#);
+        assert_eq!(off.output_simplified, Some(false), "舊引擎沒有 output_simplified_live：照設定檔");
+        assert_eq!(parse_status(r#"{"settings":{"output_simplified":"yes"}}"#).output_simplified, None);
+        assert_eq!(simplified_target(&simplified_command(true)), Some(true));
+        assert_eq!(simplified_target(&args(&["set", "output-simplified", "on", "-apply"])), None);
+    }
+
+    #[test]
     fn every_menu_command_is_allowed_and_nothing_else() {
         for s in [UpdateStatus::default(), parse_status(r#"{"action":"finish","target":{"version":"x"},"paused_until":"2026-10-06"}"#),
-                  parse_status(r#"{"updater":"schedule_missing"}"#), parse_status(r#"{"features":{"vocab":true}}"#)] {
+                  parse_status(r#"{"updater":"schedule_missing"}"#), parse_status(r#"{"features":{"vocab":true}}"#),
+                  parse_status(r#"{"settings":{"output_simplified":true}}"#), parse_status(r#"{"settings":{"output_simplified":false}}"#)] {
             for item in menu_items(&s).iter().filter(|i| !i.separator) {
                 assert!(allowed_command(&item.args), "{:?}", item.args);
             }
         }
-        for bad in [vec!["uninstall"], vec!["set", "selection", "evil", "-apply"], vec!["finish"], vec!["auto", "-feed", "https://x"], vec!["schedule", "remove"], vec!["schedule", "install"]] {
+        for bad in [vec!["uninstall"], vec!["set", "selection", "evil", "-apply"], vec!["finish"], vec!["auto", "-feed", "https://x"], vec!["schedule", "remove"], vec!["schedule", "install"],
+                    vec!["set", "output-simplified", "maybe", "-apply", "-notify"], vec!["set", "output-simplified", "on", "-notify", "-apply"]] {
             assert!(!allowed_command(&bad.iter().map(|x| x.to_string()).collect::<Vec<_>>()));
         }
     }

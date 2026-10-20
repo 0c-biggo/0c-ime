@@ -148,6 +148,38 @@ bool Session::vocabKeys() {
     return value != serverInfo_.end() && value->is_string() && value->get<std::string>() == "true";
 }
 
+bool Session::capsLockEnglish(bool spawn) {
+    if (!spawn) {
+        // Caps Lock 鍵本身：不為此啟動 0c-server。剛在設定程式打開這一項時引擎重啟了，open 的快取是舊的，
+        // 不重新確認的話第一個字母會照注音打、下一個才切英文。設定改了一定會重啟引擎（舊連線跟著斷），所以連線還在、
+        // session 是這一代連線開的就沿用 open 的值，不問引擎；斷了才以 health 重新確認（舊連線這一次才發現斷了，重連再問一次）。
+        if (!client_.connected()) { return false; }
+        if (id_ != 0 && gen_ == client_.generation() && client_.alive()) {
+            auto value = serverInfo_.find("caps_lock_english");
+            return value != serverInfo_.end() && value->is_string() && value->get<std::string>() == "true";
+        }
+        nlohmann::json reply;
+        bool ok = client_.call({{"op", "health"}}, reply) || client_.call({{"op", "health"}}, reply);
+        if (!ok || !reply.value("ok", false)) { return false; }
+        auto info = reply.value("info", nlohmann::json::object());
+        auto value = info.find("caps_lock_english");
+        if (value == info.end() || !value->is_string() || value->get<std::string>() != "true") { return false; }
+    }
+    if (!client_.connect() || !ensureOpen()) { return false; }
+    auto value = serverInfo_.find("caps_lock_english");
+    return value != serverInfo_.end() && value->is_string() && value->get<std::string>() == "true";
+}
+
+bool Session::simplifiedLive() const {
+    auto value = serverInfo_.find("output_simplified_live");
+    return id_ != 0 && gen_ == client_.generation() && value != serverInfo_.end() && value->is_string() && value->get<std::string>() == "true";
+}
+
+bool Session::simplifiedAtOpen() const {
+    auto value = serverInfo_.find("output_simplified");
+    return value != serverInfo_.end() && value->is_string() && value->get<std::string>() == "true";
+}
+
 bool Session::ctrlPunct() {
     if (!client_.connect() || !ensureOpen()) { return false; }
     auto value = serverInfo_.find("ctrl_punctuation");
@@ -183,6 +215,19 @@ bool Session::ensureOpen() {
         nlohmann::json r;
         if (!client_.call({{"op", "handle"}, {"session", id_}, {"req", {{"type", "pause"}, {"on", true}}}}, r) ||
             !r.value("ok", false)) {
+            id_ = 0;
+            return false;
+        }
+    }
+    // Caps Lock 帶來的英文（#173）：新 session 不知道 Caps Lock 開著，先還原，不然重開後的第一個字母照注音打、
+    // 下一個才切回英文。設定剛關掉（引擎以新設定重啟）時不送。真正的鎖定狀態由這次按鍵帶的同步改正。
+    if (capsLock_) {
+        auto value = serverInfo_.find("caps_lock_english");
+        nlohmann::json r;
+        if (value == serverInfo_.end() || !value->is_string() || value->get<std::string>() != "true") {
+            capsLock_ = false;
+        } else if (!client_.call({{"op", "handle"}, {"session", id_}, {"req", {{"type", "caps_lock"}, {"on", true}}}}, r) ||
+                   !r.value("ok", false)) {
             id_ = 0;
             return false;
         }
@@ -259,6 +304,7 @@ Snapshot Session::handle(const nlohmann::json &request) {
             s.reconnected = true;
             english_ = s.english;
         englishPending_ = s.englishPending;
+            capsLock_ = s.capsLock;
             s.traceSequence = traceRequest({{"type", "recovery"}}, reply["snapshot"], started,
                                           attempt + 1, generationBefore);
             return s;
@@ -280,6 +326,7 @@ Snapshot Session::handle(const nlohmann::json &request) {
                                        reply.value("engine_us", int64_t(-1)));
         english_ = s.english;
         englishPending_ = s.englishPending;
+        capsLock_ = s.capsLock;
         std::string type = request.value("type", "");
         // 符號選單可以在空白組字區開啟，也必須重播才能保留選單與反白位置。
         bool composing = !s.preedit.empty() || !s.candidates.empty();
@@ -291,7 +338,8 @@ Snapshot Session::handle(const nlohmann::json &request) {
             }
             log_.clear();
             replayView_ = nullptr;
-        } else if (type != "context") {
+        } else if (type != "context" && type != "caps_lock" && type != "output_simplified") {
+            // Caps Lock 狀態不重播：新 session 由下一個按鍵重新同步（#173）；「輸出簡體字」是全域設定，重播會再切一次（#169）
             if (log_.empty() && type == "toggle") { log_ = std::move(cleared); }
             log_.push_back(wireRequest);
         }
@@ -315,6 +363,8 @@ Snapshot Session::parse(const nlohmann::json &reply) {
     s.suggestion = j.value("suggestion", "");
     s.english = j.value("mode", "") == "english";
     s.englishPending = j.value("english_pending", false);
+    s.capsLock = j.value("caps_lock", false);
+    s.outputSimplified = j.value("output_simplified", false);
     if (j.contains("preedit")) {
         for (const auto &g : j["preedit"]) {
             s.preedit.push_back({g.value("text", ""), g.value("style", "normal")});

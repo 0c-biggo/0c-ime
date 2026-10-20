@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"sync"
 	"sync/atomic"
@@ -19,11 +20,13 @@ import (
 	"time"
 
 	"git.biggo.com/0c/ime/bridge/ipc"
+	"git.biggo.com/0c/ime/core/engine"
 	"git.biggo.com/0c/ime/core/layout"
 	"git.biggo.com/0c/ime/core/personal"
 	"git.biggo.com/0c/ime/core/proto"
 	"git.biggo.com/0c/ime/core/session"
 	"git.biggo.com/0c/ime/core/vocab"
+	"git.biggo.com/0c/ime/core/zhconv"
 	"git.biggo.com/0c/ime/internal/datadir"
 	"git.biggo.com/0c/ime/internal/e2esync"
 	"git.biggo.com/0c/ime/internal/neural"
@@ -129,6 +132,8 @@ func main() {
 	eng.SpaceInsertsSpace = !config.SpaceSelects
 	eng.AdvanceAfterSelect = config.AdvanceAfterSelect
 	eng.CtrlPunct = config.CtrlPunctuation // #168
+	// #173：Windows、Linux 的設定；macOS 開 Caps Lock 一律切到英文（#84），不看設定檔的值。
+	eng.CapsLockEnglish = config.CapsLockEnglish && settings.CapsLockEnglishSetting(runtime.GOOS)
 
 	if config.OutputSimplified { // #118：字典編在執行檔裡，只有開啟時才解析
 		if conv, err := simplified.TW2S(); err != nil {
@@ -136,6 +141,28 @@ func main() {
 		} else {
 			eng.Simplified = conv
 		}
+	}
+	// #169：輸入法選單（與 0c-update set -apply）即時切換「輸出簡體字」：字典第一次開啟時才解析，之後共用；
+	// 新的值照 0c-update set 的寫法寫進設定檔（同一把寫入鎖、保留不認得的欄位），設定程式的開關跟著變。
+	eng.SimplifiedSwitch = engine.SimplifiedSwitch{
+		Load: func() (*zhconv.Converter, error) {
+			conv, err := simplified.TW2S()
+			if err != nil {
+				lg.Printf("簡體字典無法載入，照樣送出繁體：%v", err)
+			}
+			return conv, err
+		},
+		Save: func(on bool) error {
+			value := "off"
+			if on {
+				value = "on"
+			}
+			if _, err := settings.Change(*user, [2]string{"output-simplified", value}); err != nil {
+				lg.Printf("輸出簡體字已切換為 %s，但設定檔沒有寫入：%v", value, err)
+				return err
+			}
+			return nil
+		},
 	}
 	eng.SelectionKeys = config.SelectionKeys // #112
 	// 0.2.0 正式開放（#128）：引擎的欄位留著，零值給測試確認關閉時行為不變。
@@ -318,7 +345,7 @@ func main() {
 	srv.Info = map[string]string{"version": buildVersion, "protocol": fmt.Sprint(proto.Version),
 		"neural_startup_state": neuralState, "personal_store": personalState, "personal_lock": lockState,
 		"selection_setting": config.Selection, "punctuation": fmt.Sprint(eng.Punct != nil), "document_context": fmt.Sprint(config.DocumentContext),
-		"fuzzy": eng.Fuzzy.Key(), "mixed_input": fmt.Sprint(config.MixedInput), "english_autocomplete": fmt.Sprint(config.EnglishAutocomplete), "left_shift": fmt.Sprint(config.TogglesLeft()), "right_shift": fmt.Sprint(config.TogglesRight()), "toggle_key": config.ToggleKey, "shift_tap_ms": "300", "mode_memory": config.ModeMemory, "start_mode": config.StartMode, "esc_clear": fmt.Sprint(config.EscClear), "space_selects": fmt.Sprint(config.SpaceSelects), "advance_after_select": fmt.Sprint(config.AdvanceAfterSelect), "output_simplified": fmt.Sprint(eng.Simplified != nil),
+		"fuzzy": eng.Fuzzy.Key(), "mixed_input": fmt.Sprint(config.MixedInput), "english_autocomplete": fmt.Sprint(config.EnglishAutocomplete), "left_shift": fmt.Sprint(config.TogglesLeft()), "right_shift": fmt.Sprint(config.TogglesRight()), "toggle_key": config.ToggleKey, "shift_tap_ms": "300", "mode_memory": config.ModeMemory, "start_mode": config.StartMode, "esc_clear": fmt.Sprint(config.EscClear), "space_selects": fmt.Sprint(config.SpaceSelects), "advance_after_select": fmt.Sprint(config.AdvanceAfterSelect),
 		"selection_keys": config.SelectionKeys, "candidate_cursor": config.CandidateCursor, "candidate_layout": config.CandidateLayout, "emoji_shortcut": config.EmojiShortcut, "emoji_equals_first": fmt.Sprint(config.EmojiEqualsFirst),
 		"keyboard_layout": config.KeyboardLayout, "preview_0_2": fmt.Sprint(eng.Preview02), "vocab_state": vocabState,
 		// #123：外殼據此決定要不要把組字中的 Shift＋←／→、候選窗的 Shift＋Delete／⌫ 送給引擎。
@@ -327,7 +354,13 @@ func main() {
 		"tone_mark_keys": fmt.Sprint(eng.ToneMarkKeys()),
 		// #168：引擎認得 Ctrl＋標點的鍵名而且設定開著；外殼只在這一項是 true、又在中文模式時送那六個鍵，
 		// 舊引擎沒有這一項，外殼照舊交給應用程式。
-		"ctrl_punctuation": fmt.Sprint(eng.CtrlPunct)}
+		"ctrl_punctuation": fmt.Sprint(eng.CtrlPunct),
+		// #173：引擎認得 caps_lock 請求而且設定「Caps Lock 開著時直接打英文」開著；外殼只在這一項是 true 時回報
+		// Caps Lock 狀態，舊引擎沒有這一項、或設定關閉時，注音模式照舊不理 Caps Lock（#168）。
+		"caps_lock_english": fmt.Sprint(eng.CapsLockEnglish),
+		// #169：引擎認得 output_simplified 請求，「輸出簡體字」可以即時切換；目前的值在 RuntimeInfo 的 output_simplified。
+		// 舊引擎沒有這一項，外殼退回 0c-update set output-simplified … -apply（重啟引擎套用）。
+		"output_simplified_live": "true"}
 	srv.Info["english_words"] = fmt.Sprint(eng.English.Len())
 	srv.Info["english_pack"] = eng.EnglishPack
 	if eng.EnglishPack == "" {
@@ -351,6 +384,8 @@ func main() {
 			punctuationState = "fallback"
 		}
 		info := map[string]string{"selection_state": selectionState, "punctuation_state": punctuationState}
+		// 「輸出簡體字」可以從選單即時切換（#169）：回報引擎目前實際的值，設定程式據此判斷有沒有套用。
+		info["output_simplified"] = fmt.Sprint(eng.OutputSimplified())
 		// #160：新 session 開始時的模式（全部共用時是目前共用的模式）。外殼在第一個按鍵前據此顯示中／英。
 		info["initial_mode"] = proto.ModeZhuyin
 		if eng.InitialEnglish() {

@@ -180,6 +180,12 @@ func runningValues(info map[string]string) map[string]string {
 	case "false":
 		out["ctrl-punctuation"] = "off"
 	}
+	switch info["caps_lock_english"] { // #173
+	case "true":
+		out["caps-lock-english"] = "on"
+	case "false":
+		out["caps-lock-english"] = "off"
+	}
 	switch info["space_selects"] {
 	case "true":
 		out["space-selects"] = "on"
@@ -270,7 +276,7 @@ type setOptions struct {
 	repair bool // 設定檔壞掉時改名保留，從預設值重新開始
 }
 
-const setUsage = "用法：0c-update set selection neural|statistical、set punctuation on|off、set document-context on|off、set mixed-input on|off、set english-autocomplete on|off、set left-shift on|off、set esc-clear on|off、set space-selects on|off、set candidate-cursor before|after、set advance-after-select on|off、set output-simplified on|off、set ctrl-punctuation on|off、set keyboard-layout standard|eten、set fuzzy-z-zh|fuzzy-c-ch|fuzzy-s-sh|fuzzy-en-eng off|select|auto [鍵 值 ...] [-apply] [-notify] [-json] [-repair]"
+const setUsage = "用法：0c-update set selection neural|statistical、set punctuation on|off、set document-context on|off、set mixed-input on|off、set english-autocomplete on|off、set left-shift on|off、set esc-clear on|off、set space-selects on|off、set candidate-cursor before|after、set advance-after-select on|off、set output-simplified on|off、set ctrl-punctuation on|off、set caps-lock-english on|off（Windows、Linux）、set keyboard-layout standard|eten、set fuzzy-z-zh|fuzzy-c-ch|fuzzy-s-sh|fuzzy-en-eng off|select|auto [鍵 值 ...] [-apply] [-notify] [-json] [-repair]"
 
 func parseSetArgs(args []string) (setOptions, error) {
 	var o setOptions
@@ -363,10 +369,28 @@ func runSet(base string, dial autoupdate.Dialer, o setOptions, notice func(strin
 		return res, err
 	}
 	if o.apply {
+		if on, ok := liveSimplified(res.Changes); ok && autoupdate.SetOutputSimplified(dial, on) == nil {
+			res.Apply = applyView{Requested: true, State: applyApplied}
+			return res, nil
+		}
 		res.Apply = applySettings(dial, notice)
 		ensureEngineService(base) // 引擎交接退出後立刻叫起常駐引擎（#120）
 	}
 	return res, nil
+}
+
+// liveSimplified：這次只改了「輸出簡體字」，引擎可以即時切換、不必交接重啟（#169，設定程式的開關與舊外殼的選單都走這裡）。
+// 舊引擎、引擎沒在執行或切換失敗時，呼叫端照舊以交接重啟套用。
+func liveSimplified(changes []changeView) (on, ok bool) {
+	if len(changes) == 0 {
+		return false, false
+	}
+	for _, c := range changes {
+		if c.Key != "output-simplified" {
+			return false, false
+		}
+	}
+	return changes[len(changes)-1].To == "on", true
 }
 
 // applySettings 請引擎在沒有組字時存檔退出；外殼的下一個按鍵會以新設定重新啟動引擎。

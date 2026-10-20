@@ -3057,7 +3057,7 @@
 㵟	ㄨㄟˊ	attested	y		cns11643,mcbopomofo-rare
 㵠	ㄎㄨ	primary	y		cns11643
 㵡	ㄅㄠˊ	primary	y		cns11643
-㵢	ㄌㄟˊ	primary	y		cns11643,mcbopomofo-rare
+㵢	ㄌㄟˊ	primary	y		cns11643,mcbopomofo-rare,curated	#172 台灣人名用字（新聞＋PTT 去掉日文、簡體、粵語句子後 1995 次），不排在罕用字段
 㵣	ㄎㄜˇ	primary	y		cns11643
 㵤	ㄕㄚˋ	primary	y		cns11643
 㵥	ㄇㄧˋ	primary	y		cns11643,mcbopomofo-rare
@@ -8806,7 +8806,7 @@
 企	ㄑㄧˇ	common	n	ㄑㄧˋ	curated	docs/12、16：企業、企劃的 ㄑㄧˇ 是舊審訂音與對岸標準音，台灣普遍這樣唸
 企	ㄑㄧˋ	primary	y		cns11643,mcbopomofo
 伂	ㄆㄟˋ	primary	y		cns11643,mcbopomofo
-伃	ㄩˊ	primary	y		cns11643,mcbopomofo-rare
+伃	ㄩˊ	primary	y		cns11643,mcbopomofo-rare,curated	#172 台灣人名用字（新聞＋PTT 去掉日文、簡體、粵語句子後 3710 次），不排在罕用字段
 伄	ㄉㄧㄠˋ	primary	y		cns11643,mcbopomofo
 伅	ㄉㄨㄣˋ	primary	y		cns11643,mcbopomofo
 伆	ㄨㄣˇ	primary	y		cns11643,mcbopomofo-rare
@@ -8896,7 +8896,7 @@
 伾	ㄆㄧ	primary	y		cns11643,mcbopomofo
 伿	ㄓˋ	attested	y		cns11643
 伿	ㄧˋ	primary	y		cns11643,mcbopomofo
-佀	ㄙˋ	primary	y		cns11643,mcbopomofo-rare
+佀	ㄙˋ	primary	y		cns11643,mcbopomofo-rare,curated	#172 台灣人名用字（新聞＋PTT 去掉日文、簡體、粵語句子後 7336 次），不排在罕用字段
 佁	ㄞˇ	primary	y		cns11643,mcbopomofo
 佂	ㄌㄥˋ	attested	y		cns11643,mcbopomofo-rare
 佂	ㄓㄥ	attested	y		cns11643,mcbopomofo-rare
@@ -9784,7 +9784,7 @@
 凂	ㄇㄟˇ	attested	y		cns11643,mcbopomofo-rare
 凂	ㄇㄧㄢˇ	attested	y		cns11643,mcbopomofo-rare
 凂	ㄈㄨˇ	attested	y		cns11643,mcbopomofo-rare
-凃	ㄊㄨˊ	primary	y		cns11643,mcbopomofo-rare
+凃	ㄊㄨˊ	primary	y		cns11643,mcbopomofo-rare,curated	#172 台灣人名用字（新聞＋PTT 去掉日文、簡體、粵語句子後 1961 次），不排在罕用字段
 凄	ㄑㄧ	primary	y		cns11643,mcbopomofo
 凅	ㄍㄨˋ	primary	y		cns11643,mcbopomofo
 准	ㄓㄨㄣˇ	primary	y		cns11643,mcbopomofo
@@ -11152,7 +11152,7 @@
 啑	ㄐㄧㄝ	primary	y		mcbopomofo
 啒	ㄍㄨˇ	attested	y		cns11643
 啒	ㄏㄨ	primary	y		cns11643,mcbopomofo
-啓	ㄑㄧˇ	primary	y		cns11643,mcbopomofo-rare
+啓	ㄑㄧˇ	primary	y		cns11643,mcbopomofo-rare,curated	#172 台灣人名用字（新聞＋PTT 去掉日文、簡體、粵語句子後 11015 次），不排在罕用字段
 啔	ㄑㄧˇ	primary	y		cns11643,mcbopomofo-rare
 啕	ㄊㄠˊ	primary	y		cns11643,mcbopomofo
 啖	ㄉㄢˋ	primary	y		cns11643,mcbopomofo
@@ -11914,7 +11914,7 @@
 坠	ㄓㄨㄟˋ	primary	y		cns11643
 坡	ㄆㄛ	primary	y		cns11643,mcbopomofo
 坢	ㄆㄢˇ	primary	y		cns11643,mcbopomofo
-坣	ㄊㄤˊ	primary	y		cns11643,mcbopomofo-rare
+坣	ㄊㄤˊ	primary	y		cns11643,mcbopomofo-rare,curated	#172 台灣人名用字（新聞＋PTT 去掉日文、簡體、粵語句子後 2721 次），不排在罕用字段
 坤	ㄎㄨㄣ	primary	y		cns11643,mcbopomofo
 坥	ㄐㄩˋ	attested	y		cns11643,mcbopomofo-rare
 坥	ㄑㄩ	attested	y		cns11643,mcbopomofo-rare
@@ -12821,7 +12821,7 @@
 姶	ㄧㄚˋ	attested	y		cns11643
 姶	ㄧㄢˇ	primary	y		cns11643,mcbopomofo
 姷	ㄧㄡˋ	primary	y		cns11643,mcbopomofo
-姸	ㄧㄢˊ	primary	y		cns11643,mcbopomofo-rare
+姸	ㄧㄢˊ	primary	y		cns11643,mcbopomofo-rare,curated	#172 台灣人名用字（新聞＋PTT 去掉日文、簡體、粵語句子後 2379 次），不排在罕用字段
 姹	ㄔㄚˋ	primary	y		cns11643,mcbopomofo-rare
 姺	ㄒㄧㄢˇ	primary	y		cns11643,mcbopomofo
 姻	ㄧㄣ	primary	y		cns11643,mcbopomofo
@@ -13859,7 +13859,7 @@
 峬	ㄅㄨ	primary	y		cns11643,mcbopomofo
 峭	ㄑㄧㄠˋ	primary	y		cns11643,mcbopomofo
 峮	ㄑㄩㄣ	primary	y		cns11643,mcbopomofo
-峯	ㄈㄥ	primary	y		cns11643,mcbopomofo-rare
+峯	ㄈㄥ	primary	y		cns11643,mcbopomofo-rare,curated	#172 台灣人名用字（新聞＋PTT 去掉日文、簡體、粵語句子後 7411 次），不排在罕用字段
 峰	ㄈㄥ	primary	y		cns11643,mcbopomofo
 峱	ㄋㄠˊ	primary	y		cns11643
 峱	ㄋㄠ	primary	y		mcbopomofo
@@ -14688,8 +14688,8 @@
 彡	ㄒㄧㄢ	attested	y		cns11643,mcbopomofo-rare
 彡	ㄕㄢ	attested	y		cns11643,mcbopomofo-rare
 形	ㄒㄧㄥˊ	primary	y		cns11643,mcbopomofo
-彣	ㄨㄣˊ	attested	y		cns11643,mcbopomofo-rare
-彣	ㄨㄣˋ	attested	y		cns11643,mcbopomofo-rare
+彣	ㄨㄣˊ	attested	y		cns11643,mcbopomofo-rare,curated	#172 台灣人名用字（新聞＋PTT 去掉日文、簡體、粵語句子後 1404 次），不排在罕用字段
+彣	ㄨㄣˋ	attested	y		cns11643,mcbopomofo-rare,curated	#172 台灣人名用字（新聞＋PTT 去掉日文、簡體、粵語句子後 1404 次），不排在罕用字段
 彤	ㄊㄨㄥˊ	primary	y		cns11643,mcbopomofo
 彥	ㄧㄢˋ	primary	y		cns11643,mcbopomofo
 彦	ㄧㄢˋ	primary	y		cns11643,mcbopomofo-rare
@@ -15370,7 +15370,7 @@
 慚	ㄘㄢˊ	primary	y		cns11643,mcbopomofo
 慛	ㄘㄨㄟ	primary	y		cns11643
 慛	ㄘㄨㄟˊ	primary	y		mcbopomofo
-慜	ㄇㄧㄣˇ	primary	y		cns11643,mcbopomofo-rare
+慜	ㄇㄧㄣˇ	primary	y		cns11643,mcbopomofo-rare,curated	#172 台灣人名用字（新聞＋PTT 去掉日文、簡體、粵語句子後 644 次），不排在罕用字段
 慝	ㄊㄜˋ	primary	y		cns11643,mcbopomofo
 慞	ㄓㄤ	primary	y		cns11643,mcbopomofo
 慟	ㄊㄨㄥˋ	primary	y		cns11643,mcbopomofo
@@ -17252,7 +17252,7 @@
 晔	ㄧㄝˋ	primary	y		cns11643
 晕	ㄩㄣˋ	primary	y		cns11643
 晖	ㄏㄨㄟ	primary	y		cns11643
-晗	ㄏㄢˊ	primary	y		cns11643,mcbopomofo-rare
+晗	ㄏㄢˊ	primary	y		cns11643,mcbopomofo-rare,curated	#172 台灣人名用字（新聞＋PTT 去掉日文、簡體、粵語句子後 2204 次），不排在罕用字段
 晘	ㄏㄢˋ	primary	y		cns11643,mcbopomofo-rare
 晙	ㄐㄩㄣˋ	primary	y		cns11643,mcbopomofo
 晚	ㄨㄢˇ	primary	y		cns11643,mcbopomofo
@@ -20525,7 +20525,7 @@
 瀛	ㄧㄥˊ	primary	y		cns11643,mcbopomofo
 瀜	ㄖㄨㄥˊ	primary	y		cns11643,mcbopomofo
 瀝	ㄌㄧˋ	primary	y		cns11643,mcbopomofo
-瀞	ㄐㄧㄥˋ	primary	y		cns11643,mcbopomofo-rare
+瀞	ㄐㄧㄥˋ	primary	y		cns11643,mcbopomofo-rare,curated	#172 台灣人名用字（新聞＋PTT 去掉日文、簡體、粵語句子後 2419 次），不排在罕用字段
 瀟	ㄒㄧㄠ	primary	y		cns11643,mcbopomofo
 瀠	ㄧㄥˊ	primary	y		cns11643,mcbopomofo
 瀡	ㄙㄨㄟˇ	primary	y		cns11643,mcbopomofo
@@ -20806,8 +20806,8 @@
 烮	ㄌㄧㄝˋ	primary	y		cns11643,mcbopomofo-rare
 烯	ㄒㄧ	primary	y		cns11643,mcbopomofo
 烰	ㄈㄨˊ	primary	y		cns11643,mcbopomofo
-烱	ㄐㄧㄥˇ	attested	y		cns11643,mcbopomofo-rare
-烱	ㄐㄩㄥˇ	attested	y		cns11643,mcbopomofo-rare
+烱	ㄐㄧㄥˇ	attested	y		cns11643,mcbopomofo-rare,curated	#172 台灣人名用字（新聞＋PTT 去掉日文、簡體、粵語句子後 794 次），不排在罕用字段
+烱	ㄐㄩㄥˇ	attested	y		cns11643,mcbopomofo-rare,curated	#172 台灣人名用字（新聞＋PTT 去掉日文、簡體、粵語句子後 794 次），不排在罕用字段
 烲	ㄒㄧㄝˋ	attested	y		cns11643,mcbopomofo-rare
 烲	ㄓㄜˊ	attested	y		cns11643,mcbopomofo-rare
 烲	ㄔㄜˋ	attested	y		cns11643,mcbopomofo-rare
@@ -21798,8 +21798,8 @@
 珟	ㄙㄨˋ	primary	y		cns11643,mcbopomofo-rare
 珠	ㄓㄨ	primary	y		cns11643,mcbopomofo
 珡	ㄑㄧㄣˊ	primary	y		cns11643,mcbopomofo-rare
-珢	ㄍㄣˋ	attested	y		cns11643,mcbopomofo-rare
-珢	ㄧㄣˊ	attested	y		cns11643,mcbopomofo-rare
+珢	ㄍㄣˋ	attested	y		cns11643,mcbopomofo-rare,curated	#172 台灣人名用字（新聞＋PTT 去掉日文、簡體、粵語句子後 2506 次），不排在罕用字段
+珢	ㄧㄣˊ	attested	y		cns11643,mcbopomofo-rare,curated	#172 台灣人名用字（新聞＋PTT 去掉日文、簡體、粵語句子後 2506 次），不排在罕用字段
 珣	ㄒㄩㄣˊ	primary	y		cns11643,mcbopomofo
 珤	ㄅㄠˇ	primary	y		cns11643,mcbopomofo-rare
 珥	ㄦˇ	primary	y		cns11643,mcbopomofo
@@ -21902,7 +21902,7 @@
 琶	ㄆㄚ˙	attested	y		cns11643
 琷	ㄑㄧㄤ	primary	y		cns11643
 琸	ㄓㄨㄛˊ	primary	y		cns11643,mcbopomofo-rare
-琹	ㄑㄧㄣˊ	primary	y		cns11643,mcbopomofo-rare
+琹	ㄑㄧㄣˊ	primary	y		cns11643,mcbopomofo-rare,curated	#172 台灣人名用字（新聞＋PTT 去掉日文、簡體、粵語句子後 515 次），不排在罕用字段
 琺	ㄈㄚˋ	primary	y		cns11643,mcbopomofo
 琻	ㄍㄢˋ	primary	y		cns11643,mcbopomofo-rare
 琼	ㄑㄩㄥˊ	primary	y		cns11643,mcbopomofo-rare
@@ -22061,7 +22061,7 @@
 瓅	ㄌㄧˋ	primary	y		cns11643,mcbopomofo
 瓆	ㄓˊ	primary	y		cns11643,mcbopomofo-rare
 瓇	ㄖㄡˊ	primary	y		cns11643,mcbopomofo-rare
-瓈	ㄌㄧˊ	primary	y		cns11643,mcbopomofo-rare
+瓈	ㄌㄧˊ	primary	y		cns11643,mcbopomofo-rare,curated	#172 台灣人名用字（新聞＋PTT 去掉日文、簡體、粵語句子後 651 次），不排在罕用字段
 瓉	ㄗㄢˋ	primary	y		cns11643,mcbopomofo-rare
 瓊	ㄑㄩㄥˊ	primary	y		cns11643,mcbopomofo
 瓋	ㄓㄜˊ	primary	y		cns11643,mcbopomofo
@@ -29495,7 +29495,7 @@
 諧	ㄒㄧㄝˊ	primary	y		cns11643,mcbopomofo
 諨	ㄈㄨˊ	primary	y		cns11643,mcbopomofo
 諩	ㄆㄨˇ	primary	y		cns11643,mcbopomofo-rare
-諪	ㄊㄧㄥˊ	primary	y		cns11643,mcbopomofo-rare
+諪	ㄊㄧㄥˊ	primary	y		cns11643,mcbopomofo-rare,curated	#172 台灣人名用字（新聞＋PTT 去掉日文、簡體、粵語句子後 590 次），不排在罕用字段
 諫	ㄐㄧㄢˋ	primary	y		cns11643,mcbopomofo
 諬	ㄑㄧˇ	primary	y		cns11643,mcbopomofo-rare
 諭	ㄩˋ	primary	y		cns11643,mcbopomofo
@@ -35579,7 +35579,7 @@
 鳬	ㄐㄧˇ	attested	y		cns11643,mcbopomofo-rare
 鳭	ㄉㄧㄠ	primary	y		cns11643,mcbopomofo
 鳮	ㄐㄧ	primary	y		cns11643,mcbopomofo-rare
-鳯	ㄈㄥˋ	primary	y		cns11643,mcbopomofo-rare
+鳯	ㄈㄥˋ	primary	y		cns11643,mcbopomofo-rare,curated	#172 台灣人名用字（新聞＋PTT 去掉日文、簡體、粵語句子後 4911 次），不排在罕用字段
 鳰	ㄖㄨˋ	primary	y		cns11643
 鳱	ㄍㄢ	primary	y		cns11643,mcbopomofo
 鳲	ㄕ	primary	y		cns11643,mcbopomofo

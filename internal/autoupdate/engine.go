@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"git.biggo.com/0c/ime/bridge/ipc"
+	"git.biggo.com/0c/ime/core/proto"
 	"git.biggo.com/0c/ime/internal/enginedir"
 	"git.biggo.com/0c/ime/internal/update"
 )
@@ -229,22 +230,40 @@ func PruneCore(base string, keep ...string) {
 // Dialer 連到執行中的引擎；沒有引擎時回錯誤。
 type Dialer func(timeout time.Duration) (net.Conn, error)
 
-func call(dial Dialer, op string) (map[string]string, error) {
+// dialEngine 連上引擎，整條連線限時 5 秒。
+func dialEngine(dial Dialer) (net.Conn, error) {
 	conn, err := dial(2 * time.Second)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
 	conn.SetDeadline(time.Now().Add(5 * time.Second))
-	if err = ipc.WriteFrame(conn, ipc.Envelope{Op: op}); err != nil {
-		return nil, err
+	return conn, nil
+}
+
+// exchange 在已連上的連線送一個請求、讀回覆；引擎回報失敗時回錯誤。
+func exchange(conn net.Conn, env ipc.Envelope) (ipc.Reply, error) {
+	if err := ipc.WriteFrame(conn, env); err != nil {
+		return ipc.Reply{}, err
 	}
 	var r ipc.Reply
-	if err = ipc.ReadFrame(conn, &r); err != nil {
-		return nil, err
+	if err := ipc.ReadFrame(conn, &r); err != nil {
+		return ipc.Reply{}, err
 	}
 	if !r.OK {
-		return nil, fmt.Errorf("%s：%s", op, r.Error)
+		return r, fmt.Errorf("%s：%s", env.Op, r.Error)
+	}
+	return r, nil
+}
+
+func call(dial Dialer, op string) (map[string]string, error) {
+	conn, err := dialEngine(dial)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	r, err := exchange(conn, ipc.Envelope{Op: op})
+	if err != nil {
+		return nil, err
 	}
 	return r.Info, nil
 }
@@ -289,4 +308,37 @@ func Drain(ctx context.Context, dial Dialer, wait time.Duration) error {
 		case <-time.After(200 * time.Millisecond):
 		}
 	}
+}
+
+// ErrNotLive：引擎不能即時切換這項設定（舊版引擎），要交接重啟才會套用。
+var ErrNotLive = errors.New("引擎不支援即時切換")
+
+// SetOutputSimplified 請執行中的引擎即時切換「輸出簡體字」（#169）：開一個暫時的 session 送 output_simplified 請求，
+// 引擎換掉所有輸入框的轉換器並寫進設定檔，不必重啟。引擎沒有回報 output_simplified_live（舊版）或沒有處理時回
+// ErrNotLive，由呼叫端改用交接重啟套用。
+func SetOutputSimplified(dial Dialer, on bool) error {
+	conn, err := dialEngine(dial)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	opened, err := exchange(conn, ipc.Envelope{Op: ipc.OpOpen, Version: proto.Version})
+	if err != nil {
+		return err
+	}
+	defer exchange(conn, ipc.Envelope{Op: ipc.OpClose, Session: opened.Session})
+	if opened.Info["output_simplified_live"] != "true" {
+		return ErrNotLive
+	}
+	r, err := exchange(conn, ipc.Envelope{Op: ipc.OpHandle, Session: opened.Session, Req: &proto.Request{Type: proto.OutputSimplified, On: on}})
+	if err != nil {
+		return err
+	}
+	if r.Snapshot == nil || !r.Snapshot.Handled {
+		return ErrNotLive
+	}
+	if r.Snapshot.OutputSimplified != on { // 例如字典載入失敗
+		return fmt.Errorf("引擎沒有切換：%s", strings.Join(r.Snapshot.Notices, "；"))
+	}
+	return nil
 }

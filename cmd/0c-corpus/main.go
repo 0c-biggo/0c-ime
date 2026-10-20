@@ -3,6 +3,9 @@
 // -jsonl 改讀已是台灣繁體的 jsonl.gz 語料（每行一篇，取 title 與 text），不做 OpenCC 轉換。
 //
 // 評測句子中出現的片段會從語料剔除，避免評測污染（剔除數量會印出）。
+//
+// -taiwan-only（預設開）以句子為單位跳過日文（有假名）、簡體與粵語（有不在台灣用字裡的簡化字、粵語用字）內容（#172）：
+// 這些句子斷詞後會變成「空→気」「国→家」這類配對，讓單字候選把日文新字體、簡化字排到常用字前面。
 package main
 
 import (
@@ -16,6 +19,7 @@ import (
 	"runtime"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -40,6 +44,9 @@ func main() {
 	splitSingle := flag.Bool("split-single", false, "bigram 分成兩份：<origin>-ns.tsv（至少一邊是多字詞）與 <origin>-ss.tsv（兩邊都是單字），讓編譯時分開給權重（docs/49 第 6 步）")
 	maxPages := flag.Int("max-pages", 0, "只處理前 N 條條目（0 為全部）")
 	workers := flag.Int("workers", runtime.NumCPU()-1, "平行處理的執行緒數")
+	taiwanOnly := flag.Bool("taiwan-only", true, "跳過日文、簡體與粵語句子（#172；false 可重跑舊的計數）")
+	rareSources := flag.String("rare-sources", "cns11643,mcbopomofo-rare", "只來自這些來源的字不算台灣用字（-taiwan-only 判斷簡化字用）")
+	source := flag.String("source", "data", "詞庫來源目錄（-taiwan-only 判斷台灣用字；與輸出目錄 -data 分開）")
 	flag.Parse()
 
 	var conv corpus.Converter
@@ -54,6 +61,17 @@ func main() {
 	prob := map[string]float64{}
 	lex.All(func(e lexicon.Entry) { prob[e.Surface] = eng.Model.LM.Uni(e.Surface) })
 	vocab := corpus.NewVocab(prob)
+
+	var filter *corpus.ScriptFilter
+	if *taiwanOnly {
+		simplified, err := corpus.SimplifiedOnly(filepath.Join(*occ, "STCharacters.txt"))
+		check(err)
+		common, err := taiwanChars(*source, *rareSources)
+		check(err)
+		filter = corpus.NewScriptFilter(simplified, func(r rune) bool { return common[r] })
+		fmt.Fprintf(os.Stderr, "台灣用字 %d 個；簡化字與粵語用字標記 %d 個\n", len(common), filter.Markers())
+	}
+	var dropped sync.Map // 內容種類 → *atomic.Int64
 
 	banned := map[string]bool{}
 	files, _ := filepath.Glob(*exclude)
@@ -115,14 +133,28 @@ func main() {
 				if *jsonl == "" {
 					t = conv.Convert(corpus.Clean(t))
 				}
-				corpus.HanChunks(t, 1, func(c string) {
-					chunks.Add(1)
-					if banned[c] {
-						excluded.Add(1)
-						return
-					}
-					vocab.Segment(c, func(ids []uint32) { b = append(b, append([]uint32(nil), ids...)) })
-				})
+				count := func(t string) {
+					corpus.HanChunks(t, 1, func(c string) {
+						chunks.Add(1)
+						if banned[c] {
+							excluded.Add(1)
+							return
+						}
+						vocab.Segment(c, func(ids []uint32) { b = append(b, append([]uint32(nil), ids...)) })
+					})
+				}
+				if filter == nil {
+					count(t)
+				} else {
+					corpus.Sentences(t, func(sentence string) {
+						if k := filter.Foreign(sentence); k != corpus.Taiwan {
+							n, _ := dropped.LoadOrStore(k, new(atomic.Int64))
+							n.(*atomic.Int64).Add(1)
+							return
+						}
+						count(sentence)
+					})
+				}
 				batches <- b
 				pages.Add(1)
 			}
@@ -223,6 +255,38 @@ func main() {
 	}
 	fmt.Printf("條目 %d；片段 %d（與評測句子相同而剔除 %d）；詞 %d 種、%d 次；bigram %d 種，保留 %d（次數 ≥ %d）；耗時 %v\n",
 		pages.Load(), chunks.Load(), excluded.Load(), len(counts.Uni), tokens, len(counts.Bi), kept, *minCount, time.Since(start).Round(time.Second))
+	dropped.Range(func(k, v any) bool {
+		fmt.Printf("跳過的%s句子：%d\n", map[string]string{corpus.Japanese: "日文", corpus.Simplified: "簡體", corpus.Cantonese: "粵語"}[k.(string)], v.(*atomic.Int64).Load())
+		return true
+	})
+}
+
+// taiwanChars 是詞庫裡至少有一個一般來源的字（台灣用字）；只來自罕用來源的字不算。
+func taiwanChars(dataDir, rareSources string) (map[rune]bool, error) {
+	d, _, err := compile.Load(dataDir)
+	if err != nil {
+		return nil, err
+	}
+	rare := map[string]bool{}
+	for _, x := range strings.Split(rareSources, ",") {
+		rare[strings.TrimSpace(x)] = true
+	}
+	out := map[rune]bool{}
+	for _, c := range d.Chars {
+		for _, x := range c.Origins {
+			if !rare[x] && !strings.HasPrefix(x, "rule:") {
+				r, _ := utf8.DecodeRuneInString(c.Char)
+				out[r] = true
+			}
+		}
+	}
+	for _, w := range d.Words {
+		if utf8.RuneCountInString(w.Word) == 1 {
+			r, _ := utf8.DecodeRuneInString(w.Word)
+			out[r] = true
+		}
+	}
+	return out, nil
 }
 
 func check(err error) {

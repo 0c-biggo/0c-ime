@@ -127,6 +127,10 @@ struct Shown {
 /// 同一個畫面版本最多因 OnLayoutChange 重查幾次。
 const MAX_REQUERIES: u32 = 8;
 
+/// 換欄位時，這段時間內已從引擎得知「輸出簡體字」（#169）就不再問：一次點擊或切換視窗常連著好幾次焦點變化，
+/// 而從別處切換後再點回這個程式總要超過這個時間。
+const SIMPLIFIED_FRESH: Duration = Duration::from_secs(1);
+
 /// 重送舊畫面（OnLayoutChange 後移位置）之前拿掉 0c-ui 已自己收起的提示：0c-ui 在 NOTICE_MS 後收起提示，
 /// DLL 不會知道；照舊重送會讓已收起的提示（或只有提示的視窗）在捲動、改視窗大小時又跳出來並重新計時。
 /// 回傳拿掉之後還有沒有東西可畫（只剩提示就不再重送）。
@@ -255,6 +259,25 @@ impl TextService_Impl {
         self.present(ctx.as_ref(), &snapshot);
     }
 
+    /// 選單的「輸出簡體字」（#169）：在這個程式的 session 請引擎即時切換，組字不動；快照帶的提示
+    /// 「已切換為輸出簡體字／繁體字」照一般提示顯示在游標旁、幾秒後收起，指示器跟著換成「简」／「中」。
+    /// 走的是打字用的同一條引擎管道，沙箱宿主（搜尋框等）也可以。引擎不能即時切換或沒回應時回傳 false。
+    pub(crate) fn set_output_simplified(&self, on: bool) -> bool {
+        let ctx = self.focused_context();
+        let snapshot = {
+            let Ok(mut st) = self.state.try_borrow_mut() else { return false };
+            if !st.session.available() {
+                return false;
+            }
+            st.session.output_simplified(on)
+        };
+        if !snapshot.ok || !snapshot.handled {
+            return false;
+        }
+        self.present(ctx.as_ref(), &snapshot);
+        true
+    }
+
     /// 鍵盤開關 compartment 改變（#117）。Windows 繁中的 Ctrl＋Space 是系統的輸入法開關熱鍵（輸入語言熱鍵
     /// IME_THOTKEY_IME_NONIME_TOGGLE），系統收到後翻轉這個值，按鍵本身不會送到 key event sink；外殼把每次翻轉當成
     /// 一次中英切換（同 Shift 單按，組字中保留組字）。值本身不代表中英：外殼從來不設定它（啟用後通常是 0），
@@ -312,10 +335,42 @@ impl TextService_Impl {
         }
     }
 
+    /// Caps Lock 開著時直接打英文（#173）：按鍵當下的鎖定狀態跟引擎記得的不同時告訴引擎；開啟時引擎先送出組字、
+    /// 切到英文，關閉時回到原本的模式，組字區與中／英指示照快照更新。TestKeyDown 與 OnKeyDown 都呼叫，第二次狀態已相同、
+    /// 不再送，兩者看到的模式一樣；Caps Lock 鍵本身在按下時（系統已切換鎖定狀態）與放開時（保險）各同步一次。
+    /// 設定關閉或舊引擎時什麼都不做，注音模式照舊不理 Caps Lock（#168）。
+    fn sync_caps(&self, ctx: Option<&ITfContext>, vk: u32) {
+        let on = keys::caps_lock_on();
+        let snapshot = {
+            let mut st = self.state.borrow_mut();
+            if vk == keys::VK_CAPS_LOCK {
+                st.session.refresh_caps_lock_english(); // 設定剛打開、引擎重啟後的第一次 Caps Lock
+            }
+            if !st.session.caps_needs_sync(on) || !st.session.available() {
+                return;
+            }
+            st.session.caps_lock(on)
+        };
+        zdebug!("Caps Lock {} -> english={}", on, snapshot.english);
+        self.present(ctx, &snapshot);
+    }
+
+    /// 開輸入指示器選單前重新確認「輸出簡體字」（#169）：設定程式或別的程式剛切換過、這個程式還沒有新快照時，
+    /// 勾選與「简」／「中」也要對。只用已經在執行的引擎；宿主正在處理別的事（狀態借用中）時略過。
+    pub(crate) fn recheck_simplified(&self) {
+        let changed = match self.state.try_borrow_mut() {
+            Ok(mut st) => st.session.refresh_simplified(),
+            Err(_) => false,
+        };
+        if changed {
+            self.sync_langbar();
+        }
+    }
+
     fn sync_langbar(&self) {
         let st = self.state.borrow();
         if let Some((_, button)) = st.langbar.as_ref() {
-            crate::langbar::set_english(button, st.session.english());
+            crate::langbar::set_state(button, st.session.english(), st.session.simplified());
         }
     }
 
@@ -878,7 +933,8 @@ impl TextService_Impl {
                 if key == "=" && layout == keys::Layout::Standard {
                     st.session.emoji_shortcut()
                 } else if keys::tone_key(layout, &key) {
-                    // 聲調鍵（#135）：沒開中英混打時引擎先把數字留在組字區，緊接空白換成聲調符號。
+                    // 聲調鍵：沒開中英混打時引擎先把數字留在組字區，緊接空白換成聲調符號（#135）；中英混打時
+                    // 照字面留在組字區，354 才整串留數字（#175）。
                     st.session.tone_mark_keys()
                 } else {
                     keys::starts_composition(layout, &key)
@@ -951,14 +1007,20 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
                 // 新開的程式從開始時的中英模式起（#160）：引擎已在執行就先問，中／英指示一開始就對；不為此啟動引擎。
                 st.session.learn_mode(false);
                 let english = st.session.english();
+                let simplified = st.session.simplified();
                 drop(st);
                 // 輸入指示器的中／英按鈕與選單（#13）。按鈕持有本服務的參考，Deactivate 時移除以解開循環。
                 let tm = self.state.borrow().thread_mgr.clone();
                 if let Some(Ok(mgr)) = tm.map(|tm| tm.cast::<ITfLangBarItemMgr>()) {
                     let service = self.to_object();
+                    let simplify = self.to_object();
+                    let recheck = self.to_object();
                     let button = crate::langbar::LangBarButton::create(
                         english,
+                        simplified,
                         Box::new(move || service.toggle_mode()),
+                        Box::new(move |on| simplify.set_output_simplified(on)),
+                        Box::new(move || recheck.recheck_simplified()),
                     );
                     if let Ok(item) = button.cast::<ITfLangBarItem>() {
                         if mgr.AddItem(&item).is_ok() {
@@ -1077,6 +1139,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             self.observe_shift(vk, lparam.0);
             self.commit_before_host_key(pic.as_ref(), vk, lparam.0);
             self.learn_mode(vk);
+            self.sync_caps(pic.as_ref(), vk);
             let wants = self
                 .english_key_policy(pic.as_ref(), vk, lparam.0)
                 .unwrap_or_else(|| self.wants_key(vk, lparam.0));
@@ -1096,6 +1159,9 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
                 return Ok(false.into());
             }
             let vk = wparam.0 as u32;
+            if vk == keys::VK_CAPS_LOCK {
+                self.sync_caps(pic.as_ref(), 0); // #173：按下時沒同步到的話（宿主時序不同），放開時一定已切換
+            }
             let mut st = self.state.borrow_mut();
             // Shift 只在設定開啟這一側、單按而且沒超過時限時才吃 key-up；其他情況照舊交給宿主與系統。
             if let Some(side) = keys::shift_side(vk, lparam.0) {
@@ -1125,6 +1191,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             self.observe_shift(vk, lparam.0);
             self.commit_before_host_key(pic.as_ref(), vk, lparam.0);
             self.learn_mode(vk);
+            self.sync_caps(pic.as_ref(), vk);
             if !self
                 .english_key_policy(pic.as_ref(), vk, lparam.0)
                 .unwrap_or_else(|| self.wants_key(vk, lparam.0))
@@ -1248,7 +1315,7 @@ impl ITfThreadMgrEventSink_Impl for TextService_Impl {
     }
     fn OnSetFocus(
         &self,
-        _focus: Ref<'_, ITfDocumentMgr>,
+        focus: Ref<'_, ITfDocumentMgr>,
         previous: Ref<'_, ITfDocumentMgr>,
     ) -> windows_core::Result<()> {
         crate::guarded("OnSetFocus", || {
@@ -1263,7 +1330,12 @@ impl ITfThreadMgrEventSink_Impl for TextService_Impl {
                 st.selection = None;
                 st.ui.hide();
                 // 全部共用（#115）時別的程式可能已經切換：引擎在執行就重新問，中／英指示跟著換（不為此啟動引擎）。
-                st.session.learn_mode(false)
+                // 「輸出簡體字」也可能剛在設定程式或別的程式切換過（#169）：指示器的「简」跟著換。焦點離開文件（focus 為
+                // NULL）時不問；SIMPLIFIED_FRESH 之內剛從引擎得知（剛打字、同一次點擊的前一次焦點變化）也不問，
+                // 不在宿主的 UI 執行緒上每次多一次同步 IPC。開選單時另外照常確認（recheck_simplified）。
+                let mode = st.session.learn_mode(false);
+                let simplified = focus.as_ref().is_some() && st.session.refresh_simplified_after(SIMPLIFIED_FRESH);
+                mode || simplified
             };
             if changed {
                 self.sync_langbar();

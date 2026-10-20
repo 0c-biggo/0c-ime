@@ -185,6 +185,28 @@ func TestSharedModeAcrossSessions(t *testing.T) {
 	if mode(a, proto.Request{Type: proto.Mode, On: true}) != proto.ModeEnglish || mode(b, proto.Request{Type: proto.Key, Key: "j"}) != proto.ModeZhuyin {
 		t.Fatal("Caps Lock 的設成英文只影響那個輸入框")
 	}
+	// #173 Caps Lock 開著時直接打英文：開啟只影響那個輸入框；關閉回到共用的模式（期間別的輸入框切到英文就是英文）。
+	e3 := testEngine()
+	e3.SharedMode, e3.CapsLockEnglish = true, true
+	p, q := e3.OpenSession(), e3.OpenSession()
+	mode3 := func(id uint64, r proto.Request) string {
+		snap, err := e3.Do(id, r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return snap.Mode
+	}
+	if mode3(p, proto.Request{Type: proto.CapsLock, On: true}) != proto.ModeEnglish || mode3(q, proto.Request{Type: proto.Key, Key: "j"}) != proto.ModeZhuyin {
+		t.Fatal("Caps Lock 的暫時英文只影響那個輸入框")
+	}
+	if mode3(p, proto.Request{Type: proto.CapsLock, On: false}) != proto.ModeZhuyin {
+		t.Fatal("關 Caps Lock 回到共用的注音")
+	}
+	mode3(p, proto.Request{Type: proto.CapsLock, On: true})
+	mode3(q, proto.Request{Type: proto.Key, Key: proto.KeyEscape})
+	if mode3(q, proto.Request{Type: proto.Toggle}) != proto.ModeEnglish || mode3(p, proto.Request{Type: proto.CapsLock, On: false}) != proto.ModeEnglish {
+		t.Fatal("暫時英文期間別的輸入框切到英文：關 Caps Lock 後是共用的英文")
+	}
 	// 沒有開全部共用：各自的模式，照外殼原本的做法。
 	e2 := testEngine()
 	x, y := e2.OpenSession(), e2.OpenSession()

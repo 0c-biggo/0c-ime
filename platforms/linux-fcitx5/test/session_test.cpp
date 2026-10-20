@@ -594,6 +594,90 @@ int main(int argc, char **argv) {
         std::ofstream(home + "/settings.json") << R"({})";
     }
     {
+        // #173：caps_lock_english 來自 open 回覆；預設關，外殼不送 caps_lock（注音模式不理 Caps Lock，#168）。
+        // 開啟後：組字中開 Caps Lock 先送出組字、切到英文；同樣的狀態不重送；關掉回到注音。
+        zuin::Session s(client, nullptr);
+        s.handle({{"type", "cancel"}});
+        CHECK(!s.capsLockEnglish(true) && !s.capsNeedsSync(true, true), "預設不應回報 caps_lock_english");
+        (void)!system((std::string("pkill -f '0c-server -socket ") + argv[1] + "'").c_str());
+        usleep(300 * 1000);
+        std::ofstream(home + "/settings.json") << R"({"caps_lock_english":true})";
+        // 設定程式打開這一項、引擎重啟後，Caps Lock 鍵本身（spawn=false）以 health 重新確認，不用 open 的舊快取。
+        CHECK(s.capsLockEnglish(false), "引擎重啟後 Caps Lock 鍵應重新確認到 caps_lock_english");
+        CHECK(s.capsLockEnglish(true), "設定開啟後重開的 session 應回報 caps_lock_english");
+        s.key("j"); s.key("i"); s.key("3");
+        CHECK(s.capsNeedsSync(true, true) && !s.capsNeedsSync(false, true), "開 Caps Lock 才需要同步");
+        auto snap = s.capsLock(true);
+        CHECK(snap.commit == "我" && snap.english && snap.capsLock && s.english(), "開 Caps Lock 應先送出組字再切英文：%s %d", snap.commit.c_str(), snap.english);
+        CHECK(!s.capsNeedsSync(true, true), "引擎已記得開啟，不重送");
+        CHECK(!s.key("A").handled, "暫時英文的 A 交給應用程式");
+        snap = s.capsLock(false);
+        CHECK(!snap.english && !snap.capsLock && !s.english(), "關 Caps Lock 應回到注音");
+        // 連線還在時 Caps Lock 鍵沿用 open 的值、不問引擎：引擎暫停（SIGSTOP）時問 health 會逾時而回 false。
+        CHECK(client.alive(), "連線還在");
+        (void)!system((std::string("pkill -STOP -f '[0]c-server -socket ") + argv[1] + "'").c_str());
+        CHECK(s.capsLockEnglish(false), "連線還在時 Caps Lock 鍵不問引擎，沿用 open 的值");
+        (void)!system((std::string("pkill -CONT -f '[0]c-server -socket ") + argv[1] + "'").c_str());
+        // 引擎在 Caps Lock 英文中重啟（例如在設定程式改了別的設定）：重開 session 先還原，第一個字母就是英文。
+        snap = s.capsLock(true);
+        CHECK(snap.english && snap.capsLock, "再開 Caps Lock");
+        (void)!system((std::string("pkill -f '0c-server -socket ") + argv[1] + "'").c_str());
+        usleep(300 * 1000);
+        CHECK(!client.alive() && !client.connected(), "引擎退出後 alive 發現斷線並關掉連線");
+        snap = s.key("A");
+        CHECK(snap.ok && snap.english && !snap.handled && snap.capsLock, "重開 session 後 Caps Lock 還開著，A 照英文：english=%d handled=%d", snap.english, snap.handled);
+        snap = s.capsLock(false);
+        CHECK(!snap.english && !s.english(), "重開後關 Caps Lock 也回到注音");
+        // Caps Lock 英文中關掉這一項（引擎以新設定重啟）：照注音重開，不送 caps_lock。
+        s.capsLock(true);
+        (void)!system((std::string("pkill -f '0c-server -socket ") + argv[1] + "'").c_str());
+        usleep(300 * 1000);
+        std::ofstream(home + "/settings.json") << R"({})";
+        snap = s.key("j");
+        CHECK(snap.ok && !snap.english && snap.handled && snap.text() == "ㄨ", "設定關掉後照注音：%s", snap.text().c_str());
+        CHECK(!s.capsNeedsSync(false, true) && !s.capsNeedsSync(true, true), "設定關掉後不送 caps_lock");
+        s.key("Escape");
+        (void)!system((std::string("pkill -f '0c-server -socket ") + argv[1] + "'").c_str());
+        usleep(300 * 1000);
+        std::ofstream(home + "/settings.json") << R"({})";
+    }
+    {
+        // #169：選單切換「輸出簡體字」即時生效：另一個輸入框已經在組字區的字照新的設定送出，設定檔跟著寫；
+        // 切換不記進重播紀錄（斷線重連後不會再切一次）。
+        auto typeScenery = [](zuin::Session &s) {
+            zuin::Snapshot snap;
+            for (const char *k : {"z", "/", " ", "r", "u", "/", "3"}) { snap = s.key(k); } // ㄈㄥ ㄐㄧㄥˇ
+            return snap;
+        };
+        auto stored = [&] {
+            std::ifstream in(home + "/settings.json");
+            auto j = nlohmann::json::parse(in, nullptr, false);
+            return j.is_object() && j.value("output_simplified", false);
+        };
+        zuin::Session menu(client, nullptr), editor(client, nullptr);
+        CHECK(menu.ensureLive() && !menu.simplifiedAtOpen(), "引擎應回報 output_simplified_live、目前是繁體");
+        auto snap = typeScenery(editor);
+        CHECK(snap.text() == "風景" && !snap.outputSimplified, "組字：%s", snap.text().c_str());
+        auto toggled = menu.outputSimplified(true);
+        CHECK(toggled.ok && toggled.handled && toggled.outputSimplified && !toggled.notices.empty() &&
+              toggled.notices.front() == "已切換為輸出簡體字", "切換：%d %d", toggled.handled, toggled.outputSimplified);
+        CHECK(stored(), "settings.json 應寫入 output_simplified=true");
+        snap = editor.key("Enter");
+        CHECK(snap.commit == "风景" && snap.outputSimplified, "組字中切換後送出 %s", snap.commit.c_str());
+        // 組字中切換：組字不動，也不進重播紀錄。引擎重啟後設定檔改回繁體，重播不能再把它切成簡體。
+        snap = typeScenery(menu);
+        toggled = menu.outputSimplified(true);
+        CHECK(toggled.text() == "風景" && toggled.commit.empty(), "切換不動組字：%s", toggled.text().c_str());
+        (void)!system((std::string("pkill -f '0c-server -socket ") + argv[1] + "'").c_str());
+        usleep(300 * 1000);
+        std::ofstream(home + "/settings.json") << R"({"output_simplified":false})";
+        snap = menu.key("Enter"); // 重連、重播組字後送出
+        CHECK(snap.commit == "風景" && !stored(), "重播不能再切換：送出 %s，設定 %d", snap.commit.c_str(), stored());
+        (void)!system((std::string("pkill -f '0c-server -socket ") + argv[1] + "'").c_str());
+        usleep(300 * 1000);
+        std::ofstream(home + "/settings.json") << R"({})";
+    }
+    {
         // #117：預設（右 Shift）時 health 回報右 Shift 切換、左 Shift 不切換。
         zuin::Session s(client, nullptr);
         auto keys = s.shiftKeys();

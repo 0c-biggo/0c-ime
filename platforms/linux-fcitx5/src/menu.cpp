@@ -38,6 +38,10 @@ UpdateStatus parseStatus(const std::string &text) {
         if (auto v = str(*c, "selection"); !v.empty()) { s.selection = v; }
         if (auto v = c->find("punctuation"); v != c->end() && v->is_boolean()) { s.punctuation = v->get<bool>(); }
         if (auto v = c->find("document_context"); v != c->end() && v->is_boolean()) { s.documentContext = v->get<bool>(); }
+        if (auto v = c->find("output_simplified"); v != c->end() && v->is_boolean()) {
+            s.simplifiedKnown = true;
+            s.outputSimplified = v->get<bool>();
+        }
     }
     if (auto f = j.find("features"); f != j.end() && f->is_object()) {
         if (auto v = f->find("vocab"); v != f->end() && v->is_boolean()) { s.vocab = v->get<bool>(); }
@@ -46,6 +50,12 @@ UpdateStatus parseStatus(const std::string &text) {
         s.runtime = str(*r, "state");
         s.selectionState = str(*r, "selection_state");
         s.punctuationState = str(*r, "punctuation_state");
+        auto live = r->find("output_simplified_live");
+        auto now = r->find("output_simplified");
+        if (live != r->end() && live->is_boolean() && live->get<bool>() && now != r->end() && now->is_boolean()) {
+            s.simplifiedKnown = s.simplifiedLive = true;
+            s.outputSimplified = now->get<bool>();
+        }
     }
     return s;
 }
@@ -77,6 +87,10 @@ std::vector<std::string> statusCommand(const UpdateStatus &s) {
 std::vector<std::string> settingsCommand(bool vocab) {
     if (vocab) { return {"open-settings", "vocab"}; }
     return {"open-settings"};
+}
+
+std::vector<std::string> simplifiedCommand(bool on) {
+    return {"set", "output-simplified", on ? "on" : "off", "-apply", "-notify"};
 }
 
 std::string updaterPath() {
