@@ -1,5 +1,7 @@
 //! 一個輸入欄位在 0c-server 上的 session：請求、重連後的重播、快照的解讀。
 //! 與 Fcitx 5 外殼的 session.cpp 對應；不依賴 TSF，可單獨測試。
+use std::time::{Duration, Instant};
+
 use serde_json::{json, Value};
 
 use crate::ipc::Client;
@@ -125,6 +127,8 @@ pub struct Session {
     // 跟著 session 物件（這個程式的 TSF 執行緒），換欄位也沿用。
     simplified_live: bool,
     simplified: bool,
+    // 上一次從引擎得知「輸出簡體字」的時間（health／open／快照）；換欄位時剛問過就不再問（refresh_simplified_after）。
+    simplified_at: Option<Instant>,
 }
 
 /// 重開 session（引擎重啟、斷線）時要不要送「設定模式」還原外殼記得的模式（#160）。新 session 從開始時的模式起：
@@ -188,6 +192,7 @@ impl Session {
             caps_english: false,
             simplified_live: false,
             simplified: false,
+            simplified_at: None,
         }
     }
 
@@ -196,6 +201,7 @@ impl Session {
         let before = (self.simplified_live, self.simplified);
         self.simplified_live = info["output_simplified_live"] == "true";
         self.simplified = self.simplified_live && info["output_simplified"] == "true";
+        self.simplified_at = Some(Instant::now());
         before != (self.simplified_live, self.simplified)
     }
 
@@ -219,6 +225,15 @@ impl Session {
             Some(reply) => self.learn_simplified(&reply["info"]),
             None => false,
         }
+    }
+
+    /// 換欄位用的 refresh_simplified：fresh 之內已經從引擎得知（剛打過字、剛換過欄位）就不再問，回傳 false。
+    /// 換欄位在宿主的 UI 執行緒上，一次點擊常連著好幾次焦點變化；同一段時間裡值不會變，不必每次都多一次同步 IPC。
+    pub fn refresh_simplified_after(&mut self, fresh: Duration) -> bool {
+        if self.simplified_at.is_some_and(|at| at.elapsed() < fresh) {
+            return false;
+        }
+        self.refresh_simplified()
     }
 
     /// 切換「輸出簡體字」（#169）：引擎立即改變之後送出的文字（所有程式，包括已經在組字區的字）並寫進設定檔，
@@ -521,6 +536,7 @@ impl Session {
             self.caps_english = s.caps_english;
             if self.simplified_live {
                 self.simplified = s.output_simplified; // 設定程式或別的程式切換後，下一個快照就跟上（#169）
+                self.simplified_at = Some(Instant::now());
             }
             self.mode_known = true;
             self.english_state = s.clone();
@@ -989,6 +1005,11 @@ mod tests {
         assert!(snap.ok && snap.handled && snap.output_simplified, "{:?}", snap);
         assert_eq!(snap.notice(), "已切換為輸出簡體字");
         assert_eq!(menu.simplified(), Some(true));
+        // 換欄位的確認：剛從快照得知就不問（一次點擊連著好幾次焦點變化）；過了時效才問，指示器跟上別處的切換。
+        assert!(!editor.refresh_simplified_after(Duration::from_secs(60)));
+        assert_eq!(editor.simplified(), Some(false), "時效內沿用上一個快照");
+        assert!(editor.refresh_simplified_after(Duration::ZERO), "過了時效重新問引擎");
+        assert_eq!(editor.simplified(), Some(true));
         let sent = editor.key("Enter");
         assert_eq!(sent.commit, "风景", "組字中切換後照新設定送出");
         assert_eq!(editor.simplified(), Some(true), "下一個快照就跟上");

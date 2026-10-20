@@ -127,6 +127,10 @@ struct Shown {
 /// 同一個畫面版本最多因 OnLayoutChange 重查幾次。
 const MAX_REQUERIES: u32 = 8;
 
+/// 換欄位時，這段時間內已從引擎得知「輸出簡體字」（#169）就不再問：一次點擊或切換視窗常連著好幾次焦點變化，
+/// 而從別處切換後再點回這個程式總要超過這個時間。
+const SIMPLIFIED_FRESH: Duration = Duration::from_secs(1);
+
 /// 重送舊畫面（OnLayoutChange 後移位置）之前拿掉 0c-ui 已自己收起的提示：0c-ui 在 NOTICE_MS 後收起提示，
 /// DLL 不會知道；照舊重送會讓已收起的提示（或只有提示的視窗）在捲動、改視窗大小時又跳出來並重新計時。
 /// 回傳拿掉之後還有沒有東西可畫（只剩提示就不再重送）。
@@ -1310,7 +1314,7 @@ impl ITfThreadMgrEventSink_Impl for TextService_Impl {
     }
     fn OnSetFocus(
         &self,
-        _focus: Ref<'_, ITfDocumentMgr>,
+        focus: Ref<'_, ITfDocumentMgr>,
         previous: Ref<'_, ITfDocumentMgr>,
     ) -> windows_core::Result<()> {
         crate::guarded("OnSetFocus", || {
@@ -1325,9 +1329,12 @@ impl ITfThreadMgrEventSink_Impl for TextService_Impl {
                 st.selection = None;
                 st.ui.hide();
                 // 全部共用（#115）時別的程式可能已經切換：引擎在執行就重新問，中／英指示跟著換（不為此啟動引擎）。
-                // 「輸出簡體字」也可能剛在設定程式或別的程式切換過（#169）：指示器的「简」跟著換。
+                // 「輸出簡體字」也可能剛在設定程式或別的程式切換過（#169）：指示器的「简」跟著換。焦點離開文件（focus 為
+                // NULL）時不問；SIMPLIFIED_FRESH 之內剛從引擎得知（剛打字、同一次點擊的前一次焦點變化）也不問，
+                // 不在宿主的 UI 執行緒上每次多一次同步 IPC。開選單時另外照常確認（recheck_simplified）。
                 let mode = st.session.learn_mode(false);
-                st.session.refresh_simplified() || mode
+                let simplified = focus.as_ref().is_some() && st.session.refresh_simplified_after(SIMPLIFIED_FRESH);
+                mode || simplified
             };
             if changed {
                 self.sync_langbar();
