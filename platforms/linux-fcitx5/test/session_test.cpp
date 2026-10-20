@@ -613,6 +613,30 @@ int main(int argc, char **argv) {
         CHECK(!s.key("A").handled, "暫時英文的 A 交給應用程式");
         snap = s.capsLock(false);
         CHECK(!snap.english && !snap.capsLock && !s.english(), "關 Caps Lock 應回到注音");
+        // 連線還在時 Caps Lock 鍵沿用 open 的值、不問引擎：引擎暫停（SIGSTOP）時問 health 會逾時而回 false。
+        CHECK(client.alive(), "連線還在");
+        (void)!system((std::string("pkill -STOP -f '[0]c-server -socket ") + argv[1] + "'").c_str());
+        CHECK(s.capsLockEnglish(false), "連線還在時 Caps Lock 鍵不問引擎，沿用 open 的值");
+        (void)!system((std::string("pkill -CONT -f '[0]c-server -socket ") + argv[1] + "'").c_str());
+        // 引擎在 Caps Lock 英文中重啟（例如在設定程式改了別的設定）：重開 session 先還原，第一個字母就是英文。
+        snap = s.capsLock(true);
+        CHECK(snap.english && snap.capsLock, "再開 Caps Lock");
+        (void)!system((std::string("pkill -f '0c-server -socket ") + argv[1] + "'").c_str());
+        usleep(300 * 1000);
+        CHECK(!client.alive() && !client.connected(), "引擎退出後 alive 發現斷線並關掉連線");
+        snap = s.key("A");
+        CHECK(snap.ok && snap.english && !snap.handled && snap.capsLock, "重開 session 後 Caps Lock 還開著，A 照英文：english=%d handled=%d", snap.english, snap.handled);
+        snap = s.capsLock(false);
+        CHECK(!snap.english && !s.english(), "重開後關 Caps Lock 也回到注音");
+        // Caps Lock 英文中關掉這一項（引擎以新設定重啟）：照注音重開，不送 caps_lock。
+        s.capsLock(true);
+        (void)!system((std::string("pkill -f '0c-server -socket ") + argv[1] + "'").c_str());
+        usleep(300 * 1000);
+        std::ofstream(home + "/settings.json") << R"({})";
+        snap = s.key("j");
+        CHECK(snap.ok && !snap.english && snap.handled && snap.text() == "ㄨ", "設定關掉後照注音：%s", snap.text().c_str());
+        CHECK(!s.capsNeedsSync(false, true) && !s.capsNeedsSync(true, true), "設定關掉後不送 caps_lock");
+        s.key("Escape");
         (void)!system((std::string("pkill -f '0c-server -socket ") + argv[1] + "'").c_str());
         usleep(300 * 1000);
         std::ofstream(home + "/settings.json") << R"({})";
