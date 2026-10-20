@@ -2,6 +2,22 @@
 
 每個版本的「公開摘要」與 [官網更新紀錄](https://0c.biggo.com/updates/) 相同；「原始碼套件」記錄 Release 完整 tarball 的內容變化。
 
+## 未發布
+
+### 公開摘要
+
+- Mac：自動更新換成新版輸入法時，不會再讓正在打的字變成英文字母或漏掉。背景下載安裝好的新版，改在你離開電腦（螢幕鎖定、螢幕關閉或螢幕保護程式）時才換上，回來解鎖就能直接打字；在那之前照常用原本的版本打字，不必登出。自己按「立即安裝」或執行安裝程式時，裝好就換成新版，回到原本的 App 就能打字。
+- 更新後只保留上一版供回復，不再每次更新都留下一整份舊版（每份約 0.5 GB）。以前累積下來的舊版，在更新到這一版時一次清掉；回復上一版照常可用。
+
+### 原始碼套件
+
+- 原始碼 tarball 符合 DFSG，不再內附神經模型：已配對的模型改由同一個 Release 另附 `0c-ime-models-<版本>.tar.xz`，解壓到同一處即補上 `models/select/` 與 `models/punct/`。`make assets` 預設下載兩者，`make assets MODELS=0` 只取字典；0.2.2 以前內附模型的 tarball 照常可用。逐項檢查見 `legal/DFSG-free.md`。
+- 內附字典的 `lexicon.bin`、`lm.bin` 與英文子包不變；自有來源的署名改為 Funmula Co., Limited，`manifest.json` 與 `NOTICE.txt` 跟著改變。模型權重不變，只更新配對資訊。
+- 編譯字典用的四個詞對統計檔公開在 [0c-ime-data](https://github.com/0c-biggo/0c-ime-data)，可從公開內容重建出相同位元組的內附字典，步驟見 `PACKAGING.md`。
+- 授權：寫明著作權人 Funmula Co., Limited，自有圖示與圖片採 CC BY-SA 4.0；`legal/copyright` 以 DEP-5 格式逐檔列出著作權人與授權。
+- Go module path 改為 `github.com/0c-biggo/0c-ime`。
+- `0c-cli` 一行只有 `:` 時打出冒號，不再當掉。
+
 ## 0.2.2（2026-10-20，public-beta）
 
 ### 公開摘要
