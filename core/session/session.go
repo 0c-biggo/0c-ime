@@ -430,6 +430,10 @@ func (s *Session) capsLockChanged(on bool) (bool, string) {
 	return true, commit
 }
 
+// CapsLockOn 回報外殼最近一次 caps_lock 請求是開啟（#173；設定關閉時一律 false）。全部共用時引擎據此讓 Caps Lock
+// 開著的輸入框不跟上別的輸入框切回的注音。
+func (s *Session) CapsLockOn() bool { return s.capsLock }
+
 // EnglishMode 回報目前是否為英文模式（引擎在「全部共用」時用來同步各輸入框，#115）。
 func (s *Session) EnglishMode() bool { return s.english }
 
