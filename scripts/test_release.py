@@ -2435,9 +2435,10 @@ Successfully verified: 0c-update.exe
         node = shutil.which("node")
         if not node:
             self.skipTest("沒有 node")
-        app = Path(__file__).resolve().parents[1] / "platforms/settings/ui/app.js"
-        result = subprocess.run([node, "--check", str(app)], capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
+        for name in ("app.js", "models.js"):
+            app = Path(__file__).resolve().parents[1] / "platforms/settings/ui" / name
+            result = subprocess.run([node, "--check", str(app)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, name + "：" + result.stderr)
 
     def test_settings_ui_engine_state(self):
         # 總覽「輸入法仍未全部切換」的判斷：核心更新後不誤報、外殼等重新登入時要提示（0.2.1 候選版冒煙）。
@@ -2445,6 +2446,15 @@ Successfully verified: 0c-update.exe
         if not node:
             self.skipTest("沒有 node")
         test = Path(__file__).resolve().parents[1] / "platforms/settings/test/engine_state_test.js"
+        result = subprocess.run([node, "--test", str(test)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_settings_ui_models(self):
+        # #180「模型」頁：內建只顯示資訊、可下載／下載中／已安裝／重新下載各自的按鈕、缺推論元件與網址白名單。
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("沒有 node")
+        test = Path(__file__).resolve().parents[1] / "platforms/settings/test/models_test.js"
         result = subprocess.run([node, "--test", str(test)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 

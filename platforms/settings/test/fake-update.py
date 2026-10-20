@@ -10,6 +10,10 @@ cmd/0c-update/api.go 的 apiView 相同；其他指令（status、settings、set
   fake-update.py --init STATE empty|full|ai|english [old]  建立初始狀態（english：漢字詞夾英文詞，#146；
                                                  old：模擬還沒有 features.vocab 的舊版 0c-update，入口要藏起來）
   fake-update.py vocab add-as assistant 詞 讀音   模擬 AI 助手從 API 加詞（版本加一，watch 會看到）
+
+「模型」頁（#180）：設了 FAKE_MODELS 時 models status|download|cancel|remove 由這裡依契約（schema 1）回應：
+  fake-update.py --models STATE bundled|none|downloading|user|redownload|runtime|distribution
+downloading 的進度固定不動（截圖用）；從 none 按「下載模型」後，每讀一次 status 前進一步：下載 → 核對 → 配對 → 已安裝。
 """
 import fcntl
 import json
@@ -411,8 +415,107 @@ def api_locked(args):
     return view
 
 
+MODELS = os.environ.get('FAKE_MODELS', '')
+MODEL_LOCK = [
+    {'role': 'select', 'label': '選字', 'version': 'd512-pf512-20260926', 'size': 130723134,
+     'repository': 'Funmula/0c-sequence-d512', 'revision': '71af1f0e5b3c9d2a8e6f4b1c0d7a9e3f5b2c8d1a',
+     'url': 'https://huggingface.co/Funmula/0c-sequence-d512/tree/71af1f0e5b3c9d2a8e6f4b1c0d7a9e3f5b2c8d1a', 'license': 'MIT'},
+    {'role': 'punct', 'label': '補標點', 'version': 'punct-d512-20260930', 'size': 131276866,
+     'repository': 'Funmula/0c-punct-d512', 'revision': '4db3ed40a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6',
+     'url': 'https://huggingface.co/Funmula/0c-punct-d512/tree/4db3ed40a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6', 'license': 'MIT'},
+]
+MODEL_SHA = {'select': '71af1f0e' + '3a5c' * 14, 'punct': '4db3ed40' + '9e1b' * 14}
+
+
+def models_installed(source, state='ready'):
+    base = '/usr/share/0c/neural' if source == 'bundled' else '/home/u/.local/share/zuin/models/5f1c0a9e'
+    out = []
+    for m in MODEL_LOCK:
+        item = dict(m, state=state, path=base + '/' + m['role'], sha256=MODEL_SHA[m['role']])
+        if source == 'bundled':  # 官網內建的不是 Hugging Face 那一份：沒有上游資訊
+            item = {k: item[k] for k in ('role', 'label', 'state', 'version', 'path', 'sha256', 'size')}
+            item['sha256'] = ('cef689f1' if m['role'] == 'select' else '2d98c7c6') + '0b7d' * 14
+        out.append(item)
+    return out
+
+
+def models_missing():
+    return [dict(m, state='not_installed', path='', sha256='') for m in MODEL_LOCK]
+
+
+def models_init(path, kind):
+    total = sum(m['size'] for m in MODEL_LOCK)
+    st = {'schema': 1, 'source': 'none', 'can_download': True, 'disabled_reason': '',
+          'runtime': {'ok': True, 'python': '/usr/bin/python3', 'missing': []},
+          'need': 'download', 'download_size': total, 'models': models_missing(), 'operation': None, 'last_error': None}
+    frozen = False
+    if kind == 'bundled':
+        st.update(source='bundled', can_download=False, disabled_reason='bundled', need='none', models=models_installed('bundled'))
+    elif kind == 'downloading':
+        st['operation'] = {'phase': 'downloading', 'done_bytes': 98566144, 'total_bytes': total, 'started_at': '2026-10-21T08:00:00Z'}
+        frozen = True
+    elif kind == 'user':
+        st.update(source='user', need='none', models=models_installed('user'))
+    elif kind == 'redownload':
+        st.update(source='user', need='redownload', models=[dict(m, state='fallback') for m in models_installed('user')])
+    elif kind == 'runtime':
+        st['runtime'] = {'ok': False, 'python': '/usr/bin/python3', 'missing': ['python3-numpy', 'python3-onnxruntime']}
+    elif kind == 'distribution':
+        st.update(can_download=False, disabled_reason='distribution')
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump({'status': st, 'frozen': frozen}, f, ensure_ascii=False)
+
+
+def models(args):
+    action = args[0] if args else ''
+    log({'op': 'models-' + action})
+    lock = open(MODELS + '.lock', 'w')
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    with open(MODELS, encoding='utf-8') as f:
+        doc = json.load(f)
+    st = doc['status']
+    op = st.get('operation')
+    if action == 'status' and op and not doc.get('frozen'):
+        if op['phase'] == 'downloading':
+            op['done_bytes'] = min(op['total_bytes'], op['done_bytes'] + op['total_bytes'] // 3 + 1)
+            if op['done_bytes'] >= op['total_bytes']:
+                op['phase'] = 'verifying'
+        elif op['phase'] == 'verifying':
+            op['phase'] = 'pairing'
+        else:
+            st.update(operation=None, source='user', need='none', models=models_installed('user'))
+    elif action == 'download':
+        if op:
+            print(json.dumps({'ok': False, 'error': {'code': 'in_progress', 'message': '模型正在下載。'}}, ensure_ascii=False))
+            return 1
+        st['operation'] = {'phase': 'downloading', 'done_bytes': 0, 'total_bytes': st['download_size'], 'started_at': '2026-10-21T08:00:00Z'}
+        st['last_error'] = None
+    elif action == 'cancel':
+        st['operation'] = None
+        st['last_error'] = {'code': 'canceled', 'message': '已取消下載，沒有留下檔案。', 'at': '2026-10-21T08:00:00Z'}
+    elif action == 'remove':
+        if st['source'] != 'user':
+            print(json.dumps({'ok': False, 'error': {'code': 'not_user', 'message': '只能刪除下載到個人目錄的模型。'}}, ensure_ascii=False))
+            return 1
+        st.update(source='none', need='download', models=models_missing(), last_error=None)
+    elif action != 'status':
+        print(json.dumps({'ok': False, 'error': {'code': 'usage', 'message': '未知的 models 動作'}}, ensure_ascii=False))
+        return 2
+    tmp = MODELS + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(doc, f, ensure_ascii=False)
+    os.replace(tmp, MODELS)
+    print(json.dumps(st, ensure_ascii=False))
+    return 0
+
+
 def main():
     argv = sys.argv[1:]
+    if argv[:1] == ['--models']:
+        models_init(argv[1], argv[2])
+        return 0
+    if argv[:1] == ['models'] and MODELS:
+        return models([x for x in argv[1:] if x not in ('-json', '--json')])
     if argv[:1] == ['--init']:
         global STATE
         STATE = argv[1]

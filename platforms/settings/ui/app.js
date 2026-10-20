@@ -5,7 +5,7 @@
 
   const tauri = window.__TAURI__;
   const invoke = (command, args) => tauri.core.invoke(command, args);
-  const PAGES = ['overview', 'input', 'output', 'vocab', 'update', 'troubleshoot', 'about'];
+  const PAGES = ['overview', 'input', 'output', 'vocab', 'models', 'update', 'troubleshoot', 'about'];
 
   const state = {
     info: null, status: null, settings: null, error: null,
@@ -19,6 +19,7 @@
     ? !!((state.settings && state.settings.features && state.settings.features.vocab) || (state.status && state.status.features && state.status.features.vocab))
     : null);
   let vocab = null;
+  let models = null; // 「模型」頁（#180，models.js）
 
   // ---- DOM ----
   function h(tag, attrs, ...kids) {
@@ -39,6 +40,24 @@
   const clear = (node) => { while (node.firstChild) node.removeChild(node.firstChild); return node; };
   const row = (left, right) => h('div', { class: 'row' }, left, right);
   const labelBlock = (label, desc, id) => h('div', {}, h('div', { class: 'label', id }, label), desc ? h('div', { class: 'desc' }, desc) : null);
+
+  async function copyText(text) {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+        toast('已複製。', 'ok');
+        return;
+      }
+    } catch (_) { /* 退回 execCommand */ }
+    const area = h('textarea', { class: 'offscreen', 'aria-hidden': 'true' });
+    area.value = text;
+    document.body.append(area);
+    area.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+    area.remove();
+    toast(ok ? '已複製。' : '無法複製，請手動選取文字。', ok ? 'ok' : 'error');
+  }
 
   function toast(message, kind) {
     const node = document.getElementById('toast');
@@ -166,6 +185,7 @@
       state.error = String(error);
     }
     if (vocabEnabled() && page === 'overview') await vocab.refreshOverview();
+    if (page === 'models') await models.refresh();
     render();
   }
 
@@ -328,7 +348,8 @@
     ];
     if (runtime.state === 'running') {
       rows.push(
-        row(labelBlock('神經選字'), h('div', { class: 'value' }, modelLabel(runtime.selection_state, '統計引擎') + (MODEL_REASON[runtime.selection_reason] || ''))),
+        row(labelBlock('神經選字'), h('div', { class: 'value' }, modelLabel(runtime.selection_state, '統計引擎') + (MODEL_REASON[runtime.selection_reason] || ''), ' ',
+          h('button', { type: 'button', class: 'secondary', 'data-focus': 'models-card', onclick: () => show('models') }, '查看'))),
         row(labelBlock('補標點（Beta）'), h('div', { class: 'value' }, modelLabel(runtime.punctuation_state, '原文提交') + (MODEL_REASON[runtime.punctuation_reason] || ''))));
     }
     const managed = packageManaged();
@@ -543,7 +564,7 @@
     if (items.length) root.append(h('div', { class: 'card' }, ...items.map((item) => itemRow(item, settings.file.read_only))));
   }
 
-  const RENDER = { overview, input, output, vocab: vocabPage, update, troubleshoot, about };
+  const RENDER = { overview, input, output, vocab: vocabPage, models: (root) => models.render(root), update, troubleshoot, about };
 
   function render() {
     const focused = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.focus : null;
@@ -571,6 +592,7 @@
   function show(name) {
     page = PAGES.includes(name) ? name : 'overview';
     if (page === 'overview' && vocabEnabled()) vocab.refreshOverview().then(() => { if (page === 'overview') render(); });
+    if (page === 'models') models.refresh().then(() => { if (page === 'models') render(); });
     render();
   }
 
@@ -582,6 +604,10 @@
       mcpPresent: () => !!(state.info && state.info.mcp_present),
       // 引擎是否在執行（status 的 runtime）；還不知道時 null。
       engineRunning: () => (state.status && state.status.runtime ? state.status.runtime.state === 'running' : null),
+    });
+    models = window.ZcModels({
+      h, invoke, toast, copyText, modelLabel, render,
+      visible: () => page === 'models' && !document.hidden,
     });
     document.querySelectorAll('.nav').forEach((button) => button.addEventListener('click', () => show(button.dataset.page)));
     try { state.info = await invoke('app_info'); } catch (_) { /* 關於頁顯示未知 */ }
@@ -595,6 +621,7 @@
     }
     render();
     refresh();
+    setInterval(() => models.poll(), 1000);
     setInterval(() => { if (!document.hidden) refresh(); }, 15000);
     setInterval(pollUpdate, 1000);
     window.addEventListener('focus', () => { refresh(); vocab.focus(); });

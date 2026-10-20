@@ -187,6 +187,48 @@ fn vocab_unwatch(watcher: State<'_, watch::Watcher>) {
     watcher.stop();
 }
 
+/// 「模型」頁（#180）：0c-update models status|download|cancel|remove -json。結果（status 或契約錯誤）原樣交給前端。
+#[tauri::command]
+async fn models_command(action: String) -> Result<Value, String> {
+    let (command, timeout) = updater::models_args(&action)?;
+    call(command, timeout).await
+}
+
+/// 用系統瀏覽器開外部網址（「模型」頁的 Hugging Face 連結）。設定視窗本身不離開本機頁面，只放行 Hugging Face。
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    let url = updater::browser_url(&url)?;
+    let mut command = browser_command(url);
+    command.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    let mut child = command.spawn().map_err(|e| e.to_string())?;
+    std::thread::spawn(move || {
+        let _ = child.wait(); // 回收子行程；xdg-open 等交出網址就結束
+    });
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn browser_command(url: &str) -> std::process::Command {
+    let mut command = std::process::Command::new("/usr/bin/open");
+    command.arg(url);
+    command
+}
+
+#[cfg(windows)]
+fn browser_command(url: &str) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+    let mut command = std::process::Command::new("rundll32.exe");
+    command.arg("url.dll,FileProtocolHandler").arg(url).creation_flags(0x0800_0000);
+    command
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+fn browser_command(url: &str) -> std::process::Command {
+    let mut command = std::process::Command::new("xdg-open");
+    command.arg(url);
+    command
+}
+
 /// 把狀態摘要寫成檔案（下載資料夾，沒有就家目錄），回傳路徑。內容不含輸入內容、個人詞庫或使用者名稱。
 #[tauri::command]
 async fn export_summary() -> Result<Value, String> {
@@ -260,7 +302,7 @@ fn main() {
         .manage(watch::Watcher::default())
         .invoke_handler(tauri::generate_handler![
             app_info, get_status, get_settings, set_settings, check_update, download_update, install_update, export_summary,
-            vocab_request, api_command, vocab_watch, vocab_unwatch
+            vocab_request, api_command, vocab_watch, vocab_unwatch, models_command, open_url
         ])
         .setup(move |app| {
             open_window(app.handle(), page)?;

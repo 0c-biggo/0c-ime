@@ -11,8 +11,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 /// 可以指定開啟的頁面；與 internal/settingsapp 的白名單一致（vocab 是 0.2.0 的「我的詞彙」，
-/// features.vocab 不為 true（舊版 0c-update）時畫面改開總覽）。
-pub const PAGES: [&str; 7] = ["overview", "input", "update", "troubleshoot", "about", "vocab", "output"];
+/// features.vocab 不為 true（舊版 0c-update）時畫面改開總覽；models 是 #180 的「模型」）。
+pub const PAGES: [&str; 8] = ["overview", "input", "update", "troubleshoot", "about", "vocab", "output", "models"];
 
 /// 取出命令列的 `--page X`；不認得的頁面開總覽。
 pub fn page_from_args(args: &[String]) -> &'static str {
@@ -179,6 +179,34 @@ pub fn api_args(action: &str, port: Option<u16>) -> Result<Vec<String>, String> 
         out.push(port.to_string());
     }
     Ok(out)
+}
+
+/// 「模型」頁（#180）的固定動作對應到 0c-update models 的參數與逾時（秒）。download 在背景開始下載、立刻回傳，
+/// 進度由 status 的 operation 輪詢；網路與檔案動作都在 Go 端。
+pub fn models_args(action: &str) -> Result<(Vec<String>, u64), String> {
+    let timeout = match action {
+        "status" => 20,
+        "download" | "cancel" | "remove" => 60,
+        _ => return Err("未知的模型動作".to_string()),
+    };
+    Ok((vec!["models".to_string(), action.to_string(), "-json".to_string()], timeout))
+}
+
+/// 設定視窗本身不離開本機頁面（local_origin），外部網址交給系統瀏覽器；只放行 Hugging Face 的模型頁
+/// （0c-update models status 的 url），字元限制在網址路徑用得到的範圍，不會被當成參數或指令。
+pub fn browser_url(url: &str) -> Result<&str, String> {
+    const PREFIX: &str = "https://huggingface.co/";
+    let rest = url.strip_prefix(PREFIX).ok_or("只能開啟 Hugging Face 的網址")?;
+    let ok = !rest.is_empty()
+        && url.len() <= 300
+        && !rest.contains("..")
+        && !rest.starts_with('/')
+        && rest.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '-'));
+    if ok {
+        Ok(url)
+    } else {
+        Err("網址格式不正確".to_string())
+    }
 }
 
 /// 只支援 stdio 的 AI 工具要填的 0c-mcp 路徑：不隨版本改變的位置（範例 5）。
@@ -395,6 +423,7 @@ mod tests {
     fn page_comes_from_the_whitelist_only() {
         assert_eq!(page_from_args(&strings(&["0c-settings", "--page", "update"])), "update");
         assert_eq!(page_from_args(&strings(&["0c-settings", "--page", "vocab"])), "vocab");
+        assert_eq!(page_from_args(&strings(&["0c-settings", "--page", "models"])), "models");
         assert_eq!(page_from_args(&strings(&["0c-settings", "--page", "account"])), "overview");
         assert_eq!(page_from_args(&strings(&["0c-settings", "--page", "../etc"])), "overview");
         assert_eq!(page_from_args(&strings(&["0c-settings", "--page"])), "overview");
@@ -635,5 +664,36 @@ mod tests {
             std::thread::sleep(Duration::from_millis(25));
         }
         assert_eq!(value.unwrap()["got"]["op"], "list");
+    }
+
+    #[test]
+    fn models_args_only_fixed_actions() {
+        assert_eq!(models_args("status").unwrap(), (strings(&["models", "status", "-json"]), 20));
+        assert_eq!(models_args("download").unwrap().0, strings(&["models", "download", "-json"]));
+        assert_eq!(models_args("cancel").unwrap().0, strings(&["models", "cancel", "-json"]));
+        assert_eq!(models_args("remove").unwrap().0, strings(&["models", "remove", "-json"]));
+        for bad in ["remind", "", "-json", "status -json", "download;rm"] {
+            assert!(models_args(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn browser_url_only_hugging_face_paths() {
+        let ok = "https://huggingface.co/Funmula/0c-sequence-d512/tree/df4b9f04aa11";
+        assert_eq!(browser_url(ok), Ok(ok));
+        for bad in [
+            "http://huggingface.co/Funmula/x",
+            "https://huggingface.co.evil.example/x",
+            "https://huggingface.co/",
+            "https://huggingface.co//evil.example",
+            "https://huggingface.co/Funmula/x?a=1&b=2",
+            "https://huggingface.co/Funmula/x\"&calc",
+            "https://huggingface.co/Funmula/../x",
+            "https://huggingface.co/Funmula/x y",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+        ] {
+            assert!(browser_url(bad).is_err(), "{bad:?}");
+        }
     }
 }
