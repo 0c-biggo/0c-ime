@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/0c-biggo/0c-ime/internal/atomicfile"
 )
 
 const (
@@ -24,31 +26,12 @@ type state struct {
 	LastError *LastError `json:"last_error,omitempty"`
 }
 
-// writeJSON 先寫暫存檔再改名，讀的人不會讀到寫一半的檔案。
+// writeJSON 先寫暫存檔再改名（atomicfile），讀的人不會讀到寫一半的檔案。
 func writeJSON(path string, v any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-")
-	if err != nil {
-		return err
-	}
-	_, werr := tmp.Write(append(b, '\n'))
-	cerr := tmp.Close()
-	if werr == nil {
-		werr = cerr
-	}
-	if werr == nil {
-		werr = os.Rename(tmp.Name(), path)
-	}
-	if werr != nil {
-		os.Remove(tmp.Name())
-	}
-	return werr
+	return atomicfile.WriteJSON(path, v)
 }
 
 // LastError 讀上一次的錯誤；沒有時為 nil。

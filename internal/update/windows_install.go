@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/0c-biggo/0c-ime/internal/atomicfile"
 	"github.com/0c-biggo/0c-ime/internal/enginedir"
 )
 
@@ -69,29 +70,9 @@ func lockInstall(base string) (func(), error) {
 	f.Close()
 	return func() { os.Remove(file) }, nil
 }
-func writeJSON(file string, v any) error {
-	b, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(filepath.Dir(file), ".receipt-")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name())
-	if _, err = f.Write(append(b, '\n')); err != nil {
-		f.Close()
-		return err
-	}
-	if err = f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	if err = f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(f.Name(), file)
-}
+
+// writeJSON 原子寫入收據等 JSON（暫存檔 Sync 後改名，見 atomicfile）。
+func writeJSON(file string, v any) error { return atomicfile.WriteJSON(file, v) }
 func copyFile(src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0700); err != nil {
 		return err
