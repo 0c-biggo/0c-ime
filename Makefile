@@ -71,7 +71,11 @@ GO_LDFLAGS   := -X main.buildVersion=$(VERSION) -X $(GO_MODULE)/internal/install
 FCITX5_SYSTEM_ADDONDIR := $(shell pkg-config --variable=libdir Fcitx5Core 2>/dev/null)/fcitx5
 FCITX5_ADDONDIR ?= $(if $(filter /usr,$(PREFIX)),$(FCITX5_SYSTEM_ADDONDIR),$(LIBDIR)/fcitx5)
 FCITX5_LIBRARY  := $(if $(filter $(FCITX5_SYSTEM_ADDONDIR),$(FCITX5_ADDONDIR)),lib0c,$(FCITX5_ADDONDIR)/lib0c)
-IBUS_COMPONENTDIR ?= $(DATAROOTDIR)/ibus/component
+# ibus-daemon 只讀它自己的元件目錄（編譯時的 datadir/ibus/component，Debian 是 /usr/share/ibus/component；
+# 設了 IBUS_COMPONENT_PATH 才讀別處），不看 PREFIX：PREFIX=/usr/local 時裝到 /usr/local/share 不會被讀到。
+# 所以預設一律裝到 ibus 的目錄（pkg-config ibus-1.0 的 datadir；沒有 libibus-1.0-dev 時是 /usr/share）。
+IBUS_DATADIR      := $(or $(shell pkg-config --variable=datadir ibus-1.0 2>/dev/null),/usr/share)
+IBUS_COMPONENTDIR ?= $(IBUS_DATADIR)/ibus/component
 SETTINGS_OUT := $(if $(SETTINGS_BIN),$(SETTINGS_BIN),$(SYSBUILD)/settings/release/0c-settings)
 
 .PHONY: build build-go build-fcitx5 build-settings install uninstall check-version

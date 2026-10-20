@@ -2448,6 +2448,30 @@ Successfully verified: 0c-update.exe
         result = subprocess.run([node, "--test", str(test)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_system_install_puts_ibus_component_where_ibus_daemon_reads(self):
+        # #181：ibus-daemon 只讀它自己的元件目錄（IBus 1.5.34 實測不讀 /usr/local/share/ibus/component），
+        # 所以 make install PREFIX=/usr/local 也要把 0c.xml 放到 ibus 的目錄；明確指定 IBUS_COMPONENTDIR 時照指定。
+        if not shutil.which("make"):
+            self.skipTest("沒有 make")
+        root = Path(__file__).resolve().parents[1]
+
+        def component_dir(pc_dir, *extra):
+            env = {**os.environ, "PKG_CONFIG_LIBDIR": pc_dir, "PKG_CONFIG_PATH": ""}
+            result = subprocess.run(["make", "-s", "-n", "-C", str(root), "install", "PREFIX=/usr/local", "VERSION=0.0.0",
+                                     "DESTDIR=/stage", "FCITX5=0", "SETTINGS=0", *extra], capture_output=True, text=True, env=env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            dirs = [line.split()[-1] for line in result.stdout.splitlines() if line.startswith("install -d") and "ibus" in line]
+            self.assertEqual(len(dirs), 1, result.stdout)
+            return dirs[0]
+
+        with tempfile.TemporaryDirectory() as empty, tempfile.TemporaryDirectory() as pc:
+            self.assertEqual(component_dir(empty), "/stage/usr/share/ibus/component")  # 沒有 libibus-1.0-dev
+            Path(pc, "ibus-1.0.pc").write_text("prefix=/opt/ibus\ndatadir=${prefix}/share\nName: ibus-1.0\n"
+                                               "Description: t\nVersion: 1.5.34\n", encoding="utf-8")
+            self.assertEqual(component_dir(pc), "/stage/opt/ibus/share/ibus/component")
+            self.assertEqual(component_dir(empty, "IBUS_COMPONENTDIR=/usr/local/share/ibus/component"),
+                             "/stage/usr/local/share/ibus/component")
+
 
 if __name__ == "__main__":
     unittest.main()
