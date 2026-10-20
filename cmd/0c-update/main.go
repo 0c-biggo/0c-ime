@@ -209,6 +209,12 @@ func run(args []string) error {
 			return fmt.Errorf("deploy-tsf 不接受參數")
 		}
 		return deployTSF()
+	case "prune":
+		// 內部用：安裝、回復、解除安裝成功後在背景清理舊版（#179，Windows），不列在用法裡。
+		if len(args) != 1 {
+			return fmt.Errorf("prune 不接受參數")
+		}
+		return pruneCommand()
 	}
 	flags := flag.NewFlagSet(action, flag.ContinueOnError)
 	feedURL := flags.String("feed", "", "HTTPS 更新索引 URL")
@@ -425,6 +431,7 @@ func main() {
 	if err != nil && !errors.Is(err, errReported) { // JSON 模式已把錯誤輸出到 stdout
 		fmt.Fprintln(os.Stderr, "0c-update:", err)
 	}
+	launchPrune() // 安裝、回復、解除安裝成功過才有；其餘步驟都做完了，最後才啟動（#179）
 	flush()
 	if err != nil {
 		os.Exit(1)
