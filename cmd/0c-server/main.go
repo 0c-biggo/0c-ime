@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"errors"
 	"flag"
@@ -29,6 +30,7 @@ import (
 	"github.com/0c-biggo/0c-ime/core/zhconv"
 	"github.com/0c-biggo/0c-ime/internal/datadir"
 	"github.com/0c-biggo/0c-ime/internal/e2esync"
+	"github.com/0c-biggo/0c-ime/internal/installs"
 	"github.com/0c-biggo/0c-ime/internal/neural"
 	"github.com/0c-biggo/0c-ime/internal/settings"
 	"github.com/0c-biggo/0c-ime/internal/simplified"
@@ -216,27 +218,25 @@ func serve() string {
 		dictionarySHA = fmt.Sprintf("%x", sha256.Sum256(dictionaryManifest))
 	}
 	// Python、worker 與模型分開找（#181）：Python 內附優先，Linux 沒有時用系統的 python3；模型依
-	// 安裝包內建 → 個人目錄（#180）的順序；都沒有時統計選字。找到模型卻沒有 Python 時回報 runtime_missing。
+	// 安裝包內建 → 個人目錄（#180）的順序；都沒有時統計選字。Linux 找到模型、系統卻沒有 python3 時照樣
+	// 啟動 worker（neural.Bundled）：啟動失敗回報 runtime_missing、每 10 分鐘重試，之後裝好不必重啟引擎。
 	bundled := neural.Find(neural.Options{DataDir: *data, UserDir: filepath.Dir(*user), DictionarySHA256: dictionarySHA, SystemPython: *systemPython})
 	python, pythonSource := bundled.Python, bundled.PythonSource
 	if explicit["neural-python"] {
 		python, pythonSource = *neuralPython, "custom"
+		bundled.Python, bundled.PythonSource = python, pythonSource
+		bundled.HasSelect, bundled.HasPunct = bundled.SelectSource != "", bundled.PunctSource != ""
 	}
 	if pythonSource == "" {
 		pythonSource = "missing"
 	}
 	neuralState := "disabled_by_setting"
 	var selectionSource, punctuationSource string
-	punctuationRuntimeMissing := false
 	var selectionWorker *neural.Supervisor
 	var punctuationWorker *neural.PunctWorker
 	if config.Selection == settings.Neural && !explicit["neural-package"] {
 		neuralState = "not_installed"
-		switch {
-		case bundled.SelectSource == "":
-		case python == "":
-			neuralState = "runtime_missing"
-		default:
+		if bundled.HasSelect {
 			*neuralPackage, *neuralWorker, *neuralPython = bundled.SelectPackage, bundled.SelectWorker, python
 			selectionSource = bundled.SelectSource
 			if !explicit["neural-threads"] {
@@ -244,15 +244,11 @@ func serve() string {
 			}
 		}
 	}
-	if config.Punctuation && !explicit["punct-package"] && bundled.PunctSource != "" {
-		if python == "" {
-			punctuationRuntimeMissing = true
-		} else {
-			*punctPackage, *punctWorker, *neuralPython = bundled.PunctPackage, bundled.PunctWorker, python
-			punctuationSource = bundled.PunctSource
-			if !explicit["punct-threads"] {
-				*punctThreads = neural.DefaultThreads()
-			}
+	if config.Punctuation && !explicit["punct-package"] && bundled.HasPunct {
+		*punctPackage, *punctWorker, *neuralPython = bundled.PunctPackage, bundled.PunctWorker, python
+		punctuationSource = bundled.PunctSource
+		if !explicit["punct-threads"] {
+			*punctThreads = neural.DefaultThreads()
 		}
 	}
 	if *neuralPackage != "" {
@@ -275,6 +271,9 @@ func serve() string {
 			eng.Rerank = worker.Options()
 			selectionWorker = worker
 			neuralState = "enabled"
+			if selectionSource != "" && bundled.RuntimeMissing(false) {
+				neuralState = "runtime_missing" // 啟動時就知道沒有 python3；之後的狀態看 selection_state
+			}
 			lg.Printf("神經選字已啟用（背景載入模型）：%s（%d threads）", filepath.Base(*neuralPackage), *neuralThreads)
 		}
 	}
@@ -428,8 +427,6 @@ func serve() string {
 		punctuationState := "not_installed"
 		if !config.Punctuation {
 			punctuationState = "disabled_by_setting"
-		} else if punctuationRuntimeMissing {
-			punctuationState = "runtime_missing"
 		}
 		if punctuationWorker != nil {
 			punctuationState = punctuationWorker.State()
@@ -479,8 +476,9 @@ func serve() string {
 		}
 	}
 	var watch *installWatch
-	home, _ := os.UserHomeDir()
-	if exeErr == nil && (*installWatchMode == "on" || *installWatchMode == "auto" && installWatchEnabled(runtime.GOOS, executable, *data, home)) {
+	watchCtx, stopWatch := context.WithCancel(context.Background())
+	defer stopWatch() // 引擎結束時不留下還在核對的新執行檔
+	if exeErr == nil && (*installWatchMode == "on" || *installWatchMode == "auto" && installWatchEnabled(runtime.GOOS, executable, *data, installs.Default())) {
 		neuralDir := filepath.Join(filepath.Dir(filepath.Clean(*data)), "neural")
 		watch = newInstallWatch([]string{executable, filepath.Join(*data, "manifest.json"),
 			filepath.Join(neuralDir, "sequence_runtime.py"), filepath.Join(neuralDir, "punct_runtime.py"),
@@ -512,10 +510,22 @@ func serve() string {
 						lg.Printf("安裝的檔案已更新，等檔案穩定後交接")
 					}
 					if ready {
-						if err := checkNewEngine(executable, *data); err != nil {
-							lg.Printf("新的執行檔無法載入字典，暫不交接（檔案再變時重試）：%v", err)
-							watch.reject()
-						} else {
+						// 核對在背景跑（最長 installCheckTimeout），不擋存檔、失聯偵測與閒置結束；通過的結果記下來，
+						// 交接逾時（一直在組字）之後不必再核對。
+						switch step, stamp := watch.nextStep(); step {
+						case watchCheck:
+							go func() {
+								err := checkNewEngine(watchCtx, executable, *data, installCheckTimeout)
+								switch rejected := watch.finish(stamp, err, time.Now()); {
+								case err == nil:
+									lg.Printf("新的執行檔核對通過，停手時交接")
+								case rejected:
+									lg.Printf("新的執行檔無法載入字典，暫不交接（檔案再變時重試）：%v", err)
+								default:
+									lg.Printf("新的執行檔暫時無法核對，稍後重試：%v", err)
+								}
+							}()
+						case watchHandOver:
 							lg.Printf("安裝的檔案已更新，交接到新版")
 							watchDrain.Store(true)
 							if !srv.Drain() {
@@ -539,8 +549,7 @@ func serve() string {
 	// Windows 登出／關機的 CTRL_LOGOFF_EVENT／CTRL_SHUTDOWN_EVENT 由 Go 轉成 SIGTERM；前提是引擎不載入
 	// user32／gdi32（見 logoff_windows_test.go）。
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
-	var signaled atomic.Bool // 交接途中收到結束訊號（例如登出）：照常結束，不換成新的執行檔
-	go func() { <-sig; signaled.Store(true); closeAll() }()
+	stopSignals := watchSignals(sig, closeAll, signal.Stop)
 
 	var wg sync.WaitGroup
 	for _, l := range listeners {
@@ -559,9 +568,46 @@ func serve() string {
 	// 最後一次存檔之後才放鎖（端點此時已關閉）：交接中等鎖的新引擎在這之後才讀個人檔。
 	// 神經 worker 等收尾在 main 返回後才執行，不佔著鎖。
 	writerLock.Release()
-	if handover.Load() && !signaled.Load() {
+	// 交接途中收到結束訊號（例如登出）：照常結束，不換成新的執行檔。stopSignals 之後的訊號照預設動作結束
+	// 行程，所以這裡回報沒收到，就一定不會有結束訊號被 exec 吃掉。
+	if handover.Load() {
+		if stopSignals() {
+			lg.Printf("交接途中收到結束訊號，不換成新的執行檔")
+			return ""
+		}
 		lg.Printf("換成新的執行檔：%s", executable)
 		return executable
 	}
 	return ""
+}
+
+// watchSignals 收到第一個結束訊號時呼叫 onSignal。回傳的 stop 停止接收（之後的結束訊號照預設動作結束行程），
+// 並回報在那之前有沒有收到過：signal.Stop 保證停止前到達的訊號不是已送進 sig，就是照預設動作結束行程，
+// 等處理的 goroutine 結束後再看一次 sig，送進來卻還沒被處理的那一個也算到。
+func watchSignals(sig chan os.Signal, onSignal func(), stopNotify func(chan<- os.Signal)) (stop func() (signaled bool)) {
+	quit, done := make(chan struct{}), make(chan struct{})
+	var got bool
+	go func() {
+		defer close(done)
+		select {
+		case <-sig:
+			got = true
+			onSignal()
+		case <-quit:
+		}
+	}()
+	return func() bool {
+		stopNotify(sig)
+		close(quit)
+		<-done
+		if got {
+			return true
+		}
+		select {
+		case <-sig:
+			return true
+		default:
+			return false
+		}
+	}
 }

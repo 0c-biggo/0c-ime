@@ -36,21 +36,27 @@ type Options struct {
 	// UserDir 是個人資料目錄（~/.local/share/zuin）；空字串或 DictionarySHA256 為空時不找個人目錄。
 	UserDir          string
 	DictionarySHA256 string
-	// SystemPython 是沒有內附 Python 時的退路；空字串不退回（FindBundled 的行為）。
+	// SystemPython 是沒有內附 Python 時的退路（Linux）；空字串不退回（FindBundled、macOS、Windows）。
+	// 檔案不存在時仍用這個路徑，見 Bundled。
 	SystemPython string
 }
 
-// Bundled 是找到的推論環境與模型。HasSelect／HasPunct 表示三樣都在、可以啟動 worker；
-// 找到模型但沒有 Python（RuntimeMissing）時兩者為 false，由呼叫端回報 runtime_missing。
+// Bundled 是找到的推論環境與模型。HasSelect／HasPunct 表示可以啟動 worker（有模型、worker 與要執行的 Python）。
+//
+// Python 是要執行的 Python，PythonSource 是它的來源；Python 不為空但 PythonSource 為空，表示 Linux 的系統
+// Python 目前不存在（沒裝 python3）。這時照樣啟動 worker：執行檔不存在是 runtime_missing，每 10 分鐘重試，
+// 使用者之後裝好 python3 不必重啟引擎（與缺 numpy、onnxruntime 相同）。macOS、Windows 沒有系統 Python 的
+// 退路：內附 Python 不見是安裝損毀，Python 為空、不啟動 worker，狀態與以前一樣是 not_installed。
 type Bundled struct {
 	Python, SelectWorker, SelectPackage, PunctWorker, PunctPackage string
 	PythonSource, SelectSource, PunctSource                        string // 空字串：沒有找到
 	HasSelect, HasPunct                                            bool
 }
 
-// RuntimeMissing 回報找到模型與 worker、卻沒有可用的 Python。
+// RuntimeMissing 回報找到模型與 worker、要用的系統 Python 卻不存在（Linux 沒裝 python3）。引擎照樣啟動
+// worker（HasSelect／HasPunct 為真），啟動時的狀態報 runtime_missing；之後的狀態由 worker 的重試決定。
 func (b Bundled) RuntimeMissing(punct bool) bool {
-	if b.Python != "" {
+	if b.Python == "" || b.PythonSource != "" {
 		return false
 	}
 	if punct {
@@ -73,8 +79,11 @@ func Find(o Options) Bundled {
 	switch {
 	case regular(python):
 		b.Python, b.PythonSource = python, SourceBundled
-	case o.SystemPython != "" && regular(o.SystemPython):
-		b.Python, b.PythonSource = o.SystemPython, SourceSystem
+	case o.SystemPython != "":
+		b.Python = o.SystemPython
+		if regular(o.SystemPython) {
+			b.PythonSource = SourceSystem
+		}
 	}
 	var user string
 	if o.UserDir != "" && len(o.DictionarySHA256) == 64 {

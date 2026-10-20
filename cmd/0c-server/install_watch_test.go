@@ -4,56 +4,89 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/0c-biggo/0c-ime/bridge/ipc"
 	"github.com/0c-biggo/0c-ime/core/lexicon"
 	"github.com/0c-biggo/0c-ime/core/lm"
 	"github.com/0c-biggo/0c-ime/core/proto"
 	"github.com/0c-biggo/0c-ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/internal/installs"
+	"github.com/0c-biggo/0c-ime/internal/neural"
 )
 
 func TestInstallWatchEnabledOnlyForLinuxSystemInstall(t *testing.T) {
-	home := t.TempDir()
-	prefix := t.TempDir()
-	data := filepath.Join(prefix, "share", "0c", "data")
-	os.MkdirAll(data, 0o755)
-	official := filepath.Join(home, ".local", "share", "zuin", "versions", "0.2.3", "bin", "0c-server")
-	system := filepath.Join(prefix, "libexec", "0c", "0c-server")
+	root := t.TempDir()
+	// Fedora Silverblue：/home 是 /var/home 的符號連結，$HOME 寫 /home/<user>，執行檔的實際路徑在 /var/home。
+	realHome := filepath.Join(root, "var", "home", "u")
+	os.MkdirAll(realHome, 0o755)
+	os.MkdirAll(filepath.Join(root, "home"), 0o755)
+	home := filepath.Join(root, "home", "u")
+	if err := os.Symlink(realHome, home); err != nil {
+		t.Fatal(err)
+	}
+	prefix := filepath.Join(root, "usr")
+	l := installs.Layout{Home: home, Libexec: filepath.Join(prefix, "libexec", "0c"), Data: filepath.Join(prefix, "share", "0c"), Bin: filepath.Join(prefix, "bin")}
+	systemData := filepath.Join(prefix, "share", "0c", "data")
+	officialData := filepath.Join(realHome, ".local", "share", "zuin", "data")
+	devData := filepath.Join(root, "tmp", "share", "0c", "data")
+	for _, d := range []string{systemData, officialData, devData} {
+		os.MkdirAll(d, 0o755)
+	}
+	official := filepath.Join(realHome, ".local", "share", "zuin", "versions", "0.2.3", "bin", "0c-server")
+	officialBin := filepath.Join(realHome, ".local", "bin", "0c-server")
+	system := filepath.Join(l.Libexec, "0c-server")
+	dev := filepath.Join(root, "tmp", "go-build", "0c-server")
+	for _, exe := range []string{official, officialBin, system, dev} {
+		os.MkdirAll(filepath.Dir(exe), 0o755)
+		os.WriteFile(exe, []byte("#!/bin/sh\n"), 0o755)
+	}
 	for _, c := range []struct {
-		name, goos, exe string
-		marker, want    bool
+		name, goos, exe, data string
+		marker, want          bool
 	}{
-		{"官網安裝在家目錄", "linux", official, false, false},
-		{"系統安裝在 /usr", "linux", system, false, true},
-		{"家目錄裡但有發行版標記", "linux", official, true, true},
-		{"macOS 的 App 由 0c-update 交接", "darwin", system, true, false},
-		{"Windows", "windows", system, true, false},
+		{"官網安裝的版本目錄（家目錄是符號連結）", "linux", official, officialData, false, false},
+		{"官網安裝的 ~/.local/bin（家目錄是符號連結）", "linux", officialBin, officialData, false, false},
+		{"官網安裝、字典旁卻有發行版標記：一律不開", "linux", official, officialData, true, false},
+		{"官網安裝的引擎指定系統字典（有標記）：一律不開", "linux", officialBin, systemData, true, false},
+		{"系統安裝在建置時設定的 libexec", "linux", system, systemData, false, true},
+		{"系統安裝有發行版標記", "linux", system, systemData, true, true},
+		{"/tmp 的開發建置", "linux", dev, devData, false, false},
+		{"別的位置、字典旁有發行版標記（發行版自訂 libexec）", "linux", dev, devData, true, true},
+		{"macOS 的 App 由 0c-update 交接", "darwin", system, systemData, true, false},
+		{"Windows", "windows", system, systemData, true, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			marker := distributionMarker(data)
+			marker := distributionMarker(c.data)
 			os.Remove(marker)
 			if c.marker {
 				os.WriteFile(marker, []byte(`{"schema":1,"updates":"package-manager"}`), 0o644)
+				defer os.Remove(marker)
 			}
-			if got := installWatchEnabled(c.goos, c.exe, data, home); got != c.want {
+			if got := installWatchEnabled(c.goos, c.exe, c.data, l); got != c.want {
 				t.Fatalf("installWatchEnabled = %v，應為 %v", got, c.want)
 			}
 		})
 	}
-	if distributionMarker(data) != filepath.Join(prefix, "share", "0c", "distribution.json") {
-		t.Fatalf("marker path %s", distributionMarker(data))
+	if distributionMarker(systemData) != filepath.Join(prefix, "share", "0c", "distribution.json") {
+		t.Fatalf("marker path %s", distributionMarker(systemData))
 	}
 }
 
@@ -89,7 +122,13 @@ func TestInstallWatchWaitsForStableFilesAndSkipsRejected(t *testing.T) {
 	if r, _ := poll(4); !r {
 		t.Fatal("stable change not ready")
 	}
-	w.reject()
+	step, stamp := w.nextStep()
+	if step != watchCheck {
+		t.Fatalf("step %d", step)
+	}
+	if !w.finish(stamp, &checkError{err: errors.New("exit status 1")}, at(4)) {
+		t.Fatal("definite failure not rejected")
+	}
 	for m := 5; m < 8; m++ {
 		if r, _ := poll(m); r {
 			t.Fatal("rejected files retried without another change")
@@ -171,10 +210,21 @@ func TestSystemInstallNeuralDiscovery(t *testing.T) {
 	os.WriteFile(filepath.Join(neuralDir, "sequence_runtime.py"), nil, 0o644)
 	os.WriteFile(filepath.Join(neuralDir, "punct_runtime.py"), nil, 0o644)
 	userDir := filepath.Join(root, "home", "zuin")
-	for _, name := range []string{"select", "punct"} {
+	// 核對得過的模型套件（雜湊與字典配對都對；模型內容是假的，worker 不會真的就緒）。
+	for name, manifest := range map[string]map[string]any{
+		"select": {"schema": "zuin-sequence-runtime-v1", "context_policy": "confirmed_left_64", "dictionary_sha256": sha, "weight": 1},
+		"punct":  {"schema": neural.PunctSchema},
+	} {
 		p := filepath.Join(userDir, "models", sha, name)
 		os.MkdirAll(p, 0o755)
-		os.WriteFile(filepath.Join(p, "manifest.json"), []byte(`{}`), 0o644)
+		files := map[string]string{}
+		for _, f := range []string{"model.onnx", "vocab.json"} {
+			os.WriteFile(filepath.Join(p, f), []byte(f), 0o644)
+			files[f] = fmt.Sprintf("%x", sha256.Sum256([]byte(f)))
+		}
+		manifest["files"] = files
+		b, _ := json.Marshal(manifest)
+		os.WriteFile(filepath.Join(p, "manifest.json"), b, 0o644)
 	}
 	os.WriteFile(filepath.Join(userDir, "settings.json"), []byte(`{"punctuation":true}`), 0o600)
 	run := func(t *testing.T, python string) map[string]string {
@@ -189,9 +239,25 @@ func TestSystemInstallNeuralDiscovery(t *testing.T) {
 		return healthOf(t, sock)
 	}
 	t.Run("沒有 Python", func(t *testing.T) {
-		info := run(t, filepath.Join(root, "no", "python3"))
+		// 照樣以系統 Python 的路徑啟動 worker：執行檔不存在是 runtime_missing（10 分鐘重試，之後裝好 python3
+		// 不必重啟引擎）；模型來源照實回報。
+		sock := filepath.Join(t.TempDir(), "0c.sock")
+		server := exec.Command(binary, "-data", data, "-user", filepath.Join(userDir, "user.json"), "-socket", sock,
+			"-system-python", filepath.Join(root, "no", "python3"), "-install-watch", "off")
+		if err := server.Start(); err != nil {
+			t.Fatal(err)
+		}
+		defer func() { server.Process.Signal(os.Interrupt); server.Wait() }()
+		waitDial(t, sock)
+		info := healthOf(t, sock)
+		for deadline := time.Now().Add(5 * time.Second); info["selection_state"] == "loading" || info["punctuation_state"] == "loading"; info = healthOf(t, sock) {
+			if time.Now().After(deadline) {
+				t.Fatalf("still loading: %v", info)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
 		want := map[string]string{"neural_startup_state": "runtime_missing", "selection_state": "runtime_missing",
-			"punctuation_state": "runtime_missing", "neural_python": "missing", "selection_source": "", "punctuation": "false"}
+			"punctuation_state": "runtime_missing", "neural_python": "missing", "selection_source": "user", "punctuation_source": "user"}
 		for k, v := range want {
 			if info[k] != v {
 				t.Errorf("%s = %q，應為 %q（%v）", k, info[k], v, info)
@@ -199,8 +265,8 @@ func TestSystemInstallNeuralDiscovery(t *testing.T) {
 		}
 	})
 	t.Run("系統 Python 與個人目錄的模型", func(t *testing.T) {
-		info := run(t, "/bin/sh") // 存在的執行檔；模型是假的，核對 manifest 時就退回
-		want := map[string]string{"neural_python": "system", "neural_startup_state": "startup_fallback", "selection_source": "user"}
+		info := run(t, "/bin/sh") // 存在的執行檔；worker 腳本是空的，啟動後沒有就緒就退回
+		want := map[string]string{"neural_python": "system", "neural_startup_state": "enabled", "selection_source": "user", "punctuation_source": "user"}
 		for k, v := range want {
 			if info[k] != v {
 				t.Errorf("%s = %q，應為 %q（%v）", k, info[k], v, info)
@@ -373,5 +439,183 @@ func TestSystemInstallHandsOverAfterPackageUpgrade(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "交接到新版") || !strings.Contains(logs.String(), "換成新的執行檔") {
 		t.Fatalf("handover not logged:\n%s", logs.String())
+	}
+}
+
+// 核對通過的那一組記下來：交接逾時（一直在組字）之後直接再交接，不再跑一次 -check-data；核對進行中不重複開始。
+// 暫時性失敗（逾時、執行不了）以加倍的間隔重試，次數用完才拒絕；確定載入不了立刻拒絕到檔案再變。
+func TestInstallWatchRemembersPassedCheckAndRetriesTransientFailures(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "0c-server")
+	os.WriteFile(exe, []byte("v1"), 0o755)
+	start := time.Now()
+	at := func(d time.Duration) time.Time { return start.Add(d) }
+	w := newInstallWatch([]string{exe}, nil, time.Minute, start)
+	os.WriteFile(exe+".new", []byte("v2 longer"), 0o755)
+	os.Rename(exe+".new", exe)
+	w.poll(at(time.Minute))
+	if r, _ := w.poll(at(2 * time.Minute)); !r {
+		t.Fatal("stable change not ready")
+	}
+	step, stamp := w.nextStep()
+	if step != watchCheck {
+		t.Fatalf("first step %d", step)
+	}
+	if again, _ := w.nextStep(); again != watchWait {
+		t.Fatalf("second check started while the first is running: %d", again)
+	}
+	transient := &checkError{err: context.DeadlineExceeded, transient: true}
+	now := at(2 * time.Minute)
+	for i := 1; i < installCheckRetries; i++ {
+		if w.finish(stamp, transient, now) {
+			t.Fatalf("transient failure %d rejected", i)
+		}
+		if r, _ := w.poll(now.Add(w.interval<<i - time.Second)); r {
+			t.Fatalf("retry %d before backoff", i)
+		}
+		now = now.Add(w.interval << i)
+		if r, _ := w.poll(now); !r {
+			t.Fatalf("retry %d not ready after backoff", i)
+		}
+		if step, stamp = w.nextStep(); step != watchCheck {
+			t.Fatalf("retry %d step %d", i, step)
+		}
+	}
+	if !w.finish(stamp, transient, now) {
+		t.Fatal("transient failures not rejected after the retries ran out")
+	}
+	if r, _ := w.poll(now.Add(time.Hour)); r {
+		t.Fatal("rejected files retried")
+	}
+	// 檔案又變了（套件修好重裝）：重新核對，通過後下一次 poll 立刻交接；交接逾時後再交接也不必再核對。
+	os.WriteFile(exe+".new", []byte("v3 even longer"), 0o755)
+	os.Rename(exe+".new", exe)
+	now = now.Add(2 * time.Hour)
+	w.poll(now)
+	now = now.Add(time.Minute)
+	if r, _ := w.poll(now); !r {
+		t.Fatal("new files not ready")
+	}
+	if step, stamp = w.nextStep(); step != watchCheck {
+		t.Fatalf("step %d", step)
+	}
+	if w.finish(stamp, nil, now.Add(10*time.Second)) {
+		t.Fatal("passed check rejected")
+	}
+	if r, _ := w.poll(now.Add(10 * time.Second)); !r {
+		t.Fatal("passed check did not hand over on the next tick")
+	}
+	for i := 0; i < 3; i++ { // 交接逾時之後的每一次
+		if step, _ := w.nextStep(); step != watchHandOver {
+			t.Fatalf("passed files checked again: step %d", step)
+		}
+	}
+}
+
+// -check-data 的失敗分兩種：新程式自己回報載入失敗是確定的；逾時、執行不了是暫時的。輸出依 UTF-8 字元截斷。
+func TestCheckNewEngineClassifiesFailures(t *testing.T) {
+	dir := t.TempDir()
+	script := func(name, body string) string {
+		p := filepath.Join(dir, name)
+		os.WriteFile(p, []byte("#!/bin/sh\n"+body+"\n"), 0o755)
+		return p
+	}
+	long := strings.Repeat("字", 150) // 450 位元組
+	fails := script("fails", "echo '"+long+"' >&2\nexit 1")
+	slow := script("slow", "exec sleep 30")
+	ok := script("ok", "echo 資料包可載入")
+	var check *checkError
+	err := checkNewEngine(context.Background(), fails, dir, time.Minute)
+	if !errors.As(err, &check) || check.transient {
+		t.Fatalf("load failure: %#v", err)
+	}
+	if !utf8.ValidString(check.out) || len(check.out) > 300 || !strings.HasPrefix(long, check.out) || len(check.out) != 300 {
+		t.Fatalf("output cut in the middle of a character: %d bytes %q", len(check.out), check.out)
+	}
+	started := time.Now()
+	if err := checkNewEngine(context.Background(), slow, dir, 200*time.Millisecond); !errors.As(err, &check) || !check.transient {
+		t.Fatalf("timeout: %#v", err)
+	}
+	if time.Since(started) > 10*time.Second {
+		t.Fatal("timeout not enforced")
+	}
+	if err := checkNewEngine(context.Background(), filepath.Join(dir, "missing"), dir, time.Minute); !errors.As(err, &check) || !check.transient {
+		t.Fatalf("not executable: %#v", err)
+	}
+	if err := checkNewEngine(context.Background(), ok, dir, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if got := truncateUTF8("ab字", 3); got != "ab" {
+		t.Fatalf("truncateUTF8 = %q", got)
+	}
+}
+
+// 交接時收到結束訊號：不論訊號已經處理完、還是剛送進通道還沒處理，stop 都要回報收到（不能 exec）。
+func TestWatchSignalsNeverMissesASignalBeforeStop(t *testing.T) {
+	for i := 0; i < 2000; i++ {
+		sig := make(chan os.Signal, 1)
+		var calls atomic.Int32
+		stop := watchSignals(sig, func() { calls.Add(1) }, func(chan<- os.Signal) {})
+		if i%2 == 0 {
+			sig <- syscall.SIGTERM // 剛到、處理的 goroutine 可能還沒拿到
+		}
+		if got := stop(); got != (i%2 == 0) {
+			t.Fatalf("round %d: signaled = %v", i, got)
+		}
+	}
+	// 真的訊號：Notify 之後送給自己。
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGHUP)
+	closed := make(chan struct{})
+	stop := watchSignals(sig, func() { close(closed) }, signal.Stop)
+	syscall.Kill(os.Getpid(), syscall.SIGHUP)
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("signal not handled")
+	}
+	if !stop() {
+		t.Fatal("handled signal not reported")
+	}
+	sig = make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGHUP)
+	if watchSignals(sig, func() {}, signal.Stop)() {
+		t.Fatal("no signal but reported one")
+	}
+}
+
+// 新執行檔的核對在背景跑：核對卡住（最長 2 分鐘）時，引擎照樣依 -idle-exit 結束，不被擋住。
+func TestSystemInstallCheckDoesNotBlockTheEngineLoop(t *testing.T) {
+	v1 := buildServerVersion(t, "v1")
+	root := t.TempDir()
+	exe := filepath.Join(root, "libexec", "0c", "0c-server")
+	os.MkdirAll(filepath.Dir(exe), 0o755)
+	installFile(t, v1, exe)
+	data := filepath.Join(root, "share", "0c", "data")
+	writeCompiledData(t, data)
+	user := filepath.Join(root, "home", "user.json")
+	os.MkdirAll(filepath.Dir(user), 0o700)
+	sock := filepath.Join(root, "0c.sock")
+	logs := &lockedBuffer{}
+	server := exec.Command(exe, "-data", data, "-user", user, "-socket", sock, "-idle-exit", "3s",
+		"-install-watch", "on", "-install-watch-interval", "200ms", "-install-watch-idle", "0s")
+	server.Stderr = logs
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Process.Kill()
+	waitDial(t, sock)
+	stuck := filepath.Join(t.TempDir(), "stuck")
+	os.WriteFile(stuck, []byte("#!/bin/sh\nexec sleep 300\n"), 0o755)
+	installFile(t, stuck, exe)
+	exited := make(chan error, 1)
+	go func() { exited <- server.Wait() }()
+	select {
+	case <-exited:
+	case <-time.After(20 * time.Second):
+		t.Fatalf("engine loop blocked by the check:\n%s", logs.String())
+	}
+	if !strings.Contains(logs.String(), "閒置") {
+		t.Fatalf("engine did not exit by idle:\n%s", logs.String())
 	}
 }

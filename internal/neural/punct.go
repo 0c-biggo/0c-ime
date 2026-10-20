@@ -141,7 +141,7 @@ func launchPunct(command func() *exec.Cmd, model string) (*punctProc, error) {
 	if err = cmd.Start(); err != nil {
 		input.Close()
 		output.Close()
-		return nil, err
+		return nil, launchError("punct worker", err)
 	}
 	p := &punctProc{cmd: cmd, input: input, output: bufio.NewScanner(output), done: make(chan struct{})}
 	p.output.Buffer(make([]byte, 4096), frameLimit)

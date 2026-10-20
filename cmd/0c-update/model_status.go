@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"runtime"
 
 	"github.com/0c-biggo/0c-ime/internal/autoupdate"
 )
@@ -51,6 +52,18 @@ func printModelStatus(w io.Writer, state map[string]any) {
 	}
 }
 
+// modelHintOS 決定 runtime_missing 的提示；測試換成別的平台。
+var modelHintOS = runtime.GOOS
+
+// runtimeMissingLabel：只有 Linux（系統安裝用系統的 python3）提示要裝的 Debian 套件；macOS、Windows 的
+// Python 與推論元件內附在安裝包裡，不提 apt 的套件名（與設定程式、Windows 選單相同）。
+func runtimeMissingLabel(goos, fallback string) string {
+	if goos == "linux" {
+		return "缺少推論元件（請安裝 python3-numpy、python3-onnxruntime），使用" + fallback
+	}
+	return "缺少推論元件，使用" + fallback
+}
+
 func modelStateLabel(value any, fallback string) string {
 	switch value {
 	case "ready":
@@ -63,8 +76,8 @@ func modelStateLabel(value any, fallback string) string {
 		return "依設定關閉"
 	case "not_installed":
 		return "未附模型，使用" + fallback
-	case "runtime_missing": // #181：找到模型，但系統的 python3 缺 numpy 或 onnxruntime
-		return "缺少推論元件（請安裝 python3-numpy、python3-onnxruntime），使用" + fallback
+	case "runtime_missing": // #181：找到模型，但沒有 python3，或它缺 numpy、onnxruntime
+		return runtimeMissingLabel(modelHintOS, fallback)
 	case "closed":
 		return "已停止，使用" + fallback
 	default:

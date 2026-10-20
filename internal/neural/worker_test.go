@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -233,6 +234,20 @@ func TestStartupFailureReason(t *testing.T) {
 	_, err := start(exec.Command(filepath.Join(t.TempDir(), "python3")), m, 20*time.Millisecond)
 	if got := startupReason(err); got != ReasonRuntimeMissing {
 		t.Fatalf("missing python: reason %q (%v)", got, err)
+	}
+	// 模型檔（manifest、model.onnx、vocab.json）讀不到也是 fs.ErrNotExist，但那是模型的問題：照舊 failed，
+	// 3 秒冷卻重試，不報成缺推論環境（#181）。
+	if _, err := Open(Config{Python: "python3", Package: t.TempDir(), Threads: 1, Timeout: 50 * time.Millisecond}); !errors.Is(err, fs.ErrNotExist) || startupReason(err) != ReasonFailed {
+		t.Fatalf("missing manifest: reason %q (%v)", startupReason(err), err)
+	}
+	pkg := t.TempDir()
+	manifest := `{"schema":"zuin-encoder-runtime-v1","context_policy":"empty","dictionary_sha256":"` + strings.Repeat("a", 64) + `","weight":1}`
+	os.WriteFile(filepath.Join(pkg, "manifest.json"), []byte(manifest), 0o644)
+	if _, err := Open(Config{Python: "python3", Package: pkg, DictionarySHA256: strings.Repeat("a", 64), Threads: 1, Timeout: 50 * time.Millisecond}); !errors.Is(err, fs.ErrNotExist) || startupReason(err) != ReasonFailed {
+		t.Fatalf("missing model.onnx: reason %q (%v)", startupReason(err), err)
+	}
+	if got := startupReason(&fs.PathError{Op: "open", Path: "vocab.json", Err: fs.ErrNotExist}); got != ReasonFailed {
+		t.Fatalf("missing vocab.json: reason %q", got)
 	}
 }
 
