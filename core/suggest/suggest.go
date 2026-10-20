@@ -5,10 +5,10 @@
 package suggest
 
 import (
-	"git.biggo.com/0c/ime/core/decode"
-	"git.biggo.com/0c/ime/core/input"
-	"git.biggo.com/0c/ime/core/layout"
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/decode"
+	"github.com/0c-biggo/0c-ime/core/input"
+	"github.com/0c-biggo/0c-ime/core/layout"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // Suggestion 是一個補全建議。

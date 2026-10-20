@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"git.biggo.com/0c/ime/bridge/ipc"
-	core "git.biggo.com/0c/ime/core/engine"
+	"github.com/0c-biggo/0c-ime/bridge/ipc"
+	core "github.com/0c-biggo/0c-ime/core/engine"
 )
 
 // commits 收集這段期間送出的提交文字。

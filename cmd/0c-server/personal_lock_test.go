@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"git.biggo.com/0c/ime/bridge/ipc"
-	"git.biggo.com/0c/ime/core/proto"
-	"git.biggo.com/0c/ime/internal/userlock"
+	"github.com/0c-biggo/0c-ime/bridge/ipc"
+	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/internal/userlock"
 )
 
 // lockClient 是測試用的最小外殼：一條連線、一個 session。

@@ -12,12 +12,12 @@ import (
 
 	"github.com/godbus/dbus/v5"
 
-	core "git.biggo.com/0c/ime/core/engine"
-	"git.biggo.com/0c/ime/core/lexicon"
-	"git.biggo.com/0c/ime/core/lm"
-	"git.biggo.com/0c/ime/core/zhconv"
-	"git.biggo.com/0c/ime/core/zhuyin"
-	"git.biggo.com/0c/ime/internal/simplified"
+	core "github.com/0c-biggo/0c-ime/core/engine"
+	"github.com/0c-biggo/0c-ime/core/lexicon"
+	"github.com/0c-biggo/0c-ime/core/lm"
+	"github.com/0c-biggo/0c-ime/core/zhconv"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/internal/simplified"
 )
 
 // liveSimplifiedEngine 是能即時切換「輸出簡體字」的引擎（#169）；saved 記下引擎請宿主寫進設定檔的值。

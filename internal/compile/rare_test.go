@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // rareSources 與 cmd/0c-compile 的預設相同（出貨字典也用這組，見 scripts/build_release_data.py）。

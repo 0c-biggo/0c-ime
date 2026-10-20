@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"git.biggo.com/0c/ime/core/decode"
+	"github.com/0c-biggo/0c-ime/core/decode"
 )
 
 func TestErrorLayersKeepReachabilitySeparateFromRank(t *testing.T) {

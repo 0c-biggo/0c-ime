@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"git.biggo.com/0c/ime/internal/settingsapp"
+	"github.com/0c-biggo/0c-ime/internal/settingsapp"
 )
 
 // 設定程式不可用時的退路：命令列一樣能看、能改設定（契約見 docs/settings-contract.md）。

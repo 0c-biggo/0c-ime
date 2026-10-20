@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"git.biggo.com/0c/ime/internal/autoupdate"
-	"git.biggo.com/0c/ime/internal/update"
+	"github.com/0c-biggo/0c-ime/internal/autoupdate"
+	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
 func basePath() string    { home, _ := os.UserHomeDir(); return filepath.Join(home, ".local/share/zuin") }

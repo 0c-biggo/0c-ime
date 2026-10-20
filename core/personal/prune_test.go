@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"git.biggo.com/0c/ime/core/lexicon"
-	"git.biggo.com/0c/ime/core/lm"
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/lexicon"
+	"github.com/0c-biggo/0c-ime/core/lm"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // pruneFixture 模擬兩個月的使用：常用句子、明確手選（更正、讀音、單字、片語晉升）、

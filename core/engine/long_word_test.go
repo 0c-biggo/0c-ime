@@ -3,10 +3,10 @@ package engine
 import (
 	"testing"
 
-	"git.biggo.com/0c/ime/core/lexicon"
-	"git.biggo.com/0c/ime/core/lm"
-	"git.biggo.com/0c/ime/core/proto"
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/lexicon"
+	"github.com/0c-biggo/0c-ime/core/lm"
+	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // #142：系統詞庫收 16 與 15 個音節的網路梗，超過一般詞的解碼上限 8。旋風照教育部辭典讀 ㄒㄩㄢˋ ㄈㄥ。

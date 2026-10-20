@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"git.biggo.com/0c/ime/core/english"
-	"git.biggo.com/0c/ime/core/personal"
-	"git.biggo.com/0c/ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/english"
+	"github.com/0c-biggo/0c-ime/core/personal"
+	"github.com/0c-biggo/0c-ime/core/proto"
 )
 
 func autocompleteSession() *Session {

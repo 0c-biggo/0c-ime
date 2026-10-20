@@ -17,7 +17,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"git.biggo.com/0c/ime/internal/autoupdate"
+	"github.com/0c-biggo/0c-ime/internal/autoupdate"
 )
 
 var aquaASID = regexp.MustCompile(`(?m)^\s*asid = (\d+)\s*$`)

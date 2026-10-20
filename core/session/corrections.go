@@ -1,6 +1,6 @@
 package session
 
-import "git.biggo.com/0c/ime/core/personal"
+import "github.com/0c-biggo/0c-ime/core/personal"
 
 // configureCorrections 的位置與當前字面符號分段一致。只讀已提交的偏好；
 // 當次鎖定以暫時覆蓋處理，取消、改選、刪除及重播都不寫入持久記錄。

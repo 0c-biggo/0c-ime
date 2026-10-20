@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"git.biggo.com/0c/ime/internal/update"
+	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
 // fakeApp 建立一個 .app 目錄樹並回傳收據會記錄的雜湊（路徑相對 .app）。

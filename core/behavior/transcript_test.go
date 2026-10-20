@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"git.biggo.com/0c/ime/core/personal"
+	"github.com/0c-biggo/0c-ime/core/personal"
 )
 
 var update = flag.Bool("update", false, "以目前的行為重寫 golden transcript")

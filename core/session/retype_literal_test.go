@@ -3,7 +3,7 @@ package session
 import (
 	"testing"
 
-	"git.biggo.com/0c/ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/proto"
 )
 
 // #85：打錯注音、按下聲調才發現沒有字（ㄍㄨㄜˊ）時，音節原樣留下（#109）；緊接著打的同類

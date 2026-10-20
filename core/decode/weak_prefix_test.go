@@ -3,8 +3,8 @@ package decode
 import (
 	"testing"
 
-	"git.biggo.com/0c/ime/core/lexicon"
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/lexicon"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // weakFixture 取 dev.63 資料包的實際數值（#107）：ㄈㄚˋ 自己的字「法」，「髮」讀 ㄈㄚˋ 只出現在「髮型」；

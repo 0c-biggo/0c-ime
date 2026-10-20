@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"git.biggo.com/0c/ime/internal/autoupdate"
-	"git.biggo.com/0c/ime/internal/update"
+	"github.com/0c-biggo/0c-ime/internal/autoupdate"
+	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
 // 與 EngineClient.swift 相同的 socket；升級後重新登入前，執行中的仍是 Zuin.app 的引擎。

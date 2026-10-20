@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"git.biggo.com/0c/ime/internal/autoupdate"
+	"github.com/0c-biggo/0c-ime/internal/autoupdate"
 )
 
 // 防毒軟體（例如 Defender 的雲端 ML 判定）可能把穩定更新器 bin/0c-update 連同排程一起隔離，之後自動更新就靜默停止

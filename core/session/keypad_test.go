@@ -3,7 +3,7 @@ package session
 import (
 	"testing"
 
-	"git.biggo.com/0c/ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/proto"
 )
 
 // #75：數字鍵盤不是注音鍵。主鍵盤的 1 是 ㄅ，數字鍵盤的 1 一律是半形 1。

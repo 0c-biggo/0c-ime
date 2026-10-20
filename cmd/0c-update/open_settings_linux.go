@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"git.biggo.com/0c/ime/internal/autoupdate"
-	"git.biggo.com/0c/ime/internal/settingsapp"
+	"github.com/0c-biggo/0c-ime/internal/autoupdate"
+	"github.com/0c-biggo/0c-ime/internal/settingsapp"
 )
 
 // 完整安裝放設定程式的位置（相對家目錄，也是安裝收據記錄雜湊的鍵）。

@@ -1,8 +1,8 @@
 package session
 
 import (
-	"git.biggo.com/0c/ime/core/lm"
-	"git.biggo.com/0c/ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/lm"
+	"github.com/0c-biggo/0c-ime/core/proto"
 )
 
 // 顯示門檻是保守的工程初值，不是排序參數：常用為系統詞頻至少萬分之一，

@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"git.biggo.com/0c/ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/proto"
 )
 
 // #162：中英混打時只用數字鍵就拼得成的一聲字（20 ㄉㄢ、18 ㄅㄚ、10 ㄅㄢ、5 ㄓ）按空白就出中文，不論在句首，

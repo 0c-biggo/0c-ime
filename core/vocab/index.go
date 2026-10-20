@@ -5,7 +5,7 @@ import (
 	"slices"
 	"strings"
 
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // node 是讀音前綴樹的一個節點：自訂詞最長 32 字，比一般系統詞的 8 個音節（decode.MaxWordLen）長得多，

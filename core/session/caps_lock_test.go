@@ -3,7 +3,7 @@ package session
 import (
 	"testing"
 
-	"git.biggo.com/0c/ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/proto"
 )
 
 // #173：「Caps Lock 開著時直接打英文」。外殼送 caps_lock 請求回報鎖定狀態；核心決定模式。

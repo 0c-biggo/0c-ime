@@ -6,10 +6,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"git.biggo.com/0c/ime/core/input"
-	"git.biggo.com/0c/ime/core/lexicon"
-	"git.biggo.com/0c/ime/core/lm"
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/input"
+	"github.com/0c-biggo/0c-ime/core/lexicon"
+	"github.com/0c-biggo/0c-ime/core/lm"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // repeatMargin 是非詞疊字至少要輸給同讀音詞庫詞的幅度（自然對數，e 倍）。與小麥注音「長詞彙權重

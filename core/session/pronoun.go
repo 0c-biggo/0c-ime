@@ -4,8 +4,8 @@ import (
 	"slices"
 	"strings"
 
-	"git.biggo.com/0c/ime/core/decode"
-	"git.biggo.com/0c/ime/core/personal"
+	"github.com/0c-biggo/0c-ime/core/decode"
+	"github.com/0c-biggo/0c-ime/core/personal"
 )
 
 // applyPronounHabit 讓顯示路徑的代名詞性別只依使用者習慣（見 personal/pronoun.go）：

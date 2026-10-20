@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"git.biggo.com/0c/ime/internal/enginedir"
+	"github.com/0c-biggo/0c-ime/internal/enginedir"
 )
 
 func writeFile(t *testing.T, path, content string) {

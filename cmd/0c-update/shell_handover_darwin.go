@@ -16,9 +16,9 @@ import (
 	"syscall"
 	"time"
 
-	"git.biggo.com/0c/ime/internal/autoupdate"
-	"git.biggo.com/0c/ime/internal/settings"
-	"git.biggo.com/0c/ime/internal/update"
+	"github.com/0c-biggo/0c-ime/internal/autoupdate"
+	"github.com/0c-biggo/0c-ime/internal/settings"
+	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
 // 輸入法程式（0c.app）的交接，說明見 shell_handover_mac.go。

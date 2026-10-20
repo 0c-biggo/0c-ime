@@ -18,8 +18,8 @@ import (
 	"strings"
 	"time"
 
-	"git.biggo.com/0c/ime/internal/autoupdate"
-	"git.biggo.com/0c/ime/internal/update"
+	"github.com/0c-biggo/0c-ime/internal/autoupdate"
+	"github.com/0c-biggo/0c-ime/internal/update"
 	"github.com/godbus/dbus/v5"
 )
 

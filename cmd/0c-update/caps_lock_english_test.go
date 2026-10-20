@@ -4,7 +4,7 @@ import (
 	"runtime"
 	"testing"
 
-	"git.biggo.com/0c/ime/internal/settings"
+	"github.com/0c-biggo/0c-ime/internal/settings"
 )
 
 // #173：「Caps Lock 開著時直接打英文」經 settings --json 給設定程式；引擎載入的值不同時標示待套用，舊引擎沒回報時不猜。

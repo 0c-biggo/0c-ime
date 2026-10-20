@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"git.biggo.com/0c/ime/bridge/ipc"
-	"git.biggo.com/0c/ime/core/proto"
-	"git.biggo.com/0c/ime/internal/autoupdate"
+	"github.com/0c-biggo/0c-ime/bridge/ipc"
+	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/internal/autoupdate"
 )
 
 var acceptanceEngine = flag.String("acceptance-installed-engine", "", "Optional installed engine for explicitly authorized isolated acceptance")

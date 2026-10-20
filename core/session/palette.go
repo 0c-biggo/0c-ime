@@ -6,9 +6,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"git.biggo.com/0c/ime/core/emoji"
-	"git.biggo.com/0c/ime/core/proto"
-	"git.biggo.com/0c/ime/core/vocab"
+	"github.com/0c-biggo/0c-ime/core/emoji"
+	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/vocab"
 	"github.com/clipperhouse/uax29/v2/graphemes"
 )
 

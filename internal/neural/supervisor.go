@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"git.biggo.com/0c/ime/core/rerank"
+	"github.com/0c-biggo/0c-ime/core/rerank"
 )
 
 // Supervisor 在 worker 出錯（含逾時）後於背景重啟，按鍵永遠不等待啟動。

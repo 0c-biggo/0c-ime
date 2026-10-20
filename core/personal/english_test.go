@@ -7,9 +7,9 @@ import (
 	"reflect"
 	"testing"
 
-	"git.biggo.com/0c/ime/core/english"
-	"git.biggo.com/0c/ime/core/lexicon"
-	"git.biggo.com/0c/ime/core/lm"
+	"github.com/0c-biggo/0c-ime/core/english"
+	"github.com/0c-biggo/0c-ime/core/lexicon"
+	"github.com/0c-biggo/0c-ime/core/lm"
 )
 
 func englishModel() *Model { return NewModel(lexicon.NewMem(), lm.NewMem()) }

@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"git.biggo.com/0c/ime/core/engine"
-	"git.biggo.com/0c/ime/core/lexicon"
-	"git.biggo.com/0c/ime/core/lm"
-	"git.biggo.com/0c/ime/core/proto"
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/engine"
+	"github.com/0c-biggo/0c-ime/core/lexicon"
+	"github.com/0c-biggo/0c-ime/core/lm"
+	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // Reader 以詞庫為參考標音：把一段文字以詞庫做最大機率斷詞，每個詞取 P(r|w) 最高的讀音。

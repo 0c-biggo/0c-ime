@@ -3,8 +3,8 @@ package engine
 import (
 	"fmt"
 
-	"git.biggo.com/0c/ime/core/proto"
-	"git.biggo.com/0c/ime/core/zhconv"
+	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/zhconv"
 )
 
 // SimplifiedSwitch 是從輸入法選單即時切換「輸出簡體字」需要的宿主功能（#169）。兩者都由宿主提供，

@@ -25,7 +25,7 @@ func TestCoreIsPure(t *testing.T) {
 		}
 		for _, imp := range f.Imports {
 			p, _ := strconv.Unquote(imp.Path.Value)
-			if forbidden[p] || strings.HasPrefix(p, "git.biggo.com/0c/ime/") && !strings.HasPrefix(p, "git.biggo.com/0c/ime/core/") {
+			if forbidden[p] || strings.HasPrefix(p, "github.com/0c-biggo/0c-ime/") && !strings.HasPrefix(p, "github.com/0c-biggo/0c-ime/core/") {
 				t.Errorf("%s 不得 import %q", path, p)
 			}
 		}

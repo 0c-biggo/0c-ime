@@ -1,6 +1,6 @@
 package personal
 
-import "git.biggo.com/0c/ime/core/emoji"
+import "github.com/0c-biggo/0c-ime/core/emoji"
 
 // RememberEmoji changes only the bounded palette order. It never learns words,
 // pronunciations, English evidence or contextual probabilities.

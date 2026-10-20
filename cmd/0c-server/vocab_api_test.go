@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"git.biggo.com/0c/ime/bridge/ipc"
-	"git.biggo.com/0c/ime/internal/settings"
-	"git.biggo.com/0c/ime/internal/vocabapi"
+	"github.com/0c-biggo/0c-ime/bridge/ipc"
+	"github.com/0c-biggo/0c-ime/internal/settings"
+	"github.com/0c-biggo/0c-ime/internal/vocabapi"
 )
 
 // 本機 API（#126）在 api.json 開啟時監聽 127.0.0.1（0.2.0 起不再看 preview_0_2，舊檔寫 false 也一樣）；

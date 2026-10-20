@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"git.biggo.com/0c/ime/core/decode"
-	"git.biggo.com/0c/ime/core/rerank"
+	"github.com/0c-biggo/0c-ime/core/decode"
+	"github.com/0c-biggo/0c-ime/core/rerank"
 )
 
 func hyp(segs ...decode.Seg) decode.Hypothesis {

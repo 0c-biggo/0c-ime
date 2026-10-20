@@ -3,7 +3,7 @@ package session
 import (
 	"testing"
 
-	"git.biggo.com/0c/ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/proto"
 )
 
 // #78：中英混打時，注音打完後空白是半形空白，↓ 選字；注音打到一半時空白仍是一聲。

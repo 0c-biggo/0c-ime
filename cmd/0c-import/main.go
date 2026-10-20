@@ -15,9 +15,9 @@ import (
 	"sort"
 	"strings"
 
-	"git.biggo.com/0c/ime/internal/compile"
-	"git.biggo.com/0c/ime/internal/eval"
-	"git.biggo.com/0c/ime/internal/importer"
+	"github.com/0c-biggo/0c-ime/internal/compile"
+	"github.com/0c-biggo/0c-ime/internal/eval"
+	"github.com/0c-biggo/0c-ime/internal/importer"
 )
 
 func main() {

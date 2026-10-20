@@ -3,8 +3,8 @@ package session
 import (
 	"testing"
 
-	"git.biggo.com/0c/ime/core/proto"
-	"git.biggo.com/0c/ime/core/vocab"
+	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/vocab"
 )
 
 // #124：= 開在上次真的選了東西的分頁；Tab 過去看看、Esc 取消不算。Shift＋Tab 往回，頭尾相接。

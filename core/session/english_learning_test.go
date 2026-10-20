@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"testing"
 
-	"git.biggo.com/0c/ime/core/personal"
-	"git.biggo.com/0c/ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/personal"
+	"github.com/0c-biggo/0c-ime/core/proto"
 )
 
 const englishDay = int64(86400)

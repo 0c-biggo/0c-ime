@@ -3,8 +3,8 @@ package session
 import (
 	"testing"
 
-	"git.biggo.com/0c/ime/core/proto"
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // choseShemma 只記下使用者用 ㄕㄜˊ ㄇㄜ˙ 選過「什麼」的個人讀音並遞增版本，模擬別的欄位提交後的學習；
