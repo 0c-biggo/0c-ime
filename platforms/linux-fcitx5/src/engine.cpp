@@ -568,6 +568,7 @@ private:
         ui.registerAction("zuin-simplified", &simplifiedAction_);
         simplifiedAction_.connect<fcitx::SimpleAction::Activated>([this](fcitx::InputContext *ic) { toggleSimplified(ic); });
         on(status_, [this] { return zuin::statusCommand(update_); });
+        update_ = zuin::readStatus(std::string()); // 第一次查詢前：套件管理員模式也不顯示更新列
         applyStatus();
         runUpdater({});
         modelTimer_ = instance_->eventLoop().addTimeEvent(CLOCK_MONOTONIC, fcitx::now(CLOCK_MONOTONIC) + 5000000, 100000,
@@ -700,7 +701,7 @@ private:
                     if (update) { updateFailure_ = failure; }
                 }
                 querying_ = false;
-                update_ = zuin::parseStatus(ok ? out : std::string());
+                update_ = zuin::readStatus(ok ? out : std::string()); // 查詢失敗時套件管理員模式照舊（#181）
                 applyStatus();
             });
         }).detach();

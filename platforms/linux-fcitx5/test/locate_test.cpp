@@ -35,6 +35,18 @@ int main() {
     EXPECT(system.path == dirs.libexec + "/0c-server" && system.args == (Args{"-data", dirs.data + "/data"}));
     EXPECT(zuin::locateUpdater(dirs) == dirs.libexec + "/0c-update");
 
+    // 套件管理員模式（#181）：系統的 0c-update，而且 distribution.json 寫 package-manager；只看檔案。
+    EXPECT(!zuin::packageManaged(dirs));
+    std::system(("mkdir -p '" + dirs.data + "'").c_str());
+    std::ofstream(dirs.data + "/distribution.json") << R"({"schema":1,"updates":"self"})";
+    EXPECT(!zuin::packageManaged(dirs));
+    std::ofstream(dirs.data + "/distribution.json") << R"({"schema":2,"updates":"package-manager"})";
+    EXPECT(!zuin::packageManaged(dirs));
+    std::ofstream(dirs.data + "/distribution.json") << "not json";
+    EXPECT(!zuin::packageManaged(dirs));
+    std::ofstream(dirs.data + "/distribution.json") << R"({"schema":1,"updates":"package-manager","version":"0.2.3"})";
+    EXPECT(zuin::packageManaged(dirs));
+
     // 官網安裝也在：官網優先，引擎不帶參數（自己依 engine.json 轉交），0c-update 先找穩定副本。
     touch(dirs.home + "/.local/bin/0c-server", 0644); // 不能執行的不算
     EXPECT(zuin::locateServer(dirs).path == dirs.libexec + "/0c-server");
@@ -43,6 +55,7 @@ int main() {
     auto personal = zuin::locateServer(dirs);
     EXPECT(personal.path == dirs.home + "/.local/bin/0c-server" && personal.args.empty());
     EXPECT(zuin::locateUpdater(dirs) == dirs.home + "/.local/bin/0c-update");
+    EXPECT(!zuin::packageManaged(dirs)); // 選單用官網的 0c-update：照舊有更新列
     touch(dirs.home + "/.local/share/zuin/bin/0c-update", 0755);
     EXPECT(zuin::locateUpdater(dirs) == dirs.home + "/.local/share/zuin/bin/0c-update");
 
