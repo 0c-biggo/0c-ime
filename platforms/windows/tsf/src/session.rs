@@ -47,6 +47,8 @@ pub struct Snapshot {
     pub notices: Vec<String>,
     /// 讀音提示（#162）：中英混打時照字面顯示的數字按空白會組成的注音（20 → ㄉㄢ）；沒有時為空字串。
     pub reading_hint: String,
+    /// 送出的文字目前會轉成簡體（output_simplified，#169）。只有回報 output_simplified_live 的引擎才有這一項。
+    pub output_simplified: bool,
 }
 
 impl Snapshot {
@@ -115,6 +117,11 @@ pub struct Session {
     // 最近一次快照的 caps_english（#173），換欄位清掉 english_state 後仍保留：重開 session 還原模式時，
     // Caps Lock 帶來的英文以 caps_lock 還原（關掉 Caps Lock 才回得到注音），不當成使用者切的英文。
     caps_english: bool,
+    // 「輸出簡體字」（#169）：引擎能即時切換（health／open 的 output_simplified_live），以及引擎目前的值
+    // （health／open 的 output_simplified、之後每個快照的 output_simplified）。輸入指示器的「简」與選單打勾看這兩項；
+    // 跟著 session 物件（這個程式的 TSF 執行緒），換欄位也沿用。
+    simplified_live: bool,
+    simplified: bool,
 }
 
 /// 重開 session（引擎重啟、斷線）時要不要送「設定模式」還原外殼記得的模式（#160）。新 session 從開始時的模式起：
@@ -154,7 +161,49 @@ impl Session {
             shared: false,
             caps_lock_english: false,
             caps_english: false,
+            simplified_live: false,
+            simplified: false,
         }
+    }
+
+    /// 從 health／open 的 info 記下「輸出簡體字」的能力與目前的值；回傳狀態是否因此改變。
+    fn learn_simplified(&mut self, info: &Value) -> bool {
+        let before = (self.simplified_live, self.simplified);
+        self.simplified_live = info["output_simplified_live"] == "true";
+        self.simplified = self.simplified_live && info["output_simplified"] == "true";
+        before != (self.simplified_live, self.simplified)
+    }
+
+    /// 「輸出簡體字」目前的值；引擎不能即時切換（舊引擎）或還沒問過時為 None，選單改看 0c-update 的狀態。
+    pub fn simplified(&self) -> Option<bool> {
+        self.simplified_live.then_some(self.simplified)
+    }
+
+    /// 換欄位時重新確認「輸出簡體字」（#169）：可能剛在設定程式或別的程式切換過，輸入指示器的「简」要跟上。
+    /// 只用已經在執行的引擎、不為此啟動，沒有 session 時查完不留連線（同 learn_mode）。回傳狀態是否改變。
+    pub fn refresh_simplified(&mut self) -> bool {
+        let probe = !self.client.connected();
+        if probe && !self.client.connect_existing() {
+            return false;
+        }
+        let reply = self.client.call(&json!({"op": "health"}));
+        if probe && self.id == 0 {
+            self.client.release();
+        }
+        match reply.filter(|r| r["ok"] == true) {
+            Some(reply) => self.learn_simplified(&reply["info"]),
+            None => false,
+        }
+    }
+
+    /// 切換「輸出簡體字」（#169）：引擎立即改變之後送出的文字（所有程式，包括已經在組字區的字）並寫進設定檔，
+    /// 組字不動；快照帶「已切換為輸出簡體字／繁體字」的提示。這是全域設定，不記進重播紀錄。
+    /// 引擎不能即時切換時回 handled=false（呼叫端改請 0c-ui 執行 0c-update）。
+    pub fn output_simplified(&mut self, on: bool) -> Snapshot {
+        if !self.simplified_live {
+            return Snapshot::default();
+        }
+        self.handle(json!({"type": "output_simplified", "on": on}))
     }
 
     /// 還不知道這個程式（TSF 執行緒）的中英模式時，向引擎查新 session 開始時的模式（#160）。
@@ -178,12 +227,13 @@ impl Session {
         self.mode_known = true;
         self.shared = reply["info"]["mode_memory"] == "shared";
         self.caps_lock_english = reply["info"]["caps_lock_english"] == "true";
+        let simplified = self.learn_simplified(&reply["info"]);
         let before = self.english;
         if let Some(english) = initial_english(&reply["info"]) {
             self.english = english;
             self.caps_english = false; // 模式照引擎的（共用模式或開始時的）；Caps Lock 由下一個按鍵重新同步（#173）
         }
-        before != self.english
+        before != self.english || simplified
     }
 
     /// 目前的 session 是否可以送 #123 的新鍵名（Shift＋←／→、Shift＋Delete／Backspace）。
@@ -320,6 +370,7 @@ impl Session {
         self.vocab_keys = reply["info"]["vocab_keys"] == "true";
         self.shared = reply["info"]["mode_memory"] == "shared";
         self.caps_lock_english = reply["info"]["caps_lock_english"] == "true";
+        self.learn_simplified(&reply["info"]);
         let start_english = reply["info"]["start_mode"] == "english";
         self.pending_context = None; // 新 session 不認得舊代號
         if self.context_enabled {
@@ -431,6 +482,9 @@ impl Session {
             }
             self.english = s.english;
             self.caps_english = s.caps_english;
+            if self.simplified_live {
+                self.simplified = s.output_simplified; // 設定程式或別的程式切換後，下一個快照就跟上（#169）
+            }
             self.mode_known = true;
             self.english_state = s.clone();
             self.down = false;
@@ -442,8 +496,9 @@ impl Session {
                     self.cleared = Some((log, self.replay_english));
                 }
                 self.log.clear();
-            } else if kind != "caps_lock" {
+            } else if kind != "caps_lock" && kind != "output_simplified" {
                 // Caps Lock 狀態不重播（#173）：重開的 session 由還原模式與下一個按鍵重新同步。
+                // 「輸出簡體字」是全域設定，重播會再切一次（#169）。
                 if self.log.is_empty() {
                     match cleared.take().filter(|_| kind == "toggle") {
                         Some((log, english)) => {
@@ -538,6 +593,7 @@ fn parse(reply: &Value) -> Snapshot {
     s.caps_lock = j["caps_lock"].as_bool().unwrap_or(false);
     s.caps_english = j["caps_english"].as_bool().unwrap_or(false);
     s.reading_hint = j["reading_hint"]["text"].as_str().unwrap_or("").to_string();
+    s.output_simplified = j["output_simplified"].as_bool().unwrap_or(false);
     if let Some(notices) = j["notices"].as_array() {
         s.notices = notices
             .iter()
@@ -853,6 +909,42 @@ mod tests {
         s.key("Escape");
         let mut other = Session::with_client(Client::with_pipe(&pipe));
         assert!(other.learn_mode(true) && other.english(), "另一個新開的程式從英文開始");
+    }
+
+    // #169：選單切換「輸出簡體字」即時生效（ZUIN_TEST_SIMPLIFIED_PIPE：testdata/toy、暫存個人資料的獨立引擎；
+    // 這個測試會改它的設定，不和其他測試共用引擎）。另一個程式已經在組字區的字照新的設定送出；切換不記進重播紀錄。
+    #[test]
+    fn output_simplified_switches_live_and_is_not_replayed() {
+        let Ok(pipe) = std::env::var("ZUIN_TEST_SIMPLIFIED_PIPE") else {
+            return;
+        };
+        let mut menu = Session::with_client(Client::with_pipe(&pipe));
+        let mut editor = Session::with_client(Client::with_pipe(&pipe));
+        assert_eq!(menu.simplified(), None, "還沒問過引擎");
+        assert!(menu.refresh_simplified(), "health 回報能即時切換");
+        assert_eq!(menu.simplified(), Some(false));
+        assert!(!menu.client.connected(), "換欄位的查詢不留連線");
+        let scenery = ["z", "/", " ", "r", "u", "/", "3"]; // ㄈㄥ ㄐㄧㄥˇ
+        for k in scenery {
+            editor.key(k);
+        }
+        assert_eq!(editor.english_state.text(), "風景");
+        let snap = menu.output_simplified(true);
+        assert!(snap.ok && snap.handled && snap.output_simplified, "{:?}", snap);
+        assert_eq!(snap.notice(), "已切換為輸出簡體字");
+        assert_eq!(menu.simplified(), Some(true));
+        let sent = editor.key("Enter");
+        assert_eq!(sent.commit, "风景", "組字中切換後照新設定送出");
+        assert_eq!(editor.simplified(), Some(true), "下一個快照就跟上");
+        for k in scenery {
+            menu.key(k);
+        }
+        let snap = menu.output_simplified(false);
+        assert_eq!(snap.text(), "風景", "切換不動組字");
+        assert!(menu.log.iter().all(|r| r["type"] != "output_simplified"), "不記進重播紀錄");
+        menu.client.disconnect_for_test();
+        assert_eq!(menu.key("Enter").commit, "風景", "重連重播後送出，不會再切一次");
+        assert_eq!(menu.simplified(), Some(false));
     }
 
     // #173：引擎開著「Caps Lock 開著時直接打英文」（ZUIN_TEST_CAPS_PIPE 的 settings.json 有 caps_lock_english=true）。
