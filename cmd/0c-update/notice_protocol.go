@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"strings"
 
-	"git.biggo.com/0c/ime/internal/update"
+	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
 // Both buttons retain the identity of the asset shown in the notification.

@@ -14,10 +14,10 @@ import (
 	"path/filepath"
 	"sort"
 
-	"git.biggo.com/0c/ime/core/lexicon"
-	"git.biggo.com/0c/ime/internal/corpus"
-	"git.biggo.com/0c/ime/internal/datadir"
-	"git.biggo.com/0c/ime/internal/eval"
+	"github.com/0c-biggo/0c-ime/core/lexicon"
+	"github.com/0c-biggo/0c-ime/internal/corpus"
+	"github.com/0c-biggo/0c-ime/internal/datadir"
+	"github.com/0c-biggo/0c-ime/internal/eval"
 )
 
 type document struct {

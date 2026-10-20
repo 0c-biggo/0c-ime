@@ -4,7 +4,7 @@
 // 會在同一位置放入多個帶成本的假設。解碼器對所有前端一視同仁。
 package input
 
-import "git.biggo.com/0c/ime/core/zhuyin"
+import "github.com/0c-biggo/0c-ime/core/zhuyin"
 
 // Hyp 是某個位置的一個音節假設。Cost 為負對數機率，0 表示確定。
 type Hyp struct {

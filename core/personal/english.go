@@ -5,7 +5,7 @@ import (
 	"slices"
 	"strings"
 
-	"git.biggo.com/0c/ime/core/english"
+	"github.com/0c-biggo/0c-ime/core/english"
 )
 
 const MaxEnglishObservations = 1024

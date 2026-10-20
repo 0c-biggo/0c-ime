@@ -3,7 +3,7 @@ package session
 import (
 	"testing"
 
-	"git.biggo.com/0c/ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/proto"
 )
 
 // #76：未打完的注音先單獨清掉；再按一次 Esc 依設定清除整段，或保留已組好的字。

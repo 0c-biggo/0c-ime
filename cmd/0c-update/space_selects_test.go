@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"git.biggo.com/0c/ime/internal/settings"
+	"github.com/0c-biggo/0c-ime/internal/settings"
 )
 
 // #107、#110：「空白鍵選字」經 settings --json 給設定程式；引擎載入的值不同時標示待套用。

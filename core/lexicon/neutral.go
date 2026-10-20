@@ -3,7 +3,7 @@ package lexicon
 import (
 	"sort"
 
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // particles 是語氣詞與嘆詞及其優先順序。它們口語常讀輕聲，詞庫卻往往只收在其他聲調

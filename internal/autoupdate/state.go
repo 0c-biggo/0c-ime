@@ -14,7 +14,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"git.biggo.com/0c/ime/internal/filelock"
+	"github.com/0c-biggo/0c-ime/internal/filelock"
 )
 
 // 模式：自動保持最新（推薦）、下載後詢問、手動。

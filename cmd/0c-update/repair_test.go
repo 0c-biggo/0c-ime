@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"git.biggo.com/0c/ime/internal/autoupdate"
+	"github.com/0c-biggo/0c-ime/internal/autoupdate"
 )
 
 // fakeRepair 模擬防毒軟體移除穩定更新器與排程：install 放回檔案並建立排程，quarantine 再移除。

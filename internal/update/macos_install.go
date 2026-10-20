@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"git.biggo.com/0c/ime/internal/userlock"
+	"github.com/0c-biggo/0c-ime/internal/userlock"
 )
 
 // MacApp 是套件內與安裝後的 App 名稱；LegacyMacApp 是 0.1.0-dev.21 以前的名稱，只用於升級與回復。

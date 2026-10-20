@@ -11,8 +11,8 @@ import (
 	"syscall"
 	"time"
 
-	"git.biggo.com/0c/ime/bridge/ipc"
-	"git.biggo.com/0c/ime/internal/autoupdate"
+	"github.com/0c-biggo/0c-ime/bridge/ipc"
+	"github.com/0c-biggo/0c-ime/internal/autoupdate"
 )
 
 // prepareMacInstall checks every supported endpoint before draining any engine.

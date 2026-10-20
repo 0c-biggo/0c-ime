@@ -5,9 +5,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"git.biggo.com/0c/ime/core/lm"
-	"git.biggo.com/0c/ime/core/vocab"
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/lm"
+	"github.com/0c-biggo/0c-ime/core/vocab"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // 自訂詞（#122）接進個人化模型的部分：詞庫視圖加入自訂詞（personal.go 的 view）、

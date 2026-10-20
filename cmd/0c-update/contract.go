@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"git.biggo.com/0c/ime/core/fuzzy"
-	"git.biggo.com/0c/ime/internal/autoupdate"
-	"git.biggo.com/0c/ime/internal/settings"
+	"github.com/0c-biggo/0c-ime/core/fuzzy"
+	"github.com/0c-biggo/0c-ime/internal/autoupdate"
+	"github.com/0c-biggo/0c-ime/internal/settings"
 )
 
 // contractSchema 是機器可讀輸出（settings、set、check、status 的 -json）的版本。欄位只增不改；

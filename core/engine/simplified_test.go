@@ -5,12 +5,12 @@ import (
 	"slices"
 	"testing"
 
-	"git.biggo.com/0c/ime/core/lexicon"
-	"git.biggo.com/0c/ime/core/lm"
-	"git.biggo.com/0c/ime/core/proto"
-	"git.biggo.com/0c/ime/core/zhconv"
-	"git.biggo.com/0c/ime/core/zhuyin"
-	"git.biggo.com/0c/ime/internal/simplified"
+	"github.com/0c-biggo/0c-ime/core/lexicon"
+	"github.com/0c-biggo/0c-ime/core/lm"
+	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/zhconv"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/internal/simplified"
 )
 
 // 「計畫」的引擎：ㄐㄧˋ ㄏㄨㄚˋ（標準排列 ru4 cj84）。

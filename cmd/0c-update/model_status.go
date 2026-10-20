@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 
-	"git.biggo.com/0c/ime/internal/autoupdate"
+	"github.com/0c-biggo/0c-ime/internal/autoupdate"
 )
 
 // modelStatus 只查詢已執行的引擎，不為了查看狀態啟動引擎或模型。

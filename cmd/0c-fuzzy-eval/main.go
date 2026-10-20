@@ -20,14 +20,14 @@ import (
 	"sync"
 	"time"
 
-	"git.biggo.com/0c/ime/core/engine"
-	"git.biggo.com/0c/ime/core/fuzzy"
-	"git.biggo.com/0c/ime/core/lexicon"
-	"git.biggo.com/0c/ime/core/zhuyin"
-	"git.biggo.com/0c/ime/internal/datadir"
-	"git.biggo.com/0c/ime/internal/eval"
-	"git.biggo.com/0c/ime/internal/fuzzyeval"
-	"git.biggo.com/0c/ime/internal/neural"
+	"github.com/0c-biggo/0c-ime/core/engine"
+	"github.com/0c-biggo/0c-ime/core/fuzzy"
+	"github.com/0c-biggo/0c-ime/core/lexicon"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/internal/datadir"
+	"github.com/0c-biggo/0c-ime/internal/eval"
+	"github.com/0c-biggo/0c-ime/internal/fuzzyeval"
+	"github.com/0c-biggo/0c-ime/internal/neural"
 )
 
 func main() {

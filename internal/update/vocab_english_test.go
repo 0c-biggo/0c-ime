@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"git.biggo.com/0c/ime/core/vocab"
+	"github.com/0c-biggo/0c-ime/core/vocab"
 )
 
 // #146／#127：英文詞存在 vocab.json 的 words 裡，備份與還原整個檔案，英文詞跟著走。

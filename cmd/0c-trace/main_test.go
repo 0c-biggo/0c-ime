@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"git.biggo.com/0c/ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/proto"
 )
 
 func TestReadRotatedAndIncompleteEvents(t *testing.T) {

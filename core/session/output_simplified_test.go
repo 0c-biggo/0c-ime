@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"git.biggo.com/0c/ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/proto"
 )
 
 // #169：從輸入法選單切換「輸出簡體字」是全域設定，不是對這個輸入框的操作。快照照目前的畫面，

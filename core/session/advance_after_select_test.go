@@ -3,7 +3,7 @@ package session
 import (
 	"testing"
 
-	"git.biggo.com/0c/ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/proto"
 )
 
 // #133：「選字後游標移到下一個字」關閉（預設）時游標留在原處；開啟時從候選窗選定後，

@@ -4,7 +4,7 @@ package main
 
 import (
 	"encoding/json"
-	"git.biggo.com/0c/ime/internal/autoupdate"
+	"github.com/0c-biggo/0c-ime/internal/autoupdate"
 	"os"
 	"path/filepath"
 	"strings"

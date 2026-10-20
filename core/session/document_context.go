@@ -1,11 +1,11 @@
 package session
 
 import (
-	"git.biggo.com/0c/ime/core/decode"
-	"git.biggo.com/0c/ime/core/lm"
-	"git.biggo.com/0c/ime/core/personal"
-	"git.biggo.com/0c/ime/core/proto"
-	"git.biggo.com/0c/ime/core/rerank"
+	"github.com/0c-biggo/0c-ime/core/decode"
+	"github.com/0c-biggo/0c-ime/core/lm"
+	"github.com/0c-biggo/0c-ime/core/personal"
+	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/rerank"
 	"unicode/utf8"
 )
 

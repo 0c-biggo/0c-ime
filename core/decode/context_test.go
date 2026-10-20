@@ -4,9 +4,9 @@ import (
 	"math"
 	"testing"
 
-	"git.biggo.com/0c/ime/core/input"
-	"git.biggo.com/0c/ime/core/lexicon"
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/input"
+	"github.com/0c-biggo/0c-ime/core/lexicon"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 type contextScore map[[2]string]float64

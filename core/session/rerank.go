@@ -7,10 +7,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"git.biggo.com/0c/ime/core/decode"
-	"git.biggo.com/0c/ime/core/input"
-	"git.biggo.com/0c/ime/core/rerank"
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/decode"
+	"github.com/0c-biggo/0c-ime/core/input"
+	"github.com/0c-biggo/0c-ime/core/rerank"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 const rerankCacheLimit = 128

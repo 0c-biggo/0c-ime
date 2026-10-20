@@ -10,7 +10,7 @@ import (
 	"sort"
 	"unicode/utf8"
 
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // Vocab 是斷詞與計數用的詞表：詞面 → ID 與 unigram 對數機率。

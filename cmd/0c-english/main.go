@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"git.biggo.com/0c/ime/internal/englishpack"
+	"github.com/0c-biggo/0c-ime/internal/englishpack"
 )
 
 func main() {

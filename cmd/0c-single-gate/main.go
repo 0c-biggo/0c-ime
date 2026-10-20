@@ -18,13 +18,13 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	"git.biggo.com/0c/ime/core/layout"
-	"git.biggo.com/0c/ime/core/lexicon"
-	"git.biggo.com/0c/ime/core/lm"
-	"git.biggo.com/0c/ime/core/proto"
-	"git.biggo.com/0c/ime/core/zhuyin"
-	"git.biggo.com/0c/ime/internal/compile"
-	"git.biggo.com/0c/ime/internal/datadir"
+	"github.com/0c-biggo/0c-ime/core/layout"
+	"github.com/0c-biggo/0c-ime/core/lexicon"
+	"github.com/0c-biggo/0c-ime/core/lm"
+	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/internal/compile"
+	"github.com/0c-biggo/0c-ime/internal/datadir"
 )
 
 type scenario struct {

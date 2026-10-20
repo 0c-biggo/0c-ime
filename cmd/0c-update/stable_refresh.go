@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"git.biggo.com/0c/ime/internal/enginedir"
-	"git.biggo.com/0c/ime/internal/update"
+	"github.com/0c-biggo/0c-ime/internal/enginedir"
+	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
 // refreshStaleUpdater 讓穩定副本（排程、選單、通知與開始功能表捷徑執行的 0c-update）跟上目前版本。

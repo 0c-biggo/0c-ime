@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"git.biggo.com/0c/ime/internal/autoupdate"
-	"git.biggo.com/0c/ime/internal/settingsapp"
+	"github.com/0c-biggo/0c-ime/internal/autoupdate"
+	"github.com/0c-biggo/0c-ime/internal/settingsapp"
 )
 
 func newSettingsOpener() settingsOpener {

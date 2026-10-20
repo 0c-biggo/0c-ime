@@ -8,7 +8,7 @@ import (
 	"strings"
 	"syscall"
 
-	"git.biggo.com/0c/ime/internal/enginedir"
+	"github.com/0c-biggo/0c-ime/internal/enginedir"
 )
 
 // redirectEngine：外殼以預設方式啟動引擎時，若 engine.json 指向另一個版本目錄，

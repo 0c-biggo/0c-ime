@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"git.biggo.com/0c/ime/internal/settingsapp"
-	"git.biggo.com/0c/ime/internal/update"
+	"github.com/0c-biggo/0c-ime/internal/settingsapp"
+	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
 // settingsAppPrefix 是設定程式在輸入法 App 內的位置。整個 0c.app 是一個版本單位，所以它的每個檔案

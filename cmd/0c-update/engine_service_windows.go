@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"git.biggo.com/0c/ime/internal/autoupdate"
+	"github.com/0c-biggo/0c-ime/internal/autoupdate"
 )
 
 // 引擎服務（#120，Windows）：登入工作 0c-engine-<SID>（dev.56 起）本來就在登入時啟動引擎，不改工作定義

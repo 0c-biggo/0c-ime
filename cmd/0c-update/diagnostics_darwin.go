@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"git.biggo.com/0c/ime/internal/update"
+	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
 // shellDiagnostics 回報 macOS 版本與正在執行的輸入法是哪一份 App、哪個版本，放進 status -json 與

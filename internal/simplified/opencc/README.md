@@ -1,6 +1,6 @@
 # OpenCC tw2s 字典
 
-「輸出簡體字」（[#118](https://git.biggo.com/0c/ime/issues/118)）送出時用的台灣正體轉簡體字典，原樣取自 [OpenCC](https://github.com/BYVoid/OpenCC) 的正式版 **ver.1.4.2**（commit `025f371dc76b598d77384fbdab90c937471844d8`，2026-08-22），Apache-2.0，授權全文在 `LICENSE`。來源登錄在 [data/sources/ledger.tsv](../../../data/sources/ledger.tsv) 的 `opencc`；第三方元件聲明由 `scripts/collect_notices.py` 附上。
+「輸出簡體字」（#118）送出時用的台灣正體轉簡體字典，原樣取自 [OpenCC](https://github.com/BYVoid/OpenCC) 的正式版 **ver.1.4.2**（commit `025f371dc76b598d77384fbdab90c937471844d8`，2026-08-22），Apache-2.0，授權全文在 `LICENSE`。來源登錄在 [data/sources/ledger.tsv](../../../data/sources/ledger.tsv) 的 `opencc`；第三方元件聲明由 `scripts/collect_notices.py` 附上。
 
 | 檔案 | 上游路徑 | sha256 |
 |---|---|---|

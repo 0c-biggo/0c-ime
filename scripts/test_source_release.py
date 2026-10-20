@@ -253,6 +253,16 @@ class SourceReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "AGENTS.md"):
             check_repo(self.repo)
 
+    def test_private_host_rejected_in_worktree_and_tag(self):
+        from check_public_tree import check_repo, PRIVATE_HOSTS
+        (self.repo / "go.mod").write_text(f"module {PRIVATE_HOSTS[0]}/0c/ime\n")
+        with self.assertRaisesRegex(ValueError, "private host.*\ngo.mod"):
+            check_repo(self.repo)
+        self.commit_tag("v0.2.1")
+        with self.assertRaisesRegex(ValueError, "private host.*\ngo.mod"):
+            self.build(tag="v0.2.1")
+        self.assertFalse((self.work / "output").exists())
+
     def test_downloads_pinned_files_and_rejects_corruption(self):
         entry = self.models["punct"]["files"]["model.onnx"]
         target = self.cache / entry["sha256"]

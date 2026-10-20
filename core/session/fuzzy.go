@@ -4,10 +4,10 @@ import (
 	"slices"
 	"strings"
 
-	"git.biggo.com/0c/ime/core/decode"
-	"git.biggo.com/0c/ime/core/fuzzy"
-	"git.biggo.com/0c/ime/core/input"
-	"git.biggo.com/0c/ime/core/zhuyin"
+	"github.com/0c-biggo/0c-ime/core/decode"
+	"github.com/0c-biggo/0c-ime/core/fuzzy"
+	"github.com/0c-biggo/0c-ime/core/input"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // fuzzyFirstPage 是候選第一頁為近音保留的位置數（依原音候選相對次序不變為前提）。

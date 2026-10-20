@@ -13,12 +13,12 @@ import (
 	"strings"
 	"time"
 
-	"git.biggo.com/0c/ime/core/fuzzy"
-	"git.biggo.com/0c/ime/core/layout"
-	"git.biggo.com/0c/ime/core/personal"
-	"git.biggo.com/0c/ime/core/proto"
-	"git.biggo.com/0c/ime/internal/datadir"
-	"git.biggo.com/0c/ime/internal/simplified"
+	"github.com/0c-biggo/0c-ime/core/fuzzy"
+	"github.com/0c-biggo/0c-ime/core/layout"
+	"github.com/0c-biggo/0c-ime/core/personal"
+	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/internal/datadir"
+	"github.com/0c-biggo/0c-ime/internal/simplified"
 )
 
 const help = `直接輸入按鍵（預設標準注音排列，-keyboard-layout eten 為倚天 41 鍵；空白鍵是一聲），按 Enter 送出這一行的按鍵。

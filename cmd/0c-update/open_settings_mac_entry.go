@@ -6,7 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 
-	"git.biggo.com/0c/ime/internal/settingsapp"
+	"github.com/0c-biggo/0c-ime/internal/settingsapp"
 )
 
 // syncMacSettingsEntry 的路徑由呼叫端提供，安裝／回復測試不需碰真的家目錄或 LaunchServices。
