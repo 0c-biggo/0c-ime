@@ -68,7 +68,7 @@ func (e *Engine) outputSimplified(id uint64, req proto.Request) (proto.Snapshot,
 	if !ok {
 		return proto.Snapshot{}, fmt.Errorf("session %d 不存在", id)
 	}
-	snap := s.Handle(req)
+	snap := s.View() // 不經 Handle：切換不算這個輸入框的操作，Shift 還原、撤銷等暫存都留著
 	switch {
 	case !live:
 		snap.Handled = false

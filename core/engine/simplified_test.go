@@ -171,3 +171,24 @@ func TestOutputSimplifiedInSharedMode(t *testing.T) {
 		t.Fatalf("共用的模式沒跟上：%s", snap.Mode)
 	}
 }
+
+// 切換不經 Session.Handle 的一般流程、不算這個輸入框的操作：按 Shift 暫存的未打完注音，切換之後再按 Shift 照樣放回。
+func TestOutputSimplifiedKeepsShiftRestore(t *testing.T) {
+	e := planEngine(t)
+	var log switchLog
+	e.SimplifiedSwitch = log.hooks()
+	id := e.OpenSession()
+	typeKeys(t, e, id, "ru4cj8") // 計 + 未打完的 ㄏㄨㄚ
+	if snap, _ := e.Do(id, proto.Request{Type: proto.Toggle}); snap.Text() != "計" {
+		t.Fatalf("切到英文：%q", snap.Text())
+	}
+	if snap, err := e.Do(id, proto.Request{Type: proto.OutputSimplified, On: true}); err != nil || !snap.OutputSimplified || snap.Mode != proto.ModeEnglish {
+		t.Fatalf("切換：%+v %v", snap, err)
+	}
+	if snap, _ := e.Do(id, proto.Request{Type: proto.Toggle, Restore: true}); snap.Text() != "計ㄏㄨㄚ" {
+		t.Fatalf("切換之後再按 Shift：%q", snap.Text())
+	}
+	if got := typeKeys(t, e, id, "4"); got.Text() != "計畫" {
+		t.Fatalf("放回的注音可以接著打：%q", got.Text())
+	}
+}
