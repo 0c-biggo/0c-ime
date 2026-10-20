@@ -83,9 +83,14 @@ var (
 	launchMacShell  = openMacShell
 )
 
+// ioregTimeout：ioreg 平常幾十毫秒；卡住時當成查不到（人還在、沒停手），不讓交接或排程一直等下去。
+const ioregTimeout = 5 * time.Second
+
 // macUserAway：這個帳號的使用者離開了電腦（螢幕鎖定、螢幕保護程式、螢幕關閉，或切換到別的使用者），見 macConsoleAway。
 func macUserAway() bool {
-	out, err := exec.Command("/usr/sbin/ioreg", "-n", "Root", "-d1").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), ioregTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "/usr/sbin/ioreg", "-n", "Root", "-d1").Output()
 	if err != nil {
 		return false
 	}
@@ -320,7 +325,9 @@ func applyPendingSettings(base string) {
 
 // hidIdleTime 是使用者多久沒有按鍵或移動滑鼠（IOHIDSystem 的 HIDIdleTime）。
 func hidIdleTime() (time.Duration, bool) {
-	out, err := exec.Command("ioreg", "-c", "IOHIDSystem", "-d", "4").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), ioregTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "ioreg", "-c", "IOHIDSystem", "-d", "4").Output()
 	if err != nil {
 		return 0, false
 	}

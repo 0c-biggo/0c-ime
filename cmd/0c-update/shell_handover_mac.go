@@ -69,12 +69,24 @@ func retirableMacShells(procs []macShellProcess, args map[string]string, roots [
 	return out
 }
 
+// awayCheckEvery：awayOnly 多久重新問一次使用者在不在（每次都要跑 ioreg）。retireProcesses 每 200 毫秒一輪、
+// 每個程序各問一次停手多久，不必每次都重跑；晚一秒發現使用者回來也不會誤關，停手時間（idle）仍是每次即時讀的。
+const awayCheckEvery = time.Second
+
 // awayOnly 讓交接只在使用者離開時進行：人在的時候一律當成剛按過鍵（停手 0 秒），不會送出結束要求。
-// 每一輪都重新判斷：等待中途使用者解鎖回來就停下。
+// 持續重新判斷（最多每 awayCheckEvery 一次）：等待中途使用者解鎖回來就停下。
 func awayOnly(c uiControl, away func() bool) uiControl {
-	idle := c.idle
+	idle, now := c.idle, c.now
+	if now == nil {
+		now = time.Now
+	}
+	var checked time.Time
+	last := false
 	c.idle = func() time.Duration {
-		if !away() {
+		if t := now(); checked.IsZero() || t.Sub(checked) >= awayCheckEvery || t.Before(checked) {
+			last, checked = away(), t
+		}
+		if !last {
 			return 0
 		}
 		return idle()
