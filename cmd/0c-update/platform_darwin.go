@@ -152,9 +152,9 @@ func install(bundle string, release *update.Release) error {
 	retired, left := retireMacShells(filepath.Join(installed, "Contents/MacOS/0c"), uiWaitInstall, unattendedInstall)
 	switch {
 	case len(left) > 0 && unattendedInstall:
-		fmt.Println("舊版的輸入法程式會在你離開電腦（螢幕鎖定或關閉）時換成新版，不必登出；在那之前照常可以打字。")
+		fmt.Println("新版會在你鎖定螢幕或離開電腦時換上，不必登出；在那之前照常可以打字。")
 	case len(left) > 0:
-		fmt.Println("舊版的輸入法程式正在使用中（正在組字或打字），會在你離開電腦（螢幕鎖定或關閉）時換成新版，不必登出；在那之前照常可以打字。")
+		fmt.Println("輸入法正在使用中，新版會在你鎖定螢幕或離開電腦時換上，不必登出；在那之前照常可以打字。")
 	case retired > 0:
 		fmt.Println("已換成新版，不必登出。")
 	case before != nil:
@@ -287,7 +287,7 @@ func rollback(_ string, restoreUser bool) error {
 		exe = filepath.Join(r.App, "Contents/MacOS/Zuin")
 	}
 	if retired, left := retireMacShells(exe, uiWaitInstall, false); len(left) > 0 {
-		fmt.Println("目前的輸入法程式正在使用中（正在組字或打字），會在你離開電腦（螢幕鎖定或關閉）時換成回復的版本，不必登出。")
+		fmt.Println("輸入法正在使用中，回復的版本會在你鎖定螢幕或離開電腦時換上，不必登出。")
 	} else if retired > 0 {
 		fmt.Println("已換成回復的版本，不必登出。")
 	} else {
