@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"git.biggo.com/0c/ime/bridge/ipc"
+	"git.biggo.com/0c/ime/core/proto"
 	"git.biggo.com/0c/ime/internal/enginedir"
 	"git.biggo.com/0c/ime/internal/update"
 )
@@ -289,4 +290,51 @@ func Drain(ctx context.Context, dial Dialer, wait time.Duration) error {
 		case <-time.After(200 * time.Millisecond):
 		}
 	}
+}
+
+// ErrNotLive：引擎不能即時切換這項設定（舊版引擎），要交接重啟才會套用。
+var ErrNotLive = errors.New("引擎不支援即時切換")
+
+// SetOutputSimplified 請執行中的引擎即時切換「輸出簡體字」（#169）：開一個暫時的 session 送 output_simplified 請求，
+// 引擎換掉所有輸入框的轉換器並寫進設定檔，不必重啟。引擎沒有回報 output_simplified_live（舊版）或沒有處理時回
+// ErrNotLive，由呼叫端改用交接重啟套用。
+func SetOutputSimplified(dial Dialer, on bool) error {
+	conn, err := dial(2 * time.Second)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	ask := func(env ipc.Envelope) (ipc.Reply, error) {
+		if err := ipc.WriteFrame(conn, env); err != nil {
+			return ipc.Reply{}, err
+		}
+		var r ipc.Reply
+		if err := ipc.ReadFrame(conn, &r); err != nil {
+			return ipc.Reply{}, err
+		}
+		if !r.OK {
+			return r, fmt.Errorf("%s：%s", env.Op, r.Error)
+		}
+		return r, nil
+	}
+	opened, err := ask(ipc.Envelope{Op: ipc.OpOpen, Version: proto.Version})
+	if err != nil {
+		return err
+	}
+	defer ask(ipc.Envelope{Op: ipc.OpClose, Session: opened.Session})
+	if opened.Info["output_simplified_live"] != "true" {
+		return ErrNotLive
+	}
+	r, err := ask(ipc.Envelope{Op: ipc.OpHandle, Session: opened.Session, Req: &proto.Request{Type: proto.OutputSimplified, On: on}})
+	if err != nil {
+		return err
+	}
+	if r.Snapshot == nil || !r.Snapshot.Handled {
+		return ErrNotLive
+	}
+	if r.Snapshot.OutputSimplified != on { // 例如字典載入失敗
+		return fmt.Errorf("引擎沒有切換：%s", strings.Join(r.Snapshot.Notices, "；"))
+	}
+	return nil
 }

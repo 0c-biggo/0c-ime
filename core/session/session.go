@@ -346,6 +346,8 @@ func (s *Session) Handle(r proto.Request) proto.Snapshot {
 		s.setMode(english, r.Type == proto.Toggle && r.Restore, stash)
 	case proto.CapsLock:
 		handled, commit = s.capsLockChanged(r.On)
+	case proto.OutputSimplified:
+		// #169：引擎（engine.Do）已換好所有 session 的 Simplified；這裡只回目前的畫面，組字不動。
 	default:
 		handled = false
 	}
@@ -382,6 +384,7 @@ func (s *Session) Handle(r proto.Request) proto.Snapshot {
 		snap.Mode = proto.ModeEnglish
 	}
 	snap.CapsLock, snap.CapsEnglish = s.capsLock, s.capsEnglish
+	snap.OutputSimplified = s.Simplified != nil // #169：外殼的狀態顯示跟著
 	return snap
 }
 
