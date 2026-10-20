@@ -141,3 +141,23 @@ if CommandLine.arguments.count == 2 || (CommandLine.arguments.count == 3 && Comm
         print("Passed real Go status JSON → native asset-bound menu/reminder/action integration (artificial state)")
     }
 }
+
+// #169：0c-update 0.2.1 起回報 settings.output_simplified（舊引擎時選單照它打勾）；型別不對當成不知道。
+// 舊引擎退回的命令在白名單內，執行完重新讀狀態。
+do {
+    let decode = { (json: String) in try! JSONDecoder().decode(UpdateMenuStatus.self, from: Data(json.utf8)) }
+    precondition(decode(#"{"installed":"0.2.1","settings":{"output_simplified":true}}"#).outputSimplified == true)
+    precondition(decode(#"{"installed":"0.2.1","settings":{"output_simplified":false}}"#).outputSimplified == false)
+    precondition(decode(#"{"installed":"0.2.0","settings":{}}"#).outputSimplified == nil && decode(#"{"installed":"0.2.0"}"#).outputSimplified == nil)
+    precondition(decode(#"{"installed":"x","settings":{"output_simplified":"yes"}}"#).outputSimplified == nil, "a wrong type must not break the status")
+    precondition(UpdateMenuMonitor.allowed(UpdateMenuMonitor.simplifiedCommand(true)) && UpdateMenuMonitor.allowed(["set", "output-simplified", "off", "-apply", "-notify"]))
+    precondition(!UpdateMenuMonitor.allowed(["set", "output-simplified", "maybe", "-apply", "-notify"]) && !UpdateMenuMonitor.allowed(["set", "selection", "neural", "-apply"]))
+    var simplifiedCalls: [[String]] = []
+    var finish: ((Result<Data, Error>) -> Void)?
+    let fallback = UpdateMenuMonitor { args, done in simplifiedCalls.append(args); finish = done }
+    fallback.setSimplified(true)
+    precondition(simplifiedCalls == [["set", "output-simplified", "on", "-apply", "-notify"]] && fallback.busy)
+    finish?(.success(Data())); pump()
+    precondition(!fallback.busy && simplifiedCalls.last == ["status", "-json"], "status is read again after the fallback command")
+    print("Passed simplified-output fallback status and command checks")
+}

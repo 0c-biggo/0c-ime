@@ -57,7 +57,7 @@ gdbus call --session --dest org.fcitx.Fcitx5 --object-path /controller --method 
 
 ## 按鍵
 
-按鍵的意義全部由核心決定，外殼只轉送按鍵、照快照畫（含候選窗的反白位置）。帶 Ctrl／Alt／Super 的組合鍵交還應用程式；組字中先送出組字再交還，Ctrl+Enter、Ctrl+V 才會在組字之後執行（單按修飾鍵本身不送出，#106）。例外是注音模式的 Ctrl＋標點（#168）：只按著 Ctrl（可加 Shift）的 , . ' ; ? ! 在引擎回報 `ctrl_punctuation=true`（設定「Ctrl＋標點打全形」，預設開）時送 `Ctrl+,` 等鍵名，核心打全形的 ，。、；？！ 插進組字區；引擎沒處理就照一般組合鍵。Ctrl+; 是 Fcitx5 剪貼簿外掛的預設熱鍵；剪貼簿在輸入法之後（`PostInputMethod`）才看按鍵，外殼吃掉就叫不出剪貼簿，所以剪貼簿外掛載入時外殼照舊放行 Ctrl+;，不打；（沒載入剪貼簿時才打；）。外殼不去改使用者的 Fcitx5 設定。注音模式不理 Caps Lock（#168）：字母照 `rawKey` 的 Shift 換回不受 Caps Lock 影響的大小寫，照打注音，Shift＋字母仍是大寫；英文模式照 Caps Lock 打大寫。
+按鍵的意義全部由核心決定，外殼只轉送按鍵、照快照畫（含候選窗的反白位置）。帶 Ctrl／Alt／Super 的組合鍵交還應用程式；組字中先送出組字再交還，Ctrl+Enter、Ctrl+V 才會在組字之後執行（單按修飾鍵本身不送出，#106）。例外是注音模式的 Ctrl＋標點（#168）：只按著 Ctrl（可加 Shift）的 , . ' ; ? ! 在引擎回報 `ctrl_punctuation=true`（設定「Ctrl＋標點打全形」，預設開）時送 `Ctrl+,` 等鍵名，核心打全形的 ，。、；？！ 插進組字區；引擎沒處理就照一般組合鍵。Ctrl+; 是 Fcitx5 剪貼簿外掛的預設熱鍵；剪貼簿在輸入法之後（`PostInputMethod`）才看按鍵，外殼吃掉就叫不出剪貼簿，所以剪貼簿外掛載入時外殼照舊放行 Ctrl+;，不打；（沒載入剪貼簿時才打；）。外殼不去改使用者的 Fcitx5 設定。注音模式不理 Caps Lock（#168）：字母照 `rawKey` 的 Shift 換回不受 Caps Lock 影響的大小寫，照打注音，Shift＋字母仍是大寫；英文模式照 Caps Lock 打大寫。設定「Caps Lock 開著時直接打英文」（`caps-lock-english`，預設關閉，#173）開啟時，Caps Lock 是暫時的英文模式：每個按鍵依 `rawKey` 帶的鎖定狀態（Caps Lock 鍵本身帶的是按下前的狀態，反過來算；不讀 LED，Wayland 讀不到）跟快照的 `caps_lock` 比較，不同才送 `caps_lock` 請求，核心開啟時先送出組字、切到英文，關閉時回到原本的模式，注／英圖示跟著快照，Caps Lock 鍵切換時也跳出輸入法資訊提示；猜錯時下一個按鍵改正。外殼只在 open 回覆 `caps_lock_english=true` 時送；Caps Lock 鍵本身不為此啟動 0c-server，並以 health 再確認一次（設定剛打開、引擎重啟後 open 的快取是舊的，否則第一個字母會照注音打），`caps_lock` 不寫進重播紀錄。
 
 | 情境 | 按鍵 | 作用 |
 |---|---|---|
@@ -143,5 +143,7 @@ Fcitx5 設定工具中，選取「靈犀注音」後按齒輪，可修改神經�
 工作列選單最上面的「⚙ 靈犀注音設定」會執行 `0c-update open-settings`，開啟獨立的「靈犀注音設定」程式（`platforms/settings`）：它完整列出所有設定（含四組模糊音）與更新狀態。`open-settings` 啟動設定程式後立刻返回。程式找不到、核對不過、缺少 WebKitGTK 或沒有圖形桌面時，桌面通知會說明原因，並提示改用 `0c-update settings` 與 `0c-update set`。選單的第二列是更新狀態，點一下檢查更新或完成已準備好的更新。
 
 `0c-update status --json` 的 `features.vocab` 為 true 時（0.2.0 起一律為 true），設定列下面多一列「我的詞彙…」，執行 `0c-update open-settings vocab`，開到設定程式的「我的詞彙」頁；設定程式已經開著時由單一實例切過去（#125）。舊版 0c-update 沒有這個欄位就不顯示。外殼每 5 秒讀一次狀態，這個欄位改變時（例如回復到舊版）把這一列加進或拿出目前欄位的狀態區（Fcitx 的狀態區不能插在中間，所以拿掉自己的項目後依序加回）。開啟失敗的原因顯示在被點的那一列。
+
+「輸出簡體字」（#169）：`0c-update status --json` 有 `settings.output_simplified`（0.2.1 起），或引擎在 open 回覆 `output_simplified_live=true` 時，「我的詞彙…」與更新列之間多一個可以打勾的「輸出簡體字」。點了在這個欄位的 session 送 `output_simplified` 請求：引擎立即改變之後送出的文字（所有欄位，包括已經在組字區、還沒送出的字），組字不動，並把值寫進 `settings.json`（同 `0c-update set` 的寫入鎖與寫法），不重啟引擎；提示用輸入法資訊小窗：Fcitx 5.1.11 起（`showCustomInputMethodInformation`，執行時查符號）顯示「已切換為輸出簡體字／繁體字」，Ubuntu 24.04 的 5.1.7 沒有這個函式，退回一般的輸入法資訊，顯示標籤「注簡」。舊引擎退回 `0c-update set output-simplified on|off -apply -notify`。勾選與狀態顯示跟著每個快照的 `output_simplified` 與狀態查詢的 `runtime.output_simplified`（舊引擎時是 `settings.output_simplified`），在設定程式切換後下一個按鍵或下一次查詢（5 秒內）就跟上；選單切換後，切換前開始的查詢不會把勾選改回去。開著時注音模式的子模式文字是「注音・簡體輸出」，Kimpanel 的標籤是「注簡」（Kimpanel 有標籤時會用文字取代「注」圖示，所以只在這個狀態給標籤）；Classic UI／系統匣的圖示不變，看選單的勾選。英文模式照舊是「英」（兩個字的「注簡」與 IBus 外殼相同：GNOME 頂列的 IBus 指示只採用不到 3 個字）。這個請求不記進重播紀錄。不綁快捷鍵。限制（#118 起就有，與切換無關）：組字中直接失焦時，組字由 Fcitx／用戶端照畫面上的文字送出，所以是繁體；按 Enter、空白選字或選候選送出的才會轉成簡體。
 
 實機回歸可在專用帳號執行 `test/wayland_probe.py --result /tmp/0c-wayland-result.json`，用真正桌面操作組字、選單、跨欄位及敏感欄位。JSON 的文字是應用程式已提交內容，避免把組字預覽當成提交結果。

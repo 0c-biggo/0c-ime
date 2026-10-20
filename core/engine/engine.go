@@ -36,6 +36,7 @@ type Engine struct {
 	Simplified            *zhconv.Converter // 使用者開啟「輸出簡體字」時由宿主設定（#118）；nil 送出繁體。
 	SelectionKeys         string            // 使用者選的選字鍵（#112）；空字串為 1234567890。
 	CtrlPunct             bool              // 「Ctrl＋標點打全形」開著時由宿主設定（#168）；零值時 Ctrl＋標點交給應用程式。
+	CapsLockEnglish       bool              // 「Caps Lock 開著時直接打英文」開著時由宿主設定（#173）；零值時 caps_lock 請求不起作用。
 	Fuzzy                 fuzzy.Config      // 使用者逐對啟用的模糊音；零值全部關閉。
 	EnglishAutocomplete   bool
 	MixedInput            bool                // opt-in bilingual keys; disabled preserves legacy behavior.
@@ -50,6 +51,9 @@ type Engine struct {
 	// SharedMode：所有輸入框共用同一個中英模式（#115，settings 的 mode_memory=shared）。一個輸入框切換後，
 	// 其他輸入框在下一個請求時跟上；零值照外殼原本的做法（每個 session 各自的模式）。
 	SharedMode bool
+	// SimplifiedSwitch：宿主支援從輸入法選單即時切換「輸出簡體字」時設定（#169，見 simplified.go）；零值時
+	// output_simplified 請求回 handled=false。
+	SimplifiedSwitch SimplifiedSwitch
 	// StartEnglish：開始時是英文模式（#160，settings 的 start_mode=english）。新 session 從英文開始；
 	// SharedMode 時是引擎啟動（登入）後第一個共用的模式。零值從注音開始，跟以前一樣。
 	StartEnglish  bool
@@ -59,6 +63,9 @@ type Engine struct {
 	sharedEnglish bool              // SharedMode 時大家共用的模式
 	modeGen       uint64            // sharedEnglish 每次改變時加一
 	modeSeen      map[uint64]uint64 // session → 它跟上的 modeGen
+	modeLocal     map[uint64]bool   // 「設成英文」帶來、只屬於這個輸入框的英文（macOS 的 Caps Lock）；設成中文或切換時結束
+
+	switchMu sync.Mutex // 「輸出簡體字」的即時切換一次一個（simplified.go）
 
 	supportOnce sync.Once // 標音用的字讀音詞頻（vocab_annotate.go），第一次用到才建
 	support     map[rune]map[zhuyin.Syllable]float64
@@ -88,6 +95,7 @@ func (e *Engine) OpenSession() uint64 {
 	e.sessions[e.next].Simplified = e.Simplified
 	e.sessions[e.next].SelectionKeys = e.SelectionKeys
 	e.sessions[e.next].CtrlPunct = e.CtrlPunct
+	e.sessions[e.next].CapsLockEnglish = e.CapsLockEnglish
 	e.sessions[e.next].Fuzzy = e.Fuzzy
 	e.sessions[e.next].EnglishAutocomplete = e.EnglishAutocomplete
 	e.sessions[e.next].MixedInput = e.MixedInput
@@ -133,6 +141,7 @@ func (e *Engine) initShared() {
 	}
 	if e.modeSeen == nil {
 		e.modeSeen = map[uint64]uint64{}
+		e.modeLocal = map[uint64]bool{}
 	}
 }
 
@@ -176,10 +185,14 @@ func (e *Engine) CloseSession(id uint64) {
 	defer e.mu.Unlock()
 	delete(e.sessions, id)
 	delete(e.modeSeen, id)
+	delete(e.modeLocal, id)
 }
 
 // Do 處理一個已解碼的請求。
 func (e *Engine) Do(id uint64, req proto.Request) (proto.Snapshot, error) {
+	if req.Type == proto.OutputSimplified {
+		return e.outputSimplified(id, req) // 全域設定：自己管鎖（simplified.go）
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	s, ok := e.sessions[id]
@@ -191,14 +204,34 @@ func (e *Engine) Do(id uint64, req proto.Request) (proto.Snapshot, error) {
 	}
 	// 全部共用（#115）：只有使用者的切換（Toggle）改變共用的模式。外殼的「設成中文」（Fcitx5／IBus 換輸入框時的
 	// 重設、macOS 關掉 Caps Lock）改成回到共用的模式；「設成英文」（macOS 開 Caps Lock）只影響這個輸入框。
+	// Windows／Linux 的 caps_lock（#173）同理：開啟只影響這個輸入框，關閉回到共用的模式。
 	// 舊外殼不必改。
 	e.initShared()
-	if req.Type == proto.Mode && !req.On {
+	// 暫時的英文（Caps Lock 開著：#173 的 caps_lock、macOS 的「設成英文」）期間不跟上別的輸入框切回的注音，
+	// 不然 Caps Lock 還開著，下一個字母就打成注音；關掉 Caps Lock 時才回到共用的模式（下面與「設成中文」）。
+	// 共用的模式已經是英文時的「設成英文」（Windows 重開 session 還原共用的英文）不算暫時的，照常跟上。
+	temporary := !e.sharedEnglish && (s.CapsLockOn() || e.modeLocal[id])
+	switch {
+	case req.Type == proto.Mode && !req.On:
 		req.On = e.sharedEnglish
-	} else if seen, ok := e.modeSeen[id]; (!ok || seen != e.modeGen) && s.EnglishMode() != e.sharedEnglish && req.Type != proto.Mode {
+		delete(e.modeLocal, id)
+	case req.Type == proto.Mode:
+		if !e.sharedEnglish {
+			e.modeLocal[id] = true
+		} else {
+			delete(e.modeLocal, id)
+		}
+	case req.Type == proto.Toggle:
+		delete(e.modeLocal, id)
+	}
+	if seen, ok := e.modeSeen[id]; (!ok || seen != e.modeGen) && s.EnglishMode() != e.sharedEnglish && req.Type != proto.Mode && !temporary {
 		s.Handle(proto.Request{Type: proto.Mode, On: e.sharedEnglish}) // 跟上別的輸入框切換後的模式
 	}
 	snap := s.Handle(req)
+	// 關掉 Caps Lock（#173）回到共用的模式：暫時英文期間別的輸入框可能切換過。
+	if req.Type == proto.CapsLock && !req.On && snap.Handled && s.EnglishMode() != e.sharedEnglish {
+		snap = s.Handle(proto.Request{Type: proto.Mode, On: e.sharedEnglish})
+	}
 	if req.Type == proto.Toggle && s.EnglishMode() != e.sharedEnglish {
 		e.sharedEnglish = s.EnglishMode()
 		e.modeGen++

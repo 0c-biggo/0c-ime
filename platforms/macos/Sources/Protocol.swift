@@ -51,9 +51,12 @@ struct Snapshot: Decodable {
     /// 這次按鍵的提示（例如「已加入詞庫：世傑」，#123）；舊引擎或沒有提示時缺欄位。
     var notices: [String]? = nil
     var readingHint: ReadingHint? = nil
+    /// 送出的文字目前會轉成簡體（#169）；只有回報 output_simplified_live 的引擎才有這一項，舊引擎缺欄位。
+    var outputSimplified: Bool? = nil
     enum CodingKeys: String, CodingKey {
         case handled, commit, preedit, cursor, suggestion, candidates, mode, notices
         case readingHint = "reading_hint"
+        case outputSimplified = "output_simplified"
         case englishPending = "english_pending"
         case contextID = "context_id"
     }

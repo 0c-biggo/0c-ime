@@ -379,9 +379,10 @@
     const emoji = items.find((item) => item.key === 'emoji-shortcut');
     const equalsFirst = items.find((item) => item.key === 'emoji-equals-first');
     const keyboard = items.find((item) => item.key === 'keyboard-layout');
-    const ctrlPunct = items.find((item) => item.key === 'ctrl-punctuation'); // #168：鍵盤卡片最後
+    const ctrlPunct = items.find((item) => item.key === 'ctrl-punctuation'); // #168：鍵盤卡片
+    const capsLock = items.find((item) => item.key === 'caps-lock-english'); // #173：鍵盤卡片最後；只有 Windows、Linux 有
     const selectionKeys = items.find((item) => item.key === 'selection-keys'); // #112：跟鍵盤排列放在同一張卡
-    const rest = items.filter((item) => !item.key.startsWith('fuzzy-') && item.key !== 'keyboard-layout' && item.key !== 'selection-keys' && item.key !== 'ctrl-punctuation' &&
+    const rest = items.filter((item) => !item.key.startsWith('fuzzy-') && item.key !== 'keyboard-layout' && item.key !== 'selection-keys' && item.key !== 'ctrl-punctuation' && item.key !== 'caps-lock-english' &&
       item.key !== 'output-simplified' && (!emoji || item.key !== 'emoji-equals-first'));
     const rows = rest.map((item) => {
       const parent = itemRow(item, locked ||
@@ -405,8 +406,9 @@
           onclick: () => changePairs(fuzzy.map((item) => [item.key, enabled ? 'off' : 'select'])),
         }))));
     }
-    // 鍵盤排列、選字鍵與 Ctrl＋標點（#168）放在最後一張卡：前面各項的鍵盤（Tab）順序不變。
-    const keys = [keyboard, selectionKeys, ctrlPunct].filter(Boolean);
+    // 鍵盤排列、選字鍵、Ctrl＋標點（#168）與 Caps Lock（#173）放在最後一張卡：前面各項的鍵盤（Tab）順序不變。
+    // macOS 沒有 Caps Lock 這一項（0c-update 不列），開 Caps Lock 一律打大寫英文。
+    const keys = [keyboard, selectionKeys, ctrlPunct, capsLock].filter(Boolean);
     if (keys.length) root.append(h('h2', {}, '鍵盤'), h('div', { class: 'card' }, ...keys.map((item) => itemRow(item, locked))));
     if ((settings.file.notes || []).length) {
       root.append(h('h2', {}, '注意'), h('div', { class: 'notice' }, ...settings.file.notes.map((note) => h('p', {}, note))));
@@ -505,7 +507,7 @@
 
   // 輸出設定：送出的文字怎麼轉換（#118 簡體字），跟打字、選字分開，左側獨立一頁。
   function output(root) {
-    root.append(h('h1', {}, '輸出設定'), h('p', { class: 'lead' }, '決定送到應用程式的文字；組字和候選照常顯示繁體。改動會立即儲存，並在沒有組字時讓輸入法套用。'));
+    root.append(h('h1', {}, '輸出設定'), h('p', { class: 'lead' }, '決定送到應用程式的文字；組字和候選照常顯示繁體。改動會立即儲存並馬上套用，正在組字的字送出時也照新的設定；也可以從輸入法選單的「輸出簡體字」切換。'));
     if (problem(root)) return;
     const settings = state.settings;
     root.append(...fileNotices(settings));

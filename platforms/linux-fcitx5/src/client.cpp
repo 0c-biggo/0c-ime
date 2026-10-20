@@ -56,6 +56,15 @@ void Client::closeSocket() {
     }
 }
 
+bool Client::alive() {
+    if (fd_ < 0) { return false; }
+    char b;
+    ssize_t r = recv(fd_, &b, 1, MSG_PEEK | MSG_DONTWAIT);
+    if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) { return true; }
+    closeSocket();
+    return false;
+}
+
 bool Client::connectOnce() { return connectTo(socketPath_) || (!legacySocketPath_.empty() && connectTo(legacySocketPath_)); }
 
 bool Client::connectTo(const std::string &path) {

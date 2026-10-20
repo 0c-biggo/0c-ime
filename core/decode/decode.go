@@ -705,7 +705,8 @@ func (d *Decoder) CandidatesInContextWindows(lat input.Lattice, start, length in
 			kept[at] = lock
 		}
 	}
-	before := d.frontier(d.forward(lat[:start], kept)[start])
+	fw := d.forward(lat[:start], kept)
+	before := d.frontier(fw[start])
 	// 每個位置的詞圖只列舉一次。
 	arcs := make([][]arc, len(lat))
 	for at := end; at < len(lat); at++ {
@@ -740,6 +741,7 @@ func (d *Decoder) CandidatesInContextWindows(lat input.Lattice, start, length in
 		cache[k] = best
 		return best
 	}
+	inner := d.innerScores(lat, fw, start, end, kept, suffix)
 	out := make([][]Candidate, len(windows))
 	maxCost, maxCandidates, onlyCosted := d.MaxCost, d.MaxCandidates, d.OnlyCosted
 	defer func() { d.MaxCost, d.MaxCandidates, d.OnlyCosted = maxCost, maxCandidates, onlyCosted }()
@@ -759,6 +761,9 @@ func (d *Decoder) CandidatesInContextWindows(lat input.Lattice, start, length in
 				best = math.Max(best, st.score+d.arcLog(start, end, st.last, e, cost))
 			}
 			score := best + suffix(end, e.Surface)
+			if v, ok := inner[innerKey(e.Surface, e.Reading)]; ok && v > score {
+				score = v
+			}
 			viable = viable || !math.IsInf(score, -1)
 			return score
 		}, w.Pinned, w.Accept)
@@ -777,6 +782,51 @@ func (d *Decoder) CandidatesInContextWindows(lat input.Lattice, start, length in
 		}
 	}
 	return out
+}
+
+// innerScores 回傳 [start, end) 的候選若是較長詞的一部分時，經過那個詞的最佳完整路徑分數（#172）。
+// 選了候選之後，解碼器可以把跨過它的詞組回來（鎖定只限制那幾個字，見 allowed），所以「空氣」裡的
+// 「氣」選完仍是「空氣」，候選分數也應該算這條路。只把候選當成獨立一個詞評分時，bigram 是依詞庫
+// 斷詞計數的：「空→氣」被「空氣」吸收而沒有配對，沒成詞的罕用異體（空→気）反而有，詞頻低幾百倍
+// 的字就排到前面。鍵是候選詞面與讀音（innerKey）；fw 是 forward(lat[:start]) 的結果。
+func (d *Decoder) innerScores(lat input.Lattice, fw [][]state, start, end int, kept map[int]Lock, suffix func(int, string) float64) map[string]float64 {
+	out := map[string]float64{}
+	limit := MaxLen(d.Lex)
+	for s := max(0, end-limit); s <= start; s++ {
+		if len(fw[s]) == 0 {
+			continue
+		}
+		states := d.frontier(fw[s])
+		d.spans(lat, s, func(reading []zhuyin.Syllable, cost float64) {
+			j := s + len(reading)
+			if j < end || s == start && j == end {
+				return
+			}
+			for _, e := range d.Lex.Exact(reading) {
+				runes := []rune(e.Surface)
+				if len(runes) != j-s || !allowed(kept, s, j, e.Surface) {
+					continue
+				}
+				best := math.Inf(-1)
+				for _, st := range states {
+					best = math.Max(best, st.score+d.arcLog(s, j, st.last, e, cost))
+				}
+				score := best + suffix(j, e.Surface)
+				if math.IsInf(score, -1) {
+					continue
+				}
+				k := innerKey(string(runes[start-s:end-s]), reading[start-s:end-s])
+				if v, ok := out[k]; !ok || score > v {
+					out[k] = score
+				}
+			}
+		})
+	}
+	return out
+}
+
+func innerKey(surface string, reading []zhuyin.Syllable) string {
+	return surface + "\x00" + zhuyin.Key(reading)
 }
 
 func (d *Decoder) candidates(lat input.Lattice, start, length int, score func(lexicon.Entry, float64) float64, pinned func(string) bool, accept func(lexicon.Entry) bool) []Candidate {

@@ -140,6 +140,16 @@ final class LingxiInputController: IMKInputController {
         menu.autoenablesItems = false
         UpdateMenuMonitor.shared.refreshForMenu()
         UpdateMenuMonitor.shared.append(to: menu, target: self, action: #selector(updateMenuAction(_:)))
+        // 「輸出簡體字」（#169）：可以打勾，放在「我的詞彙…」下面（append 的第一個分隔線之前）。引擎能即時切換時照引擎
+        // 目前的值；舊引擎照 0c-update 回報的設定檔。都不知道時（0.2.1 以前的 0c-update、引擎沒在執行）不顯示。
+        if let on = Self.simplifiedState() {
+            let item = NSMenuItem(title: "輸出簡體字", action: #selector(simplifiedMenuAction(_:)), keyEquivalent: "")
+            item.target = self
+            item.state = on ? .on : .off
+            item.isEnabled = true
+            let at = menu.items.firstIndex(where: \.isSeparatorItem) ?? menu.items.count
+            menu.insertItem(item, at: at)
+        }
         menu.addItem(.separator())
         ModelStatusMonitor.shared.refreshForMenu()
         for title in ModelStatusMonitor.shared.labels {
@@ -166,6 +176,32 @@ final class LingxiInputController: IMKInputController {
     }
 
     @objc func openLoginItems(_ sender: Any?) { UpdateAgentMonitor.openSettings() }
+
+    static func simplifiedState() -> Bool? {
+        if EngineSession.simplifiedLive { return EngineSession.outputSimplified }
+        return UpdateMenuMonitor.shared.status?.outputSimplified
+    }
+
+    /// 選單的「輸出簡體字」（#169）：引擎能即時切換時直接在這個欄位的 session 送請求（組字不動、之後送出的字立刻照新設定，
+    /// 引擎寫設定檔），在游標旁提示「已切換為輸出簡體字／繁體字」。IMKit 的 sender 是 infoDictionary，這裡不需要它。
+    /// 舊引擎或引擎還沒起來時退回 0c-update set output-simplified … -apply -notify。
+    @objc func simplifiedMenuAction(_ sender: Any?) {
+        let on = !(Self.simplifiedState() ?? false)
+        if EngineSession.simplifiedLive, let client = client(), !bypassSecureInput(client), !queued.isProcessing, queued.isEmpty,
+           let next = try? session.handle(Request(type: "output_simplified", on: on)), next.handled {
+            var shown = next
+            shown.notices = nil // 提示用游標旁的小面板，不留在候選窗
+            render(shown, to: client)
+            EngineSession.note(next)
+            if let notice = next.visibleNotices.first {
+                hint.level = panel.level
+                hint.showHint(notice, at: caretRect(client), for: 1.6)
+            }
+            ModelStatusMonitor.shared.refresh()
+            return
+        }
+        UpdateMenuMonitor.shared.setSimplified(on)
+    }
 
     @objc func updateMenuAction(_ sender: Any?) {
         if let item = UpdateMenuMonitor.selectedItem(from: sender) { UpdateMenuMonitor.shared.perform(item) }
@@ -454,6 +490,7 @@ final class LingxiInputController: IMKInputController {
         let generation = queued.cancellationGeneration
         let hadMarkedText = !(snapshot?.text.isEmpty ?? true)
         snapshot = next
+        EngineSession.note(next) // 「輸出簡體字」在別處切換後跟上（#169）
         if let commit = next.commit, !commit.isEmpty {
             shownMarked = nil // insertText 取代了 App 裡的組字
             queued.present { client.insertText(commit, replacementRange: replacement) }

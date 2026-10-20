@@ -29,6 +29,7 @@ const help = `直接輸入按鍵（預設標準注音排列，-keyboard-layout e
   :k 鍵名     送具名鍵：Up Down Left Right Enter Escape Delete PageUp PageDown；Ctrl+, Ctrl+. 等 Ctrl＋標點
               多排候選用方向鍵移動；表情選單啟用時 = 開啟、== 輸入等號、:tab 切顏文字
   :forget 詞  撤銷與該詞有關的學習                  :pause on|off  暫停學習
+  :shift      單按 Shift 切換中英                   :caps on|off   回報 Caps Lock 狀態（-caps-lock-english 時暫時切英文）
   :learned    列出學到的個人片語                    :why       說明目前的自動近音修正（模糊音 auto）
   :q          離開
 例：fup y3ru/3  → ㄑㄧㄣ ㄗˇ ㄐㄧㄥˇ      a86qi6 → ㄇㄚˊ ㄆㄛˊ      up e9  → ㄧㄣ ㄍㄞ（注意結尾空白）`
@@ -44,6 +45,7 @@ func main() {
 	emojiShortcut := flag.String("emoji-shortcut", "equals", "表情選單：off 或 equals；= 開選單，== 輸入等號，Tab 切顏文字")
 	emojiEqualsFirst := flag.Bool("emoji-equals-first", true, "將 = 放在 Emoji 第一項；關閉仍可按 == 輸入等號")
 	escClear := flag.Bool("esc-clear", true, "按 Esc 清除整段組字；關閉時只清未打完的注音")
+	capsLockEnglish := flag.Bool("caps-lock-english", false, "Caps Lock 開著時直接打英文（用 :caps on 送）；關閉時 caps_lock 不起作用。重播需使用相同開關")
 	ctrlPunct := flag.Bool("ctrl-punctuation", true, "注音模式的 Ctrl＋, . ' ; ? ! 打全形標點（用 :k Ctrl+, 送）；關閉時交給應用程式")
 	advanceAfterSelect := flag.Bool("advance-after-select", false, "選字後游標移到所選詞後面（前方模式往後移一個字）。重播需使用相同開關")
 	outputSimplified := flag.Bool("output-simplified", false, "送出時轉成簡體字（組字與候選仍是繁體）")
@@ -70,6 +72,7 @@ func main() {
 	eng.SpaceInsertsSpace = !*spaceSelects
 	eng.AdvanceAfterSelect = *advanceAfterSelect
 	eng.CtrlPunct = *ctrlPunct
+	eng.CapsLockEnglish = *capsLockEnglish
 	if *outputSimplified {
 		eng.Simplified, err = simplified.TW2S()
 		check(err)
@@ -124,6 +127,9 @@ func main() {
 		if *mixedInput {
 			fmt.Fprintln(rec, "# 重播需要相同的混打設定：0c-cli -mixed-input")
 		}
+		if *capsLockEnglish {
+			fmt.Fprintln(rec, "# 重播需要相同的 Caps Lock 設定：0c-cli -caps-lock-english")
+		}
 		if *advanceAfterSelect {
 			fmt.Fprintln(rec, "# 重播需要相同的選字後游標設定：0c-cli -advance-after-select")
 		}
@@ -144,6 +150,7 @@ func main() {
 		}
 	}
 	id := eng.OpenSession()
+	mode := proto.ModeZhuyin
 	do := func(r proto.Request) {
 		if rec != nil {
 			b, _ := json.Marshal(r)
@@ -152,6 +159,10 @@ func main() {
 		snap, err := eng.Do(id, r)
 		check(err)
 		render(snap)
+		if snap.Mode != mode {
+			mode = snap.Mode
+			fmt.Printf("  〔%s〕\n", map[string]string{proto.ModeZhuyin: "注音", proto.ModeEnglish: "英文"}[mode])
+		}
 		if (snap.Commit != "" || snap.PersonalChanged || r.Type == proto.Forget) && *user != "" && !userReadOnly {
 			check(datadir.SaveUser(eng, *user))
 		}
@@ -204,6 +215,10 @@ func main() {
 				do(proto.Request{Type: proto.Forget, Word: arg()})
 			case "pause":
 				do(proto.Request{Type: proto.Pause, On: arg() == "on"})
+			case "shift":
+				do(proto.Request{Type: proto.Toggle})
+			case "caps":
+				do(proto.Request{Type: proto.CapsLock, On: arg() == "on"})
 			case "why":
 				changes := eng.Session(id).AutoChanges()
 				if len(changes) == 0 {

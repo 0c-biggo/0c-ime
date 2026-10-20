@@ -8,6 +8,7 @@ package main
 import (
 	"slices"
 	"strconv"
+	"time"
 	"unicode/utf8"
 
 	"git.biggo.com/0c/ime/core/proto"
@@ -41,6 +42,7 @@ const (
 	keyKPEqual     = 0xffbd
 	keyShiftL      = 0xffe1
 	keyShiftR      = 0xffe2
+	keyCapsLock    = 0xffe5
 	keyDelete      = 0xffff
 	keyISOLeftTab  = 0xfe20
 	keySpace       = 0x20
@@ -51,6 +53,8 @@ const (
 	propSettings   = "settings"
 	propVocab      = "vocab"
 	propUpdate     = "update"
+	propSimplified = "simplified"
+	simplifiedText = "輸出簡體字"
 	recoveryNotice = "連線恢復，請確認組字後再繼續。"
 )
 
@@ -199,6 +203,7 @@ type engine struct {
 	preCursor uint32
 	preSegs   []proto.Segment
 	aux       string
+	auxRest   string // aux 去掉這次快照的提示之後的內容；切換「輸出簡體字」的提示收起後換回它（#169）
 	table     []string
 	tableAt   int
 	ids       []int // 目前候選頁的候選 ID
@@ -274,6 +279,13 @@ func (e *engine) processKey(keyval, keycode, state uint32) bool {
 	if release {
 		return false
 	}
+	// Caps Lock 開著時直接打英文（#173）：按鍵事件帶的是按下之前的鎖定狀態（同 RIME 的 ascii_composer），
+	// Caps Lock 鍵本身要反過來算；其他按鍵照它帶的狀態，猜錯時下一個按鍵就改正。不讀 LED（Wayland 讀不到）。
+	if keyval == keyCapsLock {
+		e.syncCaps(state&maskLock == 0, false)
+	} else {
+		e.syncCaps(state&maskLock != 0, true)
+	}
 	if !e.session.english {
 		keyval = foldCaps(keyval, state)
 		// Ctrl＋標點打全形（#168）：只在中文模式、引擎回報 ctrl_punctuation（認得鍵名而且設定開著）時送；
@@ -324,6 +336,19 @@ func (e *engine) processKey(keyval, keycode, state uint32) bool {
 	}
 	e.render(snap) // 先送出提交的文字，再決定是否把按鍵交還應用程式，順序才不會顛倒
 	return snap.Handled
+}
+
+// syncCaps 把 Caps Lock 狀態告訴引擎（#173）：只在引擎回報 caps_lock_english（認得 caps_lock、設定開著），
+// 而且跟引擎記得的狀態不同時才送；開啟時引擎先送出組字、切到英文，關閉時回到原本的模式。
+func (e *engine) syncCaps(on, spawn bool) {
+	if on == e.session.capsLock || !e.session.capsLockEnglish(spawn) {
+		return
+	}
+	e.context.clear()
+	e.syncContext()
+	if snap := e.session.handle(proto.Request{Type: proto.CapsLock, On: on}); snap.ok {
+		e.render(snap)
+	}
 }
 
 // toggleMode 切換注／英；引擎不可用時不切換。
@@ -456,28 +481,22 @@ func (e *engine) render(snap snapshot) {
 	// 優先於候選標題；標題在下一個按鍵就回來。兩者接在同一列會太長，GNOME 的提示列也不換行。
 	// 讀音提示（中英混打時數字按空白會組成的注音，#162）只有讀音本身（ㄉㄢ），比照常見注音輸入法在數字下方附注音；
 	// 開候選時核心不送，實際上也不會和補全提示同時出現。
-	aux := ""
-	if len(snap.Notices) > 0 {
-		aux = snap.Notices[0]
-	} else if h := snap.ReadingHint; h != nil && h.Text != "" {
-		aux = h.Text
+	// rest 是沒有通知時的提示列；切換「輸出簡體字」的提示收起後換回它（#169）。頁碼兩種都帶。
+	rest, page := "", ""
+	if h := snap.ReadingHint; h != nil && h.Text != "" {
+		rest = h.Text
 	} else if snap.Suggestion != "" { // Tab 補全：在提示列顯示，不塞進應用程式的組字區
-		aux = "⇥ " + snap.Suggestion
+		rest = "⇥ " + snap.Suggestion
 	}
 	var items, labels []string
 	var ids []int
 	highlight := 0
 	if c := snap.candidates(); len(c) > 0 {
-		if snap.Candidates.Title != "" && len(snap.Notices) == 0 {
-			aux = snap.Candidates.Title
+		if snap.Candidates.Title != "" {
+			rest = snap.Candidates.Title
 		}
 		if snap.Candidates.Pages > 1 {
-			page := strconv.Itoa(snap.Candidates.Page+1) + "/" + strconv.Itoa(snap.Candidates.Pages)
-			if aux == "" {
-				aux = page
-			} else {
-				aux += "　" + page
-			}
+			page = strconv.Itoa(snap.Candidates.Page+1) + "/" + strconv.Itoa(snap.Candidates.Pages)
 		}
 		for i, it := range c {
 			text := it.Text
@@ -491,9 +510,55 @@ func (e *engine) render(snap snapshot) {
 		highlight = snap.Candidates.Highlight
 	}
 	e.ids = ids
+	e.auxRest = joinAux(rest, page)
+	aux := e.auxRest
+	if len(snap.Notices) > 0 {
+		aux = joinAux(snap.Notices[0], page)
+	}
 	e.setAux(aux)
 	e.setTable(items, labels, highlight)
 	e.updateMode(snap.english())
+	// 「輸出簡體字」在設定程式或別的外殼切換後（#169），下一個快照就跟上；只信回報即時切換的引擎（舊引擎沒有這一項）。
+	if e.session.simplifiedLive() {
+		e.svc.setSimplified(snap.OutputSimplified, true)
+	}
+}
+
+// joinAux 把提示列的兩段接起來，中間隔一個全形空白；空的那段省略。
+func joinAux(a, b string) string {
+	if a == "" || b == "" {
+		return a + b
+	}
+	return a + "　" + b
+}
+
+// simplifiedNoticeFor 是切換「輸出簡體字」的提示留在提示列上的時間；之後換回原本的內容（測試時縮短）。
+var simplifiedNoticeFor = 3 * time.Second
+
+// toggleSimplified 是選單的「輸出簡體字」（#169）：引擎能即時切換時直接在這個輸入框的 session 送請求，組字不動、
+// 之後送出的字立刻照新設定，引擎寫設定檔；提示「已切換為輸出簡體字／繁體字」在提示列顯示幾秒。
+// 舊引擎退回 0c-update set output-simplified … -apply -notify（寫設定、交接重啟，0c-update 送桌面通知）。
+func (e *engine) toggleSimplified() {
+	on := !e.svc.simplified
+	if e.session.ensureLive() {
+		if snap := e.session.outputSimplified(on); snap.ok && snap.Handled {
+			e.svc.simplifiedSeq++ // 切換前開始的狀態查詢不得把勾選改回去
+			e.render(snap)
+			e.svc.setSimplified(snap.OutputSimplified, true)
+			if len(snap.Notices) > 0 {
+				shown := e.aux // 提示（候選有多頁時後面接著頁碼）；之後的按鍵換掉了就不動
+				time.AfterFunc(simplifiedNoticeFor, func() {
+					e.svc.mu.Lock()
+					defer e.svc.mu.Unlock()
+					if e.aux == shown {
+						e.setAux(e.auxRest)
+					}
+				})
+			}
+			return
+		}
+	}
+	e.svc.queryStatus(simplifiedCommand(on))
 }
 
 // candidateLabel 是候選第 i 項的鍵標（#112）：核心給的選字鍵（1、q、;）；舊核心沒有時依位置 1–0。
@@ -515,6 +580,10 @@ func (e *engine) modeProperty() property {
 	p := property{key: propInputMode, typ: propNormal, sensitive: true, symbol: "注", label: "注音"}
 	if e.english {
 		p.symbol, p.label = "英", "英文"
+	} else if e.svc.simplified {
+		// #169：送出時轉成簡體，誤開時從頂列看得出來。GNOME Shell 的頂列只採用不到 3 個字的 symbol（keyboard.js
+		// 的 _propertyUpdated），「注·簡」會被丟掉、照舊顯示「注」，所以用兩個字。
+		p.symbol, p.label = "注簡", "注音・簡體輸出"
 	}
 	if hint != "" {
 		other := "英文"
@@ -536,10 +605,10 @@ func (e *engine) updateMode(english bool) {
 	}
 }
 
-// properties 是輸入法選單的內容：注／英、設定、我的詞彙、更新狀態。「我的詞彙…」一律登錄，
-// 只用 visible 跟著 features.vocab 顯示或隱藏（見 refreshMenu）。
+// properties 是輸入法選單的內容：注／英、設定、我的詞彙、輸出簡體字、更新狀態。「我的詞彙…」與「輸出簡體字」一律登錄，
+// 只用 visible 跟著 features.vocab 與這項設定是否已知顯示或隱藏（見 refreshMenu）。
 func (e *engine) properties() []property {
-	return []property{e.modeProperty(), e.svc.settingsProperty(), e.svc.vocabProperty(), e.svc.updateProperty()}
+	return []property{e.modeProperty(), e.svc.settingsProperty(), e.svc.vocabProperty(), e.svc.simplifiedProperty(), e.svc.updateProperty()}
 }
 
 func (e *engine) registerProperties() {

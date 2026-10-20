@@ -108,4 +108,12 @@ func TestShippedLexiconRanksNonBig5CharsAfterCommonOnes(t *testing.T) {
 			t.Errorf("%s：%s 應是罕用、%s 不是", c.reading, c.variant, c.standard)
 		}
 	}
+	// #172：只收在全字庫的台灣人名用字由人工加上 curated，依詞頻和常用字一起排，不排在罕用字段。
+	for _, c := range []struct{ reading, char string }{
+		{"ㄊㄨˊ", "凃"}, {"ㄏㄢˊ", "晗"}, {"ㄧㄢˊ", "姸"}, {"ㄈㄥ", "峯"}, {"ㄌㄟˊ", "㵢"}, {"ㄑㄧˇ", "啓"},
+	} {
+		if rareOf(t, res, c.reading, c.char) {
+			t.Errorf("%s：人名用字 %s 不應是罕用", c.reading, c.char)
+		}
+	}
 }

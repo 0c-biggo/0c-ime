@@ -56,8 +56,8 @@ func TestCommonCharacterBeforeJapaneseVariantInSingles(t *testing.T) {
 	if ri := slices.Index(singles, "炁"); ri < ki {
 		t.Fatalf("rare characters keep their score order: %v", items)
 	}
-	// 一般字之間照舊依前後文排序：器有「空→器」的 bigram，仍可排在氣前面。
-	if slices.Index(singles, "器") < 0 {
-		t.Fatalf("器 missing: %v", items)
+	// 單字依選了之後的整句排序（#172）：選「氣」仍組回「空氣」，所以「氣」排在有「空→器」配對的「器」前面。
+	if qi != 0 || slices.Index(singles, "器") < 0 {
+		t.Fatalf("氣 (part of 空氣) must lead the singles and 器 must stay: %v", items)
 	}
 }

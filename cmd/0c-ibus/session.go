@@ -99,6 +99,28 @@ func (c *client) close() {
 	}
 }
 
+// alive 回報連線是否還在：不送請求、不等待，只看另一端關了沒有（引擎退出後讀到 EOF）。
+// 斷了、或有不該有的殘留資料（訊框會錯位）就關掉連線，下一次呼叫照常重連。
+func (c *client) alive() bool {
+	if c.conn == nil {
+		return false
+	}
+	ok := false
+	if sc, isRaw := c.conn.(syscall.Conn); isRaw {
+		if raw, err := sc.SyscallConn(); err == nil {
+			raw.Control(func(fd uintptr) {
+				var b [1]byte
+				_, _, err := syscall.Recvfrom(int(fd), b[:], syscall.MSG_PEEK|syscall.MSG_DONTWAIT)
+				ok = err == syscall.EAGAIN || err == syscall.EWOULDBLOCK
+			})
+		}
+	}
+	if !ok {
+		c.close()
+	}
+	return ok
+}
+
 // call 送出一個 Envelope 並讀回 Reply；失敗時關閉連線，下一次呼叫重新連線。
 func (c *client) call(env ipc.Envelope) (ipc.Reply, bool) {
 	var reply ipc.Reply
@@ -157,6 +179,7 @@ type session struct {
 	recovered      *proto.Snapshot // 重播結果與斷線前不同，等使用者確認
 
 	private, english, englishPending bool
+	capsLock                         bool // 引擎記得的 Caps Lock 狀態（快照的 caps_lock，#173）
 }
 
 func newSession(c *client, documentContext bool) *session {
@@ -213,6 +236,47 @@ func (s *session) ctrlPunct() bool {
 	return s.client.connect() && s.ensureOpen() && s.info["ctrl_punctuation"] == "true"
 }
 
+// capsLockEnglish 回報引擎是否認得 caps_lock 請求而且「Caps Lock 開著時直接打英文」開著（open 回覆的 caps_lock_english，
+// #173）；快取方式同 vocabKeys。舊引擎沒有這一項、或設定關閉時為 false，注音模式照舊不理 Caps Lock（#168）。
+// spawn=false（Caps Lock 鍵本身）不為此啟動 0c-server：之後第一個按鍵會帶著鎖定狀態再同步一次。
+// Caps Lock 鍵本身要確認快取還是新的：剛在設定程式打開這一項時引擎重啟了，open 的快取是舊的，
+// 不重新確認的話第一個字母會照注音打（ㄇ）、下一個才切英文。設定改了一定會重啟引擎（舊連線跟著斷），
+// 所以連線還在、session 是這一代連線開的就沿用 open 的值，不問引擎；斷了才以 health 重新確認。
+func (s *session) capsLockEnglish(spawn bool) bool {
+	if !spawn {
+		if s.client.conn == nil {
+			return false
+		}
+		if s.id != 0 && s.generation == s.client.generation && s.client.alive() {
+			return s.info["caps_lock_english"] == "true"
+		}
+		reply, ok := s.client.call(ipc.Envelope{Op: ipc.OpHealth})
+		if !ok { // 引擎重啟過：舊連線這一次才發現斷了，重連再問一次（同 shiftKeys）
+			reply, ok = s.client.call(ipc.Envelope{Op: ipc.OpHealth})
+		}
+		if !ok || !reply.OK || reply.Info["caps_lock_english"] != "true" {
+			return false
+		}
+	}
+	return s.client.connect() && s.ensureOpen() && s.info["caps_lock_english"] == "true"
+}
+
+// simplifiedLive 回報引擎能即時切換「輸出簡體字」（open 回覆的 output_simplified_live，#169）。不連線，只看目前這個
+// session 開啟時的回覆；還沒開 session 或連線已換過時為 false。
+func (s *session) simplifiedLive() bool {
+	return s.id != 0 && s.generation == s.client.generation && s.info["output_simplified_live"] == "true"
+}
+
+// ensureLive 連上引擎、開好 session 後回報 simplifiedLive；引擎不可用時 false。
+func (s *session) ensureLive() bool {
+	return s.client.connect() && s.ensureOpen() && s.info["output_simplified_live"] == "true"
+}
+
+// outputSimplified 切換「輸出簡體字」（#169）：引擎立即改變之後送出的文字並寫進設定檔，組字不動；不記進重播紀錄。
+func (s *session) outputSimplified(on bool) snapshot {
+	return s.handle(proto.Request{Type: proto.OutputSimplified, On: on})
+}
+
 func (s *session) contextAllowed() bool {
 	return s.documentContextEnabled && !s.private && !s.english
 }
@@ -249,6 +313,16 @@ func (s *session) ensureOpen() bool {
 	// 能確認應用程式文件更新才啟用跨提交協定；舊 server 會安全忽略。
 	if s.documentContextEnabled {
 		if _, ok := s.do(proto.Request{Type: proto.Context, ContextEnabled: true}); !ok {
+			s.id = 0
+			return false
+		}
+	}
+	// Caps Lock 帶來的英文（#173）：新 session 不知道 Caps Lock 開著，先還原，不然重開後的第一個字母照注音打、
+	// 下一個才切回英文。設定剛關掉（引擎以新設定重啟）時不送。真正的鎖定狀態由這次按鍵帶的同步改正。
+	if s.capsLock {
+		if s.info["caps_lock_english"] != "true" {
+			s.capsLock = false
+		} else if _, ok := s.do(proto.Request{Type: proto.CapsLock, On: true}); !ok {
 			s.id = 0
 			return false
 		}
@@ -375,7 +449,7 @@ func (s *session) handle(req proto.Request) snapshot {
 			snap.Handled, snap.Commit = true, ""
 			snap.Notices = []string{recoveryNotice}
 			s.view, s.shown = viewOf(snap), snap
-			s.english, s.englishPending = snap.Mode == proto.ModeEnglish, snap.EnglishPending
+			s.english, s.englishPending, s.capsLock = snap.Mode == proto.ModeEnglish, snap.EnglishPending, snap.CapsLock
 			return snapshot{Snapshot: snap, ok: true, reconnected: true}
 		}
 		if req.Type == proto.Context && before != s.client.generation {
@@ -390,7 +464,7 @@ func (s *session) handle(req proto.Request) snapshot {
 			continue
 		}
 		out := snapshot{Snapshot: *reply.Snapshot, ok: true, reconnected: before != s.client.generation}
-		s.english, s.englishPending = out.english(), out.EnglishPending
+		s.english, s.englishPending, s.capsLock = out.english(), out.EnglishPending, out.CapsLock
 		// 符號選單可以在空白組字區開啟，也必須重播才能保留選單與反白位置。
 		composing := len(out.Preedit) > 0 || len(out.candidates()) > 0
 		if out.Commit != "" || req.Type == proto.Cancel || !composing {
@@ -399,7 +473,8 @@ func (s *session) handle(req proto.Request) snapshot {
 				s.cleared = append(s.log, wire)
 			}
 			s.log, s.view = nil, nil
-		} else if req.Type != proto.Context {
+		} else if req.Type != proto.Context && req.Type != proto.CapsLock && req.Type != proto.OutputSimplified {
+			// Caps Lock 狀態不重播：新 session 由下一個按鍵重新同步；「輸出簡體字」是全域設定，重播會再切一次（#169）
 			if len(s.log) == 0 && req.Type == proto.Toggle {
 				s.log = cleared
 			}

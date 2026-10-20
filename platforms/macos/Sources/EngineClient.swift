@@ -183,6 +183,14 @@ final class EngineSession {
     // 舊引擎沒有這個欄位，視為 false，Ctrl＋標點照舊交給 App。
     private static var ctrlPunctSetting = false
     var ctrlPunct: Bool { Self.ctrlPunctSetting }
+    // 「輸出簡體字」（#169）：引擎能即時切換（info 的 output_simplified_live）與目前的值（info 的 output_simplified，
+    // 之後每個快照的 output_simplified）。選單打勾看它；舊引擎沒有 output_simplified_live，選單改看 0c-update 的狀態。
+    private(set) static var simplifiedLive = false
+    private(set) static var outputSimplified = false
+    /// 快照帶回的「輸出簡體字」：設定程式或別的 App 切換後，下一個快照就跟上。只信回報即時切換的引擎。
+    static func note(_ snapshot: Snapshot) {
+        if simplifiedLive { outputSimplified = snapshot.outputSimplified ?? false } // 引擎在關閉時省略這一項
+    }
     // 這個行程是否已從引擎拿到過上面的設定（open 或 health 的回覆）。
     private static var settingsKnown = false
 
@@ -194,6 +202,8 @@ final class EngineSession {
         shiftTapLimitSetting = toggle.tapLimit
         vocabKeysSetting = info["vocab_keys"] == "true"
         ctrlPunctSetting = info["ctrl_punctuation"] == "true"
+        simplifiedLive = info["output_simplified_live"] == "true"
+        outputSimplified = simplifiedLive && info["output_simplified"] == "true"
         settingsKnown = true
     }
 

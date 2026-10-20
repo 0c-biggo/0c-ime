@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -409,7 +410,11 @@ func TestCorruptFileIsReportedAndCanBeQuarantined(t *testing.T) {
 func TestItemsListEveryKeyWithCurrentValue(t *testing.T) {
 	s := Default()
 	items := s.Items()
-	if len(items) != 19+len(fuzzy.Pairs()) || items[0].Key != "selection" {
+	want := 19 + len(fuzzy.Pairs())
+	if CapsLockEnglishSetting(runtime.GOOS) {
+		want++ // caps-lock-english（#173）只有 Windows、Linux
+	}
+	if len(items) != want || items[0].Key != "selection" {
 		t.Fatalf("項目數量或順序不對：%+v", items)
 	}
 	for _, it := range items {

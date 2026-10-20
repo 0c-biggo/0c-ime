@@ -259,6 +259,30 @@ check "外殼等重新登入：收據 0.2.9、沒有指標、執行中是 $ENGIN
 shoot shellpending overview
 stop_engine
 
+# #169：「輸出簡體字」可以即時切換：引擎在執行時，設定程式的開關不交接重啟引擎（同一個行程），引擎立刻回報新的值。
+new_home outputlive
+start_engine outputlive
+launch outputlive output
+live_runtime() { # 期望值 → 引擎回報能即時切換，而且目前的值是它
+  run_update outputlive status -json | python3 -c "import json,sys; r=json.load(sys.stdin)['runtime']; sys.exit(0 if r.get('output_simplified_live') is True and r.get('output_simplified') is (sys.argv[1]=='on') else 1)" "$1"
+}
+if window_up; then
+  sleep 2.5
+  xdotool key --delay 150 Tab Tab Tab Tab Tab Tab Tab Tab space
+  sleep 3
+  check "輸出簡體字：引擎在執行時開啟，寫入設定" grep -q '"output_simplified": true' "$(settings_of outputlive)"
+  check "輸出簡體字：引擎沒有重啟（同一個行程）" kill -0 "$ENGINE_PID"
+  check "輸出簡體字：引擎立即回報開啟" live_runtime on
+  import -window root "$OUT/output-simplified-live-on.png"
+  xdotool key space
+  sleep 3
+  check "輸出簡體字：即時關閉，寫入設定" grep -q '"output_simplified": false' "$(settings_of outputlive)"
+  check "輸出簡體字：關閉後引擎仍是同一個行程" kill -0 "$ENGINE_PID"
+  check "輸出簡體字：引擎立即回報關閉" live_runtime off
+else bad "outputlive/output 視窗沒有出現"; cat /tmp/app-outputlive-output.log; fi
+stop_app
+stop_engine
+
 new_home switched      # 完整安裝 ENGINE_VERSION、引擎也是：不提示
 receipt switched "$ENGINE_VERSION"; state_json switched idle "$done_at"
 start_engine switched
@@ -432,6 +456,11 @@ if window_up; then
   sleep 3
   check "Ctrl＋標點開關可關閉" grep -q '"ctrl_punctuation": false' "$(settings_of eten)"
   import -window root "$OUT/ctrl-punctuation-off.png"
+  # 最後是「Caps Lock 開著時直接打英文」（#173，Windows、Linux），預設關閉；空白鍵開啟。
+  xdotool key Tab space
+  sleep 3
+  check "Caps Lock 英文開關可開啟" grep -q '"caps_lock_english": true' "$(settings_of eten)"
+  import -window root "$OUT/caps-lock-english-on.png"
 else bad "eten/input 視窗沒有出現"; cat /tmp/app-eten-input.log; fi
 stop_app
 

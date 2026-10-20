@@ -1,10 +1,11 @@
 //go:build windows
 
-package autoupdate
+package filelock
 
 import "golang.org/x/sys/windows"
 
-func processAlive(pid int) bool {
+// ProcessAlive 回報 pid 的行程是否仍在執行。
+func ProcessAlive(pid int) bool {
 	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
 	if err != nil {
 		return false
