@@ -150,9 +150,14 @@ bool Session::vocabKeys() {
 
 bool Session::capsLockEnglish(bool spawn) {
     if (!spawn) {
-        // Caps Lock 鍵本身：不為此啟動 0c-server，先以 health 重新確認。剛在設定程式打開這一項時引擎重啟了，
-        // open 的快取還是舊的，不重新確認的話第一個字母會照注音打、下一個才切英文。舊連線這一次才發現斷了，重連再問一次。
+        // Caps Lock 鍵本身：不為此啟動 0c-server。剛在設定程式打開這一項時引擎重啟了，open 的快取是舊的，
+        // 不重新確認的話第一個字母會照注音打、下一個才切英文。設定改了一定會重啟引擎（舊連線跟著斷），所以連線還在、
+        // session 是這一代連線開的就沿用 open 的值，不問引擎；斷了才以 health 重新確認（舊連線這一次才發現斷了，重連再問一次）。
         if (!client_.connected()) { return false; }
+        if (id_ != 0 && gen_ == client_.generation() && client_.alive()) {
+            auto value = serverInfo_.find("caps_lock_english");
+            return value != serverInfo_.end() && value->is_string() && value->get<std::string>() == "true";
+        }
         nlohmann::json reply;
         bool ok = client_.call({{"op", "health"}}, reply) || client_.call({{"op", "health"}}, reply);
         if (!ok || !reply.value("ok", false)) { return false; }
@@ -210,6 +215,19 @@ bool Session::ensureOpen() {
         nlohmann::json r;
         if (!client_.call({{"op", "handle"}, {"session", id_}, {"req", {{"type", "pause"}, {"on", true}}}}, r) ||
             !r.value("ok", false)) {
+            id_ = 0;
+            return false;
+        }
+    }
+    // Caps Lock 帶來的英文（#173）：新 session 不知道 Caps Lock 開著，先還原，不然重開後的第一個字母照注音打、
+    // 下一個才切回英文。設定剛關掉（引擎以新設定重啟）時不送。真正的鎖定狀態由這次按鍵帶的同步改正。
+    if (capsLock_) {
+        auto value = serverInfo_.find("caps_lock_english");
+        nlohmann::json r;
+        if (value == serverInfo_.end() || !value->is_string() || value->get<std::string>() != "true") {
+            capsLock_ = false;
+        } else if (!client_.call({{"op", "handle"}, {"session", id_}, {"req", {{"type", "caps_lock"}, {"on", true}}}}, r) ||
+                   !r.value("ok", false)) {
             id_ = 0;
             return false;
         }

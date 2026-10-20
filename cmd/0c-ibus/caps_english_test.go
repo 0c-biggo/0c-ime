@@ -2,7 +2,15 @@
 
 package main
 
-import "testing"
+import (
+	"fmt"
+	"net"
+	"sync/atomic"
+	"testing"
+
+	"git.biggo.com/0c/ime/bridge/ipc"
+	core "git.biggo.com/0c/ime/core/engine"
+)
 
 // commits 收集這段期間送出的提交文字。
 func commits(t *testing.T, rec *recorder) []string {
@@ -167,5 +175,98 @@ func TestCapsLockEnglishResyncsAfterFocus(t *testing.T) {
 	pressCaps(e, true)
 	if e.english {
 		t.Fatal("關 Caps Lock 應回到注音")
+	}
+}
+
+// #173 code review：連線還在時 Caps Lock 鍵沿用 open 回覆的 caps_lock_english，不在每次 Caps Lock 問 health（設定預設關，
+// 大多數人每按一次 Caps Lock 都多一次往返）。引擎（ipc.Server）的 info 在 open 與 health 都會組一次，以此計數。
+func TestCapsLockKeyUsesOpenInfoWhileConnected(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		e, _, sock := newTestEngine(t)
+		eng := toyEngine(t)
+		eng.CapsLockEnglish = on
+		l, err := net.Listen("unix", sock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var asked atomic.Int32
+		go (&ipc.Server{Engine: eng, Info: map[string]string{"caps_lock_english": fmt.Sprint(on)},
+			RuntimeInfo: func() map[string]string { asked.Add(1); return nil }}).Serve(l)
+		typeKeys(e, "j") // 開好 session
+		e.processKey(keyEscape, 0, 0)
+		before := asked.Load()
+		for i := 0; i < 3; i++ {
+			pressCaps(e, false)
+			pressCaps(e, true)
+		}
+		if got := asked.Load(); got != before {
+			t.Fatalf("caps_lock_english=%v：連線還在時 Caps Lock 鍵不應問引擎（多問了 %d 次）", on, got-before)
+		}
+		if e.english {
+			t.Fatalf("caps_lock_english=%v：開關 Caps Lock 後回到注音", on)
+		}
+		l.Close()
+	}
+}
+
+// alive 只看連線另一端關了沒有：引擎退出（關掉連線）時回 false 並放掉連線，下一次呼叫重連。
+func TestClientAliveSeesEngineExit(t *testing.T) {
+	sock := t.TempDir() + "/s.sock"
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		c, _ := l.Accept()
+		accepted <- c
+	}()
+	c := &client{socket: sock}
+	if c.alive() {
+		t.Fatal("沒有連線時不是 alive")
+	}
+	if !c.connectOnce() {
+		t.Fatal("連不上")
+	}
+	server := <-accepted
+	if !c.alive() || c.conn == nil {
+		t.Fatal("連線還在")
+	}
+	server.Close()
+	if c.alive() || c.conn != nil {
+		t.Fatal("引擎關掉連線後 alive 應回 false 並放掉連線")
+	}
+}
+
+// #173 code review：引擎在 Caps Lock 英文中重啟（在設定程式改了別的設定、更新）：重開 session 先還原 Caps Lock，
+// 第一個字母就是英文；設定剛關掉時照注音（Linux 重開 session 不還原模式，不會變成永久的英文）。
+func TestCapsLockEnglishSurvivesEngineRestart(t *testing.T) {
+	e, _, sock := newTestEngine(t)
+	on := func() *core.Engine { eng := toyEngine(t); eng.CapsLockEnglish = true; return eng }
+	stop := serveEngine(t, sock, on(), map[string]string{"caps_lock_english": "true"})
+	typeKeys(e, "j")
+	e.processKey(keyEscape, 0, 0)
+	pressCaps(e, false)
+	if !e.english {
+		t.Fatal("開 Caps Lock 應切到英文")
+	}
+	stop()
+	e.session.client.conn.Close() // 引擎結束
+	stop = serveEngine(t, sock, on(), map[string]string{"caps_lock_english": "true"})
+	if e.processKey('A', 0, maskLock) || !e.english || e.preedit != "" {
+		t.Fatalf("重開 session 後 Caps Lock 還開著，A 照英文交給應用程式：english=%v %q", e.english, e.preedit)
+	}
+	pressCaps(e, true)
+	if e.english {
+		t.Fatal("重開後關 Caps Lock 也回到注音")
+	}
+	// Caps Lock 英文中在設定程式關掉這一項：照注音重開，Caps Lock 開著也照打注音（#168）。
+	pressCaps(e, false)
+	stop()
+	e.session.client.conn.Close()
+	defer serveEngine(t, sock, toyEngine(t), map[string]string{"caps_lock_english": "false"})()
+	if !e.processKey('j', 0, maskLock) || e.english || e.preedit != "ㄨ" {
+		t.Fatalf("設定關掉後照注音：english=%v %q", e.english, e.preedit)
 	}
 }

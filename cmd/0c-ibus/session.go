@@ -99,6 +99,28 @@ func (c *client) close() {
 	}
 }
 
+// alive 回報連線是否還在：不送請求、不等待，只看另一端關了沒有（引擎退出後讀到 EOF）。
+// 斷了、或有不該有的殘留資料（訊框會錯位）就關掉連線，下一次呼叫照常重連。
+func (c *client) alive() bool {
+	if c.conn == nil {
+		return false
+	}
+	ok := false
+	if sc, isRaw := c.conn.(syscall.Conn); isRaw {
+		if raw, err := sc.SyscallConn(); err == nil {
+			raw.Control(func(fd uintptr) {
+				var b [1]byte
+				_, _, err := syscall.Recvfrom(int(fd), b[:], syscall.MSG_PEEK|syscall.MSG_DONTWAIT)
+				ok = err == syscall.EAGAIN || err == syscall.EWOULDBLOCK
+			})
+		}
+	}
+	if !ok {
+		c.close()
+	}
+	return ok
+}
+
 // call 送出一個 Envelope 並讀回 Reply；失敗時關閉連線，下一次呼叫重新連線。
 func (c *client) call(env ipc.Envelope) (ipc.Reply, bool) {
 	var reply ipc.Reply
@@ -217,12 +239,16 @@ func (s *session) ctrlPunct() bool {
 // capsLockEnglish 回報引擎是否認得 caps_lock 請求而且「Caps Lock 開著時直接打英文」開著（open 回覆的 caps_lock_english，
 // #173）；快取方式同 vocabKeys。舊引擎沒有這一項、或設定關閉時為 false，注音模式照舊不理 Caps Lock（#168）。
 // spawn=false（Caps Lock 鍵本身）不為此啟動 0c-server：之後第一個按鍵會帶著鎖定狀態再同步一次。
-// Caps Lock 鍵本身先以 health 重新確認：剛在設定程式打開這一項時引擎重啟了，open 的快取還是舊的，
-// 不重新確認的話第一個字母會照注音打（ㄇ）、下一個才切英文。
+// Caps Lock 鍵本身要確認快取還是新的：剛在設定程式打開這一項時引擎重啟了，open 的快取是舊的，
+// 不重新確認的話第一個字母會照注音打（ㄇ）、下一個才切英文。設定改了一定會重啟引擎（舊連線跟著斷），
+// 所以連線還在、session 是這一代連線開的就沿用 open 的值，不問引擎；斷了才以 health 重新確認。
 func (s *session) capsLockEnglish(spawn bool) bool {
 	if !spawn {
 		if s.client.conn == nil {
 			return false
+		}
+		if s.id != 0 && s.generation == s.client.generation && s.client.alive() {
+			return s.info["caps_lock_english"] == "true"
 		}
 		reply, ok := s.client.call(ipc.Envelope{Op: ipc.OpHealth})
 		if !ok { // 引擎重啟過：舊連線這一次才發現斷了，重連再問一次（同 shiftKeys）
@@ -287,6 +313,16 @@ func (s *session) ensureOpen() bool {
 	// 能確認應用程式文件更新才啟用跨提交協定；舊 server 會安全忽略。
 	if s.documentContextEnabled {
 		if _, ok := s.do(proto.Request{Type: proto.Context, ContextEnabled: true}); !ok {
+			s.id = 0
+			return false
+		}
+	}
+	// Caps Lock 帶來的英文（#173）：新 session 不知道 Caps Lock 開著，先還原，不然重開後的第一個字母照注音打、
+	// 下一個才切回英文。設定剛關掉（引擎以新設定重啟）時不送。真正的鎖定狀態由這次按鍵帶的同步改正。
+	if s.capsLock {
+		if s.info["caps_lock_english"] != "true" {
+			s.capsLock = false
+		} else if _, ok := s.do(proto.Request{Type: proto.CapsLock, On: true}); !ok {
 			s.id = 0
 			return false
 		}
