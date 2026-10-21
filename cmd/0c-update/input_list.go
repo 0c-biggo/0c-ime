@@ -15,9 +15,14 @@ func inputListMarker(base string) string { return filepath.Join(base, "update", 
 
 // listInputMethodOnce 第一次安裝（或從還沒有這一步的舊版更新）時把靈犀注音加入這個帳號的輸入法清單，
 // 之後不再加：使用者自己從清單移除的，更新不會再放回去。add 失敗時不留記號，下次安裝或更新再試。
-func listInputMethodOnce(base string, add func() error) error {
+// 先看記號再查身分（owns，見 ownsDesktop）：登入工作與每日檢查每次都會走到這裡，已加入過的帳號不必查 token 與帳號名稱
+// （網域電腦連不到網域控制站時查帳號可能要等很久，會拖慢引擎啟動）。owns 為 false 時不加入、不留記號。
+func listInputMethodOnce(base string, owns func() bool, add func() error) error {
 	marker := inputListMarker(base)
 	if _, err := os.Stat(marker); err == nil {
+		return nil
+	}
+	if !owns() {
 		return nil
 	}
 	if err := add(); err != nil {
