@@ -220,6 +220,13 @@ func serve() string {
 	// Python、worker 與模型分開找（#181）：Python 內附優先，Linux 沒有時用系統的 python3；模型依
 	// 安裝包內建 → 個人目錄（#180）的順序；都沒有時統計選字。Linux 找到模型、系統卻沒有 python3 時照樣
 	// 啟動 worker（neural.Bundled）：啟動失敗回報 runtime_missing、每 10 分鐘重試，之後裝好不必重啟引擎。
+	// 0.2.3 以前的 worker 會讓 onnxruntime 留下未送出的遙測事件。0c-update 安裝後也會清，但從舊版背景更新時
+	// 執行安裝的是舊的更新器，碰不到；升級後第一個啟動的一定是新引擎，所以這裡再清一次（檔案不存在時只是幾次 stat）。
+	if home, err := os.UserHomeDir(); err == nil {
+		if err := neural.RemoveTelemetryQueue(home); err != nil {
+			lg.Printf("舊的推論元件遙測暫存未刪除：%v", err)
+		}
+	}
 	bundled := neural.Find(neural.Options{DataDir: *data, UserDir: filepath.Dir(*user), DictionarySHA256: dictionarySHA, SystemPython: *systemPython})
 	python, pythonSource := bundled.Python, bundled.PythonSource
 	if explicit["neural-python"] {
