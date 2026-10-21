@@ -209,6 +209,100 @@ func deferredInputSource(b []byte, exists func(string) bool) (tool, app string, 
 	return tool, app, true
 }
 
+// loginStamp 記下某個時間點所在的登入工作階段（#195）：ASID 取自 launchctl 的 gui 網域，取不到時為 0；
+// Headless 表示當時確定這個帳號沒有圖形登入（IOConsoleUsers 裡沒有它的工作階段，例如只從 SSH 或在登入畫面安裝）。
+// 舊紀錄沒有 Headless，與「當時有圖形登入但取不到 ASID」同樣保守處理（見 crossed）。
+type loginStamp struct {
+	ASID     uint64
+	At       time.Time
+	Headless bool
+}
+
+// crossed：這個紀錄之後（現在的工作階段 current、開機時間 boot）是否已跨過登入邊界：之後重新開機過，或現在取得到
+// ASID 且與記下的不同。記下的是 0 時：當時確定沒有圖形登入，現在取得到 ASID 就是之後才登入的，算跨過（不算的話
+// 要等重新開機，比 0.2.3 以前每次登入都補做還差）；當時有圖形登入只是取不到 ASID、或舊紀錄不知道時，不能確定
+// 現在是不是同一個工作階段，不算跨過，回 adopt 讓呼叫端把現在的 ASID 記下來，之後 ASID 改變才算。
+// 現在取不到 ASID 時無法判斷，不算。
+func (s loginStamp) crossed(current uint64, boot time.Time) (crossed, adopt bool) {
+	switch {
+	case !boot.IsZero() && boot.After(s.At):
+		return true, false
+	case current == 0:
+		return false, false
+	case s.ASID != 0:
+		return s.ASID != current, false
+	case s.Headless:
+		return true, false
+	}
+	return false, true
+}
+
+// macGUILogin 從 `ioreg -n Root -d1` 的 IOConsoleUsers 判斷 uid 這個帳號有沒有圖形登入工作階段（含快速切換到別的
+// 使用者後留在背景的）。known 為 false 表示輸出看不懂，呼叫端不能當成沒有登入。
+func macGUILogin(ioreg string, uid int) (has, known bool) {
+	if !strings.Contains(ioreg, `"IOConsoleUsers" = (`) {
+		return false, strings.Contains(ioreg, "+-o Root") // 沒有人登入過時沒有這個屬性
+	}
+	if strings.Contains(ioreg, `"IOConsoleUsers" = ()`) {
+		return false, true
+	}
+	sessions := macConsoleSessions(ioreg)
+	if sessions == nil {
+		return false, false
+	}
+	for _, s := range sessions {
+		if s["kCGSSessionUserIDKey"] == strconv.Itoa(uid) {
+			return true, true
+		}
+	}
+	return false, true
+}
+
+// relogin-required 記號的內容：第一行是安裝時的 ASID，確定沒有圖形登入時第二行是 headless。
+func formatReloginMarker(s loginStamp) []byte {
+	b := strconv.FormatUint(s.ASID, 10) + "\n"
+	if s.ASID == 0 && s.Headless {
+		b += "headless\n"
+	}
+	return []byte(b)
+}
+
+func parseReloginMarker(b []byte, at time.Time) loginStamp {
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	asid, _ := strconv.ParseUint(strings.TrimSpace(lines[0]), 10, 64)
+	return loginStamp{ASID: asid, At: at, Headless: len(lines) > 1 && strings.TrimSpace(lines[1]) == "headless"}
+}
+
+// 安裝後要重新登入的情況：輸入來源還沒登記好（deferInputSource 記下、登入後補做），或簽章身分改變、要等使用者
+// 按「允許」。這時舊的輸入法程式照常能打字，不結束它；新版在重新登入後載入。
+func reloginMarker(base string) string { return filepath.Join(base, "update", "relogin-required") }
+
+// reloginRequired：還在安裝時的同一個登入工作階段、且安裝時記下要重新登入。跨過登入邊界（loginStamp.crossed）後
+// 清掉記號；安裝時有圖形登入但沒記到 ASID 的，第一次取得 ASID 時記下來，仍算同一個工作階段。
+// 輸入來源還沒啟用的記號（input-source）不算：記下它的安裝都同時寫了 relogin-required，同一個工作階段由後者判斷；
+// 跨過登入邊界後由排程補做啟用，補不成功也不該讓之後每次更新都要求重新登入（#195：dev.61 留下的記號讓之後每一版都卡在
+// 「重新登入後生效」）。
+func reloginRequired(base string, current uint64, boot time.Time) bool {
+	path := reloginMarker(base)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	crossed, adopt := parseReloginMarker(b, info.ModTime()).crossed(current, boot)
+	if crossed {
+		os.Remove(path)
+		return false
+	}
+	if adopt {
+		_ = os.WriteFile(path, formatReloginMarker(loginStamp{ASID: current}), 0o600)
+	}
+	return true
+}
+
 // inputSourceRetry 是排程補做輸入來源啟用的紀錄（update/input-source-retry.json，與 input-source 記號並存）。
 // 啟用失敗時（使用者在系統詢問按「不允許」或沒理它、新的輸入模式要重新登入才登記得到）重試只會每次再跳一次詢問
 // （.12 實測：按了「不允許」，下一次執行 --activate-input-source 又跳），所以同一個登入工作階段只試一次：安裝、
@@ -216,27 +310,24 @@ func deferredInputSource(b []byte, exists func(string) bool) (tool, app string, 
 // 沒有紀錄的記號（0.2.3 以前留下的，#195 回報者的情形）立即試一次。排程補做連續在 inputSourceRetrySessions 個
 // 登入工作階段失敗就停止，留下記號與最後的錯誤給狀態摘要；之後的安裝啟用成功時一併清掉。
 type inputSourceRetry struct {
-	ASID   uint64    `json:"asid,omitempty"` // 最後一次嘗試所在的登入工作階段；取不到時為 0，之後取得到就算跨過登入邊界（crossedLogin）
-	At     time.Time `json:"at"`
-	Failed int       `json:"failed,omitempty"` // 排程補做失敗過的登入工作階段數（不含安裝當下那次）
-	Error  string    `json:"error,omitempty"`
+	ASID     uint64    `json:"asid,omitempty"` // 最後一次嘗試所在的登入工作階段（loginStamp）；取不到時為 0
+	At       time.Time `json:"at"`
+	Headless bool      `json:"headless,omitempty"` // 最後一次嘗試時確定沒有圖形登入
+	Failed   int       `json:"failed,omitempty"`   // 排程補做失敗過的登入工作階段數（不含安裝當下那次）
+	Error    string    `json:"error,omitempty"`
 }
 
 const inputSourceRetrySessions = 3
 
-// due：這次排程喚起要不要補做。r 為 nil 表示沒有紀錄（或看不懂）。
-func (r *inputSourceRetry) due(current uint64, boot time.Time) bool {
-	if r == nil {
-		return true
-	}
-	return !r.stopped() && crossedLogin(r.ASID, r.At, current, boot)
+func (r *inputSourceRetry) session() loginStamp {
+	return loginStamp{ASID: r.ASID, At: r.At, Headless: r.Headless}
 }
 
 func (r *inputSourceRetry) stopped() bool { return r != nil && r.Failed >= inputSourceRetrySessions }
 
-// failed 回傳這次補做失敗後的紀錄。
-func (r *inputSourceRetry) failed(current uint64, now time.Time, err error) inputSourceRetry {
-	next := inputSourceRetry{ASID: current, At: now, Failed: 1, Error: err.Error()}
+// failed 回傳這次（工作階段 cur）補做失敗後的紀錄。
+func (r *inputSourceRetry) failed(cur loginStamp, err error) inputSourceRetry {
+	next := inputSourceRetry{ASID: cur.ASID, At: cur.At, Headless: cur.Headless, Failed: 1, Error: err.Error()}
 	if r != nil {
 		next.Failed = r.Failed + 1
 	}
@@ -249,14 +340,6 @@ func parseInputSourceRetry(b []byte) *inputSourceRetry {
 		return nil
 	}
 	return &r
-}
-
-// crossedLogin：at 時記下、當時登入工作階段為 stored 的紀錄，現在（工作階段 current、開機時間 boot）是否已跨過登入邊界：
-// 之後重新開機過，或現在取得到 ASID 且與記下的不同。記下的是 0（當時取不到：沒有圖形登入，例如只從 SSH 安裝）、
-// 現在取得到時也算：之後才有人登入；不算的話要等重新開機，比 0.2.3 以前每次登入都補做還差（#195）。
-// 現在取不到時無法判斷，不算。
-func crossedLogin(stored uint64, at time.Time, current uint64, boot time.Time) bool {
-	return (!boot.IsZero() && boot.After(at)) || (current != 0 && stored != current)
 }
 
 func inputSourceMarker(base string) string { return filepath.Join(base, "update", "input-source") }
@@ -289,8 +372,8 @@ func saveInputSourceRetry(base string, r inputSourceRetry) {
 // 失敗則記下，跨過登入邊界再試；連續 inputSourceRetrySessions 個登入工作階段都失敗就停止，記進更新紀錄。
 // 不補做的喚起（這個工作階段已試過、或已停止補做）只以 enabled 查詢、不啟用：使用者自己到系統設定加入，或之後才在
 // 系統詢問按「允許」時，記號與紀錄就清掉，狀態摘要不再顯示還沒啟用。
-// 記錄看不懂、App 已不在時直接清掉。asid、boot 是目前的登入工作階段與開機時間。
-func retryInputSource(base string, asid uint64, boot, now time.Time, activate func(tool, app string, force ...bool) error, enabled func(tool, app string) bool) error {
+// 記錄看不懂、App 已不在時直接清掉。cur 是目前的登入工作階段（At 為現在），boot 是開機時間。
+func retryInputSource(base string, cur loginStamp, boot time.Time, activate func(tool, app string, force ...bool) error, enabled func(tool, app string) bool) error {
 	b, err := os.ReadFile(inputSourceMarker(base))
 	if os.IsNotExist(err) {
 		return nil
@@ -304,17 +387,24 @@ func retryInputSource(base string, asid uint64, boot, now time.Time, activate fu
 		return nil
 	}
 	r := loadInputSourceRetry(base)
-	if !r.due(asid, boot) {
-		if enabled(tool, app) {
-			clearInputSource(base)
+	if r != nil {
+		crossed, adopt := r.session().crossed(cur.ASID, boot)
+		if adopt { // 嘗試時有圖形登入但沒記到 ASID：現在這個就是那個工作階段
+			r.ASID, r.Headless = cur.ASID, false
+			saveInputSourceRetry(base, *r)
 		}
-		return nil
+		if r.stopped() || !crossed {
+			if enabled(tool, app) {
+				clearInputSource(base)
+			}
+			return nil
+		}
 	}
 	if err = activate(tool, app); err == nil {
 		clearInputSource(base)
 		return nil
 	}
-	next := r.failed(asid, now, err)
+	next := r.failed(cur, err)
 	saveInputSourceRetry(base, next)
 	if next.stopped() {
 		_, _ = autoupdate.EditState(base, func(s *autoupdate.State) error {
