@@ -97,20 +97,30 @@ func TestListInputMethodOnceChecksMarkerBeforeIdentity(t *testing.T) {
 
 // #191 code review：在 UAC 對話框輸入另一個系統管理員帳號（over-the-shoulder）時，提權的安裝程式是那個管理員，
 // 不能替它把靈犀注音加進清單（加進去的是管理員的 HKCU，桌面使用者的清單不變）。
+// 發版前 code review：以 SID 比對，不比「網域\帳號」字串；Azure AD 與 Microsoft 帳號的電腦上，token 查到的名稱與
+// 工作階段的使用者名稱寫法可能不同，同一位使用者自己提權也會判成不同人，清單就永遠不加。
 func TestOwnsDesktop(t *testing.T) {
+	const amy, admin = "S-1-5-21-1-2-3-1001", "S-1-5-21-1-2-3-500"
+	const aad = "S-1-12-1-111-222-333-444"
 	for _, c := range []struct {
-		name, process, session string
-		err                    error
-		elevated, want         bool
+		name             string
+		process, session account
+		err              error
+		elevated, want   bool
 	}{
-		{"同一位使用者以系統管理員權限安裝", `PC\amy`, `PC\amy`, nil, true, true},
-		{"登入工作與每日檢查（一般權限）", `PC\amy`, `PC\amy`, nil, false, true},
-		{"帳號大小寫不同", `pc\Amy`, `PC\amy`, nil, true, true},
-		{"以另一個管理員帳號確認 UAC", `PC\admin`, `PC\amy`, nil, true, false},
-		{"另一個帳號的一般權限程序（runas）", `PC\bob`, `PC\amy`, nil, false, false},
-		{"沒有登入使用者的工作階段（服務、SSH）", `PC\amy`, "", nil, true, false},
-		{"查不到工作階段：系統管理員不加", `PC\amy`, "", errors.New("wts"), true, false},
-		{"查不到工作階段：一般權限是自己的帳號", `PC\amy`, "", errors.New("wts"), false, true},
+		{"同一位使用者以系統管理員權限安裝", account{amy, `PC\amy`}, account{amy, `PC\amy`}, nil, true, true},
+		{"登入工作與每日檢查（一般權限）", account{amy, `PC\amy`}, account{amy, `PC\amy`}, nil, false, true},
+		{"Azure AD 帳號：名稱寫法不同、SID 相同", account{aad, `AzureAD\AmyLin`}, account{aad, `AzureAD\amy.lin`}, nil, true, true},
+		{"Microsoft 帳號：名稱寫法不同、SID 相同", account{amy, `PC\amy`}, account{amy, `PC\amy_000`}, nil, true, true},
+		{"SID 大小寫不同", account{"s-1-5-21-1-2-3-1001", ""}, account{amy, `PC\amy`}, nil, true, true},
+		{"以另一個管理員帳號確認 UAC", account{admin, `PC\admin`}, account{amy, `PC\amy`}, nil, true, false},
+		{"名稱相同但 SID 不同（不同電腦或網域的同名帳號）", account{admin, `PC\amy`}, account{amy, `PC\amy`}, nil, true, false},
+		{"另一個帳號的一般權限程序（runas）", account{admin, `PC\bob`}, account{amy, `PC\amy`}, nil, false, false},
+		{"工作階段使用者的 SID 查不到：退回比名稱", account{amy, `PC\amy`}, account{"", `pc\Amy`}, nil, true, true},
+		{"工作階段使用者的 SID 查不到：名稱不同", account{admin, `PC\admin`}, account{"", `PC\amy`}, nil, true, false},
+		{"沒有登入使用者的工作階段（服務、SSH）", account{amy, `PC\amy`}, account{}, nil, true, false},
+		{"查不到工作階段：系統管理員不加", account{amy, `PC\amy`}, account{}, errors.New("wts"), true, false},
+		{"查不到工作階段：一般權限是自己的帳號", account{amy, `PC\amy`}, account{}, errors.New("wts"), false, true},
 	} {
 		if got := ownsDesktop(c.process, c.session, c.err, c.elevated); got != c.want {
 			t.Errorf("%s：ownsDesktop = %v，預期 %v", c.name, got, c.want)
