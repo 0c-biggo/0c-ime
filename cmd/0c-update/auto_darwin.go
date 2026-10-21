@@ -283,8 +283,8 @@ func deferInputSource(tool, app string) error {
 	if err := os.WriteFile(inputSourceMarker(base), []byte(tool+"\n"+app+"\n"), 0o600); err != nil {
 		return err
 	}
-	asid, _ := macAquaSession(context.Background())
-	saveInputSourceRetry(base, inputSourceRetry{ASID: asid, At: time.Now()})
+	cur := macLoginStamp(time.Now())
+	saveInputSourceRetry(base, inputSourceRetry{ASID: cur.ASID, At: cur.At, Headless: cur.Headless})
 	return nil
 }
 
@@ -294,8 +294,7 @@ func inputSourcePending(base string) bool { return fileExists(inputSourceMarker(
 
 // addInputMethod 補做安裝或回復時沒啟用成功的輸入來源（見 retryInputSource）。
 func addInputMethod() error {
-	asid, _ := macAquaSession(context.Background())
-	return retryInputSource(basePath(), asid, macBootTime(), time.Now(), activateInputSource, inputSourceEnabled)
+	return retryInputSource(basePath(), macLoginStamp(time.Now()), macBootTime(), activateInputSource, inputSourceEnabled)
 }
 
 // confirmSince：App 內附的 0c 從這一版起有 --confirm-input-source（#87）；更早的 0c 不認得的參數會當成輸入法程式

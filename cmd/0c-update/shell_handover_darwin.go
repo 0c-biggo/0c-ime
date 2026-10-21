@@ -231,37 +231,31 @@ func processExe(pid uint32) string {
 	return strings.TrimSpace(string(out))
 }
 
-// 安裝後要重新登入的情況：輸入來源還沒登記好（deferInputSource 記下、登入後補做），或簽章身分改變、要等使用者
-// 按「允許」。這時舊的輸入法程式照常能打字，不結束它；新版在重新登入後載入。
-func reloginMarker(base string) string { return filepath.Join(base, "update", "relogin-required") }
-
-func markRelogin(base string) {
+// macLoginStamp 記下現在所在的登入工作階段（loginStamp）：取不到 ASID 時，再以 IOConsoleUsers 確認是不是根本沒有
+// 圖形登入；ioreg 失敗或看不懂時不當成沒有。
+func macLoginStamp(now time.Time) loginStamp {
 	asid, _ := macAquaSession(context.Background())
-	_ = os.MkdirAll(filepath.Dir(reloginMarker(base)), 0o700)
-	_ = os.WriteFile(reloginMarker(base), []byte(strconv.FormatUint(asid, 10)+"\n"), 0o600)
+	s := loginStamp{ASID: asid, At: now}
+	if asid == 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), ioregTimeout)
+		defer cancel()
+		if out, err := exec.CommandContext(ctx, "/usr/sbin/ioreg", "-n", "Root", "-d1").Output(); err == nil {
+			has, known := macGUILogin(string(out), os.Getuid())
+			s.Headless = known && !has
+		}
+	}
+	return s
 }
 
-// macReloginRequired：還在安裝時的同一個登入工作階段、且安裝時記下要重新登入。跨過登入邊界（ASID 不同或
-// 重新開機）後清掉記號。
-// 輸入來源還沒啟用的記號（input-source）不算：記下它的安裝都同時寫了 relogin-required，同一個工作階段由後者判斷；
-// 跨過登入邊界後由排程補做啟用，補不成功也不該讓之後每次更新都要求重新登入（#195：dev.61 留下的記號讓之後每一版都卡在
-// 「重新登入後生效」）。
+func markRelogin(base string) {
+	_ = os.MkdirAll(filepath.Dir(reloginMarker(base)), 0o700)
+	_ = os.WriteFile(reloginMarker(base), formatReloginMarker(macLoginStamp(time.Now())), 0o600)
+}
+
+// macReloginRequired 見 reloginRequired。
 func macReloginRequired(base string) bool {
-	b, err := os.ReadFile(reloginMarker(base))
-	if err != nil {
-		return false
-	}
-	info, err := os.Stat(reloginMarker(base))
-	if err != nil {
-		return false
-	}
-	stored, _ := strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64)
 	current, _ := macAquaSession(context.Background())
-	if crossedLogin(stored, info.ModTime(), current, macBootTime()) {
-		os.Remove(reloginMarker(base))
-		return false
-	}
-	return true
+	return reloginRequired(base, current, macBootTime())
 }
 
 func settingsFile(base string) string { return settings.Path(filepath.Join(base, "user.json")) }

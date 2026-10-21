@@ -52,7 +52,7 @@ func newRetryFixture(t *testing.T) *retryFixture {
 
 // run 模擬一次排程喚起：目前的登入工作階段 asid，距安裝 minutes 分鐘。
 func (f *retryFixture) run(asid uint64, minutes int) error {
-	return retryInputSource(f.base, asid, f.boot, f.t0.Add(time.Duration(minutes)*time.Minute), func(string, string, ...bool) error {
+	return retryInputSource(f.base, loginStamp{ASID: asid, At: f.t0.Add(time.Duration(minutes) * time.Minute)}, f.boot, func(string, string, ...bool) error {
 		f.calls++
 		return f.fail
 	}, func(string, string) bool {
@@ -136,8 +136,12 @@ func TestInputSourceRetrySucceedsAfterLogin(t *testing.T) {
 		t.Fatalf("err=%v calls=%d pending=%v", err, f.calls, f.pending())
 	}
 	// 之後的安裝又沒啟用成功時 deferInputSource 記下新的紀錄（Failed 0），停止過的也重新起算。
-	if r := (inputSourceRetry{ASID: 9, At: f.t0}); !r.due(10, f.boot) || r.due(9, f.boot) {
-		t.Fatal("a fresh install record retries at the next login only")
+	r := inputSourceRetry{ASID: 9, At: f.t0}
+	if next, _ := r.session().crossed(10, f.boot); !next {
+		t.Fatal("a fresh install record retries at the next login")
+	}
+	if same, _ := r.session().crossed(9, f.boot); same {
+		t.Fatal("a fresh install record does not retry in the same login")
 	}
 }
 
@@ -160,12 +164,12 @@ func TestInputSourceRetryRecordUnreadableOrAppGone(t *testing.T) {
 	}
 }
 
-// 安裝時取不到 ASID（記成 0：沒有圖形登入，例如只從 SSH 安裝）：之後取得到 ASID 就是登入過了，算跨過登入邊界，
-// 跟 0.2.3 以前登入時補做一樣；兩邊都取不到、也沒重新開機時不算。relogin-required 用同一個判斷。
-func TestInputSourceRetryUnknownInstallSessionRetriesAfterLogin(t *testing.T) {
+// 安裝時取不到 ASID（記成 0）：當時確定沒有圖形登入（headless，例如只從 SSH 安裝）時，之後取得到 ASID 就是登入過了，
+// 算跨過登入邊界，跟 0.2.3 以前登入時補做一樣；兩邊都取不到、也沒重新開機時不算。relogin-required 用同一個判斷。
+func TestInputSourceRetryHeadlessInstallRetriesAfterLogin(t *testing.T) {
 	f := newRetryFixture(t)
 	f.fail = errors.New("已要求啟用，但系統尚未啟用 (exit status 2)")
-	saveInputSourceRetry(f.base, inputSourceRetry{ASID: 0, At: f.t0})
+	saveInputSourceRetry(f.base, inputSourceRetry{ASID: 0, At: f.t0, Headless: true})
 	if err := f.run(0, 15); err != nil || f.calls != 0 {
 		t.Fatalf("still no login session: err=%v calls=%d", err, f.calls)
 	}
@@ -175,12 +179,107 @@ func TestInputSourceRetryUnknownInstallSessionRetriesAfterLogin(t *testing.T) {
 	if _ = f.run(7, 75); f.calls != 1 {
 		t.Fatalf("the failed retry is recorded with ASID 7, same session must not retry: calls=%d", f.calls)
 	}
+	if r := loadInputSourceRetry(f.base); r.ASID != 7 || r.Headless {
+		t.Fatalf("retry record: %+v", r)
+	}
+}
+
+// 2b9a7cd 把「記下 0、現在非 0」一律當成跨過登入：在圖形工作階段裡安裝、只是當時 launchctl 取不到 ASID 的，同一個
+// 工作階段就會再跑一次啟用（再跳一次詢問），relogin-required 也會被清掉（誤報已生效）。當時有圖形登入、或舊紀錄
+// 不知道時，第一次取得 ASID 只記下來，之後 ASID 改變才算跨過。
+func TestInputSourceRetryGUIInstallWithoutASIDWaitsForNextLogin(t *testing.T) {
+	f := newRetryFixture(t)
+	f.fail = errors.New("已要求啟用，但系統尚未啟用 (exit status 2)")
+	saveInputSourceRetry(f.base, inputSourceRetry{ASID: 0, At: f.t0}) // 舊紀錄沒有 headless，或當時有圖形登入
+	for m := 15; m <= 120; m += 15 {
+		if err := f.run(7, m); err != nil || f.calls != 0 {
+			t.Fatalf("same GUI session must not retry: m=%d err=%v calls=%d", m, err, f.calls)
+		}
+	}
+	if r := loadInputSourceRetry(f.base); r == nil || r.ASID != 7 || r.Failed != 0 {
+		t.Fatalf("the first ASID seen is adopted: %+v", r)
+	}
+	if err := f.run(8, 24*60); err == nil || f.calls != 1 {
+		t.Fatalf("next login retries: err=%v calls=%d", err, f.calls)
+	}
 	for _, c := range []struct {
 		stored, current uint64
-		want            bool
-	}{{0, 0, false}, {0, 7, true}, {7, 0, false}, {7, 7, false}, {7, 8, true}} {
-		if got := crossedLogin(c.stored, f.t0, c.current, f.boot); got != c.want {
-			t.Errorf("crossedLogin(stored %d, current %d) = %v, want %v", c.stored, c.current, got, c.want)
+		headless        bool
+		crossed, adopt  bool
+	}{
+		{0, 0, false, false, false}, {0, 0, true, false, false},
+		{0, 7, true, true, false}, {0, 7, false, false, true},
+		{7, 0, false, false, false}, {7, 7, false, false, false}, {7, 8, false, true, false},
+	} {
+		crossed, adopt := loginStamp{ASID: c.stored, At: f.t0, Headless: c.headless}.crossed(c.current, f.boot)
+		if crossed != c.crossed || adopt != c.adopt {
+			t.Errorf("stored %d headless %v current %d: crossed %v adopt %v, want %v %v", c.stored, c.headless, c.current, crossed, adopt, c.crossed, c.adopt)
+		}
+	}
+	if crossed, _ := (loginStamp{At: f.t0}).crossed(7, f.t0.Add(time.Hour)); !crossed {
+		t.Error("a reboot since the stamp always crosses")
+	}
+}
+
+// relogin-required 用同一個判斷：在圖形工作階段安裝、當時沒記到 ASID 的，同一個工作階段仍要重新登入，下一次登入才清掉；
+// 確定沒有圖形登入時安裝的，第一次有 ASID 就清掉。
+func TestReloginMarkerSessionWithoutASID(t *testing.T) {
+	base := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(base, "update"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	boot := time.Now().Add(-time.Hour)
+	write := func(s loginStamp) {
+		if err := os.WriteFile(reloginMarker(base), formatReloginMarker(s), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(loginStamp{}) // 有圖形登入但 launchctl 失敗；0.2.3 寫的「0」也一樣
+	for i := 0; i < 3; i++ {
+		if !reloginRequired(base, 7, boot) {
+			t.Fatal("same GUI session still requires a relogin")
+		}
+	}
+	if b, _ := os.ReadFile(reloginMarker(base)); string(b) != "7\n" {
+		t.Fatalf("adopted marker = %q", b)
+	}
+	if reloginRequired(base, 8, boot) || onDisk(reloginMarker(base)) {
+		t.Fatal("the next login clears the marker")
+	}
+	write(loginStamp{Headless: true})
+	if b, _ := os.ReadFile(reloginMarker(base)); string(b) != "0\nheadless\n" {
+		t.Fatalf("headless marker = %q", b)
+	}
+	if !reloginRequired(base, 0, boot) {
+		t.Fatal("still no login session")
+	}
+	if reloginRequired(base, 7, boot) {
+		t.Fatal("the first login after a headless install clears the marker")
+	}
+}
+
+func TestMacGUILogin(t *testing.T) {
+	const session = `+-o Root  <class IORegistryEntry, id 0x100000100, retain 32>
+    {
+      "IOKitBuildVersion" = "Darwin Kernel Version 25.6.0"
+      "IOConsoleUsers" = ({"kCGSSessionOnConsoleKey"=Yes,"kCGSSessionUserNameKey"="kevin","CGSSessionScreenIsLocked"=Yes,"kCGSSessionAuditIDKey"=124131,"kCGSSessionUserIDKey"=501})
+    }
+`
+	for _, c := range []struct {
+		name       string
+		ioreg      string
+		uid        int
+		has, known bool
+	}{
+		{"own session (locked)", session, 501, true, true},
+		{"someone else's session", session, 502, false, true},
+		{"nobody logged in", "+-o Root  <class IORegistryEntry>\n    {\n      \"IOKitBuildVersion\" = \"x\"\n    }\n", 501, false, true},
+		{"empty list", "+-o Root\n  \"IOConsoleUsers\" = ()\n", 501, false, true},
+		{"garbled", "+-o Root\n  \"IOConsoleUsers\" = ({\"kCGSSessionUserIDKey\"=501", 501, false, false},
+		{"no output", "", 501, false, false},
+	} {
+		if has, known := macGUILogin(c.ioreg, c.uid); has != c.has || known != c.known {
+			t.Errorf("%s: has %v known %v, want %v %v", c.name, has, known, c.has, c.known)
 		}
 	}
 }
