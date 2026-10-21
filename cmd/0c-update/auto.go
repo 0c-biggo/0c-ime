@@ -454,6 +454,14 @@ func autoCommand(action string, args []string) (resultErr error) {
 	if flags.NArg() != 0 {
 		return fmt.Errorf("不接受額外位置參數")
 	}
+	// 這個 CLI 一個行程只執行一個命令。-json 時整個命令的 stdout 只留結果的那一份 JSON（設定程式「立即安裝」以
+	// serde_json 解析整份 stdout）：安裝程式、登入時補做輸入法清單等印給人看的訊息一律改到 stderr（#195）。
+	// 錯誤由 autoCommand 的 defer 以 failJSON 寫到 os.Stdout，這裡的 defer 先執行，屆時已換回原本的 stdout。
+	output := os.Stdout
+	if *asJSON {
+		os.Stdout = os.Stderr
+		defer func() { os.Stdout = output }()
+	}
 	if err := validateElevationOrigin(action, *originUser, *originBase); err != nil {
 		return err
 	}
@@ -485,7 +493,7 @@ func autoCommand(action string, args []string) (resultErr error) {
 			if loadErr != nil {
 				return loadErr
 			}
-			return emitJSON(os.Stdout, checkResult{Schema: contractSchema, OK: true, Update: autoupdate.ViewOf(s, installed)})
+			return emitJSON(output, checkResult{Schema: contractSchema, OK: true, Update: autoupdate.ViewOf(s, installed)})
 		}
 		return err
 	}
@@ -504,12 +512,12 @@ func autoCommand(action string, args []string) (resultErr error) {
 	// macOS 的 launchd 在登入時以 auto 喚起（不帶 -login）；新安裝的輸入法要重新登入後才登記得到，所以每次都補試。
 	// macOS 看安裝時留下的記號（inputSourcePending），不看 ProfileAtLogin（#195）；記號留著時每個登入工作階段補試一次，
 	// 失敗的重試只會一直跳系統詢問，連續幾個工作階段都失敗就停止（addInputMethod）。
-	if *login || runtime.GOOS == "darwin" {
+	if *login || retriesInputMethodEveryRun {
 		if s, err := autoupdate.Load(base); err == nil && (s.ProfileAtLogin || inputSourcePending(base)) {
 			if err := addInputMethod(); err != nil {
 				fmt.Fprintln(os.Stderr, "0c-update: 加入輸入法清單失敗：", err)
-			} else {
-				_ = editState(base, func(s *autoupdate.State) { s.ProfileAtLogin = false })
+			} else if s.ProfileAtLogin { // macOS 只有記號時不必改狀態檔；改了也不印狀態，免得混進 -json 的結果
+				_, _ = autoupdate.EditState(base, func(s *autoupdate.State) error { s.ProfileAtLogin = false; return nil })
 			}
 		}
 	}
@@ -537,16 +545,7 @@ func autoCommand(action string, args []string) (resultErr error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
-	// This CLI executes one command per process. Platform installers print human
-	// diagnostics; route those to stderr while reserving stdout for one JSON document.
-	output := os.Stdout
-	if *asJSON {
-		os.Stdout = os.Stderr
-	}
-	s, err := func() (*autoupdate.State, error) {
-		defer func() { os.Stdout = output }()
-		return co.Run(ctx)
-	}()
+	s, err := co.Run(ctx)
 	refreshPathUpdater(base)
 	if action == "auto" && !*asJSON && !*report {
 		// #179：安裝後啟動的背景清理沒做完（關機、被結束）時由排程補做；這次裝了新版就在這裡一起清，不另外啟動。
@@ -562,7 +561,7 @@ func autoCommand(action string, args []string) (resultErr error) {
 	}
 	if *asJSON {
 		installed, _ := p.Installed()
-		return emitJSON(os.Stdout, checkResult{Schema: contractSchema, OK: true, Update: autoupdate.ViewOf(s, installed)})
+		return emitJSON(output, checkResult{Schema: contractSchema, OK: true, Update: autoupdate.ViewOf(s, installed)})
 	}
 	printState(s)
 	if action == "finish" && s.Target == nil {
@@ -571,6 +570,9 @@ func autoCommand(action string, args []string) (resultErr error) {
 	}
 	return nil
 }
+
+// retriesInputMethodEveryRun：每次 auto／finish 都補做登入時的輸入法清單（macOS，見 autoCommand 裡的說明）；測試在 Linux 上打開它走同一條路。
+var retriesInputMethodEveryRun = runtime.GOOS == "darwin"
 
 // notifyOutcome 回報使用者親自要求（選單、通知按鈕）的結果；背景排程不發這類通知。
 func notifyOutcome(s *autoupdate.State, err error) {
