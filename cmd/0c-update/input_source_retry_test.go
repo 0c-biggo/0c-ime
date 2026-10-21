@@ -153,3 +153,28 @@ func TestInputSourceRetryRecordUnreadableOrAppGone(t *testing.T) {
 		t.Fatalf("app gone: err=%v calls=%d pending=%v", err, f.calls, f.pending())
 	}
 }
+
+// 安裝時取不到 ASID（記成 0：沒有圖形登入，例如只從 SSH 安裝）：之後取得到 ASID 就是登入過了，算跨過登入邊界，
+// 跟 0.2.3 以前登入時補做一樣；兩邊都取不到、也沒重新開機時不算。relogin-required 用同一個判斷。
+func TestInputSourceRetryUnknownInstallSessionRetriesAfterLogin(t *testing.T) {
+	f := newRetryFixture(t)
+	f.fail = errors.New("已要求啟用，但系統尚未啟用 (exit status 2)")
+	saveInputSourceRetry(f.base, inputSourceRetry{ASID: 0, At: f.t0})
+	if err := f.run(0, 15); err != nil || f.calls != 0 {
+		t.Fatalf("still no login session: err=%v calls=%d", err, f.calls)
+	}
+	if err := f.run(7, 60); err == nil || f.calls != 1 {
+		t.Fatalf("first login after a headless install retries: err=%v calls=%d", err, f.calls)
+	}
+	if _ = f.run(7, 75); f.calls != 1 {
+		t.Fatalf("the failed retry is recorded with ASID 7, same session must not retry: calls=%d", f.calls)
+	}
+	for _, c := range []struct {
+		stored, current uint64
+		want            bool
+	}{{0, 0, false}, {0, 7, true}, {7, 0, false}, {7, 7, false}, {7, 8, true}} {
+		if got := crossedLogin(c.stored, f.t0, c.current, f.boot); got != c.want {
+			t.Errorf("crossedLogin(stored %d, current %d) = %v, want %v", c.stored, c.current, got, c.want)
+		}
+	}
+}
