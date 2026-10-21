@@ -71,7 +71,11 @@ func listSettings(w io.Writer, r settings.Report, path string) {
 	}
 	fmt.Fprintf(w, "english-autocomplete=%s（英文自動補字；Tab 接受、Esc 關閉）\n", onOff(s.EnglishAutocomplete))
 	fmt.Fprintf(w, "toggle-key=%s（中英切換鍵：right 右 Shift；both 左右 Shift；left 左 Shift；none 不用 Shift）\n", s.ToggleKey)
-	fmt.Fprintf(w, "start-mode=%s（開始時的中英模式：zhuyin 注音；english 英文）\n", s.StartMode)
+	locked := ""
+	if s.StartMode == settings.StartEnglish && !s.StartsEnglish() {
+		locked = "；目前不用 Shift 切換，固定從注音開始" // #184
+	}
+	fmt.Fprintf(w, "start-mode=%s（開始時的中英模式：zhuyin 注音；english 英文%s）\n", s.StartMode, locked)
 	fmt.Fprintf(w, "mode-memory=%s（切換視窗後的中英模式：native 照平台原本的做法；shared 全部共用同一個模式）\n", s.ModeMemory)
 	fmt.Fprintf(w, "esc-clear=%s（按 Esc 清除整段組字；off 只清未打完的注音）\n", onOff(s.EscClear))
 	fmt.Fprintf(w, "space-selects=%s（注音打完按空白選字；off 空白輸入空格、↓ 選字）\n", onOff(s.SpaceSelects))
