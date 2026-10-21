@@ -65,3 +65,26 @@ func TestListInputMethodOnce(t *testing.T) {
 		t.Fatalf("加入過之後不能再改使用者的清單，呼叫了 %d 次", calls)
 	}
 }
+
+// #191 code review：在 UAC 對話框輸入另一個系統管理員帳號（over-the-shoulder）時，提權的安裝程式是那個管理員，
+// 不能替它把靈犀注音加進清單（加進去的是管理員的 HKCU，桌面使用者的清單不變）。
+func TestOwnsDesktop(t *testing.T) {
+	for _, c := range []struct {
+		name, process, session string
+		err                    error
+		elevated, want         bool
+	}{
+		{"同一位使用者以系統管理員權限安裝", `PC\amy`, `PC\amy`, nil, true, true},
+		{"登入工作與每日檢查（一般權限）", `PC\amy`, `PC\amy`, nil, false, true},
+		{"帳號大小寫不同", `pc\Amy`, `PC\amy`, nil, true, true},
+		{"以另一個管理員帳號確認 UAC", `PC\admin`, `PC\amy`, nil, true, false},
+		{"另一個帳號的一般權限程序（runas）", `PC\bob`, `PC\amy`, nil, false, false},
+		{"沒有登入使用者的工作階段（服務、SSH）", `PC\amy`, "", nil, true, false},
+		{"查不到工作階段：系統管理員不加", `PC\amy`, "", errors.New("wts"), true, false},
+		{"查不到工作階段：一般權限是自己的帳號", `PC\amy`, "", errors.New("wts"), false, true},
+	} {
+		if got := ownsDesktop(c.process, c.session, c.err, c.elevated); got != c.want {
+			t.Errorf("%s：ownsDesktop = %v，預期 %v", c.name, got, c.want)
+		}
+	}
+}
