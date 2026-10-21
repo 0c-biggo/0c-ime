@@ -475,8 +475,9 @@ func notifyWithAction(_ context.Context, n autoupdate.Notice) (string, error) {
 }
 
 // setupInputMethod：此平台由安裝程式註冊輸入法，不需額外設定。
-func setupInputMethod(string) error { return nil }
-func addInputMethod() error         { return nil }
+func setupInputMethod(string) error  { return nil }
+func addInputMethod() error          { return nil }
+func inputSourcePending(string) bool { return false }
 
 // openScheduleSettings：只有 macOS 的排程可能在系統設定被關閉。
 func openScheduleSettings() error {

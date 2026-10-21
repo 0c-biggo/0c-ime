@@ -18,8 +18,8 @@ import (
 //
 // 0c.app 是 IMK 輸入法程式，系統在第一次用到時啟動、常駐到登出；安裝只換掉磁碟上的 App，執行中的那一份不會換新，
 // 外殼的新功能要重新登入才生效。安裝、回復、解除安裝與排程喚起時，請本帳號執行中、不是目前安裝的那一份
-// 0c.app（含 0.1.0-dev.21 以前的 Zuin.app）在使用者沒有組字、停手之後結束，再以不搶前景的方式（open -g -j）
-// 啟動新的 App。做法同鼠鬚管安裝時結束舊的 Squirrel，但鼠鬚管與威注音都只在使用者自己執行安裝程式時做。
+// 0c.app（含 0.1.0-dev.21 以前的 Zuin.app）在使用者沒有組字、停手之後結束，再以不搶前景的方式（open -g；不加 -j，
+// 隱藏啟動的 App 候選窗不會上螢幕，#194）啟動新的 App。做法同鼠鬚管安裝時結束舊的 Squirrel，但鼠鬚管與威注音都只在使用者自己執行安裝程式時做。
 //
 // 結束舊程式時，已經連著它的 App 不會自己換到新版：要等到焦點改變（切換 App、鎖定後解鎖、螢幕關閉後喚醒、
 // 螢幕保護程式結束）才連上新的；在那之前按的第一個鍵會以英文字母直接交給 App，沒有先啟動新版時整批按鍵都會
@@ -28,7 +28,8 @@ import (
 //     就是一次焦點改變：停手後立即交接並啟動新版。
 //   - 背景（排程、背景自動安裝）只在使用者離開時交接：這個帳號的螢幕已鎖定、螢幕保護程式或螢幕關閉中，或已切換
 //     到別的使用者（macConsoleAway）。回來時的解鎖、喚醒就是焦點改變，一個字都不會漏。使用中停手多久都不交接，
-//     舊程式搭新版引擎照常能打字，等下一次離開或重新登入。
+//     舊程式搭新版引擎照常能打字，等下一次離開或重新登入。排程每 15 分鐘才喚起一次，0.2.4 起的輸入法程式在螢幕鎖定、
+//     螢幕關閉或切換使用者時，若自己的執行檔已被換掉，就請 launchd 立即執行一次排程（Handover.swift，#195）。
 
 // macShellHelper：同一個執行檔帶參數執行的是一次性工具（--activate-input-source、--update-agent、--update-notice
 // 等），不是輸入法程式本身，不能結束。
@@ -183,6 +184,27 @@ func macConsoleAway(ioreg string, uid int) bool {
 		return s["CGSSessionScreenIsLocked"] == "Yes" || s["kCGSSessionOnConsoleKey"] == "No"
 	}
 	return false
+}
+
+// deferredInputSource 解析 deferInputSource 記下的輸入來源：第一行是登記用的工具（App 內的 0c），第二行是 App。
+// 記錄看不懂、或 App 已經不在時 ok 為 false，呼叫端刪掉記錄，不再每次喚起都重試（#195）。記下的工具已不在
+// （回復時用的是移入備份的新版工具，備份之後被清掉）時改用 App 本身的 0c；也沒有時一樣放棄。
+func deferredInputSource(b []byte, exists func(string) bool) (tool, app string, ok bool) {
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(lines) != 2 {
+		return "", "", false
+	}
+	tool, app = strings.TrimSpace(lines[0]), strings.TrimSpace(lines[1])
+	if app == "" || !exists(app) {
+		return "", "", false
+	}
+	if tool == "" || !exists(tool) {
+		tool = filepath.Join(app, "Contents/MacOS/0c")
+		if !exists(tool) {
+			return "", "", false
+		}
+	}
+	return tool, app, true
 }
 
 func parsePID(s string) (uint32, error) {

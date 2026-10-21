@@ -102,7 +102,7 @@ $(BUILD)/request-queue-test: Sources/Protocol.swift Sources/RequestQueue.swift T
 test-request-queue: $(BUILD)/request-queue-test
 	$(BUILD)/request-queue-test
 
-$(BUILD)/retire-test: Sources/Retire.swift Tests/Retire/main.swift
+$(BUILD)/retire-test: Sources/Retire.swift Sources/Handover.swift Tests/Retire/main.swift
 	@mkdir -p $(BUILD)
 	$(SWIFTC) $(SWIFTFLAGS) $^ -o $@
 

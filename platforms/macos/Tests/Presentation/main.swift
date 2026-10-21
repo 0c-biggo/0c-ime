@@ -238,4 +238,10 @@ precondition(legacy.visibleReading == nil, "old engines without reading_hint sho
 let empty = try JSONDecoder().decode(Snapshot.self, from: Data(#"{"handled":false,"cursor":{"utf16":0},"mode":"zhuyin"}"#.utf8))
 panel.show(empty, at: .zero)
 precondition(!panel.isVisible, "empty snapshot must hide the panel")
-print("Passed native candidate panel checks: legacy payload, near notes, labels, light/dark layout, hit testing, focus, accessibility fallback, hints and notices")
+// #194：App 是隱藏狀態時解除隱藏、不搶前景。以 open -j 隱藏啟動的情況這裡模擬不出來（行程內 hide 之後
+// orderFrontRegardless 自己會解除），真的隱藏啟動要在真機驗收（platforms/macos/README.md）。
+app.hide(nil)
+precondition(app.isHidden, "test setup: app must be hidden")
+CandidatePanel.revealApp(app)
+precondition(!app.isHidden && !app.isActive, "revealApp unhides without activating")
+print("Passed native candidate panel checks: legacy payload, near notes, labels, light/dark layout, hit testing, focus, accessibility fallback, hints and notices, hidden app")

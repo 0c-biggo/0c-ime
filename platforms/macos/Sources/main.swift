@@ -23,7 +23,12 @@ guard let name = bundle.object(forInfoDictionaryKey: "InputMethodConnectionName"
       let server = IMKServer(name: name, bundleIdentifier: identifier) else {
     fatalError("Cannot initialize 0c InputMethodKit server")
 }
+// #194：以 open -j 隱藏啟動時整個 App 是隱藏的，候選窗不會上螢幕；啟動完成就解除隱藏（不搶前景）。
+NotificationCenter.default.addObserver(forName: NSApplication.didFinishLaunchingNotification, object: application, queue: .main) { _ in
+    CandidatePanel.revealApp(application)
+}
 RetireMonitor.shared.start { LingxiInputController.anyComposing() }
+HandoverMonitor.shared.start()
 UpdateAgentMonitor.shared.start()
 UpdateMenuMonitor.shared.start()
 ModelStatusMonitor.shared.start()

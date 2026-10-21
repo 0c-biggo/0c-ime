@@ -18,6 +18,12 @@ final class CandidatePanel: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
+    /// App 是隱藏狀態時，面板排好版、orderFrontRegardless 也不會上螢幕：以 open -j（隱藏啟動）開起來的輸入法程式整個是隱藏的，
+    /// 空白鍵、↓ 叫不出選字窗（#194，0.2.3 自動換版後以 open -g -j 啟動新版）。啟動時與每次顯示前解除隱藏，不搶前景。
+    static func revealApp(_ app: NSApplication? = NSApp) {
+        if let app, app.isHidden { app.unhideWithoutActivation() }
+    }
+
     func show(_ snapshot: Snapshot, at caret: NSRect) {
         let stack = NSStackView()
         stack.orientation = .vertical
@@ -119,6 +125,7 @@ final class CandidatePanel: NSPanel {
         contentView = CandidateSurface(stack)
         hideTimer?.invalidate()
         place(stack.fittingSize, below: caret)
+        Self.revealApp()
         orderFrontRegardless()
         // 只有提示、沒有候選與補全時，幾秒後自己收起（沒有下一個按鍵時不一直擋在游標下方）；
         // 標示中的說明（引擎每個快照都送）留到標示結束。
@@ -142,6 +149,7 @@ final class CandidatePanel: NSPanel {
         stack.edgeInsets = NSEdgeInsets(top: 4, left: 10, bottom: 4, right: 10)
         contentView = CandidateSurface(stack)
         place(stack.fittingSize, below: caret)
+        Self.revealApp()
         orderFrontRegardless()
         hideTimer?.invalidate()
         hideTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self] _ in self?.orderOut(nil) }
