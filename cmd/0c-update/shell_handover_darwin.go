@@ -97,10 +97,12 @@ func macUserAway() bool {
 	return macConsoleAway(string(out), os.Getuid())
 }
 
-// openMacShell 以不搶前景、不顯示的方式啟動新的輸入法程式（open -g -j）。系統本來也會在下一次需要時啟動它，
+// openMacShell 以不搶前景的方式啟動新的輸入法程式（open -g）。系統本來也會在下一次需要時啟動它，
 // 先啟動可以讓焦點一改變就連上新版，不必等到按鍵（那個按鍵會以英文字母交給 App）。
+// 不加 -j（隱藏啟動）：隱藏啟動的 App 整個是隱藏狀態，候選窗排好版也不會上螢幕，空白鍵、↓ 叫不出選字窗（#194）。
+// 0c.app 是背景程式、啟動時沒有視窗，不隱藏也不會顯示任何東西。
 func openMacShell(app string) {
-	if out, err := exec.Command("/usr/bin/open", "-g", "-j", app).CombinedOutput(); err != nil {
+	if out, err := exec.Command("/usr/bin/open", "-g", app).CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "0c-update: 無法啟動新的輸入法程式（%s）：%v\n", strings.TrimSpace(string(out)), err)
 	}
 }
@@ -241,10 +243,10 @@ func markRelogin(base string) {
 
 // macReloginRequired：還在安裝時的同一個登入工作階段、且安裝時記下要重新登入。跨過登入邊界（ASID 不同或
 // 重新開機）後清掉記號。
+// 輸入來源還沒啟用的記號（input-source）不算：記下它的安裝都同時寫了 relogin-required，同一個工作階段由後者判斷；
+// 跨過登入邊界後由排程補做啟用，補不成功也不該讓之後每次更新都要求重新登入（#195：dev.61 留下的記號讓之後每一版都卡在
+// 「重新登入後生效」）。
 func macReloginRequired(base string) bool {
-	if fileExists(inputSourceMarker(base)) {
-		return true
-	}
 	b, err := os.ReadFile(reloginMarker(base))
 	if err != nil {
 		return false

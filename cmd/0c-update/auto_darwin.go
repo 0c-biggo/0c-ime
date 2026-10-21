@@ -274,41 +274,38 @@ func setupInputMethod(string) error { return nil }
 
 func inputSourceMarker(base string) string { return filepath.Join(base, "update", "input-source") }
 
-// deferInputSource 記下要啟用的輸入來源：新裝的 App 要重新登入後系統才登記得到，由登入時的 auto 補做。
+// deferInputSource 記下要啟用的輸入來源：新裝的 App 要重新登入後系統才登記得到，由之後每次排程喚起補做（addInputMethod）。
+// 只寫記號，不動狀態檔：安裝多半在協調器手上拿著狀態時進行，這裡存的欄位會被協調器存檔蓋掉（#195）。
 func deferInputSource(tool, app string) error {
 	base := basePath()
 	if err := os.MkdirAll(filepath.Dir(inputSourceMarker(base)), 0o700); err != nil {
 		return err
 	}
-	if err := os.WriteFile(inputSourceMarker(base), []byte(tool+"\n"+app+"\n"), 0o600); err != nil {
-		return err
-	}
-	s, err := autoupdate.Load(base)
-	if err != nil {
-		return err
-	}
-	s.ProfileAtLogin = true
-	return autoupdate.Save(base, s)
+	return os.WriteFile(inputSourceMarker(base), []byte(tool+"\n"+app+"\n"), 0o600)
 }
 
-// addInputMethod 啟用安裝或回復時記下的輸入來源；成功後清除記錄，失敗則留待下次喚起。
+// inputSourcePending：安裝或回復時有輸入來源還沒啟用成功，每次排程喚起都補試，不靠狀態檔的 ProfileAtLogin（#195）。
+func inputSourcePending(base string) bool { return fileExists(inputSourceMarker(base)) }
+
+// addInputMethod 啟用安裝或回復時記下的輸入來源；成功後清除記錄，失敗則留待下次喚起。記錄看不懂、App 已不在時直接清掉。
 func addInputMethod() error {
-	b, err := os.ReadFile(inputSourceMarker(basePath()))
+	marker := inputSourceMarker(basePath())
+	b, err := os.ReadFile(marker)
 	if os.IsNotExist(err) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
-	if len(lines) != 2 {
-		os.Remove(inputSourceMarker(basePath()))
+	tool, app, ok := deferredInputSource(b, fileExists)
+	if !ok {
+		os.Remove(marker)
 		return nil
 	}
-	if err = activateInputSource(lines[0], lines[1]); err != nil {
+	if err = activateInputSource(tool, app); err != nil {
 		return err
 	}
-	return os.Remove(inputSourceMarker(basePath()))
+	return os.Remove(marker)
 }
 
 // scheduleExists：修復只針對 Windows 防毒軟體移除排程的情況；這裡不檢查。

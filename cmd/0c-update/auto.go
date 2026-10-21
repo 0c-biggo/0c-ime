@@ -501,8 +501,9 @@ func autoCommand(action string, args []string) (resultErr error) {
 		}
 	}
 	// macOS 的 launchd 在登入時以 auto 喚起（不帶 -login）；新安裝的輸入法要重新登入後才登記得到，所以每次都補試。
+	// macOS 看安裝時留下的記號（inputSourcePending），不看 ProfileAtLogin：記號留著就一直補試到成功（#195）。
 	if *login || runtime.GOOS == "darwin" {
-		if s, err := autoupdate.Load(base); err == nil && s.ProfileAtLogin {
+		if s, err := autoupdate.Load(base); err == nil && (s.ProfileAtLogin || inputSourcePending(base)) {
 			if err := addInputMethod(); err != nil {
 				fmt.Fprintln(os.Stderr, "0c-update: 加入輸入法清單失敗：", err)
 			} else {
