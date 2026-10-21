@@ -292,29 +292,23 @@ func deferInputSource(tool, app string) error {
 // addInputMethod 依 inputSourceRetry 決定。
 func inputSourcePending(base string) bool { return fileExists(inputSourceMarker(base)) }
 
-// addInputMethod 補做安裝或回復時沒啟用成功的輸入來源（見 retryInputSource）。
-func addInputMethod() error {
-	return retryInputSource(basePath(), macLoginStamp(time.Now()), macBootTime(), activateInputSource, inputSourceEnabled)
+// addInputMethod 補做安裝或回復時沒啟用成功的輸入來源（見 retryInputSource）；不補做時不查詢。
+func addInputMethod() error { return retryInputMethod(false) }
+
+// retryInputMethod：scheduled 是背景排程的 auto，只有它在不補做時查詢使用者是不是已經自己加入（見 retryInputSource）。
+func retryInputMethod(scheduled bool) error {
+	return retryInputSource(basePath(), macLoginStamp(time.Now()), macBootTime(), scheduled, activateInputSource, inputSourceEnabled)
 }
 
-// confirmSince：App 內附的 0c 從這一版起有 --confirm-input-source（#87）；更早的 0c 不認得的參數會當成輸入法程式
-// 啟動，所以先看版本。
-const confirmSince = "0.1.0-dev.61"
-
 // inputSourceEnabled 查詢 app 的輸入來源是否已啟用：以 tool 在新的行程回讀 TIS（本行程的 TIS 有快取），只查詢、
-// 不登記也不啟用，不會跳系統詢問。已啟用且目前選著靈犀注音的其他來源時，它會改選這一版的來源，與安裝時啟用成功
-// 的結果相同。tool 的版本太舊、讀不到或逾時都當成還沒啟用。
+// 不登記、不啟用也不改選，不會跳系統詢問、不會切換使用者正在用的輸入來源。tool 的版本太舊、讀不到或逾時都當成還沒啟用。
 func inputSourceEnabled(tool, app string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	v := bundleBuildVersion(ctx, filepath.Dir(filepath.Dir(filepath.Dir(tool))))
-	if !update.ValidVersion(v) {
+	if !queryInputSourceSupported(bundleBuildVersion(ctx, filepath.Dir(filepath.Dir(filepath.Dir(tool))))) {
 		return false
 	}
-	if order, err := update.CompareVersion(v, confirmSince); err != nil || order < 0 {
-		return false
-	}
-	out, err := exec.CommandContext(ctx, tool, "--confirm-input-source", app).Output()
+	out, err := exec.CommandContext(ctx, tool, "--query-input-source", app).Output()
 	return err == nil && confirmedInputSource(string(out))
 }
 

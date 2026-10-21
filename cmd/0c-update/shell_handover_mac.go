@@ -213,9 +213,9 @@ func deferredInputSource(b []byte, exists func(string) bool) (tool, app string, 
 // Headless 表示當時確定這個帳號沒有圖形登入（IOConsoleUsers 裡沒有它的工作階段，例如只從 SSH 或在登入畫面安裝）。
 // 舊紀錄沒有 Headless，與「當時有圖形登入但取不到 ASID」同樣保守處理（見 crossed）。
 type loginStamp struct {
-	ASID     uint64
-	At       time.Time
-	Headless bool
+	ASID     uint64    `json:"asid,omitempty"`
+	At       time.Time `json:"at"`
+	Headless bool      `json:"headless,omitempty"`
 }
 
 // crossed：這個紀錄之後（現在的工作階段 current、開機時間 boot）是否已跨過登入邊界：之後重新開機過，或現在取得到
@@ -315,12 +315,27 @@ type inputSourceRetry struct {
 	Headless bool      `json:"headless,omitempty"` // 最後一次嘗試時確定沒有圖形登入
 	Failed   int       `json:"failed,omitempty"`   // 排程補做失敗過的登入工作階段數（不含安裝當下那次）
 	Error    string    `json:"error,omitempty"`
+	// Queried：不補做時最後一次查詢（--query-input-source）所在的登入工作階段；一個工作階段只查一次。
+	Queried *loginStamp `json:"queried,omitempty"`
 }
 
 const inputSourceRetrySessions = 3
 
 func (r *inputSourceRetry) session() loginStamp {
 	return loginStamp{ASID: r.ASID, At: r.At, Headless: r.Headless}
+}
+
+// queryDue：這個登入工作階段還沒查詢過。上次查詢時有圖形登入但沒記到 ASID 的，與補做一樣把這次的 ASID 記成那次的。
+func (r *inputSourceRetry) queryDue(base string, cur loginStamp, boot time.Time) bool {
+	if r.Queried == nil {
+		return true
+	}
+	crossed, adopt := r.Queried.crossed(cur.ASID, boot)
+	if adopt {
+		r.Queried.ASID, r.Queried.Headless = cur.ASID, false
+		saveInputSourceRetry(base, *r)
+	}
+	return crossed
 }
 
 func (r *inputSourceRetry) stopped() bool { return r != nil && r.Failed >= inputSourceRetrySessions }
@@ -370,10 +385,11 @@ func saveInputSourceRetry(base string, r inputSourceRetry) {
 
 // retryInputSource 啟用安裝或回復時記下的輸入來源，同一個登入工作階段只試一次（inputSourceRetry）：成功後清除記錄，
 // 失敗則記下，跨過登入邊界再試；連續 inputSourceRetrySessions 個登入工作階段都失敗就停止，記進更新紀錄。
-// 不補做的喚起（這個工作階段已試過、或已停止補做）只以 enabled 查詢、不啟用：使用者自己到系統設定加入，或之後才在
-// 系統詢問按「允許」時，記號與紀錄就清掉，狀態摘要不再顯示還沒啟用。
+// 不補做的喚起（這個工作階段已試過、或已停止補做）只在 query 時（背景排程的 auto；設定程式「立即安裝」、選單、
+// 通知按鈕等著結果的呼叫不查）以 enabled 查詢、不啟用，而且同一個登入工作階段只查一次（Queried）：使用者自己到
+// 系統設定加入，或之後才在系統詢問按「允許」時，最晚下一次登入記號與紀錄就清掉，狀態摘要不再顯示還沒啟用。
 // 記錄看不懂、App 已不在時直接清掉。cur 是目前的登入工作階段（At 為現在），boot 是開機時間。
-func retryInputSource(base string, cur loginStamp, boot time.Time, activate func(tool, app string, force ...bool) error, enabled func(tool, app string) bool) error {
+func retryInputSource(base string, cur loginStamp, boot time.Time, query bool, activate func(tool, app string, force ...bool) error, enabled func(tool, app string) bool) error {
 	b, err := os.ReadFile(inputSourceMarker(base))
 	if os.IsNotExist(err) {
 		return nil
@@ -394,8 +410,12 @@ func retryInputSource(base string, cur loginStamp, boot time.Time, activate func
 			saveInputSourceRetry(base, *r)
 		}
 		if r.stopped() || !crossed {
-			if enabled(tool, app) {
-				clearInputSource(base)
+			if query && r.queryDue(base, cur, boot) {
+				r.Queried = &cur
+				saveInputSourceRetry(base, *r)
+				if enabled(tool, app) {
+					clearInputSource(base)
+				}
 			}
 			return nil
 		}
@@ -416,13 +436,25 @@ func retryInputSource(base string, cur loginStamp, boot time.Time, activate func
 	return err
 }
 
-// confirmedInputSource 解析 `0c --confirm-input-source <App>` 的輸出：每行「<ID> enabled|disabled|missing」，依啟用順序
-// 列出、可選取的來源在最後；可選取的來源已啟用、改選了它時再多一行「<ID> selected」。回報可選取的來源是否已啟用，
+// confirmedInputSource 解析 `0c --query-input-source <App>`（輸出與 --confirm-input-source 相同，但不改選）：每行
+// 「<ID> enabled|disabled|missing」，依啟用順序列出、可選取的來源在最後；--confirm-input-source 在可選取的來源已啟用、
+// 改選了它時再多一行「<ID> selected」。回報可選取的來源是否已啟用，
 // 與安裝時 --activate-input-source 判斷成功的條件相同（InputSource.swift 的 confirm）。
 func confirmedInputSource(out string) bool {
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	fields := strings.Fields(lines[len(lines)-1])
 	return len(fields) == 2 && (fields[1] == "enabled" || fields[1] == "selected")
+}
+
+// querySince：App 內附的 0c 從這一版起有只查詢、絕不改選的 --query-input-source（#195）。更早的只有
+// --confirm-input-source，來源已啟用而目前選著靈犀注音的其他來源時會改選，背景排程不能用它；更早的 0c 不認得的參數
+// 還會當成輸入法程式啟動。所以先看版本，太舊的不查。
+const querySince = "0.2.4"
+
+// queryInputSourceSupported：版本 v 的 App 內附的 0c 有 --query-input-source（querySince 起）。
+func queryInputSourceSupported(v string) bool {
+	order, err := update.CompareVersion(v, querySince)
+	return err == nil && order >= 0
 }
 
 func parsePID(s string) (uint32, error) {

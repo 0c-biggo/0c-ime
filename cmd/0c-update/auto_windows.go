@@ -480,6 +480,9 @@ func notifyWithAction(_ context.Context, n autoupdate.Notice) (string, error) {
 func setupInputMethod(string) error  { return nil }
 func inputSourcePending(string) bool { return false }
 
+// retryInputMethod：此平台登入時補做就是 addInputMethod，不分是不是背景排程（macOS 見 auto_darwin.go）。
+func retryInputMethod(bool) error { return addInputMethod() }
+
 // openScheduleSettings：只有 macOS 的排程可能在系統設定被關閉。
 func openScheduleSettings() error {
 	return fmt.Errorf("此平台沒有系統設定的背景執行開關")
