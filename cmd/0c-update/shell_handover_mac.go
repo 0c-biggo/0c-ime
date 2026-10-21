@@ -216,7 +216,7 @@ func deferredInputSource(b []byte, exists func(string) bool) (tool, app string, 
 // 沒有紀錄的記號（0.2.3 以前留下的，#195 回報者的情形）立即試一次。排程補做連續在 inputSourceRetrySessions 個
 // 登入工作階段失敗就停止，留下記號與最後的錯誤給狀態摘要；之後的安裝啟用成功時一併清掉。
 type inputSourceRetry struct {
-	ASID   uint64    `json:"asid,omitempty"` // 最後一次嘗試所在的登入工作階段；取不到時為 0，改看開機時間
+	ASID   uint64    `json:"asid,omitempty"` // 最後一次嘗試所在的登入工作階段；取不到時為 0，之後取得到就算跨過登入邊界（crossedLogin）
 	At     time.Time `json:"at"`
 	Failed int       `json:"failed,omitempty"` // 排程補做失敗過的登入工作階段數（不含安裝當下那次）
 	Error  string    `json:"error,omitempty"`
@@ -252,9 +252,11 @@ func parseInputSourceRetry(b []byte) *inputSourceRetry {
 }
 
 // crossedLogin：at 時記下、當時登入工作階段為 stored 的紀錄，現在（工作階段 current、開機時間 boot）是否已跨過登入邊界：
-// 之後重新開機過，或兩邊都取得到 ASID 且不同。
+// 之後重新開機過，或現在取得到 ASID 且與記下的不同。記下的是 0（當時取不到：沒有圖形登入，例如只從 SSH 安裝）、
+// 現在取得到時也算：之後才有人登入；不算的話要等重新開機，比 0.2.3 以前每次登入都補做還差（#195）。
+// 現在取不到時無法判斷，不算。
 func crossedLogin(stored uint64, at time.Time, current uint64, boot time.Time) bool {
-	return (!boot.IsZero() && boot.After(at)) || (stored != 0 && current != 0 && stored != current)
+	return (!boot.IsZero() && boot.After(at)) || (current != 0 && stored != current)
 }
 
 func inputSourceMarker(base string) string { return filepath.Join(base, "update", "input-source") }
