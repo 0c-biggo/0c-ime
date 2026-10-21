@@ -22,10 +22,7 @@ func listInputMethod(base string) {
 	if version, err := installedVersion(); err != nil || version == "" {
 		return
 	}
-	if !listsOwnDesktop() {
-		return
-	}
-	if err := listInputMethodOnce(base, addInputMethod); err != nil {
+	if err := listInputMethodOnce(base, listsOwnDesktop, addInputMethod); err != nil {
 		fmt.Fprintln(os.Stderr, "0c-update: 未能把靈犀注音加入輸入法清單（可在 Windows 語言設定的「中文（台灣）」新增「靈犀注音」鍵盤）：", err)
 	}
 }
