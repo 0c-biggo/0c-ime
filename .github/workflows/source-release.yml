@@ -13,6 +13,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  go-module:
+    # Ask the Go proxy for the tag so pkg.go.dev lists it without waiting for a first user.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions: {}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Fetch the tag through proxy.golang.org and request pkg.go.dev indexing
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          MODULE=$(awk '$1 == "module" { print $2; exit }' go.mod)
+          curl --fail --silent --show-error --retry 5 --retry-all-errors \
+            "https://proxy.golang.org/$MODULE/@v/$RELEASE_TAG.mod" > "$RUNNER_TEMP/proxy.mod"
+          if ! cmp -s go.mod "$RUNNER_TEMP/proxy.mod"; then
+            echo "proxy.golang.org served a different go.mod for $MODULE@$RELEASE_TAG" >&2
+            exit 1
+          fi
+          curl --fail --silent --show-error --retry 3 --retry-all-errors -X POST --output /dev/null \
+            "https://pkg.go.dev/fetch/$MODULE@$RELEASE_TAG" \
+            || echo "::warning::pkg.go.dev did not accept the fetch request; it indexes from the proxy within hours anyway."
+
   source-release:
     # Bootstrap the first release locally, then configure its dictionary URL.
     if: ${{ vars.DICTIONARY_SOURCE_URL != '' }}
