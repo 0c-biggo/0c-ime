@@ -99,6 +99,8 @@ func TestListInputMethodOnceChecksMarkerBeforeIdentity(t *testing.T) {
 // 不能替它把靈犀注音加進清單（加進去的是管理員的 HKCU，桌面使用者的清單不變）。
 // 發版前 code review：以 SID 比對，不比「網域\帳號」字串；Azure AD 與 Microsoft 帳號的電腦上，token 查到的名稱與
 // 工作階段的使用者名稱寫法可能不同，同一位使用者自己提權也會判成不同人，清單就永遠不加。
+// 第三輪：工作階段使用者的 SID 改取自桌面 shell 的擁有者，不再由名稱查（Azure AD 帳號的名稱常查不到 SID，原本就退回比名稱）；
+// 一般權限的程序就是它自己的帳號，不查身分，查不到 SID、名稱寫法不同也加入。
 func TestOwnsDesktop(t *testing.T) {
 	const amy, admin = "S-1-5-21-1-2-3-1001", "S-1-5-21-1-2-3-500"
 	const aad = "S-1-12-1-111-222-333-444"
@@ -115,10 +117,14 @@ func TestOwnsDesktop(t *testing.T) {
 		{"SID 大小寫不同", account{"s-1-5-21-1-2-3-1001", ""}, account{amy, `PC\amy`}, nil, true, true},
 		{"以另一個管理員帳號確認 UAC", account{admin, `PC\admin`}, account{amy, `PC\amy`}, nil, true, false},
 		{"名稱相同但 SID 不同（不同電腦或網域的同名帳號）", account{admin, `PC\amy`}, account{amy, `PC\amy`}, nil, true, false},
-		{"另一個帳號的一般權限程序（runas）", account{admin, `PC\bob`}, account{amy, `PC\amy`}, nil, false, false},
+		{"另一個帳號的一般權限程序（runas）：加進的是它自己的清單", account{admin, `PC\bob`}, account{amy, `PC\amy`}, nil, false, true},
+		{"Azure AD 的登入工作：工作階段 SID 查不到、名稱寫法不同", account{aad, `AzureAD\AmyLin`}, account{"", `AzureAD\amy.lin`}, nil, false, true},
+		{"Azure AD 自己提權：SID 取自桌面 shell", account{aad, `AzureAD\AmyLin`}, account{aad, `AzureAD\amy.lin`}, nil, true, true},
+		{"Azure AD 帳號的電腦上以另一個管理員確認 UAC", account{admin, `PC\admin`}, account{aad, `AzureAD\amy.lin`}, nil, true, false},
 		{"工作階段使用者的 SID 查不到：退回比名稱", account{amy, `PC\amy`}, account{"", `pc\Amy`}, nil, true, true},
 		{"工作階段使用者的 SID 查不到：名稱不同", account{admin, `PC\admin`}, account{"", `PC\amy`}, nil, true, false},
 		{"沒有登入使用者的工作階段（服務、SSH）", account{amy, `PC\amy`}, account{}, nil, true, false},
+		{"沒有登入使用者的工作階段：一般權限是自己的帳號", account{amy, `PC\amy`}, account{}, nil, false, true},
 		{"查不到工作階段：系統管理員不加", account{amy, `PC\amy`}, account{}, errors.New("wts"), true, false},
 		{"查不到工作階段：一般權限是自己的帳號", account{amy, `PC\amy`}, account{}, errors.New("wts"), false, true},
 	} {
