@@ -1,0 +1,44 @@
+{
+  "schema": "zuin-sequence-runtime-v1",
+  "context_policy": "confirmed_left_64",
+  "allow_partial": true,
+  "dictionary_sha256": "517e6c8bb5cbb145c0554edc3cc91c2b55fc753dd42e11194d83f6b0e119aea3",
+  "weight": 2.0,
+  "margin": 0.0,
+  "files": {
+    "model.onnx": "71af1f0e77b2752cc71cbc04bf19c8e8f2e765662246f766e65a2822bab4e66e",
+    "vocab.json": "556dffaffbf4c05211a846dcee55ef735cea68c5754f9bffcc6f9588124172b3"
+  },
+  "spec": {
+    "kind": "decoder",
+    "hidden": 512,
+    "layers": 8,
+    "heads": 8,
+    "intermediate": 768
+  },
+  "limits": {
+    "min_syllables": 2,
+    "max_syllables": 32,
+    "max_candidates": 16,
+    "context_runes": 64,
+    "correction": "whole_case_fallback",
+    "unknown_candidate_character": "whole_case_fallback",
+    "text_mode": "single_syllable_with_confirmed_context"
+  },
+  "hint_gap": 2.0,
+  "text_weight": 2.0,
+  "text_margin": 1.0,
+  "neutral_tolerant_last": [
+    "ㄅㄚ",
+    "ㄇㄚ",
+    "ㄋㄜ",
+    "ㄌㄚ",
+    "ㄌㄨㄛ",
+    "ㄓㄜ",
+    "ㄚ",
+    "ㄛ",
+    "ㄧㄚ",
+    "ㄧㄝ"
+  ],
+  "neutral_expand_penalty": 4.0
+}

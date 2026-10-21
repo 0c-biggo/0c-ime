@@ -70,6 +70,7 @@ func TestKeyboardLayoutUnknownValueKept(t *testing.T) {
 func TestETenDisablesMixedAndEmojiItems(t *testing.T) {
 	s := Default()
 	s.MixedInput = true
+	s.Set("toggle-key", ToggleRight) // macOS 預設不用 Shift，開始模式另外停用（#184）；這裡只看倚天
 	disabled := func(s Settings) map[string]string {
 		out := map[string]string{}
 		for _, it := range s.Items() {

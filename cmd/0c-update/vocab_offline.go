@@ -78,12 +78,17 @@ func vocabOffline(dial autoupdate.Dialer, base string, req engine.VocabRequest) 
 
 func needsLexicon(op string) bool { return op == engine.VocabAnnotate || op == engine.VocabRank }
 
-// dataPackDir 是目前安裝版本的資料包：核心更新的指標優先，沒有指標時用各平台完整安裝的位置。
+// dataPackDir 是目前安裝版本的資料包：Linux 照外殼啟動引擎的規則（activeDataDir）；其他平台與 Linux 沒有找到
+// 安裝時，核心更新的指標優先，沒有指標時用各平台完整安裝的位置。沒有字典時是空字串。
 func dataPackDir(base string) string {
-	if _, data, ok := enginedir.Resolve(base); ok {
-		return data
+	data, ok := activeDataDir(base)
+	if !ok {
+		if _, resolved, ok := enginedir.Resolve(base); ok {
+			return resolved
+		}
+		data = installedDataDir(base)
 	}
-	if data := installedDataDir(base); data != "" {
+	if data != "" {
 		if _, err := os.Stat(filepath.Join(data, "manifest.json")); err == nil {
 			return data
 		}

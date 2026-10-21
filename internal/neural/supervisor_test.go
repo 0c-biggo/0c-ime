@@ -144,7 +144,7 @@ func TestSupervisorStateReportsStartupFailureAndRecovery(t *testing.T) {
 	s, err := openSupervisedAsync(Config{}, load, func(c Config) (*Worker, error) {
 		attempts++
 		if attempts == 1 {
-			return nil, &StartupError{ReasonMissingRuntime, "neural worker"}
+			return nil, &StartupError{Reason: ReasonMissingRuntime, what: "neural worker"}
 		}
 		return open(c)
 	})

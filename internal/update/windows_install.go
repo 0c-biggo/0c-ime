@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/0c-biggo/0c-ime/internal/atomicfile"
 	"github.com/0c-biggo/0c-ime/internal/enginedir"
 )
 
@@ -69,29 +70,9 @@ func lockInstall(base string) (func(), error) {
 	f.Close()
 	return func() { os.Remove(file) }, nil
 }
-func writeJSON(file string, v any) error {
-	b, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(filepath.Dir(file), ".receipt-")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name())
-	if _, err = f.Write(append(b, '\n')); err != nil {
-		f.Close()
-		return err
-	}
-	if err = f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	if err = f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(f.Name(), file)
-}
+
+// writeJSON 原子寫入收據等 JSON（暫存檔 Sync 後改名，見 atomicfile）。
+func writeJSON(file string, v any) error { return atomicfile.WriteJSON(file, v) }
 func copyFile(src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0700); err != nil {
 		return err
@@ -489,7 +470,8 @@ func InstallWindows(bundle, base, arch string, reg Registrar) (string, []string,
 				return "", nil, err
 			}
 		}
-		return destination, removeLegacy(base, next, previous), nil
+		left := removeLegacy(base, next, previous)
+		return destination, left, nil
 	}
 	next.Previous, err = savePrevious(base, previous)
 	if err != nil {
@@ -498,7 +480,9 @@ func InstallWindows(bundle, base, arch string, reg Registrar) (string, []string,
 	if err = switchRegistration(base, previous, next, reg); err != nil {
 		return "", nil, fmt.Errorf("registration failed; attempted to restore previous registration: %w", err)
 	}
-	return destination, removeLegacy(base, next, previous), nil
+	// 舊版本目錄與備份不在這裡清：由呼叫端啟動的背景行程以 PruneWindows 清（#179）。
+	left := removeLegacy(base, next, previous)
+	return destination, left, nil
 }
 
 // UserStore is the personal dictionary shared by every installed version.
@@ -610,7 +594,8 @@ func RollbackWindows(base string, reg Registrar, restoreUser bool) ([]string, er
 			return nil, fmt.Errorf("registration rolled back, but the personal dictionary was not restored (current copy kept in %s): %w", previous.Previous, err)
 		}
 	}
-	return removeLegacy(base, previous, current), nil
+	left := removeLegacy(base, previous, current)
+	return left, nil
 }
 
 func legacyRollbackStore(file string) error {
@@ -634,7 +619,7 @@ func legacyRollbackStore(file string) error {
 	return nil
 }
 
-// UninstallWindows 取消註冊並停用收據；版本檔案、備份與個人詞庫保留。
+// UninstallWindows 取消註冊並停用收據；個人詞庫、回復用的備份與版本目錄保留，更早的由背景的 PruneWindows 清掉（#179）。
 // 解除安裝只取消註冊，不需要檔案完好：已安裝的檔案被改動或移除（例如防毒軟體隔離 DLL）時照常完成，
 // 否則使用者永遠移除不了（#82）。回傳的 changed 是核對失敗的原因（沒有則為 nil），由呼叫端提示。
 func UninstallWindows(base string, reg Registrar) (changed error, err error) {
@@ -666,5 +651,8 @@ func UninstallWindows(base string, reg Registrar) (changed error, err error) {
 	if err != nil {
 		return changed, err
 	}
-	return changed, switchRegistration(base, current, &next, reg)
+	if err = switchRegistration(base, current, &next, reg); err != nil {
+		return changed, err
+	}
+	return changed, nil
 }

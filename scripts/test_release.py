@@ -1,5 +1,7 @@
 """Check release rejection, tampering and installation recovery in temporary directories."""
 
+from contextlib import redirect_stderr, redirect_stdout
+import io
 import json
 import os
 import shutil
@@ -786,6 +788,50 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "符號連結"):
             installer.install(self.bundle, self.home, self.release)
         self.assertFalse((self.home / ".local/share/zuin/backups").exists())
+
+    def test_install_keeps_only_the_new_backup(self):
+        # #179：每份安裝備份都含整個舊神經模型，以前從不刪。安裝成功後只留收據記錄的這一份，回復照常。
+        backups = self.home / ".local/share/zuin/backups"
+        first = installer.install(self.bundle, self.home, self.release)
+        installer.install(self.bundle, self.home, self.release)
+        (backups / "0c-install-old_old1" / "neural").mkdir(parents=True)
+        (backups / "0c-install-old_old1" / "neural/model.onnx").write_text("old model")
+        for name in ("upgrade-20261011-025419-t7yd75aw", "manual-dev39-20261003", "0c-user-abcd1234", "0c-install-notours"):
+            (backups / name).mkdir()
+        (backups / "user.json.pre-hint").write_text("hand-made copy")
+        elsewhere = self.root / "elsewhere"
+        elsewhere.mkdir()
+        (elsewhere / "keep").write_text("not ours")
+        (backups / "0c-install-linked01").symlink_to(elsewhere)
+        (self.bundle / "bin/0c-server").write_text("next engine")
+        self.release["files"]["bin/0c-server"] = installer.digest(self.bundle / "bin/0c-server")
+        self.release["channel"] = "internal-preview"
+        self.save_release()
+        with patch.object(installer.sys, "argv", ["install.py", "install", "--bundle", str(self.bundle), "--home", str(self.home)]), \
+                patch.object(installer.os, "getuid", return_value=1000), \
+                patch.dict(installer.os.environ, {"ZC_MANAGED_RELOAD": "1"}), \
+                patch.object(installer, "runtime_check"), patch.object(installer, "require_desktop_stopped"), \
+                patch.object(installer, "clear_session_addon_dirs"), patch.object(installer, "settings_dependencies"), \
+                patch.object(installer, "first_install", return_value=True), redirect_stdout(io.StringIO()):
+            installer.main()
+        backup = Path(json.loads((self.home / installer.RECEIPT).read_text())["backup"])
+        self.assertEqual(sorted(p.name for p in backups.iterdir()), sorted([
+            backup.name, "upgrade-20261011-025419-t7yd75aw", "manual-dev39-20261003", "0c-user-abcd1234",
+            "0c-install-notours", "user.json.pre-hint", "0c-install-linked01"]))
+        self.assertFalse(first.exists())
+        self.assertEqual((elsewhere / "keep").read_text(), "not ours")
+        installer.rollback(self.home, backup)
+        self.assertEqual((self.home / ".local/bin/0c-server").read_text(), "new bin/0c-server")
+        self.assertEqual(self.user.read_text(), "private learning")
+
+    def test_backup_pruning_refuses_a_linked_backup_directory(self):
+        real = self.root / "external"
+        (real / "0c-install-abcdefgh").mkdir(parents=True)
+        backups = self.home / ".local/share/zuin/backups"
+        backups.symlink_to(real)
+        with redirect_stderr(io.StringIO()):
+            self.assertEqual(installer.prune_backups(self.home, backups / "0c-install-new12345"), [])
+        self.assertTrue((real / "0c-install-abcdefgh").exists())
 
     def test_rollback_restores_paired_data_and_keeps_learning(self):
         first = installer.install(self.bundle, self.home, self.release)
@@ -2389,9 +2435,10 @@ Successfully verified: 0c-update.exe
         node = shutil.which("node")
         if not node:
             self.skipTest("沒有 node")
-        app = Path(__file__).resolve().parents[1] / "platforms/settings/ui/app.js"
-        result = subprocess.run([node, "--check", str(app)], capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
+        for name in ("app.js", "models.js"):
+            app = Path(__file__).resolve().parents[1] / "platforms/settings/ui" / name
+            result = subprocess.run([node, "--check", str(app)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, name + "：" + result.stderr)
 
     def test_settings_ui_engine_state(self):
         # 總覽「輸入法仍未全部切換」的判斷：核心更新後不誤報、外殼等重新登入時要提示（0.2.1 候選版冒煙）。
@@ -2401,6 +2448,222 @@ Successfully verified: 0c-update.exe
         test = Path(__file__).resolve().parents[1] / "platforms/settings/test/engine_state_test.js"
         result = subprocess.run([node, "--test", str(test)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_settings_ui_models(self):
+        # #180「模型」頁：內建只顯示資訊、可下載／下載中／已安裝／重新下載各自的按鈕、缺推論元件與網址白名單。
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("沒有 node")
+        test = Path(__file__).resolve().parents[1] / "platforms/settings/test/models_test.js"
+        result = subprocess.run([node, "--test", str(test)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_system_install_puts_ibus_component_where_ibus_daemon_reads(self):
+        # #181：ibus-daemon 只讀它自己的元件目錄（IBus 1.5.34 實測不讀 /usr/local/share/ibus/component），
+        # 所以 make install PREFIX=/usr/local 也要把 0c.xml 放到 ibus 的目錄；明確指定 IBUS_COMPONENTDIR 時照指定。
+        if not shutil.which("make"):
+            self.skipTest("沒有 make")
+        root = Path(__file__).resolve().parents[1]
+
+        def component_dir(pc_dir, *extra):
+            env = {**os.environ, "PKG_CONFIG_LIBDIR": pc_dir, "PKG_CONFIG_PATH": ""}
+            result = subprocess.run(["make", "-s", "-n", "-C", str(root), "install", "PREFIX=/usr/local", "VERSION=0.0.0",
+                                     "DESTDIR=/stage", "FCITX5=0", "SETTINGS=0", *extra], capture_output=True, text=True, env=env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            dirs = [line.split()[-1] for line in result.stdout.splitlines() if line.startswith("install -d") and "ibus" in line]
+            self.assertEqual(len(dirs), 1, result.stdout)
+            return dirs[0]
+
+        with tempfile.TemporaryDirectory() as empty, tempfile.TemporaryDirectory() as pc:
+            self.assertEqual(component_dir(empty), "/stage/usr/share/ibus/component")  # 沒有 libibus-1.0-dev
+            Path(pc, "ibus-1.0.pc").write_text("prefix=/opt/ibus\ndatadir=${prefix}/share\nName: ibus-1.0\n"
+                                               "Description: t\nVersion: 1.5.34\n", encoding="utf-8")
+            self.assertEqual(component_dir(pc), "/stage/opt/ibus/share/ibus/component")
+            self.assertEqual(component_dir(empty, "IBUS_COMPONENTDIR=/usr/local/share/ibus/component"),
+                             "/stage/usr/local/share/ibus/component")
+
+    def test_pairing_lock_matches_0c_ime_pair_models(self):
+        # #180：發版產生的 pairing.lock 與 0c-ime 以 scripts/pair_models.py 產生的逐位元組相同（兩份不同的字典）。
+        import pairing_lock
+        testdata = Path(__file__).resolve().parents[1] / "internal/models/testdata"
+        for name in ("0c-ime-dfsg-pairing.lock.json", "0c-ime-0.2.3-pairing.lock.json"):
+            expected = (testdata / name).read_bytes()
+            dictionary = json.loads(expected)["dictionary_manifest_sha256"]
+            self.assertEqual(pairing_lock.pairing_lock(dictionary), expected, name)
+        with tempfile.TemporaryDirectory() as temp:
+            data = Path(temp, "data")
+            data.mkdir()
+            (data / "manifest.json").write_bytes(b'{"x": 1}\n')
+            out = Path(temp, "neural/pairing.lock.json")
+            dictionary = pairing_lock.write_pairing_lock(data, out)
+            self.assertEqual(json.loads(out.read_bytes())["dictionary_manifest_sha256"], installer.digest(data / "manifest.json"))
+            self.assertEqual(dictionary, installer.digest(data / "manifest.json"))
+
+    def test_system_install_ships_pairing_lock_and_model_download_switch(self):
+        # #180：make install 把配對清單放在字典旁的 neural/；MODEL_DOWNLOAD=0 寫進 distribution.json 關掉下載與提醒。
+        if not shutil.which("make"):
+            self.skipTest("沒有 make")
+        root = Path(__file__).resolve().parents[1]
+        lock = root / "internal/models/testdata/0c-ime-dfsg-pairing.lock.json"
+
+        def dry_run(*extra):
+            result = subprocess.run(["make", "-s", "-n", "-C", str(root), "install", "PREFIX=/usr", "VERSION=0.0.0", "DESTDIR=/stage",
+                                     "FCITX5=0", "IBUS=0", "SETTINGS=0", *extra], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return result.stdout
+
+        out = dry_run(f"PAIRING_LOCK={lock}")
+        self.assertIn(f"install -Dm644 '{lock}' /stage/usr/share/0c/neural/pairing.lock.json", out)
+        self.assertIn('"version":"%s"}', out)
+        self.assertNotIn("model_download", out)
+        self.assertIn('"model_download":false}', dry_run(f"PAIRING_LOCK={lock}", "MODEL_DOWNLOAD=0"))
+        self.assertNotIn("neural/pairing.lock.json\n", dry_run("PAIRING_LOCK=/nonexistent/pairing.lock.json"))
+
+
+class HFModelsTests(unittest.TestCase):
+    """#180：官網套件內建 Hugging Face 公開版模型（scripts/hf_models.py），0.2.2 以前的內部匯出視為等價。"""
+
+    OLD = {"select": "cef689f1e706537e54eaed4241a776f1ea41b4cad2b504061d1e27cd0c1ca342",
+           "punct": "2d98c7c6c75dc9d46081e967dbd2fccef67f73a1ed9b2da44d7e02002e760cf5"}
+
+    def setUp(self):
+        import hf_models
+        import pairing_lock
+        self.hf, self.pairing = hf_models, pairing_lock
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        # 小的假權重：models.lock 只換 model.onnx、LICENSE、README.md 的雜湊；manifest.json、vocab.json 仍是上游原檔。
+        lock = json.loads(hf_models.LOCK.read_bytes())
+        self.weights = self.root / "hf"
+        for role in hf_models.ROLES:
+            for name in ("model.onnx", "LICENSE", "README.md"):
+                content = f"{role} {name}\n".encode() * 100
+                (self.weights / role).mkdir(parents=True, exist_ok=True)
+                (self.weights / role / name).write_bytes(content)
+                lock["models"][role]["files"][name] = {"sha256": installer.digest(self.weights / role / name), "size": len(content)}
+        self.lock = self.root / "models.lock.json"
+        self.lock.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+        self.data = self.root / "data"
+        self.data.mkdir()
+        (self.data / "manifest.json").write_bytes(b'{"format": 2, "dictionary": "release"}\n')
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_identity_accepts_hugging_face_and_old_shipped_hashes(self):
+        lock = json.loads(self.hf.LOCK.read_bytes())
+        for role in self.hf.ROLES:
+            self.assertEqual(self.hf.model_identity(role, lock["models"][role]["files"]["model.onnx"]["sha256"]), "upstream")
+            self.assertEqual(self.hf.model_identity(role, self.OLD[role]), "equivalent")
+            self.assertIsNone(self.hf.model_identity(role, "c" * 64))
+        self.assertIsNone(self.hf.model_identity("punct", self.OLD["select"]))  # 不跨角色
+        # models.lock 換了 revision：舊的等價紀錄不再適用
+        lock["models"]["select"]["revision"] = "e" * 40
+        bumped = self.root / "bumped.lock.json"
+        bumped.write_text(json.dumps(lock), encoding="utf-8")
+        self.assertIsNone(self.hf.model_identity("select", self.OLD["select"], bumped))
+        self.assertEqual(self.hf.model_identity("punct", self.OLD["punct"], bumped), "equivalent")
+        # 等價清單與 Go 編進 0c-update 的是同一份，記的上游與 models.lock 一致
+        equivalent = json.loads(self.hf.EQUIVALENT.read_text(encoding="utf-8"))
+        real = json.loads(self.hf.LOCK.read_bytes())["models"]
+        for role, item in equivalent["models"].items():
+            self.assertEqual((item["repository"], item["revision"], item["model.onnx"]),
+                             (real[role]["repository"], real[role]["revision"], real[role]["files"]["model.onnx"]["sha256"]))
+
+    def test_fetch_verifies_source_and_caches_downloads(self):
+        weights = self.hf.fetch(self.weights, lock_path=self.lock)
+        self.assertEqual(sorted(weights["select"]), ["LICENSE", "README.md", "model.onnx"])
+        (self.weights / "punct/model.onnx").write_bytes(b"tampered")
+        with self.assertRaisesRegex(ValueError, "punct/model.onnx 與 models.lock 不符"):
+            self.hf.fetch(self.weights, lock_path=self.lock)
+        (self.weights / "punct/model.onnx").write_bytes("punct model.onnx\n".encode() * 100)
+        # 沒有 --from：從鏡像（Hugging Face 的 <repo>/resolve/<revision>/<檔名>）下載進快取，第二次不再下載
+        lock = json.loads(self.lock.read_bytes())
+        urls = []
+
+        def fake_download(url, target):
+            urls.append(url)
+            role = "select" if "/0c-sequence-d512/" in url else "punct"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(self.weights / role / url.rsplit("/", 1)[1], target)
+
+        with patch.object(self.hf, "download", fake_download):
+            cache = self.root / "cache"
+            got = self.hf.fetch(cache=cache, base_url="https://mirror.test/", lock_path=self.lock)
+            self.assertEqual(len(urls), 6)
+            self.assertIn(f"https://mirror.test/Funmula/0c-sequence-d512/resolve/{lock['models']['select']['revision']}/model.onnx", urls)
+            self.assertEqual(got["punct"]["model.onnx"], cache / "punct" / lock["models"]["punct"]["revision"] / "model.onnx")
+            self.hf.fetch(cache=cache, base_url="https://mirror.test", lock_path=self.lock)
+            self.assertEqual(len(urls), 6)
+
+    def test_replace_models_pairs_public_models_and_matches_pairing_lock(self):
+        # 0.2.2 形狀的 neural/：可攜 Python、worker、內部匯出的模型（含 export-validation.json）
+        old = self.root / "old-neural"
+        for path in ("python/bin/python3", "sequence_runtime.py", "punct_runtime.py", "README.txt",
+                     "select/model.onnx", "select/manifest.json", "select/vocab.json", "select/export-validation.json",
+                     "punct/model.onnx", "punct/manifest.json", "punct/vocab.json", "pairing.lock.json"):
+            (old / path).parent.mkdir(parents=True, exist_ok=True)
+            (old / path).write_text("old " + path)
+        weights = self.hf.fetch(self.weights, lock_path=self.lock)
+        out = self.hf.replace_models(old, self.data, self.root / "new/neural", weights, self.lock)
+        self.assertEqual((out / "python/bin/python3").read_text(), "old python/bin/python3")
+        # worker 不沿用舊 neural/ 的：一律是 repo 的版本（例如關掉 onnxruntime 遙測的修正才會出貨）
+        for name in self.hf.WORKER_NAMES:
+            self.assertEqual((out / name).read_bytes(), (self.hf.WORKERS / name).read_bytes(), name)
+        self.assertFalse((out / "pairing.lock.json").exists())
+        self.assertEqual(sorted(p.name for p in (out / "select").iterdir()), ["LICENSE", "README.md", "manifest.json", "model.onnx", "vocab.json"])
+        dictionary = installer.digest(self.data / "manifest.json")
+        expected = json.loads(self.pairing.pairing_lock(dictionary, self.lock))
+        for role in self.hf.ROLES:
+            self.assertEqual((out / role / "model.onnx").read_bytes(), (self.weights / role / "model.onnx").read_bytes())
+            self.assertEqual(json.loads((out / role / "vocab.json").read_bytes())["dictionary_sha256"], dictionary)
+            for name in ("manifest.json", "vocab.json"):
+                self.assertEqual(installer.digest(out / role / name), expected["packages"][role][name]["sha256"], f"{role}/{name}")
+        self.assertEqual(self.hf.check_shipped(out, self.data, self.lock), self.pairing.pairing_lock(dictionary, self.lock))
+        with self.assertRaisesRegex(ValueError, "輸出已存在"):
+            self.hf.replace_models(old, self.data, out, weights, self.lock)
+        # 內部匯出的 neural/（manifest 不是上游的）不能當公開包出貨
+        with self.assertRaisesRegex(ValueError, "不是公開版模型配對出貨字典的結果"):
+            self.hf.check_shipped(old, self.data, self.lock)
+        # worker 跟 repo 不同（沿用舊版或手改）不能出貨
+        for name in self.hf.WORKER_NAMES:
+            original = (out / name).read_bytes()
+            (out / name).write_bytes(original + b"\n")
+            with self.assertRaisesRegex(ValueError, f"neural/{name} 與 platforms/neural/runtime/{name} 不同"):
+                self.hf.check_shipped(out, self.data, self.lock)
+            (out / name).write_bytes(original)
+        # 只換掉權重（例如沿用舊的 model.onnx）也擋下
+        shutil.copyfile(old / "select/model.onnx", out / "select/model.onnx")
+        with self.assertRaisesRegex(ValueError, "官網套件要內建 Hugging Face 公開版"):
+            self.hf.check_shipped(out, self.data, self.lock)
+
+    def test_shipped_repairing_keeps_the_pairing_lock_consistent(self):
+        # 打包時 prepare_data_manifest 拿掉不公開來源、把模型改配對到出貨 manifest：結果仍等於出貨字典的 pairing.lock。
+        news = {"ID": "zuin-news-stratified-20260921", "Name": "新聞", "Distributable": False}
+        (self.data / "manifest.json").write_bytes(packager.json_bytes(
+            {"format": 2, "sources": [{"ID": "zhwiki", "Distributable": True}, news]}))
+        weights = self.hf.fetch(self.weights, lock_path=self.lock)
+        neural = self.root / "neural"
+        neural.mkdir()
+        self.hf.write_packages(weights, installer.digest(self.data / "manifest.json"), neural, self.lock)
+        for name in self.hf.WORKER_NAMES:
+            shutil.copyfile(self.hf.WORKERS / name, neural / name)
+        shipped = packager.prepare_data_manifest(self.data, neural)
+        self.assertEqual(shipped, installer.digest(self.data / "manifest.json"))
+        self.assertEqual(json.loads(self.hf.check_shipped(neural, self.data, self.lock))["dictionary_manifest_sha256"], shipped)
+
+    def test_missing_in_vocab_lists_unknown_characters(self):
+        # #172 的 18 個人名字都在公開版模型的 vocab 裡；沒有的字逐一列出（兩個模型各一）
+        self.assertEqual(self.hf.missing_in_vocab(list("凃姸晗峯鳯伃珢瀞㵢彣烱瓈慜諪琹坣佀啓")), [])
+        self.assertEqual(self.hf.missing_in_vocab(["𠀀"]), ["select:𠀀", "punct:𠀀"])
+
+    def test_prepare_neural_takes_models_from_the_lock(self):
+        import prepare_neural
+        import sys
+        parser_help = subprocess.run([sys.executable, "-B", str(Path(prepare_neural.__file__)), "--help"],
+                                     capture_output=True, text=True).stdout
+        self.assertIn("--models", parser_help)
+        self.assertNotIn("--select", parser_help)
 
 
 if __name__ == "__main__":

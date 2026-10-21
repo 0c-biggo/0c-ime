@@ -21,6 +21,7 @@ from collect_notices import collect
 from package_release import ROOT, DATA_FILES, check_licenses, copy_licenses, check_release_docs, copy_release_docs, check_data, copy_english, prepare_shipped_data, valid_version
 from macos_version import bundle_version, short_version
 import package_macos_pkg
+import hf_models
 
 # 內嵌 Python 的 ._pth 或 PYTHONPATH 指向另一份原始碼時，會打包出那份程式（2026-10-01 曾因沿用舊建置目錄的
 # Python，把 dev.21 的程式標成新版本）。
@@ -103,6 +104,8 @@ def build(args):
         if neural:
             shutil.copytree(args.neural, neural)
         shipped_manifest = prepare_shipped_data(sealed, neural, public=not args.preview)
+        if neural and not args.preview:  # #180：公開包內建 Hugging Face 公開版，配對出貨字典
+            hf_models.check_shipped(neural, sealed)
         copy_english(sealed, sealed, args.go)
         subprocess.run([args.go, "run", "./cmd/0c-compile", "-seal", str(sealed)], cwd=ROOT, check=True)
         # App 內附一份 0c-update 與排程 plist，以 SMAppService 註冊（系統設定顯示「靈犀注音」，#25）；

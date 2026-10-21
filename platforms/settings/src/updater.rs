@@ -11,8 +11,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 /// 可以指定開啟的頁面；與 internal/settingsapp 的白名單一致（vocab 是 0.2.0 的「我的詞彙」，
-/// features.vocab 不為 true（舊版 0c-update）時畫面改開總覽）。
-pub const PAGES: [&str; 7] = ["overview", "input", "update", "troubleshoot", "about", "vocab", "output"];
+/// features.vocab 不為 true（舊版 0c-update）時畫面改開總覽；models 是 #180 的「模型」）。
+pub const PAGES: [&str; 8] = ["overview", "input", "update", "troubleshoot", "about", "vocab", "output", "models"];
 
 /// 取出命令列的 `--page X`；不認得的頁面開總覽。
 pub fn page_from_args(args: &[String]) -> &'static str {
@@ -50,8 +50,15 @@ fn usable(path: &Path) -> bool {
 
 /// 找出要呼叫的 0c-update。優先用啟動這個程式的那一個（環境變數 ZC_UPDATER）：設定程式與它讀同一份契約，
 /// 版本必定一致；其次是同一個資料夾裡的（Windows 核心版本目錄與完整安裝的版本目錄都把 0c-update.exe 放在設定程式旁邊）；macOS 上設定程式是 0c.app 內的巢狀 App，往上找外層 App 的
-/// Contents/MacOS/0c-update（LaunchServices 的 open 不帶環境變數）；最後才是穩定的安裝位置。
-pub fn find_updater(env_updater: Option<&str>, current_exe: Option<&Path>, home: Option<&Path>, local_app_data: Option<&Path>) -> Result<PathBuf, String> {
+/// Contents/MacOS/0c-update（LaunchServices 的 open 不帶環境變數）；再來是穩定的安裝位置。Linux 的系統套件（#181）
+/// 把 0c-update 放在 libexec/0c，排在官網安裝（家目錄）之後，與外殼找工具的規則相同（internal/installs）。
+pub fn find_updater(
+    env_updater: Option<&str>,
+    current_exe: Option<&Path>,
+    home: Option<&Path>,
+    local_app_data: Option<&Path>,
+    system_libexec: Option<&Path>,
+) -> Result<PathBuf, String> {
     let mut candidates: Vec<PathBuf> = Vec::new();
     if let Some(p) = env_updater.filter(|p| !p.is_empty()) {
         candidates.push(PathBuf::from(p));
@@ -70,6 +77,9 @@ pub fn find_updater(env_updater: Option<&str>, current_exe: Option<&Path>, home:
     if let Some(home) = home {
         candidates.push(home.join(".local/share/zuin/bin").join(updater_name()));
         candidates.push(home.join(".local/bin").join(updater_name()));
+    }
+    if let Some(dir) = system_libexec {
+        candidates.push(dir.join(updater_name()));
     }
     candidates.into_iter().find(|p| usable(p)).ok_or_else(|| "找不到 0c-update；請重新安裝靈犀注音".to_string())
 }
@@ -171,17 +181,58 @@ pub fn api_args(action: &str, port: Option<u16>) -> Result<Vec<String>, String> 
     Ok(out)
 }
 
+/// 「模型」頁（#180）的固定動作對應到 0c-update models 的參數與逾時（秒）。download 在背景開始下載、立刻回傳，
+/// 進度由 status 的 operation 輪詢；網路與檔案動作都在 Go 端。
+pub fn models_args(action: &str) -> Result<(Vec<String>, u64), String> {
+    let timeout = match action {
+        "status" => 20,
+        "download" | "cancel" | "remove" => 60,
+        _ => return Err("未知的模型動作".to_string()),
+    };
+    Ok((vec!["models".to_string(), action.to_string(), "-json".to_string()], timeout))
+}
+
+/// 設定視窗本身不離開本機頁面（local_origin），外部網址交給系統瀏覽器；只放行 Hugging Face 的模型頁
+/// （0c-update models status 的 url），字元限制在網址路徑用得到的範圍，不會被當成參數或指令。
+pub fn browser_url(url: &str) -> Result<&str, String> {
+    const PREFIX: &str = "https://huggingface.co/";
+    let rest = url.strip_prefix(PREFIX).ok_or("只能開啟 Hugging Face 的網址")?;
+    let ok = !rest.is_empty()
+        && url.len() <= 300
+        && !rest.contains("..")
+        && !rest.starts_with('/')
+        && rest.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '-'));
+    if ok {
+        Ok(url)
+    } else {
+        Err("網址格式不正確".to_string())
+    }
+}
+
 /// 只支援 stdio 的 AI 工具要填的 0c-mcp 路徑：不隨版本改變的位置（範例 5）。
-/// Linux 由安裝器放在 ~/.local/bin；Windows 放在穩定副本的 %LOCALAPPDATA%\Zuin\bin；
-/// macOS 在輸入法 App 內（App 原地更新，路徑不變），設定程式是巢狀 App，取最外層的 Contents。
-pub fn planned_mcp_path(os: &str, current_exe: Option<&Path>, home: Option<&Path>, local_app_data: Option<&Path>) -> Option<PathBuf> {
+/// Linux 由安裝器放在 ~/.local/bin（沒有官網安裝、只有系統套件時是系統的 bin，#181）；Windows 放在穩定副本的
+/// %LOCALAPPDATA%\Zuin\bin；macOS 在輸入法 App 內（App 原地更新，路徑不變），設定程式是巢狀 App，取最外層的 Contents。
+pub fn planned_mcp_path(
+    os: &str,
+    current_exe: Option<&Path>,
+    home: Option<&Path>,
+    local_app_data: Option<&Path>,
+    system_bin: Option<&Path>,
+) -> Option<PathBuf> {
     match os {
         "windows" => local_app_data.map(|base| base.join("Zuin").join("bin").join("0c-mcp.exe")),
         "macos" => current_exe
             .and_then(|exe| exe.ancestors().filter(|a| a.file_name().is_some_and(|n| n == "Contents")).last())
             .map(|contents| contents.join("MacOS").join("0c-mcp"))
             .or_else(|| home.map(|h| h.join("Library/Input Methods/0c.app/Contents/MacOS/0c-mcp"))),
-        _ => home.map(|h| h.join(".local/bin/0c-mcp")),
+        _ => {
+            let personal = home.map(|h| h.join(".local/bin/0c-mcp"));
+            let system = system_bin.map(|b| b.join("0c-mcp")).filter(|s| s.is_file());
+            match personal {
+                Some(p) if p.is_file() => Some(p),
+                p => system.or(p),
+            }
+        }
     }
 }
 
@@ -372,6 +423,7 @@ mod tests {
     fn page_comes_from_the_whitelist_only() {
         assert_eq!(page_from_args(&strings(&["0c-settings", "--page", "update"])), "update");
         assert_eq!(page_from_args(&strings(&["0c-settings", "--page", "vocab"])), "vocab");
+        assert_eq!(page_from_args(&strings(&["0c-settings", "--page", "models"])), "models");
         assert_eq!(page_from_args(&strings(&["0c-settings", "--page", "account"])), "overview");
         assert_eq!(page_from_args(&strings(&["0c-settings", "--page", "../etc"])), "overview");
         assert_eq!(page_from_args(&strings(&["0c-settings", "--page"])), "overview");
@@ -391,7 +443,7 @@ mod tests {
         fs::create_dir_all(&stable).unwrap();
         let stable_updater = script(&stable, updater_name(), "exit 0");
 
-        let found = |env: Option<&str>, exe: Option<&Path>, home: Option<&Path>| find_updater(env, exe, home, None);
+        let found = |env: Option<&str>, exe: Option<&Path>, home: Option<&Path>| find_updater(env, exe, home, None, None);
         assert_eq!(found(launcher.to_str(), Some(&exe), Some(&home)).unwrap(), launcher);
         assert_eq!(found(None, Some(&exe), Some(&home)).unwrap(), sibling);
         assert_eq!(found(Some(""), Some(&exe), Some(&home)).unwrap(), sibling);
@@ -401,14 +453,37 @@ mod tests {
     }
 
     #[test]
+    fn linux_system_package_comes_after_the_personal_install() {
+        let dir = temp("system");
+        let libexec = dir.join("usr/libexec/0c");
+        fs::create_dir_all(&libexec).unwrap();
+        let system = script(&libexec, updater_name(), "exit 0");
+        let exe = dir.join("usr/bin/0c-settings"); // 旁邊沒有 0c-update
+        let home = dir.join("home");
+        assert_eq!(find_updater(None, Some(&exe), Some(&home), None, Some(&libexec)).unwrap(), system);
+        let bin = home.join(".local/bin");
+        fs::create_dir_all(&bin).unwrap();
+        let personal = script(&bin, updater_name(), "exit 0");
+        assert_eq!(find_updater(None, Some(&exe), Some(&home), None, Some(&libexec)).unwrap(), personal);
+        // 0c-mcp：官網安裝有就用它，沒有時是系統的；兩邊都沒有時照舊顯示官網安裝的位置（畫面註明沒有附）。
+        let sys_bin = dir.join("usr/bin");
+        fs::create_dir_all(&sys_bin).unwrap();
+        assert_eq!(planned_mcp_path("linux", None, Some(&home), None, Some(&sys_bin)).unwrap(), bin.join("0c-mcp"));
+        let sys_mcp = script(&sys_bin, "0c-mcp", "exit 0");
+        assert_eq!(planned_mcp_path("linux", None, Some(&home), None, Some(&sys_bin)).unwrap(), sys_mcp);
+        script(&bin, "0c-mcp", "exit 0");
+        assert_eq!(planned_mcp_path("linux", None, Some(&home), None, Some(&sys_bin)).unwrap(), bin.join("0c-mcp"));
+    }
+
+    #[test]
     fn windows_falls_back_to_the_stable_copy_in_local_app_data() {
         let dir = temp("winstable");
         let stable_dir = dir.join("Local/Zuin/bin");
         fs::create_dir_all(&stable_dir).unwrap();
         let stable = script(&stable_dir, updater_name(), "exit 0");
         let lonely = dir.join("versions/x/0c-settings.exe"); // 旁邊沒有 0c-update
-        assert_eq!(find_updater(None, Some(&lonely), None, Some(&dir.join("Local"))).unwrap(), stable);
-        assert!(find_updater(None, Some(&lonely), None, Some(&dir.join("elsewhere"))).is_err());
+        assert_eq!(find_updater(None, Some(&lonely), None, Some(&dir.join("Local")), None).unwrap(), stable);
+        assert!(find_updater(None, Some(&lonely), None, Some(&dir.join("elsewhere")), None).is_err());
     }
 
     #[test]
@@ -421,13 +496,13 @@ mod tests {
         let inner_macos = outer.join("Helpers/0c-settings.app/Contents/MacOS");
         fs::create_dir_all(&inner_macos).unwrap();
         let exe = inner_macos.join("0c-settings");
-        assert_eq!(find_updater(None, Some(&exe), None, None).unwrap(), updater);
+        assert_eq!(find_updater(None, Some(&exe), None, None, None).unwrap(), updater);
         // 內層 App 自己的 MacOS 資料夾若有同名檔案，優先用它旁邊的（與 Linux 同一個規則）。
         let own = script(&inner_macos, updater_name(), "exit 0");
-        assert_eq!(find_updater(None, Some(&exe), None, None).unwrap(), own);
+        assert_eq!(find_updater(None, Some(&exe), None, None, None).unwrap(), own);
         // 不在 Contents 底下的路徑不會被往上猜。
         let elsewhere = dir.join("tools/0c-settings");
-        assert!(find_updater(None, Some(&elsewhere), Some(&dir.join("empty")), None).is_err());
+        assert!(find_updater(None, Some(&elsewhere), Some(&dir.join("empty")), None, None).is_err());
     }
 
     #[test]
@@ -565,13 +640,13 @@ mod tests {
     #[test]
     fn mcp_path_is_the_version_independent_location() {
         let home = Path::new("/home/alice");
-        assert_eq!(planned_mcp_path("linux", None, Some(home), None).unwrap(), PathBuf::from("/home/alice/.local/bin/0c-mcp"));
+        assert_eq!(planned_mcp_path("linux", None, Some(home), None, None).unwrap(), PathBuf::from("/home/alice/.local/bin/0c-mcp"));
         let local = Path::new("/c/Users/alice/AppData/Local");
-        assert_eq!(planned_mcp_path("windows", None, None, Some(local)).unwrap(), local.join("Zuin").join("bin").join("0c-mcp.exe"));
+        assert_eq!(planned_mcp_path("windows", None, None, Some(local), None).unwrap(), local.join("Zuin").join("bin").join("0c-mcp.exe"));
         let exe = Path::new("/Users/alice/Library/Input Methods/0c.app/Contents/Helpers/0c-settings.app/Contents/MacOS/0c-settings");
-        assert_eq!(planned_mcp_path("macos", Some(exe), Some(home), None).unwrap(),
+        assert_eq!(planned_mcp_path("macos", Some(exe), Some(home), None, None).unwrap(),
                    PathBuf::from("/Users/alice/Library/Input Methods/0c.app/Contents/MacOS/0c-mcp"));
-        assert_eq!(planned_mcp_path("macos", Some(Path::new("/tmp/0c-settings")), Some(home), None).unwrap(),
+        assert_eq!(planned_mcp_path("macos", Some(Path::new("/tmp/0c-settings")), Some(home), None, None).unwrap(),
                    PathBuf::from("/home/alice/Library/Input Methods/0c.app/Contents/MacOS/0c-mcp"));
     }
 
@@ -589,5 +664,36 @@ mod tests {
             std::thread::sleep(Duration::from_millis(25));
         }
         assert_eq!(value.unwrap()["got"]["op"], "list");
+    }
+
+    #[test]
+    fn models_args_only_fixed_actions() {
+        assert_eq!(models_args("status").unwrap(), (strings(&["models", "status", "-json"]), 20));
+        assert_eq!(models_args("download").unwrap().0, strings(&["models", "download", "-json"]));
+        assert_eq!(models_args("cancel").unwrap().0, strings(&["models", "cancel", "-json"]));
+        assert_eq!(models_args("remove").unwrap().0, strings(&["models", "remove", "-json"]));
+        for bad in ["remind", "", "-json", "status -json", "download;rm"] {
+            assert!(models_args(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn browser_url_only_hugging_face_paths() {
+        let ok = "https://huggingface.co/Funmula/0c-sequence-d512/tree/df4b9f04aa11";
+        assert_eq!(browser_url(ok), Ok(ok));
+        for bad in [
+            "http://huggingface.co/Funmula/x",
+            "https://huggingface.co.evil.example/x",
+            "https://huggingface.co/",
+            "https://huggingface.co//evil.example",
+            "https://huggingface.co/Funmula/x?a=1&b=2",
+            "https://huggingface.co/Funmula/x\"&calc",
+            "https://huggingface.co/Funmula/../x",
+            "https://huggingface.co/Funmula/x y",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+        ] {
+            assert!(browser_url(bad).is_err(), "{bad:?}");
+        }
     }
 }

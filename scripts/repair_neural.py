@@ -13,6 +13,9 @@
 - 新字典新增的單字讀音所用的字與音節都在模型 vocab 內（--expect-char／--expect-base 列出，逐一核對）。
 
 換模型或字典有大幅變動（重新匯入、改 bigram）時不要用這支，照 platforms/neural/README.md 重新產生。
+
+0.2.3 起官網套件內建 Hugging Face 公開版（#180）：發版改用 scripts/hf_models.py neural（從 models/upstream 配對，
+不需要舊字典），公開包打包時也會拒絕舊的內部匯出。這支只原樣搬既有的模型，保留給內部驗證。
 """
 import argparse
 import hashlib

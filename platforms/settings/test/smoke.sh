@@ -43,8 +43,8 @@ shoot() { # 場景 頁面
 }
 run_update() { local name=$1; shift; HOME=$(home_of "$name") "$UPDATE_BIN" "$@"; }
 
-# SMOKE_ONLY=vocab：只跑「我的詞彙」（vocab.sh），開發時省時間。
-if [ "${SMOKE_ONLY:-}" != vocab ]; then
+# SMOKE_ONLY=vocab／models：只跑「我的詞彙」（vocab.sh）或「模型」（models.sh），開發時省時間。
+if [ -z "${SMOKE_ONLY:-}" ]; then
 
 # ---- 場景 A：全新安裝，沒有設定檔也沒有引擎 ----
 new_home fresh
@@ -56,8 +56,8 @@ mkdir -p "$(home_of export)/Downloads"
 launch export troubleshoot
 if window_up; then
   sleep 2.5
-  # 7 個導覽（含我的詞彙、輸出設定）→ 匯出按鈕（第 8 個）。
-  xdotool key --delay 150 Tab Tab Tab Tab Tab Tab Tab Tab space
+  # 8 個導覽（含我的詞彙、輸出設定、模型）→ 匯出按鈕（第 9 個）。
+  xdotool key --delay 150 Tab Tab Tab Tab Tab Tab Tab Tab Tab space
   sleep 3
   import -window root "$OUT/export-troubleshoot.png"
   check "匯出的狀態摘要寫進「下載」資料夾" bash -c "ls '$(home_of export)'/Downloads/0c-status-*.json >/dev/null 2>&1"
@@ -114,8 +114,8 @@ launch live input
 if window_up; then
   sleep 2.5
   import -window root "$OUT/live-input-before.png"
-  # 鍵盤路徑：7 個導覽按鈕（含我的詞彙、輸出設定）→ 選字方式（一組單選）→ 「提交時補標點（Beta）」開關，按空白鍵開啟。
-  xdotool key --delay 150 Tab Tab Tab Tab Tab Tab Tab Tab Tab space
+  # 鍵盤路徑：8 個導覽按鈕（含我的詞彙、輸出設定、模型）→ 選字方式（一組單選）→ 「提交時補標點（Beta）」開關，按空白鍵開啟。
+  xdotool key --delay 150 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab space
   sleep 6
   import -window root "$OUT/live-input-after.png"
   check "自行開啟後新路徑 settings.json 的 punctuation 為 true" grep -q '"punctuation": true' "$(settings_of live)"
@@ -197,11 +197,11 @@ import -window root "$OUT/live-second-instance.png"
 stop_app
 unset HOME
 
-# 輸出設定是左側獨立一頁（#118）：7 個導覽 → 輸出簡體字開關（第 8 個），預設關閉。
+# 輸出設定是左側獨立一頁（#118）：8 個導覽 → 輸出簡體字開關（第 9 個），預設關閉。
 launch live output
 if window_up; then
   sleep 2.5
-  xdotool key --delay 150 Tab Tab Tab Tab Tab Tab Tab Tab space
+  xdotool key --delay 150 Tab Tab Tab Tab Tab Tab Tab Tab Tab space
   sleep 3
   check "輸出簡體字開關可保存 on" grep -q '"output_simplified": true' "$(settings_of live)"
   import -window root "$OUT/output-simplified-on.png"
@@ -268,7 +268,7 @@ live_runtime() { # 期望值 → 引擎回報能即時切換，而且目前的�
 }
 if window_up; then
   sleep 2.5
-  xdotool key --delay 150 Tab Tab Tab Tab Tab Tab Tab Tab space
+  xdotool key --delay 150 Tab Tab Tab Tab Tab Tab Tab Tab Tab space
   sleep 3
   check "輸出簡體字：引擎在執行時開啟，寫入設定" grep -q '"output_simplified": true' "$(settings_of outputlive)"
   check "輸出簡體字：引擎沒有重啟（同一個行程）" kill -0 "$ENGINE_PID"
@@ -317,9 +317,9 @@ launch toggles input
 if window_up; then
   sleep 2.5
   import -window root "$OUT/toggles-before.png"
-  # 7 個導覽（含我的詞彙、輸出設定）、選字方式、補標點、前文、混打、英文補字、中英切換鍵、開始時的中英模式、切換視窗後的中英模式、Esc、空白選字、修改位置、選字後游標、排列 → Emoji（第20個）。
+  # 8 個導覽（含我的詞彙、輸出設定、模型）、選字方式、補標點、前文、混打、英文補字、中英切換鍵、開始時的中英模式、切換視窗後的中英模式、Esc、空白選字、修改位置、選字後游標、排列 → Emoji（第21個）。
   # 輸出簡體字在後面的「輸出設定」一節（模糊音之後），不在這段。
-  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab space
+  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab space
   check "預設啟用的 Emoji 開關可以關閉，保留未知設定" toggle_value emoji_off
   sleep 1
   xdotool key space
@@ -386,8 +386,8 @@ PY_CURSOR
 launch cursor input
 if window_up; then
   sleep 2.5
-  # 7 個導覽（含我的詞彙、輸出設定）、選字方式、補標點、前文、混打、英文補字、中英切換鍵、開始時的中英模式、切換視窗後的中英模式、Esc、空白選字 → 修改字詞的位置（第17個）。
-  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Left
+  # 8 個導覽（含我的詞彙、輸出設定、模型）、選字方式、補標點、前文、混打、英文補字、中英切換鍵、開始時的中英模式、切換視窗後的中英模式、Esc、空白選字 → 修改字詞的位置（第18個）。
+  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Left
   check "游標前方單選儲存 before，保留未知設定" cursor_value before
   sleep 1
   import -window root "$OUT/cursor-before.png"
@@ -396,7 +396,7 @@ stop_app
 launch cursor input
 if window_up; then
   sleep 2.5
-  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Right
+  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Right
   check "重新開啟設定後可改回游標後方，保留未知設定" cursor_value after
   sleep 1
   import -window root "$OUT/cursor-after.png"
@@ -429,9 +429,9 @@ launch eten input
 if window_up; then
   sleep 2.5
   import -window root "$OUT/eten-input.png"
-  # 停用的混打、Emoji、等號首項不在 Tab 順序裡：7 個導覽（含我的詞彙、輸出設定）、選字方式、補標點、前文、英文補字、中英切換鍵、開始時的中英模式、
-  # 切換視窗後的中英模式、Esc、空白選字、修改位置、選字後游標、排列、模糊音 → 鍵盤排列（第21個；輸出簡體字在輸出設定頁），← 選標準。
-  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab
+  # 停用的混打、Emoji、等號首項不在 Tab 順序裡：8 個導覽（含我的詞彙、輸出設定、模型）、選字方式、補標點、前文、英文補字、中英切換鍵、開始時的中英模式、
+  # 切換視窗後的中英模式、Esc、空白選字、修改位置、選字後游標、排列、模糊音 → 鍵盤排列（第22個；輸出簡體字在輸出設定頁），← 選標準。
+  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab
   sleep 1
   import -window root "$OUT/eten-input-keyboard.png"
   xdotool key Left
@@ -464,6 +464,48 @@ if window_up; then
 else bad "eten/input 視窗沒有出現"; cat /tmp/app-eten-input.log; fi
 stop_app
 
+# ---- 不用 Shift 切換（#184）：開始時的中英模式固定為注音、反灰並附原因，設定檔的 english 保留；改回用 Shift 照原本的英文 ----
+new_home noshift
+printf '{"schema":1,"toggle_key":"none","start_mode":"english"}\n' > "$(base_of noshift)/settings.json"
+run_update noshift settings -json > "$OUT/noshift-settings.json"
+check "不用 Shift 時契約標示開始模式停用、實際是注音，值保留 english" python3 - "$OUT/noshift-settings.json" <<'PY_NOSHIFT'
+import json,sys
+items={x['key']:x for x in json.load(open(sys.argv[1]))['items']}
+it=items['start-mode']
+sys.exit(0 if it.get('disabled') and it.get('disabled_reason')=='不用 Shift 切換時固定從注音開始' and it['value']=='english' and it.get('effective')=='zhuyin' else 1)
+PY_NOSHIFT
+noshift_value() { # toggle_key 期望值 → 設定檔寫入，start_mode 仍是 english
+  python3 - "$(settings_of noshift)" "$1" <<'PY_NOSHIFT_FILE'
+import json,sys,time
+for _ in range(80):
+    try: value=json.load(open(sys.argv[1]))
+    except FileNotFoundError: time.sleep(.1); continue
+    if value.get('toggle_key')==sys.argv[2] and value.get('start_mode')=='english':sys.exit(0)
+    time.sleep(.1)
+sys.exit(1)
+PY_NOSHIFT_FILE
+}
+start_mode_shown() { # 期望畫面：disabled／enabled → 契約與畫面用的欄位
+  run_update noshift settings -json | python3 -c "import json,sys; it=next(x for x in json.load(sys.stdin)['items'] if x['key']=='start-mode'); sys.exit(0 if bool(it.get('disabled'))==(sys.argv[1]=='disabled') and it['value']=='english' and (it.get('effective')=='zhuyin')==(sys.argv[1]=='disabled') else 1)" "$1"
+}
+launch noshift input
+if window_up; then
+  sleep 2.5
+  import -window root "$OUT/noshift-input.png"
+  # 8 個導覽、選字方式、補標點、前文、混打、英文補字 → 中英切換鍵（第 14 個，焦點在「不用 Shift」），↑ 選左 Shift。
+  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Up
+  check "改成左 Shift，開始時的英文照舊保留" noshift_value left
+  sleep 2
+  check "有 Shift 可以切換時開始模式恢復可改、是英文" start_mode_shown enabled
+  import -window root "$OUT/noshift-left-shift.png"
+  xdotool key Down
+  check "再改回不用 Shift" noshift_value none
+  sleep 2
+  check "不用 Shift 時開始模式又固定為注音" start_mode_shown disabled
+  import -window root "$OUT/noshift-again.png"
+else bad "noshift/input 視窗沒有出現"; cat /tmp/app-noshift-input.log; fi
+stop_app
+
 # ---- 背景更新持鎖：手動檢查提示進度，輸入設定仍可保存 ----
 new_home checking
 state_json checking idle ''
@@ -474,7 +516,7 @@ check "背景更新期間仍可儲存輸入設定" run_update checking set punct
 launch checking update
 if window_up; then
   sleep 2.5
-  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab space
+  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab space
   sleep 3
   import -window root "$OUT/checking-in-progress.png"
   check "背景更新忙碌時設定視窗仍正常執行" kill -0 "$APP_PID"
@@ -540,7 +582,10 @@ sed -i 's/^/ /' /tmp/open4.log; cat /tmp/open4.log
 fi # SMOKE_ONLY
 
 # ---- 我的詞彙（#125）----
-. "$(dirname "$0")/vocab.sh"
+if [ "${SMOKE_ONLY:-vocab}" = vocab ]; then . "$(dirname "$0")/vocab.sh"; fi
+
+# ---- 模型（#180）----
+if [ "${SMOKE_ONLY:-models}" = models ]; then . "$(dirname "$0")/models.sh"; fi
 
 echo "SMOKE_RESULT=$([ $fail -eq 0 ] && echo PASS || echo FAIL)"
 exit $fail

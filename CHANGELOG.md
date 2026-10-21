@@ -2,6 +2,29 @@
 
 每個版本的「公開摘要」與 [官網更新紀錄](https://0c.biggo.com/updates/) 相同；「原始碼套件」記錄 Release 完整 tarball 的內容變化。
 
+## 0.2.3（2026-10-21，public-beta）
+
+### 公開摘要
+
+- Mac：自動更新換成新版輸入法時，不會再讓正在打的字變成英文字母或漏掉。背景下載安裝好的新版，改在你離開電腦（螢幕鎖定、螢幕關閉或螢幕保護程式）時才換上，回來解鎖就能直接打字；在那之前照常用原本的版本打字，不必登出。自己按「立即安裝」或執行安裝程式時，裝好就換成新版，回到原本的 App 就能打字。
+- 更新後只保留上一版供回復，不再每次更新都留下一整份舊版（每份約 0.5 GB）。以前累積下來的舊版，在更新到這一版時一次清掉；回復上一版照常可用。
+- Linux：發行版（例如 Debian）可以把靈犀注音打包成系統套件，裝在 /usr、由套件管理員更新。這種安裝不會自己檢查或下載更新，設定程式的「更新」頁顯示「由系統套件管理員更新」，輸入法選單也沒有更新項目。同一個帳號另外用官網安裝時，以官網安裝為準，「問題排解」會顯示目前用的是哪一份。
+- Linux：沒有附神經選字模型的系統套件，可以在設定程式按下載，從 Hugging Face 取得選字與補標點模型（約 260 MB），下載完不必重新登入就能用。沒有模型時會用桌面通知提醒幾次（最多 3 次，可以按「不再提醒」）。官網的安裝包照舊內建模型，改用 Hugging Face 上公開的同一份，設定程式「模型」頁可以看到來源與授權。
+- 神經選字與補標點用的推論元件不再嘗試連線到外部的使用統計服務，也不再在個人目錄寫入它的資料；更新到這一版時，舊版留下、還沒送出的使用統計會一併刪掉。選字、補標點全部在本機執行。
+- 中英切換鍵選「不用 Shift」時，「開始時的中英模式」固定為注音。Mac 與 Linux 沒有 Shift 就沒有鍵能從英文切回注音，以前同時選了英文會一直停在英文、打不出注音。設定程式把這一項反灰並寫明原因（Mac 預設不用 Shift，所以預設就是反灰的）；改回用 Shift 切換時，照你原本的選擇。Windows 可以按 Ctrl＋空白鍵切換，不受影響。
+- 中英混打：在句首或空白後面打「歐」（句點鍵再按空白）會出中文，不再留成句點，「歐洲車」可以直接打出來；要打句點時按 Enter，打錯了也可以在字上按 ↓ 換回句點。數字後面的「3. 」這類編號照舊。
+
+### 原始碼套件
+
+- 原始碼 tarball 符合 DFSG，不再內附神經模型：已配對的模型改由同一個 Release 另附 `0c-ime-models-<版本>.tar.xz`，解壓到同一處即補上 `models/select/` 與 `models/punct/`。`make assets` 預設下載兩者，`make assets MODELS=0` 只取字典；0.2.2 以前內附模型的 tarball 照常可用。逐項檢查見 `legal/DFSG-free.md`。
+- 內附字典的 `lexicon.bin`、`lm.bin` 與英文子包不變；自有來源的署名改為 Funmula Co., Limited，`manifest.json` 與 `NOTICE.txt` 跟著改變。模型權重不變，只更新配對資訊。
+- 編譯字典用的四個詞對統計檔公開在 [0c-ime-data](https://github.com/0c-biggo/0c-ime-data)，可從公開內容重建出相同位元組的內附字典，步驟見 `PACKAGING.md`。
+- 授權：寫明著作權人 Funmula Co., Limited，自有圖示與圖片採 CC BY-SA 4.0；`legal/copyright` 以 DEP-5 格式逐檔列出著作權人與授權。
+- Go module path 改為 `github.com/0c-biggo/0c-ime`。
+- `0c-cli` 一行只有 `:` 時打出冒號，不再當掉。
+- Linux 系統安裝：`make build PREFIX=/usr` 與 `make install PREFIX=/usr DESTDIR=…` 把外殼、引擎、設定程式、字典與推論 worker 裝到系統目錄，由套件管理員更新；`DATA` 預設用 `make assets` 取得的 `assets/data`，不附模型時使用者可在設定程式下載。路徑與相依見 `platforms/linux-system/README.md`。
+- `models/` 新增 Hugging Face 模型與字典的配對資料（`models/upstream` 與 `models/pairing.lock.json`），`scripts/hf_models.py` 取得、核對並配對公開模型；`prepare_neural.py` 改以 `--models` 指定模型目錄。
+
 ## 0.2.2（2026-10-20，public-beta）
 
 ### 公開摘要

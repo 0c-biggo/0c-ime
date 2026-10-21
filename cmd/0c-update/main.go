@@ -20,6 +20,9 @@ import (
 )
 
 func installedVersion() (string, error) {
+	if packageManaged() { // 系統套件（#181）：版本記在 distribution.json，沒有收據
+		return distributionVersion(), nil
+	}
 	b, err := os.ReadFile(receiptPath())
 	if os.IsNotExist(err) {
 		return "", nil
@@ -68,7 +71,11 @@ func listSettings(w io.Writer, r settings.Report, path string) {
 	}
 	fmt.Fprintf(w, "english-autocomplete=%s（英文自動補字；Tab 接受、Esc 關閉）\n", onOff(s.EnglishAutocomplete))
 	fmt.Fprintf(w, "toggle-key=%s（中英切換鍵：right 右 Shift；both 左右 Shift；left 左 Shift；none 不用 Shift）\n", s.ToggleKey)
-	fmt.Fprintf(w, "start-mode=%s（開始時的中英模式：zhuyin 注音；english 英文）\n", s.StartMode)
+	locked := ""
+	if s.StartMode == settings.StartEnglish && !s.StartsEnglish() {
+		locked = "；目前不用 Shift 切換，固定從注音開始" // #184
+	}
+	fmt.Fprintf(w, "start-mode=%s（開始時的中英模式：zhuyin 注音；english 英文%s）\n", s.StartMode, locked)
 	fmt.Fprintf(w, "mode-memory=%s（切換視窗後的中英模式：native 照平台原本的做法；shared 全部共用同一個模式）\n", s.ModeMemory)
 	fmt.Fprintf(w, "esc-clear=%s（按 Esc 清除整段組字；off 只清未打完的注音）\n", onOff(s.EscClear))
 	fmt.Fprintf(w, "space-selects=%s（注音打完按空白選字；off 空白輸入空格、↓ 選字）\n", onOff(s.SpaceSelects))
@@ -171,14 +178,20 @@ func onOff(v bool) string {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("用法：0c-update status|settings|set|vocab|api|open-settings|engine|auto|finish|mode|pause|resume|snooze|schedule|verify|check|download|download-now|apply|install|rollback|uninstall [選項]")
+		return fmt.Errorf("用法：0c-update status|settings|set|models|vocab|api|open-settings|engine|auto|finish|mode|pause|resume|snooze|schedule|verify|check|download|download-now|apply|install|rollback|uninstall [選項]")
 	}
 	action := args[0]
+	delegateToPersonal(args) // 系統安裝的 0c-update、而官網安裝也在時，交給官網那一份（成功時不會返回）
+	if err := refusePackageManaged(action, args[1:]); err != nil {
+		return err
+	}
 	switch action {
 	case "settings":
 		return settingsCommand(args[1:])
 	case "set":
 		return setCommand(args[1:])
+	case "models": // 個人目錄的神經模型（#180）
+		return modelsCommand(args[1:])
 	case "vocab": // 自訂詞彙（#122）
 		return vocabCommand(args[1:])
 	case "api": // AI 助手的本機 API（#126）
@@ -200,6 +213,12 @@ func run(args []string) error {
 			return fmt.Errorf("deploy-tsf 不接受參數")
 		}
 		return deployTSF()
+	case "prune":
+		// 內部用：安裝、回復、解除安裝成功後在背景清理舊版（#179，Windows），不列在用法裡。
+		if len(args) != 1 {
+			return fmt.Errorf("prune 不接受參數")
+		}
+		return pruneCommand()
 	}
 	flags := flag.NewFlagSet(action, flag.ContinueOnError)
 	feedURL := flags.String("feed", "", "HTTPS 更新索引 URL")
@@ -238,6 +257,15 @@ func run(args []string) error {
 		if *asJSON {
 			return statusJSON(version, *diagnostics)
 		}
+		if packageManaged() {
+			if version == "" {
+				version = "（版本未知）"
+			}
+			fmt.Printf("靈犀注音（0c）：%s\n平台：%s/%s\n更新：由系統套件管理員更新\n", version, runtime.GOOS, runtime.GOARCH)
+			printInstalls(os.Stdout, installList())
+			printModelStatus(os.Stdout, modelStatus(dialEngine))
+			return nil
+		}
 		if version == "" {
 			version = "尚未有版本收據"
 		}
@@ -252,6 +280,7 @@ func run(args []string) error {
 			printState(s)
 		}
 		fmt.Println(scheduleStatus())
+		printInstalls(os.Stdout, installList())
 		printModelStatus(os.Stdout, modelStatus(dialEngine))
 		return nil
 	case "rollback":
@@ -406,6 +435,7 @@ func main() {
 	if err != nil && !errors.Is(err, errReported) { // JSON 模式已把錯誤輸出到 stdout
 		fmt.Fprintln(os.Stderr, "0c-update:", err)
 	}
+	launchPrune() // 安裝、回復、解除安裝成功過才有；其餘步驟都做完了，最後才啟動（#179）
 	flush()
 	if err != nil {
 		os.Exit(1)

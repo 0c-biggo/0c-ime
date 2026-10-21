@@ -290,6 +290,24 @@ func TestDrainTimeoutKeepsServing(t *testing.T) {
 	}
 }
 
+// 宿主自己開始的交接（#181 系統安裝的升級）：與 drain 請求相同，組字中逾時就放棄、Draining 回到 false。
+func TestHostDrainReportsProgressAndTimeout(t *testing.T) {
+	srv := &Server{Engine: toyEngine(t), DrainTimeout: 200 * time.Millisecond, OnDrained: func() { t.Error("must not drain") }}
+	sessions := map[uint64]bool{}
+	open := srv.do(Envelope{Op: OpOpen, Version: proto.Version}, sessions, new(bool))
+	srv.do(Envelope{Op: OpHandle, Session: open.Session, Req: &proto.Request{Type: proto.Key, Key: "a"}}, sessions, new(bool))
+	if srv.Draining() || !srv.Drain() || !srv.Draining() {
+		t.Fatal("host drain did not start")
+	}
+	if srv.Drain() {
+		t.Fatal("second drain started while one is running")
+	}
+	time.Sleep(500 * time.Millisecond)
+	if srv.Draining() {
+		t.Fatal("drain timed out but still reported")
+	}
+}
+
 func TestOpenAndHealthRefreshRuntimeInfo(t *testing.T) {
 	state := "loading"
 	srv := &Server{Engine: toyEngine(t), Info: map[string]string{"version": "test", "neural_startup_state": "enabled"},

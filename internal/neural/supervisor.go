@@ -111,7 +111,7 @@ func (s *Supervisor) accumulate(w *Worker) {
 // maybeRestart 需持有 s.mu。
 func (s *Supervisor) maybeRestart() {
 	now := time.Now()
-	if s.closed || s.starting || now.Sub(s.lastFailure) < s.Cooldown {
+	if s.closed || s.starting || now.Sub(s.lastFailure) < retryCooldown(s.reason, s.Cooldown) {
 		return
 	}
 	if now.Sub(s.window) >= time.Hour {
@@ -192,6 +192,9 @@ func (s *Supervisor) State() string {
 	}
 	if s.starting {
 		return "loading"
+	}
+	if s.reason == ReasonRuntimeMissing {
+		return "runtime_missing"
 	}
 	return "fallback"
 }

@@ -23,20 +23,17 @@ import (
 
 // 輸入法程式（0c.app）的交接，說明見 shell_handover_mac.go。
 //
-// 結束舊程式到系統啟動新程式之間約一秒，這段時間按的鍵會直接交給 App、以英文字母出現（.12 實測），所以要等使用者
-// 停手夠久才關。安裝、回復、解除安裝時使用者正看著安裝程式或終端機，或背景排程已經等過閒置 5 分鐘（ShellNeedsIdle）：
-// 停手 2 秒即可，最多等 10 秒。之後每次排程喚起（舊版更新器在背景裝好、沒有交接的情況）在使用者使用中的任意時刻，
-// 要停手 20 秒才關、最多等 30 秒，沒等到就留給 15 分鐘後的下一次。
+// 使用者自己安裝、回復、解除安裝時停手 2 秒就交接，最多等 10 秒；排程喚起（30 秒）與背景自動安裝只在使用者離開時
+// （macUserAway）交接，同樣要沒有組字、停手 2 秒（解鎖時輸入密碼的按鍵不算組字，但也不在那一刻收掉）。
 const (
-	uiWaitInstall    = 10 * time.Second
-	uiWaitTask       = 60 * time.Second
-	uiWaitAuto       = 30 * time.Second
-	macQuietInstall  = 2 * time.Second
-	macQuietSchedule = 20 * time.Second
+	uiWaitInstall = 10 * time.Second
+	uiWaitTask    = 60 * time.Second
+	uiWaitAuto    = 30 * time.Second
+	macQuiet      = 2 * time.Second
 )
 
 // handOverUI：每次排程喚起時補做交接。0.2.0 以前的更新器在背景安裝新版時不會結束舊的輸入法程式，
-// 也不會替升級的人保留右 Shift（#167）；新的穩定副本下一次喚起時在這裡補上。
+// 也不會替升級的人保留右 Shift（#167）；新的穩定副本下一次喚起時在這裡補上。交接只在使用者離開時做（#178）。
 func handOverUI(wait time.Duration) {
 	base := basePath()
 	if keepRightShiftAfterUpgrade(base) {
@@ -44,28 +41,69 @@ func handOverUI(wait time.Duration) {
 	}
 	if !macReloginRequired(base) {
 		if current := currentShellExe(); current != "" && fileExists(current) {
-			retireMacShells(current, wait, macQuietSchedule)
+			retireMacShells(current, wait, true)
 		}
 	}
 	applyPendingSettings(base)
 }
 
 // stopUI（解除安裝）：結束這個帳號執行中的靈犀注音輸入法程式。
-func stopUI(wait time.Duration) { retireMacShells("", wait, macQuietInstall) }
+func stopUI(wait time.Duration) { retireMacShells("", wait, false) }
 
-// retireMacShells 請過期的輸入法程式在沒有組字、使用者停手 quiet 之後結束，回傳到期時仍在執行的。
-func retireMacShells(current string, wait, quiet time.Duration) []uiProcess {
+// retireMacShells 請過期的輸入法程式在沒有組字、使用者停手之後結束；whenAway 時只在使用者離開時（背景交接）。
+// current 不為空時，全部結束後以不搶前景的方式啟動 current 所在的 App。回傳結束了幾個，以及到期時仍在執行的。
+func retireMacShells(current string, wait time.Duration, whenAway bool) (int, []uiProcess) {
+	pending := func() []uiProcess { return listMacShells(current) }
+	todo := pending()
+	if len(todo) == 0 {
+		return 0, nil
+	}
+	if whenAway && !userAway() {
+		return 0, todo // 使用中：不交接，也不在這裡空等
+	}
 	c := macShellControl()
-	c.quiet = quiet
-	_, left := retireProcesses(c, func() []uiProcess { return listMacShells(current) }, wait)
-	return left
+	c.quiet = macQuiet
+	if whenAway {
+		c = awayOnly(c, userAway)
+	}
+	var relaunch func()
+	if current != "" {
+		app := filepath.Dir(filepath.Dir(filepath.Dir(current))) // <App>/Contents/MacOS/<執行檔>
+		relaunch = func() { launchMacShell(app) }
+	}
+	return handOverShells(c, pending, wait, relaunch)
 }
 
-// listMacShells、macShellControl 測試替換用：go test 不結束這台機器上真的輸入法程式（isolate_darwin_test.go）。
+// listMacShells、macShellControl、userAway、launchMacShell 測試替換用：go test 不結束、不啟動這台機器上真的輸入法程式
+// （isolate_darwin_test.go）。
 var (
 	listMacShells   = runningMacShells
 	macShellControl = darwinShellControl
+	userAway        = macUserAway
+	launchMacShell  = openMacShell
 )
+
+// ioregTimeout：ioreg 平常幾十毫秒；卡住時當成查不到（人還在、沒停手），不讓交接或排程一直等下去。
+const ioregTimeout = 5 * time.Second
+
+// macUserAway：這個帳號的使用者離開了電腦（螢幕鎖定、螢幕保護程式、螢幕關閉，或切換到別的使用者），見 macConsoleAway。
+func macUserAway() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), ioregTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "/usr/sbin/ioreg", "-n", "Root", "-d1").Output()
+	if err != nil {
+		return false
+	}
+	return macConsoleAway(string(out), os.Getuid())
+}
+
+// openMacShell 以不搶前景、不顯示的方式啟動新的輸入法程式（open -g -j）。系統本來也會在下一次需要時啟動它，
+// 先啟動可以讓焦點一改變就連上新版，不必等到按鍵（那個按鍵會以英文字母交給 App）。
+func openMacShell(app string) {
+	if out, err := exec.Command("/usr/bin/open", "-g", "-j", app).CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "0c-update: 無法啟動新的輸入法程式（%s）：%v\n", strings.TrimSpace(string(out)), err)
+	}
+}
 
 func darwinShellControl() uiControl {
 	return uiControl{
@@ -287,7 +325,9 @@ func applyPendingSettings(base string) {
 
 // hidIdleTime 是使用者多久沒有按鍵或移動滑鼠（IOHIDSystem 的 HIDIdleTime）。
 func hidIdleTime() (time.Duration, bool) {
-	out, err := exec.Command("ioreg", "-c", "IOHIDSystem", "-d", "4").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), ioregTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "ioreg", "-c", "IOHIDSystem", "-d", "4").Output()
 	if err != nil {
 		return 0, false
 	}
@@ -299,5 +339,6 @@ func hidIdleTime() (time.Duration, bool) {
 	return 0, false
 }
 
-// shellPendingAfterInstall：安裝時已請舊的輸入法程式結束；只有要重新登入的情況（見 macReloginRequired）才算待生效。
+// shellPendingAfterInstall：舊的輸入法程式在安裝時（使用者自己安裝）或使用者離開時（背景）結束，不必重新登入；
+// 只有要重新登入的情況（見 macReloginRequired）才算待生效，其餘由協調器以 ShellReady 核對。
 func shellPendingAfterInstall() bool { return macReloginRequired(basePath()) }

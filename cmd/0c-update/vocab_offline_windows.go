@@ -7,6 +7,9 @@ import (
 	"strings"
 )
 
+// activeDataDir：Windows 只有一種安裝，照 dataPackDir 的找法。
+func activeDataDir(string) (string, bool) { return "", false }
+
 // installedDataDir：收據記錄的版本目錄（同 spawnEngine 沒有核心指標時的做法）。
 func installedDataDir(base string) string {
 	b, err := os.ReadFile(receiptPath())

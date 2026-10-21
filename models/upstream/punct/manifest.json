@@ -1,0 +1,28 @@
+{
+  "schema": "zuin-punct-runtime-v1",
+  "labels": [
+    "",
+    "，",
+    "。",
+    "？",
+    "！",
+    "、",
+    "；"
+  ],
+  "threshold": 0.63,
+  "window": 128,
+  "stride": 64,
+  "input": "bidirectional",
+  "end_of_text": "never_inserted",
+  "max_text_runes": 256,
+  "files": {
+    "model.onnx": "4db3ed40df777347d9c455da01285b01de192d4c210c5f7cd9f0646c727880d8",
+    "vocab.json": "556dffaffbf4c05211a846dcee55ef735cea68c5754f9bffcc6f9588124172b3"
+  },
+  "spec": {
+    "hidden": 512,
+    "layers": 8,
+    "heads": 8,
+    "intermediate": 768
+  }
+}

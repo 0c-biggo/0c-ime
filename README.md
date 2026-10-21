@@ -119,6 +119,8 @@ go run ./cmd/0c-cli -data assets/data
 
 `make assets` 從同版本的 [Release](https://github.com/0c-biggo/0c-ime/releases) 取得原始碼與模型 tarball（合計約 275 MB），驗證後把現成字典放到 `assets/data/`、已配對模型放到 `models/select/` 與 `models/punct/`，和出貨內容相同；0.2.2 起 Release 附的 Source code 壓縮檔也適用。要指定版本用 `make assets RELEASE=v0.2.2`，只取字典用 `make assets MODELS=0`（約 36 MB，以統計選字運作）。
 
+發行版維護者以 `make install PREFIX=/usr` 做系統安裝、由套件管理員更新，見 [Linux 系統安裝](platforms/linux-system/README.md)。
+
 各平台外殼另需各自的工具鏈與系統函式庫：
 
 | 平台 | 外殼 | 建置說明 |

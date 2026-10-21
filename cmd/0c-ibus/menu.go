@@ -11,10 +11,11 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/0c-biggo/0c-ime/internal/installs"
 )
 
 type updateStatus struct {
@@ -26,6 +27,24 @@ type updateStatus struct {
 	// 「輸出簡體字」（#169）：settings.output_simplified 是設定檔的值（0.2.1 起的 0c-update 才有，沒有時 simplifiedKnown 為 false）；
 	// runtime.output_simplified_live 時以 runtime.output_simplified（引擎目前的值）為準。
 	simplifiedKnown, outputSimplified, simplifiedLive bool
+	// packageManaged：updates 是 package-manager（系統套件，#181），選單不放更新列。
+	packageManaged bool
+}
+
+// packageManagedUpdater 回報選單用的 0c-update 屬於由套件管理員更新的系統安裝（#181）。與 0c-update 自己
+// 判斷的規則相同（installs.PackageManaged：程式在系統 libexec/0c、distribution.json 寫 package-manager），
+// 只看檔案，status 查詢失敗或逾時也不會變。測試替換用。
+var packageManagedUpdater = func() bool {
+	l := installs.Default()
+	return l.PackageManaged(l.Updater())
+}
+
+// readStatus 解析 0c-update status --json（text 為空：查詢失敗）。套件管理員模式另依檔案判斷，
+// 查詢失敗時更新列不會又出現。
+func readStatus(text string) updateStatus {
+	s := parseStatus(text)
+	s.packageManaged = s.packageManaged || packageManagedUpdater()
+	return s
 }
 
 func parseStatus(text string) updateStatus {
@@ -50,12 +69,14 @@ func parseStatus(text string) updateStatus {
 			PunctuationState string `json:"punctuation_state"`
 		} `json:"runtime"`
 		Features json.RawMessage `json:"features"` // 另外解析：型別不對也不能讓整份狀態讀不出來
+		Updates  string          `json:"updates"`
 	}
 	if json.Unmarshal([]byte(text), &j) != nil {
 		return updateStatus{}
 	}
 	s := updateStatus{ok: true, installed: j.Installed, engine: j.Engine, mode: j.Mode, stage: j.Stage,
-		action: j.Action, pausedUntil: j.PausedUntil, lastSuccess: j.LastSuccess, lastError: j.LastError}
+		action: j.Action, pausedUntil: j.PausedUntil, lastSuccess: j.LastSuccess, lastError: j.LastError,
+		packageManaged: j.Updates == "package-manager"}
 	if s.mode == "" {
 		s.mode = "auto"
 	}
@@ -158,16 +179,9 @@ func statusCommand(s updateStatus) []string {
 	return []string{"auto", "-now", "-notify"}
 }
 
-// updaterPath 是排程使用的穩定 0c-update；不存在時退回安裝器放在 ~/.local/bin 的版本。
-func updaterPath() string {
-	home := os.Getenv("HOME")
-	for _, p := range []string{filepath.Join(home, ".local/share/zuin/bin/0c-update"), filepath.Join(home, ".local/bin/0c-update")} {
-		if st, err := os.Stat(p); err == nil && st.Mode().IsRegular() && st.Mode()&0o111 != 0 {
-			return p
-		}
-	}
-	return filepath.Join(home, ".local/share/zuin/bin/0c-update")
-}
+// updaterPath 依共用規則（internal/installs，#181）：官網安裝排程使用的穩定 0c-update、安裝器放在 ~/.local/bin 的版本，
+// 再來是系統安裝的 libexec/0c/0c-update。
+func updaterPath() string { return installs.Default().Updater() }
 
 // runUpdater 執行 0c-update 並取得輸出；逾時或失敗回傳 false。會阻塞，請在背景呼叫。
 // 輸出寫到已刪除的暫存檔而不是 pipe：更新可能結束本行程，pipe 的另一端消失會讓更新器收到 SIGPIPE。
