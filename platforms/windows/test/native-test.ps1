@@ -27,8 +27,10 @@ public static class NativeProbe {
  New-Item -ItemType File -Force "$ResultDir\Zuin\tsf-debug" | Out-Null
  $form=New-Object Windows.Forms.Form
  $form.Text='0c native EDIT acceptance'; $form.Width=600; $form.Height=200; $form.TopMost=$true
+ $button=New-Object Windows.Forms.Button
+ $button.Text='OK'; $button.Dock='Bottom'; $form.Controls.Add($button)
  $box=New-Object Windows.Forms.TextBox
- $box.Multiline=$true; $box.Dock='Fill'; $form.Controls.Add($box)
+ $box.Multiline=$true; $box.Dock='Fill'; $form.Controls.Add($box); $box.BringToFront()
  $form.Show();$form.Activate();$box.Focus() | Out-Null
  function Pump([int]$ms) { $w=[Diagnostics.Stopwatch]::StartNew();while($w.ElapsedMilliseconds -lt $ms){[Windows.Forms.Application]::DoEvents();Start-Sleep -Milliseconds 10} }
  function Send([string]$keys) { if([NativeProbe]::GetForegroundWindow() -ne $form.Handle){throw 'test window lost focus'};[Windows.Forms.SendKeys]::SendWait($keys);Pump 350 }
@@ -58,6 +60,13 @@ public static class NativeProbe {
  }
  [Runtime.InteropServices.Marshal]::ThrowExceptionForHR([NativeProbe]::SetInputScope($box.Handle,0));Pump 200
  Send 'su3{ENTER}';Expect '你' 'native_after_private'
+ # 組字中焦點移到沒有文字的按鈕：組字照舊送出到原欄位（#189 只在宿主把組字搬到新的焦點文件時才繼續組字）。
+ # 回到原欄位按 Esc：組字還在的話會被取消，已送出就不受影響。
+ $box.Clear();Pump 150
+ Send 'su3'
+ $button.Focus() | Out-Null;Pump 500
+ $box.Focus() | Out-Null;Pump 300
+ Send '{ESC}';Expect '你' 'native_focus_change_commits_composition'
  $report.dll=((Get-Process -Id $PID).Modules | Where-Object ModuleName -eq '0c_tsf.dll' | Select-Object -First 1).FileName
  if($report.dll -ne $ExpectedDLL){throw 'wrong native host DLL'}
  $report.passed=$true
