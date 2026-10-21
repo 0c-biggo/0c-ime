@@ -535,6 +535,8 @@ func serve() string {
 			if schedule.due(now, srv.LastKey()) {
 				save()
 			}
+			// 「靈犀學到的」頁的復原複本含使用者要求刪除的學習：操作完不再回來時，也在 10 分鐘後放掉（#182）。
+			eng.ExpireLearnedUndo()
 			if remind != nil && !stopping.Load() {
 				_, composing := eng.Sessions()
 				remind.tick(now, composing)
