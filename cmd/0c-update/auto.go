@@ -16,6 +16,7 @@ import (
 
 	"github.com/0c-biggo/0c-ime/core/fuzzy"
 	"github.com/0c-biggo/0c-ime/internal/autoupdate"
+	"github.com/0c-biggo/0c-ime/internal/neural"
 	"github.com/0c-biggo/0c-ime/internal/settings"
 	"github.com/0c-biggo/0c-ime/internal/update"
 )
@@ -642,6 +643,12 @@ func setFeed(base, feed string) error {
 func afterInstall() {
 	if os.Getenv("ZC_NO_SCHEDULE") != "" {
 		return
+	}
+	// 0.2.3 以前的 worker 會讓 onnxruntime 留下未送出的遙測事件；新版不再讀寫，安裝後刪掉，免得別的程式送出（docs/46）。
+	if home, err := os.UserHomeDir(); err == nil {
+		if err := neural.RemoveTelemetryQueue(home); err != nil {
+			fmt.Fprintln(os.Stderr, "0c-update: 舊的推論元件遙測暫存未刪除：", err)
+		}
 	}
 	if err := installSchedule(basePath()); err != nil {
 		fmt.Fprintln(os.Stderr, "0c-update: 自動更新排程未建立：", err)
