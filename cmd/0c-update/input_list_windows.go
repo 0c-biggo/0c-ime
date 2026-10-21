@@ -30,40 +30,59 @@ func listInputMethod(base string) {
 // listsOwnDesktop：這個程序是不是工作階段登入的那位使用者（見 ownsDesktop）。以另一個帳號提權的安裝程式不加入，只提示。
 func listsOwnDesktop() bool {
 	elevated := windows.GetCurrentProcessToken().IsElevated()
-	process, err := processAccount()
-	session := ""
+	var process, session account
+	var err error
+	process.sid, err = processUserSID()
 	if err == nil {
 		session, err = sessionAccount()
+	}
+	if err == nil && session.sid == "" && session.name != "" {
+		process.name, err = processAccount() // 工作階段使用者的 SID 查不到時退回比名稱
 	}
 	if ownsDesktop(process, session, err, elevated) {
 		return true
 	}
-	if elevated && err == nil && session != "" {
+	if elevated && err == nil && session.name != "" {
+		if process.name == "" {
+			if process.name, err = processAccount(); err != nil {
+				process.name = process.sid
+			}
+		}
 		fmt.Fprintf(os.Stderr, "0c-update: 系統管理員權限是以另一個帳號（%s）確認的，沒有替它把靈犀注音加入輸入法清單；"+
-			"請以目前桌面使用者（%s）的帳號安裝，或在 Windows 語言設定的「中文（台灣）」新增「靈犀注音」鍵盤\n", process, session)
+			"請以目前桌面使用者（%s）的帳號安裝，或在 Windows 語言設定的「中文（台灣）」新增「靈犀注音」鍵盤\n", process.name, session.name)
 	}
 	return false
 }
 
-// processAccount 是這個程序的帳號（網域\帳號）。
+// processAccount 是這個程序的帳號名稱（網域\帳號）。
 func processAccount() (string, error) {
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {
 		return "", err
 	}
-	account, domain, _, err := user.User.Sid.LookupAccount("")
+	name, domain, _, err := user.User.Sid.LookupAccount("")
 	if err != nil {
 		return "", err
 	}
-	return domain + `\` + account, nil
+	return domain + `\` + name, nil
 }
 
-// sessionAccount 是這個程序所在的工作階段登入的使用者（網域\帳號）；沒有登入使用者（例如 session 0 的服務、SSH）時為空字串。
-// 提權的程序與桌面使用者在同一個工作階段，看到的是桌面使用者，不是確認 UAC 的帳號。
-func sessionAccount() (string, error) {
+// accountSID 以帳號名稱（網域\帳號）查 SID；查不到時為空字串。
+func accountSID(name string) string {
+	sid, _, _, err := windows.LookupSID("", name)
+	if err != nil {
+		return ""
+	}
+	return sid.String()
+}
+
+// sessionAccount 是這個程序所在的工作階段登入的使用者；沒有登入使用者（例如 session 0 的服務、SSH）時兩者皆空。
+// 提權的程序與桌面使用者在同一個工作階段，看到的是桌面使用者，不是確認 UAC 的帳號。工作階段只給名稱
+// （取得使用者 token 的 WTSQueryUserToken 要 SYSTEM 權限），SID 由名稱查（LookupAccountName）。
+func sessionAccount() (account, error) {
 	var session uint32
 	if err := windows.ProcessIdToSessionId(uint32(os.Getpid()), &session); err != nil {
-		return "", err
+		return account{}, err
 	}
 	query := func(class uintptr) (string, error) {
 		var buffer *uint16
@@ -79,13 +98,14 @@ func sessionAccount() (string, error) {
 	const wtsUserName, wtsDomainName = 5, 7
 	user, err := query(wtsUserName)
 	if err != nil || user == "" {
-		return "", err
+		return account{}, err
 	}
 	domain, err := query(wtsDomainName)
 	if err != nil {
-		return "", err
+		return account{}, err
 	}
-	return domain + `\` + user, nil
+	name := domain + `\` + user
+	return account{sid: accountSID(name), name: name}, nil
 }
 
 // addInputMethod 以 input.dll 的 InstallLayoutOrTip 把靈犀注音加入目前帳號的語言清單並啟用（小狼毫的安裝程式也這樣做）。
