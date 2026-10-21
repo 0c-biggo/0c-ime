@@ -67,6 +67,9 @@ type Engine struct {
 
 	switchMu sync.Mutex // 「輸出簡體字」的即時切換一次一個（simplified.go）
 
+	learnedUndo []learnedUndo // 「靈犀學到的」頁最近幾次移除、不再學、恢復學習的復原複本（learned.go），只在記憶體
+	undoSerial  uint64
+
 	supportOnce sync.Once // 標音用的字讀音詞頻（vocab_annotate.go），第一次用到才建
 	support     map[rune]map[zhuyin.Syllable]float64
 }

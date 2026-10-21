@@ -323,7 +323,8 @@ func TestVocabAddBeatsEarlierPlainCommit(t *testing.T) {
 	}
 }
 
-// 刪除自訂詞後：加詞時記下的學習一起忘記，被動使用不學回；復原後又打得出來。
+// 刪除自訂詞後：加詞時記下的學習一起清掉，但不留 tombstone（#182：刪詞不是「不再學」，不會出現在「不再學的詞」）；
+// 復原後又打得出來。
 func TestVocabRemoveForgetsAndUndoRestores(t *testing.T) {
 	s := markSession()
 	b, _ := s.model.VocabAdd([]vocab.Entry{{Text: "世傑", Readings: []string{"ㄕˋ ㄐㄧㄝˊ"}}}, vocab.SourceManual)
@@ -332,8 +333,8 @@ func TestVocabRemoveForgetsAndUndoRestores(t *testing.T) {
 	}
 	s.Handle(proto.Request{Type: proto.Cancel})
 	rm, _ := s.model.VocabRemove([]string{"世傑"}, vocab.SourceManual)
-	if !s.model.Store.Tombstones["世傑"] || len(s.model.Store.Corrections) != 0 {
-		t.Fatalf("忘記並留下 tombstone：%v %v", s.model.Store.Tombstones, s.model.Store.Corrections)
+	if len(s.model.Store.Tombstones) != 0 || len(s.model.Store.Corrections) != 0 || len(s.model.Store.Readings) != 0 {
+		t.Fatalf("清掉學習、不留 tombstone：%v %v %v", s.model.Store.Tombstones, s.model.Store.Corrections, s.model.Store.Readings)
 	}
 	if got := shown(s, "ㄕˋ ㄐㄧㄝˊ").Text(); got == "世傑" {
 		t.Fatal("刪除後不再出現")

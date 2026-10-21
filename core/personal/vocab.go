@@ -96,7 +96,7 @@ func (m *Model) VocabAdd(entries []vocab.Entry, source string) (*vocab.Batch, er
 	return b, err
 }
 
-// VocabRemove 刪除自訂詞。自動學到的部分不動：刪掉的詞回到一般學習規則。
+// VocabRemove 刪除自訂詞，連同它的學習紀錄（vocabChanged）；不留 tombstone，刪掉的詞回到一般學習規則。
 func (m *Model) VocabRemove(texts []string, source string) (*vocab.Batch, error) {
 	if m.Vocab == nil {
 		m.Vocab = vocab.New()
@@ -136,10 +136,12 @@ func (m *Model) vocabChanged(b *vocab.Batch) {
 			continue // 英文詞只影響混打時照字面送出，與選字的學習資料無關（刪除時也不能忘記學到的英文字）
 		}
 		if c.After == nil {
-			// 刪除自訂詞：連同加詞時記下的手選、更正與使用證據一起忘記，留下 tombstone，被動使用不會學回
-			// （#122）；否則指向已不存在的詞的更正會讓同一組讀音解出奇怪的拆法。復原時會重新學回。
+			// 刪除自訂詞：連同加詞時記下的手選、更正與使用證據一起清掉（#122），否則指向已不存在的詞的更正
+			// 會讓同一組讀音解出奇怪的拆法。不留 tombstone（#182）：刪詞是「不要這個自訂詞」，不是「不再學」，
+			// 之後回到一般學習規則；留了 tombstone 的話，刪掉或復原掉的詞會跑到「不再學的詞」，
+			// 詞庫裡本來就有的詞也從此打了不學。復原時重新加入，照加詞的規則處理。
 			if c.Before != nil {
-				m.Forget(c.Before.Text)
+				m.Unlearn(c.Before.Text)
 			}
 			continue
 		}

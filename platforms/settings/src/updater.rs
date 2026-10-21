@@ -135,7 +135,7 @@ pub fn update_action_args(action: &str, version: &str, checksum: &str) -> Result
 /// 前端可以送的詞彙指令（core/engine 的 VocabRequest.op）。
 pub const VOCAB_OPS: &[&str] = &[
     "status", "list", "add", "remove", "readings", "undo", "batches", "rank", "annotate", "learned", "keep", "forget",
-    "phrases", "phrase-add", "phrase-remove", "phrase-move",
+    "unlearn", "forgotten", "relearn", "learned-undo", "phrases", "phrase-add", "phrase-remove", "phrase-move",
 ];
 
 /// 一個詞彙指令最多這麼大（500 個詞或片語的上限遠低於此）。

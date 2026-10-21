@@ -28,6 +28,7 @@ window.ZcVocab = function (ctx) {
     tab: 'words', version: null, count: null, limit: 10000, notes: [], loaded: false, disabled: false, engineDown: null,
     words: [], total: 0, offset: 0, query: '', listError: null, ranks: new Map(),
     learned: null, learnedError: null, phrases: null, phrasesError: null,
+    learnedView: 'learned', learnedSel: new Set(), learnedBusy: false, forgotten: null, forgottenSel: new Set(), forgottenCount: 0,
     batches: null, showAllBatches: false, openBatch: null, batchDetail: new Map(),
     draft: null, paste: null, editing: null, staleList: false, flash: new Set(),
     undo: null, ai: { open: false, view: null, busy: false, tool: 'chat', shown: false, regenAsk: false, test: null, testing: false, port: '' },
@@ -643,19 +644,85 @@ window.ZcVocab = function (ctx) {
     }, 300);
   }
 
-  // ---- 靈犀學到的 ----
+  // ---- 靈犀學到的（#182：保留／移除／不再學、勾選多個一起處理、復原，以及「不再學的詞」） ----
+  // 學到的詞存在學習資料（user.json），不是 vocab.json 的批次：移除、不再學、恢復學習的復原編號由引擎發（learned-undo），
+  // 只留在引擎記憶體裡，所以只在底部提示給「復原」，不進「最近變更」。
+  const undoKey = () => (/^macos\//.test(ctx.platform ? ctx.platform() : '') ? 'Shift＋⌫' : 'Shift＋Delete');
   async function loadLearned() {
-    let r;
-    try { r = await req({ op: 'learned' }); } catch (error) { r = { error: { message: String(error) } }; }
-    if (r.ok) { v.learned = r.learned || []; v.learnedError = null; } else { v.learnedError = r.error && r.error.code === 'engine' ? 'engine' : errText(r); }
+    const forgotten = v.learnedView === 'forgotten';
+    let r, f;
+    try {
+      [r, f] = await Promise.all([req({ op: 'learned' }), forgotten ? req({ op: 'forgotten' }) : null]);
+    } catch (error) { r = { error: { message: String(error) } }; }
+    if (r.ok) {
+      v.learned = r.learned || [];
+      v.learnedError = null;
+      v.forgottenCount = r.forgotten_count || 0;
+      const words = new Set(v.learned.filter((l) => !l.vocab).map((l) => l.word));
+      for (const w of [...v.learnedSel]) if (!words.has(w)) v.learnedSel.delete(w);
+    } else { v.learnedError = r.error && r.error.code === 'engine' ? 'engine' : errText(r); }
+    if (f && f.ok) {
+      v.forgotten = f.forgotten || [];
+      v.forgottenCount = f.forgotten_count || 0;
+      const words = new Set(v.forgotten);
+      for (const w of [...v.forgottenSel]) if (!words.has(w)) v.forgottenSel.delete(w);
+    }
+    if (v.learnedView === 'forgotten' && r.ok && !v.forgottenCount) v.learnedView = 'learned'; // 全部恢復了：回到學到的詞
     drawLearned();
     drawNotices();
+  }
+
+  function setLearnedView(view) {
+    v.learnedView = view;
+    if (view === 'forgotten') v.forgotten = null;
+    drawLearnedNow();
+    const target = el.learned.querySelector(view === 'forgotten' ? '[data-k="back-learned"]' : '[data-k="show-forgotten"]');
+    if (target) target.focus();
+    loadLearned();
+  }
+
+  // 勾選列：全選（部分勾選時顯示半勾）、已選幾個、批次按鈕。
+  function bulkBar(items, sel, actions, label) {
+    const all = h('input', { type: 'checkbox', 'data-k': 'all:' + label, 'aria-label': '全選' + label });
+    all.checked = items.length > 0 && items.every((w) => sel.has(w));
+    all.indeterminate = !all.checked && items.some((w) => sel.has(w));
+    all.disabled = !items.length;
+    all.addEventListener('change', () => {
+      if (all.checked) items.forEach((w) => sel.add(w)); else items.forEach((w) => sel.delete(w));
+      drawLearned();
+    });
+    const n = items.filter((w) => sel.has(w)).length;
+    return h('div', { class: 'vbulk' },
+      h('label', { class: 'vcheck' }, all, h('span', {}, '全選')),
+      h('span', { class: 'muted small vselcount' }, n ? '已選 ' + num(n) + ' 個' : '勾選要一起處理的詞'),
+      h('span', { class: 'vactions' }, actions.map(([op, text]) => h('button', {
+        type: 'button', class: 'secondary small', 'data-k': 'bulk:' + op, disabled: !n,
+        onclick: () => learnedAction(op, items.filter((w) => sel.has(w))),
+      }, text))));
+  }
+
+  function rowCheck(word, sel, disabled) {
+    const box = h('input', { type: 'checkbox', class: 'vsel', 'data-k': 'sel:' + word, 'aria-label': '選取「' + word + '」' });
+    box.checked = sel.has(word);
+    box.disabled = !!disabled;
+    box.addEventListener('change', () => { if (box.checked) sel.add(word); else sel.delete(word); drawLearned(); });
+    return box;
   }
 
   function drawLearned() { keepFocus(el.learned, drawLearnedNow); }
   function drawLearnedNow() {
     clear(el.learned);
-    el.learned.append(h('p', { class: 'muted vlead' }, '靈犀從你的選字自動學到的詞。「保留」會把它變成你加的詞；「忘記」之後不會再自動學回來。'));
+    if (v.learnedView === 'forgotten') { drawForgottenNow(); return; }
+    // 沒有任何不再學的詞時不顯示入口（#182 負責人決定）。
+    const link = v.forgottenCount > 0 && !v.learnedError
+      ? h('button', { type: 'button', class: 'link', 'data-k': 'show-forgotten', onclick: () => setLearnedView('forgotten') }, '不再學的詞（' + num(v.forgottenCount) + '）›')
+      : null;
+    el.learned.append(h('div', { class: 'vhead' },
+      h('p', { class: 'muted vlead' }, '靈犀從你的選字自動學到的詞。可以勾選多個一起處理，做錯了按底部提示的「復原」。'), link));
+    el.learned.append(h('dl', { class: 'vhelp muted' },
+      h('dt', {}, '保留'), h('dd', {}, '變成「我加的詞」，一直留著。'),
+      h('dt', {}, '移除'), h('dd', {}, '清掉這個詞的學習紀錄。之後照常打字、選字，還會再學回來。'),
+      h('dt', {}, '不再學'), h('dd', {}, '清掉紀錄，之後也不再自動學它。「你選過的寫法」在候選窗再親手選一次就會恢復；「常一起用」的詞要到「不再學的詞」恢復。')));
     if (v.learnedError) {
       el.learned.append(h('div', { class: 'card vempty' }, h('p', { class: 'muted' },
         v.learnedError === 'engine' ? '輸入法引擎執行時才看得到學到的詞。' : '無法讀取：' + v.learnedError)));
@@ -666,29 +733,92 @@ window.ZcVocab = function (ctx) {
       el.learned.append(h('div', { class: 'card vempty' }, h('p', { class: 'muted' }, '還沒有學到的詞。常一起選的字、你親手選過的寫法會出現在這裡。')));
       return;
     }
-    el.learned.append(h('div', { class: 'card vrows' }, v.learned.map((l) => h('div', { class: 'vrow learned' },
-      h('div', { class: 'vword' }, l.word),
-      h('span', { class: 'vreading plain' }, l.reading),
-      h('span', { class: 'vmeta muted' }, KIND[l.kind] || ''),
-      l.vocab ? h('span', { class: 'muted small' }, '已在我加的詞')
-        : h('span', { class: 'vactions' },
-          h('button', { type: 'button', class: 'secondary small', 'data-k': 'keep:' + l.word, 'aria-label': '保留「' + l.word + '」', onclick: () => keepLearned(l.word) }, '保留'),
-          h('button', { type: 'button', class: 'link', 'data-k': 'forget:' + l.word, 'aria-label': '忘記「' + l.word + '」', onclick: () => forgetLearned(l.word) }, '忘記'))))));
+    const sel = v.learnedSel;
+    const items = v.learned.filter((l) => !l.vocab).map((l) => l.word);
+    el.learned.append(h('div', { class: 'card vrows' },
+      bulkBar(items, sel, [['keep', '保留'], ['unlearn', '移除'], ['forget', '不再學']], '學到的詞'),
+      v.learned.map((l) => h('div', { class: 'vrow learned' + (v.flash.has(l.word) ? ' flash' : ''), 'data-word': l.word },
+        rowCheck(l.word, sel, l.vocab),
+        h('div', { class: 'vword' }, l.word),
+        h('span', { class: 'vreading plain' }, l.reading),
+        h('span', { class: 'vmeta muted' }, KIND[l.kind] || ''),
+        l.vocab ? h('span', { class: 'muted small' }, '已在我加的詞')
+          : h('span', { class: 'vactions' },
+            h('button', { type: 'button', class: 'secondary small', 'data-k': 'keep:' + l.word, 'aria-label': '保留「' + l.word + '」', onclick: () => learnedAction('keep', [l.word]) }, '保留'),
+            h('button', { type: 'button', class: 'link', 'data-k': 'unlearn:' + l.word, 'aria-label': '移除「' + l.word + '」', onclick: () => learnedAction('unlearn', [l.word]) }, '移除'),
+            h('button', { type: 'button', class: 'link', 'data-k': 'forget:' + l.word, 'aria-label': '不再學「' + l.word + '」', onclick: () => learnedAction('forget', [l.word]) }, '不再學'))))));
   }
 
-  async function keepLearned(word) {
-    const r = await req({ op: 'keep', texts: [word] });
-    if (!r.ok) { toast(errText(r), 'error'); return; }
-    v.version = r.version;
-    v.flash.add(word);
-    showUndo('已把「' + word + '」加到我加的詞', r.batch && r.batch.id);
-    reload();
+  function drawForgottenNow() {
+    el.learned.append(h('div', { class: 'vhead' },
+      h('button', { type: 'button', class: 'link vback', 'data-k': 'back-learned', onclick: () => setLearnedView('learned') }, '‹ 靈犀學到的'),
+      h('strong', { class: 'vsubtitle' }, '不再學的詞')));
+    el.learned.append(h('p', { class: 'muted vlead' }, '你按過「不再學」，或在候選窗用 ' + undoKey() + ' 忘記的詞，打字時不會自動學它們。按「恢復學習」之後，照常打字、選字就會再學回來；已經清掉的紀錄不會回來。'));
+    if (v.learnedError) {
+      el.learned.append(h('div', { class: 'card vempty' }, h('p', { class: 'muted' },
+        v.learnedError === 'engine' ? '輸入法引擎執行時才看得到不再學的詞。' : '無法讀取：' + v.learnedError)));
+      return;
+    }
+    if (!v.forgotten) { el.learned.append(h('p', { class: 'muted' }, '讀取中…')); return; }
+    if (!v.forgotten.length) {
+      el.learned.append(h('div', { class: 'card vempty' }, h('p', { class: 'muted' }, '沒有不再學的詞。')));
+      return;
+    }
+    const sel = v.forgottenSel;
+    el.learned.append(h('div', { class: 'card vrows' },
+      bulkBar(v.forgotten, sel, [['relearn', '恢復學習']], '不再學的詞'),
+      v.forgotten.map((word) => h('div', { class: 'vrow forgotten', 'data-word': word },
+        rowCheck(word, sel, false),
+        h('div', { class: 'vword' }, word),
+        h('button', { type: 'button', class: 'secondary small', 'data-k': 'relearn:' + word, 'aria-label': '恢復學習「' + word + '」', onclick: () => learnedAction('relearn', [word]) }, '恢復學習')))));
   }
 
-  async function forgetLearned(word) {
-    const r = await req({ op: 'forget', texts: [word] });
+  const LEARNED_DONE = {
+    keep: (q) => '已把' + q + '加到我加的詞',
+    unlearn: (q) => '已移除' + q + '，之後還會再學',
+    forget: (q) => '已設成不再學：' + q,
+    relearn: (q) => '已恢復學習' + q,
+  };
+
+  async function learnedAction(op, words) {
+    if (!words.length || v.learnedBusy) return;
+    const hadFocus = el.learned.contains(document.activeElement);
+    v.learnedBusy = true;
+    let r;
+    try { r = await req({ op, texts: words }); } catch (error) { r = { error: { message: String(error) } }; } finally { v.learnedBusy = false; }
     if (!r.ok) { toast(errText(r), 'error'); return; }
-    toast('已忘記「' + word + '」，之後不會再自動學回來。', 'ok');
+    const sel = op === 'relearn' ? v.forgottenSel : v.learnedSel;
+    words.forEach((w) => sel.delete(w));
+    const q = words.length === 1 ? '「' + words[0] + '」' : ' ' + num(words.length) + ' 個詞';
+    if (op === 'keep') {
+      v.version = r.version;
+      words.forEach((w) => v.flash.add(w));
+      showUndo(LEARNED_DONE.keep(q), r.batch && r.batch.id);
+      reload();
+    } else {
+      v.forgottenCount = r.forgotten_count || 0;
+      // 先拿掉那幾列，不等重新整理。
+      if (op === 'relearn' && v.forgotten) v.forgotten = v.forgotten.filter((w) => !words.includes(w));
+      else if (v.learned) v.learned = v.learned.filter((l) => !words.includes(l.word));
+      if (v.learnedView === 'forgotten' && !v.forgottenCount) v.learnedView = 'learned';
+      drawLearned();
+      if (r.undo) showUndo(LEARNED_DONE[op](q), () => undoLearned(r.undo));
+      else toast(op === 'relearn' ? '這些詞已經不在「不再學的詞」裡。' : '沒有需要清掉的學習紀錄。', 'ok');
+      loadLearned();
+    }
+    // 按下的按鈕隨著那一列消失（或批次按鈕變成停用）時，焦點交給「復原」，用鍵盤的人可以馬上按 Enter 反悔。
+    const active = document.activeElement;
+    const lost = !active || active === document.body || !active.isConnected || active.disabled || (el.tabs && active === el.tabs[v.tab]);
+    const undo = !el.undo.hidden && el.undo.querySelector('button');
+    if (hadFocus && lost && undo) undo.focus();
+  }
+
+  async function undoLearned(id) {
+    hideUndo();
+    let r;
+    try { r = await req({ op: 'learned-undo', undo: id }); } catch (error) { r = { error: { message: String(error) } }; }
+    if (!r.ok) { toast(errText(r), 'warn'); return; }
+    toast('已復原。', 'ok');
     loadLearned();
   }
 
@@ -860,11 +990,12 @@ window.ZcVocab = function (ctx) {
   }
 
   // 刪除不跳確認框：底部提示「已刪除… [復原]」，5 秒內可以按；之後仍可從「最近變更」復原。
-  function showUndo(message, batch) {
-    v.undo = batch ? { message, batch } : null;
+  // action 是「最近變更」的批次編號，或復原用的函式（學到的詞的移除、不再學、恢復學習，#182）。
+  function showUndo(message, action) {
+    v.undo = action ? { message, action } : null;
     clear(el.undo);
-    if (!batch) { toast(message + '。', 'ok'); return; }
-    const button = h('button', { type: 'button', class: 'link', onclick: () => undoBatch(batch) }, '復原');
+    if (!action) { toast(message + '。', 'ok'); return; }
+    const button = h('button', { type: 'button', class: 'link', onclick: () => (typeof action === 'function' ? action() : undoBatch(action)) }, '復原');
     el.undo.append(h('span', {}, message), button);
     el.undo.hidden = false;
     // 按下的刪除鈕隨著那一列消失時，焦點交給「復原」，用鍵盤的人可以馬上按 Enter 反悔。
@@ -882,6 +1013,7 @@ window.ZcVocab = function (ctx) {
     const had = el.undo.contains(document.activeElement);
     el.undo.hidden = true;
     if (had && v.tab === 'words') el.add.focus();
+    else if (had && el.tabs[v.tab]) el.tabs[v.tab].focus();
   }
 
   // ---- 讓 AI 幫你加詞 ----

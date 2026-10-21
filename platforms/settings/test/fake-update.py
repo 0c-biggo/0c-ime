@@ -200,7 +200,7 @@ def vocab_locked(req):
     log({'op': op, 'req': req})
     resp = {'ok': True}
     # 同 0c-update：引擎沒執行時在寫入者鎖內直接改 vocab.json，只有學到的詞要交給引擎。
-    if not state.get('engine', True) and op in ('learned', 'keep', 'forget'):
+    if not state.get('engine', True) and op in ('learned', 'keep', 'forget', 'unlearn', 'forgotten', 'relearn', 'learned-undo'):
         return {'ok': False, 'error': err('engine', '引擎沒有在執行，學到的詞要在輸入法執行時才能管理；切換到靈犀注音打一個字後再試'), 'version': 0, 'count': 0, 'limit': 0}
     words = state['words']
     find = lambda t: next((w for w in words if w['word'] == t), None)
@@ -308,6 +308,7 @@ def vocab_locked(req):
         resp['annotations'] = [annotate(t.strip()) for t in req.get('texts') or []]
     elif op == 'learned':
         resp['learned'] = [dict(l, vocab=bool(find(l['word']))) for l in state['learned']]
+        resp['forgotten_count'] = len(set(state['tombstones']))
     elif op == 'keep':
         changes = []
         for i, t in enumerate(req.get('texts') or []):
@@ -320,10 +321,35 @@ def vocab_locked(req):
             changes.append({'after': word_view(w)})
         if resp['ok']:
             changed = commit(state, 'add', 'learned', changes)
-    elif op == 'forget':
-        state['learned'] = [l for l in state['learned'] if l['word'] not in (req.get('texts') or [])]
-        state['tombstones'] += req.get('texts') or []
-        resp['changed'] = True
+    elif op in ('forget', 'unlearn', 'relearn'):
+        # 同引擎（#182）：不再學留 tombstone、移除不留、恢復學習刪 tombstone；操作前留一份複本給 learned-undo。
+        texts = [t.strip() for t in req.get('texts') or [] if t.strip()]
+        if not texts:
+            return {'ok': False, 'error': err('empty', '沒有選任何詞'), **status_fields(state)}
+        before = {'learned': list(state['learned']), 'tombstones': list(state['tombstones'])}
+        if op == 'relearn':
+            state['tombstones'] = [t for t in state['tombstones'] if t not in texts]
+        else:
+            state['learned'] = [l for l in state['learned'] if l['word'] not in texts]
+            if op == 'forget':
+                state['tombstones'] += [t for t in texts if t not in state['tombstones']]
+        if before['learned'] != state['learned'] or before['tombstones'] != state['tombstones']:
+            state['next_undo'] = state.get('next_undo', 0) + 1
+            state.setdefault('undos', {})[str(state['next_undo'])] = before
+            resp['undo'] = state['next_undo']
+            resp['changed'] = True
+        resp['forgotten_count'] = len(set(state['tombstones']))
+    elif op == 'forgotten':
+        resp['forgotten'] = sorted(set(state['tombstones']))
+        resp['forgotten_count'] = len(resp['forgotten'])
+    elif op == 'learned-undo':
+        before = state.get('undos', {}).pop(str(req.get('undo')), None)
+        if not before:
+            resp = {'ok': False, 'error': err('not_found', '已經無法復原（太久以前的操作，或輸入法引擎重新啟動過）')}
+        else:
+            state['learned'], state['tombstones'] = before['learned'], before['tombstones']
+            resp['changed'] = True
+            resp['forgotten_count'] = len(set(state['tombstones']))
     elif op in ('phrases', 'phrase-add', 'phrase-remove', 'phrase-move'):
         if op == 'phrase-add':
             changes = []

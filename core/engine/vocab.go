@@ -26,7 +26,11 @@ const (
 	VocabRank         = "rank"          // Texts（空白表示全部，最多 Limit 筆）：只打這組注音時排第幾、前面是哪個詞；只讀不學
 	VocabLearned      = "learned"       // 自動學到的片語
 	VocabKeep         = "keep"          // Texts：學到的片語轉成自訂詞
-	VocabForget       = "forget"        // Texts：撤銷自動學到的詞（與輸入法的 Forget 相同）
+	VocabForget       = "forget"        // Texts：「不再學」：撤銷自動學到的詞並留下 tombstone（與輸入法的 Forget 相同）
+	VocabUnlearn      = "unlearn"       // Texts：「移除」：撤銷自動學到的詞、不留 tombstone，之後照常學回來（#182）
+	VocabForgotten    = "forgotten"     // 不再學的詞（tombstone），依字面排序
+	VocabRelearn      = "relearn"       // Texts：「恢復學習」：刪掉 tombstone
+	VocabLearnedUndo  = "learned-undo"  // Undo：復原一次 unlearn／forget／relearn（只在引擎記憶體，重新啟動後就沒了）
 	VocabPhrases      = "phrases"       // 「我的片語」
 	VocabPhraseAdd    = "phrase-add"    // Texts
 	VocabPhraseRemove = "phrase-remove" // IDs
@@ -46,6 +50,7 @@ type VocabRequest struct {
 	// 回傳 conflict，不悄悄覆蓋別人的修改。nil 表示不檢查。
 	Expect []string `json:"expect,omitempty"`
 	Batch  uint64   `json:"batch,omitempty"`
+	Undo   uint64   `json:"undo,omitempty"` // learned-undo：unlearn／forget／relearn 回傳的編號
 	IDs    []uint64 `json:"ids,omitempty"`
 	ID     uint64   `json:"id,omitempty"`
 	To     int      `json:"to,omitempty"`
@@ -72,6 +77,11 @@ type VocabResponse struct {
 	Phrases     []vocab.Phrase `json:"phrases,omitempty"`
 	Annotations []Annotation   `json:"annotations,omitempty"`
 	Changed     bool           `json:"changed,omitempty"` // 這個指令改了資料，宿主要存檔
+	// Undo 是 unlearn／forget／relearn 改了學習資料時的復原編號（learned-undo）；0 表示沒有改到。
+	Undo      uint64   `json:"undo,omitempty"`
+	Forgotten []string `json:"forgotten,omitempty"` // forgotten：不再學的詞
+	// ForgottenCount 是不再學的詞有幾個，學到的詞相關指令都附上：0 時頁面不顯示「不再學的詞」。
+	ForgottenCount int `json:"forgotten_count,omitempty"`
 }
 
 // BatchSummary 是批次清單的一項；明細用 VocabBatches 加 Batch 查詢。
@@ -182,6 +192,7 @@ func (e *Engine) vocabLocked(req VocabRequest) VocabResponse {
 		}
 	case VocabLearned:
 		resp.Learned = e.learned()
+		resp.ForgottenCount = len(m.Forgotten())
 	case VocabKeep:
 		var entries []vocab.Entry
 		learned := map[string][]string{}
@@ -199,17 +210,8 @@ func (e *Engine) vocabLocked(req VocabRequest) VocabResponse {
 		if err == nil {
 			b, err = m.VocabAdd(entries, vocab.SourceLearned)
 		}
-	case VocabForget:
-		if len(req.Texts) == 0 {
-			err = &vocab.Error{Code: vocab.CodeEmpty, Item: -1, Msg: "沒有要忘記的詞"}
-			break
-		}
-		for _, t := range req.Texts {
-			if t = strings.TrimSpace(t); t != "" {
-				m.Forget(t)
-			}
-		}
-		resp.Changed = true
+	case VocabForget, VocabUnlearn, VocabRelearn, VocabLearnedUndo, VocabForgotten:
+		err = e.learnedOp(req, &resp)
 	case VocabPhrases:
 	case VocabPhraseAdd:
 		b, err = m.Vocab.AddPhrases(req.Texts, src, e.now())

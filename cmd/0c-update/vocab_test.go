@@ -69,8 +69,10 @@ func TestVocabDoGoesThroughEngineAndReadsOffline(t *testing.T) {
 	if r, _ := vocabDo(noEngine, base, engine.VocabRequest{Op: engine.VocabList}); r.Total != 2 {
 		t.Fatalf("寫回檔案：%+v", r)
 	}
-	if _, err := vocabDo(noEngine, base, engine.VocabRequest{Op: engine.VocabLearned}); err == nil || !strings.Contains(err.Error(), "學到的詞") {
-		t.Fatalf("學到的詞只能交給引擎：%v", err)
+	for _, op := range []string{engine.VocabLearned, engine.VocabUnlearn, engine.VocabForgotten, engine.VocabRelearn, engine.VocabLearnedUndo} {
+		if _, err := vocabDo(noEngine, base, engine.VocabRequest{Op: op, Texts: []string{"世傑"}}); err == nil || !strings.Contains(err.Error(), "學到的詞") {
+			t.Fatalf("%s：學到的詞只能交給引擎：%v", op, err)
+		}
 	}
 	// 有引擎拿著寫入者鎖（還沒開始服務）：不碰檔案。
 	lock, err := userlock.TryLock(base)
