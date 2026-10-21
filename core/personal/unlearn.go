@@ -75,6 +75,40 @@ func (m *Model) Relearn(w string) bool {
 	return found
 }
 
+// RelearnAll 對多個詞做 Relearn：英文詞的各種大小寫一起解除，但 tombstone 只掃一遍，不是每個詞各掃一遍。
+func (m *Model) RelearnAll(ws []string) bool {
+	if len(ws) == 1 {
+		return m.Relearn(ws[0])
+	}
+	s := m.Store
+	r := m.recording()
+	found := false
+	english := map[string]bool{}
+	for _, w := range ws {
+		if _, ok := s.Tombstones[w]; ok {
+			note(r.tombstones, s.Tombstones, w)
+			delete(s.Tombstones, w)
+			found = true
+		}
+		if EnglishToken(w) {
+			english[strings.ToLower(w)] = true
+		}
+	}
+	if len(english) > 0 {
+		for t := range s.Tombstones {
+			if EnglishToken(t) && english[strings.ToLower(t)] {
+				note(r.tombstones, s.Tombstones, t)
+				delete(s.Tombstones, t)
+				found = true
+			}
+		}
+	}
+	if found {
+		m.Gen++
+	}
+	return found
+}
+
 // Undo 是一次學習資料操作之前的複本，只存被改到的項目。只能用在同一份個人資料、只能復原一次。
 // 它只在記憶體裡（引擎重新啟動就沒了），不寫進 user.json：使用者要求刪除的內容不能因為復原而留在磁碟上。
 type Undo struct {
