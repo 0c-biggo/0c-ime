@@ -425,6 +425,8 @@ func ensureEngine() error {
 	}
 	// 登入工作也在安裝、回復交接引擎之後由提權的安裝程式叫起：以使用者權限順便請舊版的候選窗程式換新。
 	defer handOverUI(uiWaitTask)
+	listInputMethod(basePath()) // 舊版更新器在背景裝上這一版時沒有加入輸入法清單（#191）
+
 	if c, err := dialEngine(time.Second); err == nil {
 		c.Close()
 		return nil
@@ -474,9 +476,8 @@ func notifyWithAction(_ context.Context, n autoupdate.Notice) (string, error) {
 	return "", notify(n)
 }
 
-// setupInputMethod：此平台由安裝程式註冊輸入法，不需額外設定。
+// setupInputMethod：註冊由安裝完成，加入語言清單由 afterInstall 的 listInputMethod 做，不需額外設定。
 func setupInputMethod(string) error  { return nil }
-func addInputMethod() error          { return nil }
 func inputSourcePending(string) bool { return false }
 
 // openScheduleSettings：只有 macOS 的排程可能在系統設定被關閉。
