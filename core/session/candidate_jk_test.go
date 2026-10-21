@@ -27,6 +27,9 @@ func jkWalk(t *testing.T, s *Session, keys string, want [][2]int) {
 			t.Fatalf("%d:%c handled=%v commit=%q", i, k, snap.Handled, snap.Commit)
 		}
 		cursorRange(t, snap, want[i][0], want[i][1])
+		if !snap.Candidates.StepKeys {
+			t.Fatalf("%d:%c: j/k still step here, the snapshot must say so: %+v", i, k, snap.Candidates)
+		}
 	}
 }
 
@@ -119,6 +122,9 @@ func TestCandidateJKStepsOverLiterals(t *testing.T) {
 func TestCandidateJKSelectionKeysWin(t *testing.T) {
 	s := manySession("asdfghjkl;")
 	snap := openMany(t, s)
+	if snap.Candidates.StepKeys {
+		t.Fatalf("j/k are selection keys, the footer must not offer them: %+v", snap.Candidates)
+	}
 	want := snap.Candidates.Items[6].Text
 	if snap = key(s, "j"); snap.Candidates != nil || snap.Text() != want {
 		t.Fatalf("j 是第 7 個選字鍵：%+v", snap)
@@ -151,6 +157,9 @@ func TestCandidateJKIgnoredOutsideOrdinaryCandidates(t *testing.T) {
 	unchanged := func(t *testing.T, name string, s *Session) {
 		t.Helper()
 		before := s.snapshot()
+		if before.Candidates == nil || before.Candidates.StepKeys {
+			t.Fatalf("%s: j/k do nothing here, the snapshot must not offer them: %+v", name, before.Candidates)
+		}
 		c := *s.cand
 		for _, k := range []string{"j", "k"} {
 			snap := key(s, k)
@@ -200,4 +209,15 @@ func TestCandidateJKIgnoredOutsideOrdinaryCandidates(t *testing.T) {
 		t.Fatalf("symbol menu fixture: %+v", b.cand)
 	}
 	unchanged(t, "symbols", b)
+}
+
+// 英文自動補字的候選也不是改字（#193 的頁尾提示要跟著核心）。
+func TestCandidateJKNotOfferedForEnglishCompletion(t *testing.T) {
+	s := autocompleteSession()
+	mixedType(s, "hel")
+	s.Handle(proto.Request{Type: proto.Close})
+	snap := s.Handle(proto.Request{Type: proto.Candidates})
+	if snap.Candidates == nil || !s.cand.english || snap.Candidates.StepKeys {
+		t.Fatalf("english completion: %+v", snap.Candidates)
+	}
 }

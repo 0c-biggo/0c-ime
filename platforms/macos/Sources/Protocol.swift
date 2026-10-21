@@ -35,10 +35,15 @@ struct Snapshot: Decodable {
         let page: Int
         let pages: Int
         let highlight: Int
-        var length: Int? = nil // 替換格數；0 是插入符號、選未完成注音、混打按鍵或 Emoji 選單
         var columns: Int? = nil
         var kind: String? = nil
         var title: String? = nil
+        /// 改字的候選，j／k 換前後一個字（#193）；由核心判斷（選字鍵含 j、k、Emoji、混打按鍵、注音打到一半等都不算）。舊引擎缺欄位。
+        var stepKeys: Bool? = nil
+        enum CodingKeys: String, CodingKey {
+            case items, page, pages, highlight, columns, kind, title
+            case stepKeys = "step_keys"
+        }
     }
     let handled: Bool
     let commit: String?
