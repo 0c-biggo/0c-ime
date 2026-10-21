@@ -37,11 +37,13 @@ func LearningOp(op string) bool {
 func (e *Engine) learnedOp(req VocabRequest, resp *VocabResponse) error {
 	m := e.Model
 	now := e.expireLearnedUndo()
+	if req.Op == VocabForgotten {
+		resp.Forgotten = m.Forgotten()
+		resp.ForgottenCount = len(resp.Forgotten)
+		return nil
+	}
 	defer func() { resp.ForgottenCount = m.ForgottenCount() }()
 	switch req.Op {
-	case VocabForgotten:
-		resp.Forgotten = m.Forgotten()
-		return nil
 	case VocabLearnedUndo:
 		for i, x := range e.learnedUndo {
 			if x.id == req.Undo {
@@ -72,9 +74,7 @@ func (e *Engine) learnedOp(req VocabRequest, resp *VocabResponse) error {
 		case VocabUnlearn:
 			m.UnlearnAll(texts)
 		case VocabRelearn:
-			for _, t := range texts {
-				m.Relearn(t)
-			}
+			m.RelearnAll(texts)
 		}
 	})
 	if u == nil {

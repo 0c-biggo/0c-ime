@@ -242,6 +242,7 @@ func journalOps(ws []string) []struct {
 		{"forgetAll", func(m *Model) { m.ForgetAll(ws) }},
 		{"unlearnAll", func(m *Model) { m.UnlearnAll(ws) }},
 		{"relearn", func(m *Model) { m.Relearn("Git"); m.Relearn("很好"); m.Relearn("不在") }},
+		{"relearnAll", func(m *Model) { m.RelearnAll([]string{"Git", "很好", "不在"}) }},
 		{"noop", func(m *Model) { m.Relearn("不在") }},
 	}
 }
@@ -269,6 +270,23 @@ func TestUnlearnAllMatchesOneByOne(t *testing.T) {
 					t.Fatalf("seed %d n=%d：合成資料沒有被刪到的詞對", seed, n)
 				}
 			}
+		}
+	}
+}
+
+// 多個詞一起恢復學習，跟逐一做的結果相同（英文詞各種大小寫一起解除）。
+func TestRelearnAllMatchesOneByOne(t *testing.T) {
+	for seed := range uint64(5) {
+		base, ws := journalStore(3000, seed)
+		base.ForgetAll(ws)
+		ws = append(ws, "Git", "GIT", "不在")
+		for _, n := range []int{1, 2, len(ws)} {
+			a, b := cloneModel(base), cloneModel(base)
+			a.RelearnAll(ws[:n])
+			for _, w := range ws[:n] {
+				b.Relearn(w)
+			}
+			storesClose(t, fmt.Sprintf("seed %d n=%d", seed, n), a.Store, b.Store)
 		}
 	}
 }
