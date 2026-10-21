@@ -753,7 +753,7 @@ window.ZcVocab = function (ctx) {
     el.learned.append(h('div', { class: 'vhead' },
       h('button', { type: 'button', class: 'link vback', 'data-k': 'back-learned', onclick: () => setLearnedView('learned') }, '‹ 靈犀學到的'),
       h('strong', { class: 'vsubtitle' }, '不再學的詞')));
-    el.learned.append(h('p', { class: 'muted vlead' }, '你按過「不再學」，或在候選窗用 ' + undoKey() + ' 忘記的詞，打字時不會自動學它們。按「恢復學習」之後，照常打字、選字就會再學回來；已經清掉的紀錄不會回來。'));
+    el.learned.append(h('p', { class: 'muted vlead' }, '你按過「不再學」或「忘記」、在候選窗用 ' + undoKey() + ' 忘記的詞，以及舊版刪掉的自訂詞，打字時都不會自動學它們。按「恢復學習」之後，照常打字、選字就會再學回來；已經清掉的紀錄不會回來。'));
     if (v.learnedError) {
       el.learned.append(h('div', { class: 'card vempty' }, h('p', { class: 'muted' },
         v.learnedError === 'engine' ? '輸入法引擎執行時才看得到不再學的詞。' : '無法讀取：' + v.learnedError)));
