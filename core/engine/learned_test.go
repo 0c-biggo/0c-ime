@@ -100,3 +100,45 @@ func TestVocabLearnedUndoLimit(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 }
+
+// 復原複本過了 learnedUndoTTL 就放掉：使用者操作完不再回來時，宿主定時呼叫 ExpireLearnedUndo 也會清，
+// 不必等下一次操作；底層陣列也不留著被丟掉的複本。沒有時鐘時不過期。
+func TestVocabLearnedUndoExpiresWithoutAnotherOp(t *testing.T) {
+	e := vocabEngine()
+	now := int64(1_000_000)
+	e.Model.Now = func() int64 { return now }
+	var ids []uint64
+	for range 3 {
+		e.Model.Store.Readings["世界\tㄕˋ ㄐㄧㄝˋ"] = true
+		ids = append(ids, e.Vocab(VocabRequest{Op: VocabUnlearn, Texts: []string{"世界"}}).Undo)
+		now += 60
+	}
+	backing := e.learnedUndo[:cap(e.learnedUndo)]
+	now += learnedUndoTTL - 2*60 // 第一份剛好過期
+	e.ExpireLearnedUndo()
+	if len(e.learnedUndo) != 2 || e.learnedUndo[0].id != ids[1] {
+		t.Fatalf("只清過期的：%+v", e.learnedUndo)
+	}
+	now += 10 * 60
+	e.ExpireLearnedUndo()
+	if len(e.learnedUndo) != 0 {
+		t.Fatalf("全部過期：%+v", e.learnedUndo)
+	}
+	for i, x := range backing {
+		if x.u != nil {
+			t.Fatalf("底層陣列第 %d 格還留著複本", i)
+		}
+	}
+	if r := e.Vocab(VocabRequest{Op: VocabLearnedUndo, Undo: ids[2]}); r.OK || r.Error.Code != vocab.CodeNotFound {
+		t.Fatalf("過期後不能復原：%+v", r)
+	}
+
+	// 沒有時鐘：操作時間是 0，不過期（最多 maxLearnedUndo 份留到行程結束）。
+	e = vocabEngine()
+	e.Model.Store.Readings["世界\tㄕˋ ㄐㄧㄝˋ"] = true
+	id := e.Vocab(VocabRequest{Op: VocabUnlearn, Texts: []string{"世界"}}).Undo
+	e.ExpireLearnedUndo()
+	if r := e.Vocab(VocabRequest{Op: VocabLearnedUndo, Undo: id}); !r.OK {
+		t.Fatalf("沒有時鐘時照常復原：%+v", r)
+	}
+}
