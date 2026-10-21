@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/0c-biggo/0c-ime/core/engine"
 	"github.com/0c-biggo/0c-ime/core/vocab"
 )
 
@@ -26,9 +27,36 @@ type Server struct {
 	Version string // 引擎版本，放進 MCP serverInfo
 	// Unavailable 不為 nil 而且回傳非空字串時，資料端點回 503（例如引擎正在交接），帶 Retry-After。
 	Unavailable func() string
+	// Save 在指令改了詞彙（VocabResponse.Changed）之後、回應之前呼叫，把 vocab.json 寫好（#196）：
+	// API 回成功時檔案已經寫入。回傳錯誤時這次請求回 not_saved（HTTP 500）；記憶體裡的修改留著，
+	// 由宿主記下、交接或結束前再存。0c-server 一定要給；nil 只給測試。
+	Save func() error
 
 	lastUsed atomic.Int64
 }
+
+// CodeNotSaved：修改已經套用，但 vocab.json 沒有寫進去。
+const CodeNotSaved = "not_saved"
+
+// savingDoer 讓所有會改資料的操作（REST 與 MCP 共用同一份 Ops）都在回應前存檔，不必每個操作各自記得。
+type savingDoer struct {
+	Doer
+	save func() error
+}
+
+func (d savingDoer) Vocab(req engine.VocabRequest) engine.VocabResponse {
+	resp := d.Doer.Vocab(req)
+	if resp.OK && resp.Changed && d.save != nil {
+		if err := d.save(); err != nil {
+			resp.OK = false
+			resp.Error = &vocab.Error{Code: CodeNotSaved, Item: -1,
+				Msg: "修改已經生效，但自訂詞彙檔沒有寫進去（" + err.Error() + "）；輸入法引擎交接或結束前會再試一次"}
+		}
+	}
+	return resp
+}
+
+func (s *Server) doer() Doer { return savingDoer{Doer: s.Doer, save: s.Save} }
 
 // LastUsed 回傳最後一次通過驗證的請求時間（Unix 秒，0 表示還沒用過）。
 func (s *Server) LastUsed() int64 { return s.lastUsed.Load() }
@@ -114,9 +142,13 @@ func (s *Server) Handler() http.Handler {
 				}
 				in = b
 			}
-			out, verr := op.call(s.Doer, in)
+			out, verr := op.call(s.doer(), in)
 			if verr != nil {
-				writeJSON(w, http.StatusBadRequest, map[string]any{"error": verr})
+				status := http.StatusBadRequest
+				if verr.Code == CodeNotSaved {
+					status = http.StatusInternalServerError
+				}
+				writeJSON(w, status, map[string]any{"error": verr})
 				return
 			}
 			writeJSON(w, http.StatusOK, out)

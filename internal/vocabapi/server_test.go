@@ -2,6 +2,7 @@ package vocabapi
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -247,5 +248,71 @@ func TestConfigAndTokenFiles(t *testing.T) {
 	b, _ := EnsureToken(dir)
 	if a.Value != b.Value || !strings.HasPrefix(a.Value, "0c_") || len(a.Value) != 51 {
 		t.Fatalf("%q %q", a.Value, b.Value)
+	}
+}
+
+// #196：會改資料的操作（REST 與 MCP）成功後一定呼叫 Save，API 回成功時檔案已寫入；
+// 唯讀的操作與整批拒絕的修改不呼叫。存檔失敗時回 500 not_saved，不讓呼叫端以為已經存好。
+func TestWritesCallSave(t *testing.T) {
+	s, ts, tok := testServer(t)
+	var saves int
+	var saveErr error
+	s.Save = func() error { saves++; return saveErr }
+	expect := func(what string, want int) {
+		t.Helper()
+		if saves != want {
+			t.Fatalf("%s：存檔 %d 次，應該 %d 次", what, saves, want)
+		}
+	}
+	code, out, _ := do(t, ts, "POST", "/v1/words", tok, `{"words":[{"word":"曾小明","readings":["ㄗㄥ ㄒㄧㄠˇ ㄇㄧㄥˊ"]},{"word":"ls"}]}`)
+	if code != 200 {
+		t.Fatalf("%d %v", code, out)
+	}
+	expect("add_words", 1)
+	if code, out, _ = do(t, ts, "POST", "/v1/words", tok, `{"words":[{"word":"a c","readings":["ㄅ"]}]}`); code != 400 {
+		t.Fatalf("%d %v", code, out)
+	}
+	expect("整批拒絕不存", 1)
+	for _, r := range []struct{ method, path, body string }{
+		{"GET", "/v1/words", ""}, {"GET", "/v1/status", ""}, {"GET", "/v1/batches", ""}, {"GET", "/v1/snippets", ""},
+		{"POST", "/v1/readings", `{"words":["曾小明"]}`},
+	} {
+		if code, out, _ := do(t, ts, r.method, r.path, tok, r.body); code != 200 {
+			t.Fatalf("%s %s：%d %v", r.method, r.path, code, out)
+		}
+	}
+	expect("唯讀的操作不存", 1)
+	if code, out, _ = do(t, ts, "POST", "/v1/words/remove", tok, `{"words":["ls"]}`); code != 200 {
+		t.Fatalf("%d %v", code, out)
+	}
+	expect("remove_words", 2)
+	batch := out["batch"].(map[string]any)["id"].(float64) // 撤回這次刪除
+	if code, out, _ = do(t, ts, "POST", "/v1/snippets", tok, `{"snippets":["台北市"]}`); code != 200 {
+		t.Fatalf("%d %v", code, out)
+	}
+	expect("add_snippets", 3)
+	id := out["snippets"].([]any)[0].(map[string]any)["id"].(float64)
+	if code, out, _ = do(t, ts, "POST", "/v1/snippets/remove", tok, `{"ids":[`+jsonNum(id)+`]}`); code != 200 {
+		t.Fatalf("%d %v", code, out)
+	}
+	expect("remove_snippets", 4)
+	if code, out, _ = do(t, ts, "POST", "/v1/batches/undo", tok, `{"batch":`+jsonNum(batch)+`}`); code != 200 {
+		t.Fatalf("%d %v", code, out)
+	}
+	expect("undo_batch", 5)
+	code, out, _ = do(t, ts, "POST", "/mcp", tok, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"add_words","arguments":{"words":[{"word":"kubectl"}]}}}`)
+	if code != 200 || out["result"].(map[string]any)["isError"] == true {
+		t.Fatalf("%d %v", code, out)
+	}
+	expect("MCP add_words", 6)
+
+	saveErr = errors.New("磁碟已滿")
+	code, out, _ = do(t, ts, "POST", "/v1/words", tok, `{"words":[{"word":"git"}]}`)
+	if code != 500 || out["error"].(map[string]any)["code"] != CodeNotSaved {
+		t.Fatalf("存檔失敗要回錯誤：%d %v", code, out)
+	}
+	code, out, _ = do(t, ts, "POST", "/mcp", tok, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"add_words","arguments":{"words":[{"word":"npm"}]}}}`)
+	if res := out["result"].(map[string]any); code != 200 || res["isError"] != true || !strings.Contains(res["content"].([]any)[0].(map[string]any)["text"].(string), CodeNotSaved) {
+		t.Fatalf("MCP 存檔失敗要回錯誤：%d %v", code, out)
 	}
 }
