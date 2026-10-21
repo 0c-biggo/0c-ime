@@ -427,6 +427,7 @@ func autoCommand(action string, args []string) (resultErr error) {
 			ensureEngineService(base)
 			repairFixedDLL(base)
 			refreshStableMCP(base) // 外殼更新由舊的穩定更新器執行，它不認得 0c-mcp；由新版在這裡補上（Windows）
+			listInputMethod(base)  // 同上，舊的更新器不會把靈犀注音加入輸入法清單（Windows，#191）
 			return repairUpdater(base, *report, platformRepair)
 		case "status":
 			fmt.Println(scheduleStatus())
@@ -651,6 +652,8 @@ func afterInstall() {
 			fmt.Fprintln(os.Stderr, "0c-update: 舊的推論元件遙測暫存未刪除：", err)
 		}
 	}
+	// Windows：第一次安裝（或從還沒有這一步的版本更新）時把靈犀注音加入這個帳號的輸入法清單（#191）。
+	listInputMethod(basePath())
 	if err := installSchedule(basePath()); err != nil {
 		fmt.Fprintln(os.Stderr, "0c-update: 自動更新排程未建立：", err)
 		return
