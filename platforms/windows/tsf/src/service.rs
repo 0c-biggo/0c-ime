@@ -181,6 +181,13 @@ impl State {
         (self.session.available() && self.session.ctrl_punctuation()).then_some(key)
     }
 
+    /// 這一鍵是不是要攔下來切換「輸出簡體字」的 Ctrl＋Shift＋F11（#192）：引擎可用而且回報 simplified_hotkey
+    /// （設定開著、能即時切換）。先看按鍵本身，不是這個鍵就不問引擎。TestKeyDown 與 OnKeyDown 用同一個答案；
+    /// 是的話不先送出組字（同選單，組字不動）。
+    fn simplified_hotkey(&mut self, vk: u32) -> bool {
+        keys::simplified_hotkey(vk) && self.session.available() && self.session.simplified_hotkey()
+    }
+
     fn tap(&mut self, side: keys::Side) -> &mut keys::ShiftTap {
         match side {
             keys::Side::Left => &mut self.left_shift,
@@ -1232,6 +1239,11 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             }
             let vk = wparam.0 as u32;
             self.observe_shift(vk, lparam.0);
+            // 用快捷鍵切換簡體字（#192）：設定開著時吃掉，OnKeyDown 才切換；不先送出組字。
+            if self.state.borrow_mut().simplified_hotkey(vk) {
+                zdebug!("OnTestKeyDown vk={} -> 切換簡體字", vk);
+                return Ok(true.into());
+            }
             self.commit_before_host_key(pic.as_ref(), vk, lparam.0);
             self.learn_mode(vk);
             self.sync_caps(pic.as_ref(), vk);
@@ -1284,6 +1296,15 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             }
             let vk = wparam.0 as u32;
             self.observe_shift(vk, lparam.0);
+            // 用快捷鍵切換簡體字（#192）：跟輸入指示器選單的「輸出簡體字」同一條路，組字不動、提示「已切換為…」、
+            // 工作列「中」↔「简」。TestKeyDown 已經說要吃，切換失敗（引擎剛好斷線）也照樣吃掉，按鍵不會半途交給應用程式。
+            if self.state.borrow_mut().simplified_hotkey(vk) {
+                let on = !self.state.borrow().session.simplified().unwrap_or(false);
+                let switched = self.set_output_simplified(on);
+                zdebug!("OnKeyDown vk={} 切換簡體字 on={} ok={}", vk, on, switched);
+                self.state.borrow_mut().eaten.insert(vk);
+                return Ok(true.into());
+            }
             self.commit_before_host_key(pic.as_ref(), vk, lparam.0);
             self.learn_mode(vk);
             self.sync_caps(pic.as_ref(), vk);

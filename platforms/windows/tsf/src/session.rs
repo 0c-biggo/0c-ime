@@ -364,6 +364,17 @@ impl Session {
             .is_some_and(|reply| reply["ok"] == true && idle_tone_keys(&reply["info"]))
     }
 
+    /// 「用快捷鍵切換簡體字」開著、引擎也能即時切換（health 的 simplified_hotkey 與 output_simplified_live，#192）。
+    /// 只在按下 Ctrl＋Shift＋F11 時查詢（同 ctrl_punctuation），設定套用（引擎重啟）後第一次按就照新設定；
+    /// 順便記下引擎目前的「輸出簡體字」，切換的方向才對。引擎不可用或舊版引擎沒有這一項時為 false，照舊交給應用程式。
+    pub fn simplified_hotkey(&mut self) -> bool {
+        let Some(reply) = self.client.call(&json!({"op": "health"})).filter(|r| r["ok"] == true) else {
+            return false;
+        };
+        self.learn_simplified(&reply["info"]);
+        self.simplified_live && reply["info"]["simplified_hotkey"] == "true"
+    }
+
     /// 引擎是否認得 Ctrl＋標點的鍵名而且設定開著（health 的 ctrl_punctuation，#168）。只在按下那六個鍵時查詢，
     /// 設定套用（引擎重啟）後立即生效；引擎不可用或舊版引擎沒有這一項時為 false，照舊交給應用程式。
     pub fn ctrl_punctuation(&mut self) -> bool {
@@ -1043,6 +1054,31 @@ mod tests {
         menu.client.disconnect_for_test();
         assert_eq!(menu.key("Enter").commit, "風景", "重連重播後送出，不會再切一次");
         assert_eq!(menu.simplified(), Some(false));
+    }
+
+    // #192：一般的 ZUIN_TEST_PIPE（設定關閉）不回報 simplified_hotkey，Ctrl＋Shift＋F11 照舊交給應用程式；
+    // ZUIN_TEST_HOTKEY_PIPE（暫存個人資料、settings.json 有 simplified_hotkey=true 的獨立引擎；這個測試會改它的設定）
+    // 回報開著，按下時送選單同一個請求：組字不動，之後送出簡體。
+    #[test]
+    fn simplified_hotkey_follows_the_setting() {
+        if let Some(mut s) = session() {
+            assert!(!s.simplified_hotkey(), "設定關閉時不攔");
+        }
+        let Ok(pipe) = std::env::var("ZUIN_TEST_HOTKEY_PIPE") else {
+            return;
+        };
+        let mut s = Session::with_client(Client::with_pipe(&pipe));
+        assert!(s.simplified_hotkey(), "設定開著");
+        assert_eq!(s.simplified(), Some(false), "順便知道目前是繁體");
+        for k in ["z", "/", " ", "r", "u", "/", "3"] {
+            s.key(k);
+        }
+        let snap = s.output_simplified(!s.simplified().unwrap());
+        assert!(snap.ok && snap.handled && snap.text() == "風景", "{:?}", snap);
+        assert_eq!(snap.notice(), "已切換為輸出簡體字");
+        assert_eq!(s.key("Enter").commit, "风景");
+        let back = s.output_simplified(!s.simplified().unwrap());
+        assert!(back.handled && s.simplified() == Some(false), "再按一次切回繁體");
     }
 
     // #173：引擎開著「Caps Lock 開著時直接打英文」（ZUIN_TEST_CAPS_PIPE 的 settings.json 有 caps_lock_english=true）。

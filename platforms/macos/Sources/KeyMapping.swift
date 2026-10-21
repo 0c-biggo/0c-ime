@@ -47,6 +47,15 @@ enum KeyMapping {
         }
     }
 
+    /// F11 的鍵碼（與排列無關）。
+    static let f11Code: UInt16 = 103
+
+    /// 切換「輸出簡體字」的 ⌃⇧F11（#192，settings.SimplifiedHotkeyLabel）：只按著 Control 與 Shift，沒有 Command／Option。
+    /// F 鍵的事件本來就帶 .function（不論有沒有按 fn），不看它。要不要攔由呼叫端看引擎回報的 simplified_hotkey。
+    static func simplifiedHotkey(code: UInt16, modifiers: NSEvent.ModifierFlags) -> Bool {
+        code == f11Code && modifiers.contains([.control, .shift]) && modifiers.intersection([.command, .option]).isEmpty
+    }
+
     /// Ctrl＋標點打出的全形標點：引擎冷啟動時排隊，重送後引擎沒處理（設定剛關掉）就補送這個字給 App。
     static let ctrlPunctText: [String: String] = ["Ctrl+,": "，", "Ctrl+.": "。", "Ctrl+'": "、", "Ctrl+;": "；", "Ctrl+?": "？", "Ctrl+!": "！"]
 

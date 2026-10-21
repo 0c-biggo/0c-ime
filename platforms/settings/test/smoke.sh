@@ -208,6 +208,14 @@ if window_up; then
   xdotool key space
   sleep 3
   check "輸出簡體字開關可改回 off" grep -q '"output_simplified": false' "$(settings_of live)"
+  # 下一個是「用快捷鍵切換簡體字」（#192），預設關閉，說明寫出快捷鍵。
+  xdotool key --delay 150 Tab space
+  sleep 3
+  check "快捷鍵開關可保存 on" grep -q '"simplified_hotkey": true' "$(settings_of live)"
+  import -window root "$OUT/simplified-hotkey-on.png"
+  xdotool key space
+  sleep 3
+  check "快捷鍵開關可改回 off" grep -q '"simplified_hotkey": false' "$(settings_of live)"
 else bad "live/output 視窗沒有出現"; cat /tmp/app-live-output.log; fi
 stop_app
 
