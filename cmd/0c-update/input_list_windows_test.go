@@ -9,13 +9,16 @@ import (
 
 // #191 發版前 code review：工作階段只給使用者名稱，SID 由名稱查回；查回的必須是 token 上的那個 SID，比對才成立。
 func TestAccountSIDFromNameMatchesToken(t *testing.T) {
-	sid, err := processUserSID()
+	process, err := processUser()
 	if err != nil {
 		t.Fatal(err)
 	}
-	name, err := processAccount()
-	if err != nil {
-		t.Fatal(err)
+	if want, err := processUserSID(); err != nil || !strings.EqualFold(process.sid, want) {
+		t.Fatalf("processUser 的 SID %q，token 是 %q（%v）", process.sid, want, err)
+	}
+	sid, name := process.sid, process.name
+	if name == "" {
+		t.Fatal("查不到這個程序的帳號名稱")
 	}
 	if got := accountSID(name); !strings.EqualFold(got, sid) {
 		t.Fatalf("accountSID(%q) = %q，token 是 %q", name, got, sid)
