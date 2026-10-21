@@ -27,7 +27,8 @@ func listInputMethod(base string) {
 	}
 }
 
-// listsOwnDesktop：這個程序是不是工作階段登入的那位使用者（見 ownsDesktop）。以另一個帳號提權的安裝程式不加入，只提示。
+// listsOwnDesktop：這個程序是不是工作階段登入的那位使用者（見 ownsDesktop）。以另一個帳號提權的安裝程式不加入，只提示
+// 這次安裝其實裝在那個帳號。
 func listsOwnDesktop() bool {
 	elevated := windows.GetCurrentProcessToken().IsElevated()
 	var process, session account
@@ -48,8 +49,10 @@ func listsOwnDesktop() bool {
 				process.name = process.sid
 			}
 		}
-		fmt.Fprintf(os.Stderr, "0c-update: 系統管理員權限是以另一個帳號（%s）確認的，沒有替它把靈犀注音加入輸入法清單；"+
-			"請以目前桌面使用者（%s）的帳號安裝，或在 Windows 語言設定的「中文（台灣）」新增「靈犀注音」鍵盤\n", process.name, session.name)
+		// 這時整套安裝都在那個管理員帳號（見 ownsDesktop），不只是清單。
+		fmt.Fprintf(os.Stderr, "0c-update: 系統管理員權限是以另一個帳號（%[1]s）確認的：這次安裝的程式、自動更新與登入啟動都在 %[1]s，"+
+			"不在目前桌面使用者（%[2]s），也沒有加入輸入法清單。要給 %[2]s 使用，請以 %[2]s 自己的帳號確認系統管理員權限重新安裝\n",
+			process.name, session.name)
 	}
 	return false
 }
