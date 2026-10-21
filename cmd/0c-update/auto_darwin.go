@@ -295,7 +295,28 @@ func inputSourcePending(base string) bool { return fileExists(inputSourceMarker(
 // addInputMethod 補做安裝或回復時沒啟用成功的輸入來源（見 retryInputSource）。
 func addInputMethod() error {
 	asid, _ := macAquaSession(context.Background())
-	return retryInputSource(basePath(), asid, macBootTime(), time.Now(), activateInputSource)
+	return retryInputSource(basePath(), asid, macBootTime(), time.Now(), activateInputSource, inputSourceEnabled)
+}
+
+// confirmSince：App 內附的 0c 從這一版起有 --confirm-input-source（#87）；更早的 0c 不認得的參數會當成輸入法程式
+// 啟動，所以先看版本。
+const confirmSince = "0.1.0-dev.61"
+
+// inputSourceEnabled 查詢 app 的輸入來源是否已啟用：以 tool 在新的行程回讀 TIS（本行程的 TIS 有快取），只查詢、
+// 不登記也不啟用，不會跳系統詢問。已啟用且目前選著靈犀注音的其他來源時，它會改選這一版的來源，與安裝時啟用成功
+// 的結果相同。tool 的版本太舊、讀不到或逾時都當成還沒啟用。
+func inputSourceEnabled(tool, app string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	v := bundleBuildVersion(ctx, filepath.Dir(filepath.Dir(filepath.Dir(tool))))
+	if !update.ValidVersion(v) {
+		return false
+	}
+	if order, err := update.CompareVersion(v, confirmSince); err != nil || order < 0 {
+		return false
+	}
+	out, err := exec.CommandContext(ctx, tool, "--confirm-input-source", app).Output()
+	return err == nil && confirmedInputSource(string(out))
 }
 
 // scheduleExists：修復只針對 Windows 防毒軟體移除排程的情況；這裡不檢查。
