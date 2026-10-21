@@ -166,7 +166,8 @@
   function applyText(apply) {
     switch (apply && apply.state) {
       case 'applied': return ['已儲存，下一個按鍵起生效。', 'ok'];
-      case 'engine_not_running': return ['已儲存，輸入法下次啟動時生效。', 'ok'];
+      // 引擎沒在執行：外殼在下一個按鍵啟動引擎（macOS、Windows 由 0c-update 先叫起常駐引擎），啟動時讀新設定。
+      case 'engine_not_running': return ['已儲存，下一個按鍵起生效。', 'ok'];
       case 'deferred_composing': return ['已儲存。你正在組字，完成後會在輸入法下次重新啟動時生效。', 'warn'];
       case 'timeout': return ['已儲存，但等候套用逾時，尚未生效。', 'warn'];
       case 'failed': return ['已儲存，但尚未套用' + (apply.detail ? '（' + apply.detail + '）' : '') + '。', 'warn'];

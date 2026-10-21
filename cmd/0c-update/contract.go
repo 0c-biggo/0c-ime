@@ -36,7 +36,7 @@ const (
 const (
 	applyNotRequested  = "not_requested"      // 沒有要求套用：下次引擎啟動時生效
 	applyApplied       = "applied"            // 引擎已交接退出，下一個按鍵以新設定重新啟動
-	applyEngineStopped = "engine_not_running" // 引擎沒有在執行：下次啟動時就是新設定
+	applyEngineStopped = "engine_not_running" // 引擎沒有在執行：外殼下一個按鍵啟動引擎時就是新設定
 	applyDeferred      = "deferred_composing" // 仍在組字：已儲存，等引擎自然重啟
 	applyTimeout       = "timeout"
 	applyFailed        = "failed"
