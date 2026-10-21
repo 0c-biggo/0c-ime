@@ -257,7 +257,7 @@ func macReloginRequired(base string) bool {
 	}
 	stored, _ := strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64)
 	current, _ := macAquaSession(context.Background())
-	if boot := macBootTime(); (!boot.IsZero() && boot.After(info.ModTime())) || (stored != 0 && current != 0 && stored != current) {
+	if crossedLogin(stored, info.ModTime(), current, macBootTime()) {
 		os.Remove(reloginMarker(base))
 		return false
 	}

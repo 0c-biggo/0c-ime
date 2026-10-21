@@ -272,40 +272,30 @@ func notifyWithAction(_ context.Context, n autoupdate.Notice) (string, error) {
 // setupInputMethod：此平台由安裝程式註冊輸入法，不需額外設定。
 func setupInputMethod(string) error { return nil }
 
-func inputSourceMarker(base string) string { return filepath.Join(base, "update", "input-source") }
-
-// deferInputSource 記下要啟用的輸入來源：新裝的 App 要重新登入後系統才登記得到，由之後每次排程喚起補做（addInputMethod）。
+// deferInputSource 記下要啟用的輸入來源：新裝的 App 要重新登入後系統才登記得到，由之後的排程喚起補做（addInputMethod）。
 // 只寫記號，不動狀態檔：安裝多半在協調器手上拿著狀態時進行，這裡存的欄位會被協調器存檔蓋掉（#195）。
+// 安裝、回復當下已在這個登入工作階段試過一次，記下來，排程跨過登入邊界才再試（見 inputSourceRetry）。
 func deferInputSource(tool, app string) error {
 	base := basePath()
 	if err := os.MkdirAll(filepath.Dir(inputSourceMarker(base)), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(inputSourceMarker(base), []byte(tool+"\n"+app+"\n"), 0o600)
+	if err := os.WriteFile(inputSourceMarker(base), []byte(tool+"\n"+app+"\n"), 0o600); err != nil {
+		return err
+	}
+	asid, _ := macAquaSession(context.Background())
+	saveInputSourceRetry(base, inputSourceRetry{ASID: asid, At: time.Now()})
+	return nil
 }
 
-// inputSourcePending：安裝或回復時有輸入來源還沒啟用成功，每次排程喚起都補試，不靠狀態檔的 ProfileAtLogin（#195）。
+// inputSourcePending：安裝或回復時有輸入來源還沒啟用成功（不靠狀態檔的 ProfileAtLogin，#195）；要不要在這次喚起補做由
+// addInputMethod 依 inputSourceRetry 決定。
 func inputSourcePending(base string) bool { return fileExists(inputSourceMarker(base)) }
 
-// addInputMethod 啟用安裝或回復時記下的輸入來源；成功後清除記錄，失敗則留待下次喚起。記錄看不懂、App 已不在時直接清掉。
+// addInputMethod 補做安裝或回復時沒啟用成功的輸入來源（見 retryInputSource）。
 func addInputMethod() error {
-	marker := inputSourceMarker(basePath())
-	b, err := os.ReadFile(marker)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	tool, app, ok := deferredInputSource(b, fileExists)
-	if !ok {
-		os.Remove(marker)
-		return nil
-	}
-	if err = activateInputSource(tool, app); err != nil {
-		return err
-	}
-	return os.Remove(marker)
+	asid, _ := macAquaSession(context.Background())
+	return retryInputSource(basePath(), asid, macBootTime(), time.Now(), activateInputSource)
 }
 
 // scheduleExists：修復只針對 Windows 防毒軟體移除排程的情況；這裡不檢查。

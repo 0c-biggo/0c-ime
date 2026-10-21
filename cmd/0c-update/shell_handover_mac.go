@@ -4,12 +4,14 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/0c-biggo/0c-ime/internal/autoupdate"
 	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
@@ -205,6 +207,116 @@ func deferredInputSource(b []byte, exists func(string) bool) (tool, app string, 
 		}
 	}
 	return tool, app, true
+}
+
+// inputSourceRetry 是排程補做輸入來源啟用的紀錄（update/input-source-retry.json，與 input-source 記號並存）。
+// 啟用失敗時（使用者在系統詢問按「不允許」或沒理它、新的輸入模式要重新登入才登記得到）重試只會每次再跳一次詢問
+// （.12 實測：按了「不允許」，下一次執行 --activate-input-source 又跳），所以同一個登入工作階段只試一次：安裝、
+// 回復當下的那次算這個工作階段的；跨過登入邊界（同 relogin-required 的判斷）再試，跟 0.2.3 以前登入時補做一樣。
+// 沒有紀錄的記號（0.2.3 以前留下的，#195 回報者的情形）立即試一次。排程補做連續在 inputSourceRetrySessions 個
+// 登入工作階段失敗就停止，留下記號與最後的錯誤給狀態摘要；之後的安裝啟用成功時一併清掉。
+type inputSourceRetry struct {
+	ASID   uint64    `json:"asid,omitempty"` // 最後一次嘗試所在的登入工作階段；取不到時為 0，改看開機時間
+	At     time.Time `json:"at"`
+	Failed int       `json:"failed,omitempty"` // 排程補做失敗過的登入工作階段數（不含安裝當下那次）
+	Error  string    `json:"error,omitempty"`
+}
+
+const inputSourceRetrySessions = 3
+
+// due：這次排程喚起要不要補做。r 為 nil 表示沒有紀錄（或看不懂）。
+func (r *inputSourceRetry) due(current uint64, boot time.Time) bool {
+	if r == nil {
+		return true
+	}
+	return !r.stopped() && crossedLogin(r.ASID, r.At, current, boot)
+}
+
+func (r *inputSourceRetry) stopped() bool { return r != nil && r.Failed >= inputSourceRetrySessions }
+
+// failed 回傳這次補做失敗後的紀錄。
+func (r *inputSourceRetry) failed(current uint64, now time.Time, err error) inputSourceRetry {
+	next := inputSourceRetry{ASID: current, At: now, Failed: 1, Error: err.Error()}
+	if r != nil {
+		next.Failed = r.Failed + 1
+	}
+	return next
+}
+
+func parseInputSourceRetry(b []byte) *inputSourceRetry {
+	var r inputSourceRetry
+	if json.Unmarshal(b, &r) != nil || r.At.IsZero() {
+		return nil
+	}
+	return &r
+}
+
+// crossedLogin：at 時記下、當時登入工作階段為 stored 的紀錄，現在（工作階段 current、開機時間 boot）是否已跨過登入邊界：
+// 之後重新開機過，或兩邊都取得到 ASID 且不同。
+func crossedLogin(stored uint64, at time.Time, current uint64, boot time.Time) bool {
+	return (!boot.IsZero() && boot.After(at)) || (stored != 0 && current != 0 && stored != current)
+}
+
+func inputSourceMarker(base string) string { return filepath.Join(base, "update", "input-source") }
+
+func inputSourceRetryFile(base string) string {
+	return filepath.Join(base, "update", "input-source-retry.json")
+}
+
+// clearInputSource：輸入來源已啟用（或 App 已不在），刪掉記號與補做紀錄。
+func clearInputSource(base string) {
+	os.Remove(inputSourceMarker(base))
+	os.Remove(inputSourceRetryFile(base))
+}
+
+func loadInputSourceRetry(base string) *inputSourceRetry {
+	b, err := os.ReadFile(inputSourceRetryFile(base))
+	if err != nil {
+		return nil
+	}
+	return parseInputSourceRetry(b)
+}
+
+func saveInputSourceRetry(base string, r inputSourceRetry) {
+	if b, err := json.Marshal(r); err == nil {
+		_ = os.WriteFile(inputSourceRetryFile(base), append(b, '\n'), 0o600)
+	}
+}
+
+// retryInputSource 啟用安裝或回復時記下的輸入來源，同一個登入工作階段只試一次（inputSourceRetry）：成功後清除記錄，
+// 失敗則記下，跨過登入邊界再試；連續 inputSourceRetrySessions 個登入工作階段都失敗就停止，記進更新紀錄。
+// 記錄看不懂、App 已不在時直接清掉。asid、boot 是目前的登入工作階段與開機時間。
+func retryInputSource(base string, asid uint64, boot, now time.Time, activate func(tool, app string, force ...bool) error) error {
+	b, err := os.ReadFile(inputSourceMarker(base))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	tool, app, ok := deferredInputSource(b, func(p string) bool { _, err := os.Stat(p); return err == nil })
+	if !ok {
+		clearInputSource(base)
+		return nil
+	}
+	r := loadInputSourceRetry(base)
+	if !r.due(asid, boot) {
+		return nil
+	}
+	if err = activate(tool, app); err == nil {
+		clearInputSource(base)
+		return nil
+	}
+	next := r.failed(asid, now, err)
+	saveInputSourceRetry(base, next)
+	if next.stopped() {
+		_, _ = autoupdate.EditState(base, func(s *autoupdate.State) error {
+			s.Record("input_source_retry_stopped", next.Error)
+			return nil
+		})
+		return fmt.Errorf("已在 %d 次登入後補做仍未啟用，不再自動重試；請在「系統設定 → 鍵盤 → 文字輸入 → 編輯」加入「靈犀注音」並允許（%w）", next.Failed, err)
+	}
+	return err
 }
 
 func parsePID(s string) (uint32, error) {

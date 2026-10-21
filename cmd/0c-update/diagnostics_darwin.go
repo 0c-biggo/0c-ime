@@ -54,6 +54,14 @@ func shellDiagnostics() map[string]any {
 		ready, _ := macShellBoundary(receiptPath(), r, asid, macBootTime())
 		out["new_login_since_install"] = ready
 	}
+	// 安裝時沒啟用成功、還在等排程補做（或已停止補做）的輸入來源（#195）。
+	if inputSourcePending(basePath()) {
+		pending := map[string]any{}
+		if r := loadInputSourceRetry(basePath()); r != nil {
+			pending["failed_logins"], pending["stopped"], pending["error"] = r.Failed, r.stopped(), r.Error
+		}
+		out["input_source_pending"] = pending
+	}
 	return out
 }
 
