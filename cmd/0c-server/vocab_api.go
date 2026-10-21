@@ -13,7 +13,7 @@ import (
 
 // startVocabAPI 在「讓 AI 幫你加詞」開啟時（api.json，預設關閉）於 127.0.0.1 監聽本機 API（#126）。
 // 回傳停止函式與給 health 的狀態；沒有開啟時狀態是 off。埠被占用時照常輸入，只回報 port_in_use。
-// save 是寫 vocab.json 的函式（與 IPC 的 OnVocab 相同）：API 改了詞彙，回應前一定先存（#196）。
+// save 寫 vocab.json 並標記 user.json 要存（與 IPC 的 OnVocab 相同）：API 改了詞彙，回應前一定先存 vocab.json（#196）。
 func startVocabAPI(dir string, eng *engine.Engine, version string, save func() error, lg *log.Logger) (stop func(), info func() map[string]string) {
 	state := func(s string) func() map[string]string {
 		return func() map[string]string { return map[string]string{"api_state": s} }
