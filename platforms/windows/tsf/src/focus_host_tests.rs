@@ -263,3 +263,42 @@ fn switching_documents_directly_commits_to_the_previous() {
     assert!(edits_a.get() > 0 && edits_b.get() == 0, "{} {}", edits_a.get(), edits_b.get());
     service.state.borrow_mut().callback = None;
 }
+
+/// 宿主把組字搬到另一個 context（Excel 把組字交給儲存格編輯器）。
+fn move_composition(service: &ComObject<TextService>, ctx: ITfContext) {
+    let range: ITfRange = ComObject::new(Range { ctx }).into_interface();
+    let composition: ITfComposition = ComObject::new(Comp { range }).into_interface();
+    service.state.borrow_mut().composition = Some(composition);
+}
+
+#[test]
+fn focus_to_null_commits_to_where_the_composition_now_is() {
+    // 發版前 code review 第二輪：組字中焦點 A → NULL，確認前宿主把組字搬到 C，焦點卻接著落到 B（例如馬上點了別的地方）。
+    // 要送到組字實際所在的 C；送到焦點移到 NULL 前記下的 A，A 的 edit session 改不到 C 裡的組字範圍，打到一半的字會不見。
+    let Some((service, doc_a, edits_a, doc_b, edits_b)) = composing_in_a() else {
+        return;
+    };
+    let (_doc_c, ctx_c, edits_c) = document();
+    let sink: ITfThreadMgrEventSink = service.to_interface();
+    unsafe { sink.OnSetFocus(None::<&ITfDocumentMgr>, &doc_a) }.unwrap();
+    move_composition(&service, ctx_c);
+    unsafe { sink.OnSetFocus(&doc_b, None::<&ITfDocumentMgr>) }.unwrap();
+    assert!(edits_c.get() > 0, "組字要送到 C");
+    assert_eq!((edits_a.get(), edits_b.get()), (0, 0), "不送到 A、B");
+    service.state.borrow_mut().callback = None;
+}
+
+#[test]
+fn switching_documents_commits_to_the_composition_context() {
+    // 直接換文件時也以組字範圍本身的 context 為準：原文件 A 的 context 跟組字所在的 C 不同時送到 C。
+    let Some((service, doc_a, edits_a, doc_b, edits_b)) = composing_in_a() else {
+        return;
+    };
+    let (_doc_c, ctx_c, edits_c) = document();
+    move_composition(&service, ctx_c);
+    let sink: ITfThreadMgrEventSink = service.to_interface();
+    unsafe { sink.OnSetFocus(&doc_b, &doc_a) }.unwrap();
+    assert!(edits_c.get() > 0, "組字要送到 C");
+    assert_eq!((edits_a.get(), edits_b.get()), (0, 0), "不送到 A、B");
+    service.state.borrow_mut().callback = None;
+}
