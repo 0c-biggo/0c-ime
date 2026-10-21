@@ -109,6 +109,8 @@ struct State {
     openclose_value: i32,
     /// 組字中焦點移到 NULL 時的原文件（#189）：之後確認焦點沒回到組字所在的文件，就照舊送出到這裡。
     focus_watch: FocusWatch<ITfContext>,
+    /// OnTestKeyDown 對 Ctrl＋Shift＋F11 的決定（#192），OnKeyDown 沿用。
+    hotkey_tested: keys::Tested,
 }
 
 /// 候選窗最近一次的呈現：OnLayoutChange 時重查游標位置並補送。
@@ -245,10 +247,21 @@ impl State {
     }
 
     /// 這一鍵是不是要攔下來切換「輸出簡體字」的 Ctrl＋Shift＋F11（#192）：引擎可用而且回報 simplified_hotkey
-    /// （設定開著、能即時切換）。先看按鍵本身，不是這個鍵就不問引擎。TestKeyDown 與 OnKeyDown 用同一個答案；
-    /// 是的話不先送出組字（同選單，組字不動）。
+    /// （設定開著、能即時切換）。先看按鍵本身，不是這個鍵就不問引擎。是的話不先送出組字（同選單，組字不動）。
+    /// TestKeyDown 問（test_simplified_hotkey），OnKeyDown 沿用同一個答案（key_simplified_hotkey）。
     fn simplified_hotkey(&mut self, vk: u32) -> bool {
         keys::simplified_hotkey(vk) && self.session.available() && self.session.simplified_hotkey()
+    }
+
+    fn test_simplified_hotkey(&mut self, vk: u32) -> bool {
+        let decision = self.simplified_hotkey(vk);
+        self.hotkey_tested.record(vk, decision);
+        decision
+    }
+
+    fn key_simplified_hotkey(&mut self, vk: u32) -> bool {
+        let mut tested = std::mem::take(&mut self.hotkey_tested);
+        tested.take(vk, || self.simplified_hotkey(vk))
     }
 
     fn tap(&mut self, side: keys::Side) -> &mut keys::ShiftTap {
@@ -315,6 +328,7 @@ impl TextService {
                 openclose: None,
                 openclose_value: 0,
                 focus_watch: FocusWatch::default(),
+                hotkey_tested: keys::Tested::default(),
             }),
             applying: Cell::new(0),
             layout_missed: Cell::new(false),
@@ -1303,7 +1317,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             let vk = wparam.0 as u32;
             self.observe_shift(vk, lparam.0);
             // 用快捷鍵切換簡體字（#192）：設定開著時吃掉，OnKeyDown 才切換；不先送出組字。
-            if self.state.borrow_mut().simplified_hotkey(vk) {
+            if self.state.borrow_mut().test_simplified_hotkey(vk) {
                 zdebug!("OnTestKeyDown vk={} -> 切換簡體字", vk);
                 return Ok(true.into());
             }
@@ -1360,8 +1374,9 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             let vk = wparam.0 as u32;
             self.observe_shift(vk, lparam.0);
             // 用快捷鍵切換簡體字（#192）：跟輸入指示器選單的「輸出簡體字」同一條路，組字不動、提示「已切換為…」、
-            // 工作列「中」↔「简」。TestKeyDown 已經說要吃，切換失敗（引擎剛好斷線）也照樣吃掉，按鍵不會半途交給應用程式。
-            if self.state.borrow_mut().simplified_hotkey(vk) {
+            // 工作列「中」↔「简」。沿用 TestKeyDown 的決定（不再問引擎）：說要吃就一定吃，切換失敗（引擎剛好斷線）也照樣吃掉，
+            // 按鍵不會半途交給應用程式（F11 在瀏覽器、Excel 是全螢幕），放開時 OnTestKeyUp 看 eaten 也一致。
+            if self.state.borrow_mut().key_simplified_hotkey(vk) {
                 let on = !self.state.borrow().session.simplified().unwrap_or(false);
                 let switched = self.set_output_simplified(on);
                 zdebug!("OnKeyDown vk={} 切換簡體字 on={} ok={}", vk, on, switched);

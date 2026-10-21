@@ -234,6 +234,24 @@ pub fn is_simplified_hotkey(vk: u32, ctrl: bool, shift: bool, other: bool) -> bo
     vk == VK_SIMPLIFIED_HOTKEY && ctrl && shift && !other
 }
 
+/// OnTestKeyDown 對一個鍵的決定，留給接著的 OnKeyDown 沿用（#192）：要問引擎的決定（health IPC）在 TestKeyDown 問一次，
+/// 兩次答案不會因為引擎剛好在中間斷線或改了設定而不同（TestKeyDown 說要吃、OnKeyDown 卻交給應用程式），
+/// 宿主的 UI 執行緒每按一次也只多一次同步往返。
+#[derive(Default)]
+pub struct Tested(Option<(u32, bool)>);
+impl Tested {
+    pub fn record(&mut self, vk: u32, decision: bool) {
+        self.0 = Some((vk, decision));
+    }
+    /// OnKeyDown：TestKeyDown 剛為同一個鍵決定過就沿用（只用一次）；宿主沒先呼叫 TestKeyDown（或是別的鍵）才呼叫 `ask`。
+    pub fn take(&mut self, vk: u32, ask: impl FnOnce() -> bool) -> bool {
+        match self.0.take() {
+            Some((tested, decision)) if tested == vk => decision,
+            _ => ask(),
+        }
+    }
+}
+
 /// 不按 Ctrl 時的字元對應的 Ctrl＋標點鍵名。
 pub fn ctrl_punct_name(c: &str) -> Option<&'static str> {
     Some(match c {
@@ -619,6 +637,22 @@ mod tests {
         assert!(!is_simplified_hotkey(f11, true, true, true), "多按 Alt／Win");
         assert!(!is_simplified_hotkey(0x7B, true, true, false), "Ctrl＋Shift＋F12");
         assert!(!is_simplified_hotkey(0x46, true, true, false), "Ctrl＋Shift＋F");
+    }
+
+    #[test]
+    fn key_down_reuses_the_test_key_down_decision() {
+        // #192 code review：TestKeyDown 說要吃 Ctrl＋Shift＋F11，OnKeyDown 時引擎剛好斷線也照樣吃，不再問一次。
+        let mut tested = Tested::default();
+        tested.record(VK_SIMPLIFIED_HOTKEY, true);
+        assert!(tested.take(VK_SIMPLIFIED_HOTKEY, || panic!("不應再問引擎")));
+        // 只用一次：下一次（宿主直接呼叫 OnKeyDown、沒先 TestKeyDown）重新問。
+        assert!(!tested.take(VK_SIMPLIFIED_HOTKEY, || false));
+        // TestKeyDown 說不吃，OnKeyDown 也不吃。
+        tested.record(VK_SIMPLIFIED_HOTKEY, false);
+        assert!(!tested.take(VK_SIMPLIFIED_HOTKEY, || panic!("不應再問引擎")));
+        // 記下的是別的鍵：照常問。
+        tested.record(0x41, false);
+        assert!(tested.take(VK_SIMPLIFIED_HOTKEY, || true));
     }
 
     #[test]
