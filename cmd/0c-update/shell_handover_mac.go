@@ -287,8 +287,10 @@ func saveInputSourceRetry(base string, r inputSourceRetry) {
 
 // retryInputSource 啟用安裝或回復時記下的輸入來源，同一個登入工作階段只試一次（inputSourceRetry）：成功後清除記錄，
 // 失敗則記下，跨過登入邊界再試；連續 inputSourceRetrySessions 個登入工作階段都失敗就停止，記進更新紀錄。
+// 不補做的喚起（這個工作階段已試過、或已停止補做）只以 enabled 查詢、不啟用：使用者自己到系統設定加入，或之後才在
+// 系統詢問按「允許」時，記號與紀錄就清掉，狀態摘要不再顯示還沒啟用。
 // 記錄看不懂、App 已不在時直接清掉。asid、boot 是目前的登入工作階段與開機時間。
-func retryInputSource(base string, asid uint64, boot, now time.Time, activate func(tool, app string, force ...bool) error) error {
+func retryInputSource(base string, asid uint64, boot, now time.Time, activate func(tool, app string, force ...bool) error, enabled func(tool, app string) bool) error {
 	b, err := os.ReadFile(inputSourceMarker(base))
 	if os.IsNotExist(err) {
 		return nil
@@ -303,6 +305,9 @@ func retryInputSource(base string, asid uint64, boot, now time.Time, activate fu
 	}
 	r := loadInputSourceRetry(base)
 	if !r.due(asid, boot) {
+		if enabled(tool, app) {
+			clearInputSource(base)
+		}
 		return nil
 	}
 	if err = activate(tool, app); err == nil {
@@ -319,6 +324,15 @@ func retryInputSource(base string, asid uint64, boot, now time.Time, activate fu
 		return fmt.Errorf("已在 %d 次登入後補做仍未啟用，不再自動重試；請在「系統設定 → 鍵盤 → 文字輸入 → 編輯」加入「靈犀注音」並允許（%w）", next.Failed, err)
 	}
 	return err
+}
+
+// confirmedInputSource 解析 `0c --confirm-input-source <App>` 的輸出：每行「<ID> enabled|disabled|missing」，依啟用順序
+// 列出、可選取的來源在最後；可選取的來源已啟用、改選了它時再多一行「<ID> selected」。回報可選取的來源是否已啟用，
+// 與安裝時 --activate-input-source 判斷成功的條件相同（InputSource.swift 的 confirm）。
+func confirmedInputSource(out string) bool {
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	fields := strings.Fields(lines[len(lines)-1])
+	return len(fields) == 2 && (fields[1] == "enabled" || fields[1] == "selected")
 }
 
 func parsePID(s string) (uint32, error) {

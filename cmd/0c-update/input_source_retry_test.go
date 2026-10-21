@@ -22,8 +22,11 @@ type retryFixture struct {
 	base  string
 	calls int
 	fail  error
-	t0    time.Time
-	boot  time.Time
+	// enabled：不補做時查詢到的狀態（使用者自己在系統設定加入、或之後才按「允許」）；queries 是查詢次數。
+	enabled bool
+	queries int
+	t0      time.Time
+	boot    time.Time
 }
 
 func newRetryFixture(t *testing.T) *retryFixture {
@@ -52,6 +55,9 @@ func (f *retryFixture) run(asid uint64, minutes int) error {
 	return retryInputSource(f.base, asid, f.boot, f.t0.Add(time.Duration(minutes)*time.Minute), func(string, string, ...bool) error {
 		f.calls++
 		return f.fail
+	}, func(string, string) bool {
+		f.queries++
+		return f.enabled
 	})
 }
 
@@ -175,6 +181,45 @@ func TestInputSourceRetryUnknownInstallSessionRetriesAfterLogin(t *testing.T) {
 	}{{0, 0, false}, {0, 7, true}, {7, 0, false}, {7, 7, false}, {7, 8, true}} {
 		if got := crossedLogin(c.stored, f.t0, c.current, f.boot); got != c.want {
 			t.Errorf("crossedLogin(stored %d, current %d) = %v, want %v", c.stored, c.current, got, c.want)
+		}
+	}
+}
+
+// 停止補做後使用者自己到「系統設定 → 鍵盤 → 文字輸入」加入靈犀注音：之後的喚起只查詢（不跑啟用工具、不跳詢問），
+// 查到已啟用就清掉記號與紀錄，狀態摘要不再顯示停止補做與舊的錯誤。同一個工作階段之後才按「允許」也一樣。
+func TestInputSourceRetryClearsOnceEnabledElsewhere(t *testing.T) {
+	f := newRetryFixture(t)
+	f.fail = errors.New("已要求啟用，但系統尚未啟用 (exit status 2)")
+	saveInputSourceRetry(f.base, inputSourceRetry{ASID: 9, At: f.t0, Failed: inputSourceRetrySessions, Error: f.fail.Error()})
+	if err := f.run(10, 60); err != nil || f.calls != 0 || f.queries != 1 || !f.pending() {
+		t.Fatalf("stopped, not enabled yet: err=%v calls=%d queries=%d pending=%v", err, f.calls, f.queries, f.pending())
+	}
+	f.enabled = true
+	if err := f.run(10, 75); err != nil || f.calls != 0 || f.pending() || onDisk(inputSourceRetryFile(f.base)) {
+		t.Fatalf("enabled by the user: err=%v calls=%d pending=%v", err, f.calls, f.pending())
+	}
+
+	f = newRetryFixture(t)
+	saveInputSourceRetry(f.base, inputSourceRetry{ASID: 7, At: f.t0}) // 安裝當下試過、沒成功
+	f.enabled = true                                                  // 之後才在系統詢問按「允許」
+	if err := f.run(7, 15); err != nil || f.calls != 0 || f.queries != 1 || f.pending() {
+		t.Fatalf("allowed later in the same session: err=%v calls=%d queries=%d pending=%v", err, f.calls, f.queries, f.pending())
+	}
+}
+
+func TestConfirmedInputSource(t *testing.T) {
+	for out, want := range map[string]bool{
+		"com.biggo.inputmethod.0c enabled\ncom.biggo.inputmethod.0c.Bopomofo enabled\n":                                             true,
+		"com.biggo.inputmethod.0c disabled\ncom.biggo.inputmethod.0c.Bopomofo enabled\n":                                            true, // 父項要等「允許」，模式啟用即可
+		"com.biggo.inputmethod.0c enabled\ncom.biggo.inputmethod.0c.Bopomofo enabled\ncom.biggo.inputmethod.0c.Bopomofo selected\n": true,
+		"com.biggo.inputmethod.0c enabled\ncom.biggo.inputmethod.0c.Bopomofo disabled\n":                                            false,
+		"com.biggo.inputmethod.0c enabled\ncom.biggo.inputmethod.0c.Bopomofo missing\n":                                             false,
+		"org.zuin.inputmethod.Zuin enabled\n":                                                                                       true, // 回復到沒有模式的版本
+		"":                                                                                                                          false,
+		"不是靈犀注音的 App\n":                                                                                                             false,
+	} {
+		if got := confirmedInputSource(out); got != want {
+			t.Errorf("confirmedInputSource(%q) = %v, want %v", out, got, want)
 		}
 	}
 }
