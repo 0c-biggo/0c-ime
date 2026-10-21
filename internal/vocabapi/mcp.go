@@ -126,7 +126,7 @@ func (s *Server) rpc(req rpcRequest) rpcResponse {
 			resp.Error = &rpcError{-32602, "沒有這個工具：" + p.Name}
 			break
 		}
-		out, verr := Ops[i].call(s.Doer, p.Arguments)
+		out, verr := Ops[i].call(s.doer(), p.Arguments)
 		if verr != nil { // 工具執行失敗以結果回報，讓模型讀得到原因並轉告使用者
 			b, _ := json.Marshal(map[string]any{"error": verr})
 			resp.Result = map[string]any{"content": []any{map[string]any{"type": "text", "text": string(b)}}, "isError": true}

@@ -310,6 +310,34 @@ func serve() string {
 	}
 	lg.Printf("已載入 %s（%v）", *data, time.Since(start).Round(time.Millisecond))
 
+	// 存檔共用一把鎖；自訂詞彙要在本機 API 開始服務前就能存（#196），所以先定義。
+	var saveMu sync.Mutex
+	// 自訂詞彙在指令改了它時立即寫（IPC 與本機 API 都是）；失敗時記下。交接前與結束時，
+	// 寫入失敗過、或引擎裡的版本跟最後寫入的不同（漏存的路徑）都再寫一次。
+	vocabVersion := eng.VocabVersion
+	var vocabDirty bool
+	savedVocab := vocabVersion()
+	saveVocab := func() error {
+		saveMu.Lock()
+		defer saveMu.Unlock()
+		if vocabDisabled != "" {
+			return nil
+		}
+		v := vocabVersion() // 寫入前讀：寫進去的只會更新，之後最多多存一次，不會漏存
+		if err := datadir.SaveVocab(eng, vocabPath); err != nil {
+			vocabDirty = true
+			lg.Printf("自訂詞彙存檔失敗：%v", err)
+			return err
+		}
+		vocabDirty, savedVocab = false, v
+		return nil
+	}
+	vocabUnsaved := func() bool {
+		saveMu.Lock()
+		defer saveMu.Unlock()
+		return vocabDisabled == "" && (vocabDirty || vocabVersion() != savedVocab)
+	}
+
 	var listeners []*endpoint
 	var stopping atomic.Bool // 已決定結束：端點由自己關閉，不再當成被移除
 	stopAPI, apiInfo := func() {}, func() map[string]string { return map[string]string{"api_state": "off"} }
@@ -330,7 +358,7 @@ func serve() string {
 		listeners = append(listeners, l)
 	}
 	if eng.Preview02 && vocabDisabled == "" { // 本機 API 只能動自訂詞彙：詞彙不能改時不開（#126）
-		stopAPI, apiInfo = startVocabAPI(filepath.Dir(*user), eng, buildVersion, lg)
+		stopAPI, apiInfo = startVocabAPI(filepath.Dir(*user), eng, buildVersion, saveVocab, lg)
 	}
 	if err := e2esync.Pause(filepath.Dir(*user), "writer_ready"); err != nil {
 		closeAll()
@@ -339,7 +367,6 @@ func serve() string {
 
 	// 存檔：學習改變後標記，使用者停下來或最長間隔到了才整份重寫（save_schedule.go）；
 	// 交接與結束時一定寫。存檔前每日清理一次衰減到不影響排序的項目。
-	var saveMu sync.Mutex
 	schedule := newSaveSchedule()
 	save := func() error {
 		saveMu.Lock()
@@ -358,22 +385,6 @@ func serve() string {
 		}
 		return nil
 	}
-	// 自訂詞彙只在指令改了它時寫，立即寫；失敗時記下，交接前再試。
-	var vocabDirty bool
-	saveVocab := func() error {
-		saveMu.Lock()
-		defer saveMu.Unlock()
-		if vocabDisabled != "" {
-			return nil
-		}
-		if err := datadir.SaveVocab(eng, vocabPath); err != nil {
-			vocabDirty = true
-			lg.Printf("自訂詞彙存檔失敗：%v", err)
-			return err
-		}
-		vocabDirty = false
-		return nil
-	}
 	srv := &ipc.Server{Engine: eng, Log: lg, VocabDisabled: vocabDisabled, OnVocab: func() { saveVocab() },
 		OnCommit: func() { schedule.changed(time.Now(), false); remind.markCommitted() },
 		OnForget: func() { schedule.changed(time.Now(), true) }}
@@ -381,10 +392,7 @@ func serve() string {
 		if err := save(); err != nil {
 			return err
 		}
-		saveMu.Lock()
-		retry := vocabDirty
-		saveMu.Unlock()
-		if retry {
+		if vocabUnsaved() {
 			if err := saveVocab(); err != nil {
 				return err
 			}
@@ -585,6 +593,9 @@ func serve() string {
 	}
 	wg.Wait()
 	save()
+	if vocabUnsaved() { // 例如存檔失敗過、又不是交接（訊號或閒置結束）：放鎖前最後再試一次
+		saveVocab()
+	}
 	// 最後一次存檔之後才放鎖（端點此時已關閉）：交接中等鎖的新引擎在這之後才讀個人檔。
 	// 神經 worker 等收尾在 main 返回後才執行，不佔著鎖。
 	writerLock.Release()

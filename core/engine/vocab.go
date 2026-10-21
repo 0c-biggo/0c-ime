@@ -252,6 +252,17 @@ func (e *Engine) VocabSnapshot() *vocab.Set {
 	return e.Model.Vocab.Clone()
 }
 
+// VocabVersion 回傳自訂詞彙目前的版本（每次修改加一）；沒有自訂詞彙時是 0。
+// 宿主拿它跟最後寫入檔案的版本比，知道有沒有還沒存的修改（#196）。不像 VocabStatus 會建立空的詞彙。
+func (e *Engine) VocabVersion() uint64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.Model.Vocab == nil {
+		return 0
+	}
+	return e.Model.Vocab.Version()
+}
+
 // SetVocab 換上宿主載入的自訂詞彙。
 func (e *Engine) SetVocab(v *vocab.Set) {
 	e.mu.Lock()
