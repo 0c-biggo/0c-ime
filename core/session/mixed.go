@@ -455,6 +455,9 @@ const (
 // 英文前段（ok、gmail、iPhone）在明確的聲調鍵、後段至少兩個照順序打的注音鍵且組成常用字時也切開；
 // 接空白、前段夾數字或標點（網址、識別字）、聲調前一鍵是數字（帳號、編號）都照字面。整串本身是英文字（step3、zoom3）在呼叫前就排除。
 func (s *Session) mixedBoundary(raw, key string, tone rune) (int, zhuyin.Syllable, bool) {
+	if key == " " && s.englishThenPunct(raw) {
+		return 0, "", false
+	}
 	best, bestScore, bestSyl := 0, 0.0, zhuyin.Syllable("")
 	for at := len(raw) - 1; at >= 1; at-- {
 		if !s.mixedLiteralPrefix(raw[:at], raw[at:], key) {
@@ -491,6 +494,14 @@ func (s *Session) mixedBoundary(raw, key string, tone rune) (int, zhuyin.Syllabl
 		}
 	}
 	return best, bestSyl, best > 0
+}
+
+// englishThenPunct（#188）：英文字後面緊接著只有標點鍵（hello. 、vs. 、hello, 、hello; ），比照 #187「緊接在半形英數後面的
+// . , 是標點」，接空白時整串照字面，不把標點鍵切給中文（hello歐、vs歐），也不改把英文字尾借去組字（max. 不是 ma摟）。
+// 有數字（app2. 都、hello5. 周）或字母（helloej/ 公）的後段照舊由 mixedBoundary 判斷；明確的聲調鍵（hello.3）不在此限。
+func (s *Session) englishThenPunct(raw string) bool {
+	word := strings.TrimRightFunc(raw, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+	return word != raw && word != "" && s.mixedEnglishWord(word)
 }
 
 // mixedSyllableScore：單一音節在句首的解碼機率（含個人用字）。只在多字詞裡常見的音節以詞首計（應 → 應該）。

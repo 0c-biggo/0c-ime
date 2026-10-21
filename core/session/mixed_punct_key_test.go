@@ -21,13 +21,15 @@ func punctKeySession() *Session {
 		{"我", "ㄨㄛˇ", 1e-2}, {"歐", "ㄡ", 3e-4}, {"洲", "ㄓㄡ", 1e-4}, {"周", "ㄓㄡ", 5e-4}, {"車", "ㄔㄜ", 5e-4},
 		{"歐洲", "ㄡ ㄓㄡ", 3e-4}, {"歐洲車", "ㄡ ㄓㄡ ㄔㄜ", 1e-5}, {"欸", "ㄝ", 1e-4},
 		{"骯", "ㄤ", 1e-5}, {"鞥", "ㄥ", 1e-7}, {"兒", "ㄦ", 1e-4}, {"之", "ㄓ", 1e-3},
+		{"摟", "ㄌㄡ", 1e-4}, {"都", "ㄉㄡ", 1e-2}, {"公", "ㄍㄨㄥ", 1e-3},
 	} {
 		lex.Add(lexicon.Entry{Surface: e.w, Reading: zhuyin.ParseReading(e.r), PRW: 1})
 		sys.SetUni(e.w, e.p)
 	}
 	s := New(personal.NewModel(lex, sys))
 	s.MixedInput = true
-	s.English = english.New([]english.Word{{Text: "hello", Weight: 100}, {Text: "world", Weight: 50}})
+	s.English = english.New([]english.Word{{Text: "hello", Weight: 100}, {Text: "world", Weight: 50},
+		{Text: "vs", Weight: 40}, {Text: "max", Weight: 40}, {Text: "ma", Weight: 30}, {Text: "app", Weight: 40}})
 	return s
 }
 
@@ -98,6 +100,38 @@ func TestMixedPunctuationKeyAfterEnglishWordStaysPunctuation(t *testing.T) {
 	}
 	if snap := mixedType(s, ". "); snap.Text() != "hello. " {
 		t.Fatalf("hello. 顯示 %q", snap.Text())
+	}
+}
+
+// #188：直接打在英文字後面的標點鍵（hello. 、vs. ）是標點，接空白照字面，跟 #187 的「緊接在半形英數後面的 . 是句點」一致。
+// 原本 #119 的英→中切法把 . 切給中文（hello歐、vs歐），連後面的空白也吃掉（say my name歐You're）；
+// 先打空白再打 .（hello . 歐）、後段有數字或字母（app2. 都、hello5. 周）、明確的聲調鍵照舊組成中文。
+func TestMixedPunctuationKeyRightAfterEnglishWord(t *testing.T) {
+	for _, tc := range []struct{ keys, want string }{
+		{"hello. ", "hello. "},
+		{"vs. ", "vs. "},
+		{"hello, ", "hello, "},
+		{"hello; ", "hello; "},
+		{"hello/ ", "hello/ "},
+		{"hello- ", "hello- "},
+		{"hello.. ", "hello.. "},
+		{"hello. world", "hello. world"},
+		{"ji3hello. ", "我hello. "},
+		{"max. ", "max. "}, // 不改成把英文字尾借去組字（ma摟）
+		{"hello . ", "hello 歐"},
+		{"hello5. ", "hello周"},
+		{"app2. ", "app都"},
+		{"helloej/ ", "hello公"},
+		{"hello.ji3", "hello.我"},
+	} {
+		s := punctKeySession()
+		snap := mixedType(s, tc.keys)
+		if snap.Text() != tc.want {
+			t.Errorf("%q 顯示 %q，要 %q", tc.keys, snap.Text(), tc.want)
+		}
+		if got := key(s, proto.KeyEnter).Commit; got != tc.want {
+			t.Errorf("%q 提交 %q，要 %q", tc.keys, got, tc.want)
+		}
 	}
 }
 
