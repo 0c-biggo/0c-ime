@@ -175,7 +175,7 @@ func main() {
 		switch {
 		case line == "":
 			do(proto.Request{Type: proto.Commit})
-		case !strings.HasPrefix(line, ":"):
+		case !strings.HasPrefix(line, ":") || strings.TrimSpace(line[1:]) == "": // 只有「:」（Shift＋; 的標點）照字面送
 			for _, k := range line {
 				do(proto.Request{Type: proto.Key, Key: string(k)})
 			}

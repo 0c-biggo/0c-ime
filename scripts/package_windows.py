@@ -18,6 +18,7 @@ import zipfile
 from install_package import digest, regular
 from collect_notices import collect
 from package_release import ROOT, DATA_FILES, check_licenses, copy_licenses, check_release_docs, copy_release_docs, check_data, copy_neural, copy_english, seal_data
+import hf_models
 
 # 內嵌 Python 的 ._pth 或 PYTHONPATH 指向另一份原始碼時，會打包出那份程式（2026-10-01 曾因沿用舊建置目錄的
 # Python，把 dev.21 的程式標成新版本）。
@@ -279,6 +280,8 @@ def build(args):
                         raise ValueError(f"內附的 {crt} 不是 Microsoft 簽章")
                 authenticode_sign(unsigned_pe(stage / "neural", args), args)
         seal_data(stage, args.go, public=not args.preview)
+        if args.neural and not args.preview:  # #180：公開包內建 Hugging Face 公開版，配對出貨字典
+            hf_models.check_shipped(stage / "neural", stage / "data")
         copy(PLATFORM / "install.ps1", "install.ps1")
         copy_release_docs(release_docs, stage)
         copy_licenses(stage)

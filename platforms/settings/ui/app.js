@@ -5,7 +5,7 @@
 
   const tauri = window.__TAURI__;
   const invoke = (command, args) => tauri.core.invoke(command, args);
-  const PAGES = ['overview', 'input', 'output', 'vocab', 'update', 'troubleshoot', 'about'];
+  const PAGES = ['overview', 'input', 'output', 'vocab', 'models', 'update', 'troubleshoot', 'about'];
 
   const state = {
     info: null, status: null, settings: null, error: null,
@@ -19,6 +19,7 @@
     ? !!((state.settings && state.settings.features && state.settings.features.vocab) || (state.status && state.status.features && state.status.features.vocab))
     : null);
   let vocab = null;
+  let models = null; // 「模型」頁（#180，models.js）
 
   // ---- DOM ----
   function h(tag, attrs, ...kids) {
@@ -39,6 +40,24 @@
   const clear = (node) => { while (node.firstChild) node.removeChild(node.firstChild); return node; };
   const row = (left, right) => h('div', { class: 'row' }, left, right);
   const labelBlock = (label, desc, id) => h('div', {}, h('div', { class: 'label', id }, label), desc ? h('div', { class: 'desc' }, desc) : null);
+
+  async function copyText(text) {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+        toast('已複製。', 'ok');
+        return;
+      }
+    } catch (_) { /* 退回 execCommand */ }
+    const area = h('textarea', { class: 'offscreen', 'aria-hidden': 'true' });
+    area.value = text;
+    document.body.append(area);
+    area.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+    area.remove();
+    toast(ok ? '已複製。' : '無法複製，請手動選取文字。', ok ? 'ok' : 'error');
+  }
 
   function toast(message, kind) {
     const node = document.getElementById('toast');
@@ -61,6 +80,8 @@
       case 'fallback': return '模型無法使用，已退回' + fallback;
       case 'disabled_by_setting': return '依設定關閉';
       case 'not_installed': return '未附模型，使用' + fallback;
+      // #181：只有 Linux 的系統安裝用系統的 python3，才提示 Debian 套件名；macOS、Windows 的推論元件內附在安裝包裡。
+      case 'runtime_missing': return '缺少推論元件' + (/^linux\//.test(state.info?.platform || '') ? '（請安裝 python3-numpy、python3-onnxruntime）' : '') + '，使用' + fallback;
       case 'closed': return '已停止，使用' + fallback;
       default: return '未知（引擎未提供即時狀態）';
     }
@@ -70,6 +91,10 @@
     missing_runtime: '（缺少系統元件：Visual C++ 執行階段）', timeout: '（模型載入逾時）', failed: '（模型程式無法啟動）',
   };
   const MODE = { auto: '自動保持最新', ask: '下載後詢問', manual: '手動' };
+  // 由系統套件管理員更新（#181，Linux 發行版的套件）：0c-update 不檢查、不下載、不安裝，這裡也不提供這些按鈕。
+  const packageManaged = () => state.status?.updates === 'package-manager';
+  const PACKAGE_MANAGED = '由系統套件管理員更新';
+  const INSTALL_KIND = { personal: '官網安裝（家目錄）', system: '系統套件' };
   const REASON = {
     rollout: '分批發布還沒輪到這台電腦', no_asset: '沒有這個平台的安裝包',
     withdrawn: '該版本已撤回', failed: '該版本在這台電腦上檢查失敗過，已暫停',
@@ -84,9 +109,12 @@
   };
   // 與 internal/autoupdate 的 OldShellDetail 相同：重新登入後系統仍開著更新前留下的舊版輸入法（#98）。
   const OLD_SHELL = '已安裝，但系統仍開著更新前留下的舊版輸入法；登出再登入後改用新版';
-  // 與 internal/autoupdate 的 ShellRetiringDetail 相同：macOS 新版已裝好，舊的輸入法程式等停手後結束（#170）。
-  const SHELL_RETIRING = '已安裝，停止打字後自動換成新版，不必登出';
-  const SHELL_RETIRING_HELP = '新版已安裝。舊版的輸入法程式還在使用中，停止打字一下就會自動換成新版，不必登出。';
+  // 與 internal/autoupdate 的 ShellRetiringDetail 相同：macOS 新版已裝好，舊的輸入法程式等使用者離開電腦時才換（#170、#178）。
+  // 第二個是 0.2.1／0.2.2 寫進狀態檔的舊說明。
+  const SHELL_RETIRING = ['已安裝，離開電腦（螢幕鎖定或關閉）時自動換成新版，不必登出', '已安裝，停止打字後自動換成新版，不必登出'];
+  const retiringDetail = (detail) => SHELL_RETIRING.includes(detail);
+  const SHELL_RETIRING_HELP = '新版已安裝，鎖定螢幕或離開電腦時換上，不必登出；在那之前照常可以打字。';
+  const SHELL_RETIRING_NOTE = '不必登出，在那之前照常可以打字。';
   const OLD_SHELL_HELP = '新版已安裝，但系統仍開著更新前留下的舊版輸入法。請先儲存工作，登出再登入一次就會改用新版；如果之後仍看到這則訊息，請到「問題排解」匯出狀態摘要回報。';
   const VALUE = { neural: '神經選字', statistical: '統計引擎', off: '關閉', select: '僅供選字', auto: '自動修正（實驗）', vertical: '直排', grid: '多排', before: '游標前方', after: '游標後方', standard: '標準', eten: '倚天 41 鍵' };
   const ERROR = {
@@ -117,7 +145,7 @@
     if (update.stage === 'pending' && update.target) {
       if (update.target.kind !== 'shell') return { text: '正在確認新版引擎是否可用。', tone: 'warn' };
       if (update.blocked?.detail === OLD_SHELL) return { text: update.target.version + ' 已安裝，仍在使用舊版輸入法。', tone: 'warn' };
-      if (update.blocked?.detail === SHELL_RETIRING) return { text: update.target.version + ' 已安裝，停止打字後自動換成新版。', tone: 'warn' };
+      if (retiringDetail(update.blocked?.detail)) return { text: update.target.version + ' 已安裝，鎖定螢幕或離開電腦時換上。', tone: 'warn' };
       return { text: update.target.version + ' 等待重新登入後生效。', tone: 'warn' };
     }
     switch (update.state) {
@@ -157,6 +185,7 @@
       state.error = String(error);
     }
     if (vocabEnabled() && page === 'overview') await vocab.refreshOverview();
+    if (page === 'models') await models.refresh();
     render();
   }
 
@@ -220,7 +249,7 @@
       else if (result.update?.blocked && result.update.stage !== 'pending' && !(kind === 'download' && result.update.stage === 'prepared')) toast(result.update.blocked.detail || '更新尚未完成，請再試一次。', 'warn');
       else if (kind === 'download') toast(result.update?.operation ? operationText(result.update.operation) : result.update?.stage === 'pending' ? updateSummary(result.update).text : '下載完成，可按「立即安裝」。', 'ok');
       else toast(result.update?.stage === 'pending'
-        ? (result.update.blocked?.detail === SHELL_RETIRING ? SHELL_RETIRING_HELP : '請先儲存工作，登出再登入以完成更新。')
+        ? (retiringDetail(result.update.blocked?.detail) ? SHELL_RETIRING_HELP : '請先儲存工作，登出再登入以完成更新。')
         : '更新作業已完成。', 'ok');
     } catch (error) {
       toast(String(error), 'error');
@@ -319,15 +348,17 @@
     ];
     if (runtime.state === 'running') {
       rows.push(
-        row(labelBlock('神經選字'), h('div', { class: 'value' }, modelLabel(runtime.selection_state, '統計引擎') + (MODEL_REASON[runtime.selection_reason] || ''))),
+        row(labelBlock('神經選字'), h('div', { class: 'value' }, modelLabel(runtime.selection_state, '統計引擎') + (MODEL_REASON[runtime.selection_reason] || ''), ' ',
+          h('button', { type: 'button', class: 'secondary', 'data-focus': 'models-card', onclick: () => show('models') }, '查看'))),
         row(labelBlock('補標點（Beta）'), h('div', { class: 'value' }, modelLabel(runtime.punctuation_state, '原文提交') + (MODEL_REASON[runtime.punctuation_reason] || ''))));
     }
-    const summary = updateSummary(status.update);
+    const managed = packageManaged();
+    const summary = managed ? { text: PACKAGE_MANAGED, tone: 'muted' } : updateSummary(status.update);
     rows.push(
       row(labelBlock('更新'), h('div', { class: 'value' },
         h('span', { class: summary.tone === 'ok' ? 'status-ok' : summary.tone === 'warn' ? 'status-warn' : 'muted' }, summary.text), ' ',
         h('button', { type: 'button', class: 'secondary', onclick: () => show('update') }, '查看'))),
-      row(labelBlock('更新方式'), h('div', { class: 'value' }, MODE[status.mode] || status.mode || '未知')));
+      row(labelBlock('更新方式'), h('div', { class: 'value' }, managed ? '系統套件管理員' : MODE[status.mode] || status.mode || '未知')));
     root.append(h('div', { class: 'card' }, ...rows));
     if (vocabEnabled()) {
       const text = vocab.overviewText();
@@ -339,7 +370,7 @@
 
   function control(item, locked) {
     const values = item.values || [];
-    // item.disabled：另一個設定讓這一項不起作用（倚天 41 鍵時的混打與 Emoji，#83）。開關顯示實際狀態（關閉），
+    // item.disabled：另一個設定讓這一項不起作用（倚天 41 鍵時的混打與 Emoji，#83；不用 Shift 時的開始模式，#184）。開關顯示實際狀態（關閉），
     // 設定檔中的值不動，條件解除後照舊。
     const disabled = locked || state.busy.has(item.key) || !!item.disabled;
     const labelId = 'label-' + item.key;
@@ -351,10 +382,12 @@
         'data-focus': item.key, disabled, onclick: () => change(item.key, checked ? 'off' : on),
       });
     }
+    // 選項也畫實際使用的值：不用 Shift 時開始模式固定為注音（#184，item.effective），設定檔裡的英文保留到改回 Shift。
+    const shown = item.disabled && item.effective ? item.effective : item.value;
     return h('fieldset', { class: 'choices', 'aria-labelledby': labelId, disabled },
       ...values.map((value) => h('label', {},
         h('input', {
-          type: 'radio', name: item.key, value, checked: item.value === value, 'data-focus': item.key + ':' + value,
+          type: 'radio', name: item.key, value, checked: shown === value, 'data-focus': item.key + ':' + value,
           onchange: () => change(item.key, value),
         }), (item.value_labels && item.value_labels[value]) || VALUE[value] || value)));
   }
@@ -419,6 +452,13 @@
     root.append(h('h1', {}, '更新'));
     if (problem(root)) return;
     const status = state.status;
+    if (packageManaged()) {
+      root.append(h('p', { class: 'lead' }, '目前版本 ' + (status.installed || '未知')),
+        h('div', { class: 'notice info' },
+          h('p', {}, PACKAGE_MANAGED + '。'),
+          h('p', {}, '這份靈犀注音是用系統的套件管理員（例如 apt）安裝的，更新與移除也請用套件管理員；這裡不會檢查、下載或安裝更新。')));
+      return;
+    }
     const view = status.update || {};
     const op = view.operation;
     const blocked = view.blocked || status.blocked;
@@ -428,7 +468,7 @@
       h('p', {}, summary.text),
       view.target && !op ? h('p', {}, view.stage === 'pending' && view.target.kind === 'shell'
         ? (blocked?.detail === '登出再登入時自動完成安裝' ? '套件已下載，儲存工作後登出再登入，會完成安裝。'
-          : blocked?.detail === OLD_SHELL ? OLD_SHELL_HELP : blocked?.detail === SHELL_RETIRING ? SHELL_RETIRING_HELP
+          : blocked?.detail === OLD_SHELL ? OLD_SHELL_HELP : retiringDetail(blocked?.detail) ? SHELL_RETIRING_NOTE
           : '新版已安裝；請儲存工作後登出再登入，讓應用程式載入新版輸入法。')
         : view.stage === 'pending' ? '正在確認新版引擎是否可用。' : (STAGE[view.stage] || ('進度：' + view.stage)) + '。') : null,
       blocked && !op && view.stage !== 'pending' && !(view.stage === 'found' && ['needs_relogin', 'needs_consent'].includes(blocked.reason))
@@ -476,9 +516,20 @@
         h('p', {}, '已匯出到：'), h('p', {}, h('code', {}, state.summary)),
         h('p', {}, '寫信到 ', email(), '，附上這個檔案，並描述發生了什麼。')));
     }
+    // 同一個帳號有官網安裝與系統套件時（#181），外殼用官網安裝（使用者自己裝的通常比較新）；兩份都列出來。
+    const installs = Array.isArray(state.status?.installs) ? state.status.installs : [];
+    const active = installs.find((item) => item.active);
+    if (installs.length > 1 || active?.kind === 'system') {
+      root.append(h('h2', {}, '使用中的安裝'), h('div', { class: 'card' }, ...installs.map((item) => row(
+        h('div', {}, h('div', { class: 'label' }, INSTALL_KIND[item.kind] || item.kind),
+          h('div', { class: 'desc paths' }, '引擎 ' + item.server + '\n字典 ' + item.data)),
+        h('div', { class: 'value' }, h('span', { class: item.active ? 'status-ok' : 'muted' }, item.active ? '使用中' : '未使用（官網安裝優先）'))))));
+    }
+    // 系統套件的 0c-update 不在 PATH 上，命令列範例寫完整路徑。
+    const cli = active?.kind === 'system' && active.updater ? active.updater : '0c-update';
     root.append(h('h2', {}, '命令列'),
       h('p', { class: 'muted' }, '設定程式打不開、或你偏好終端機時，同樣的設定可以這樣查看與修改：'),
-      h('pre', { class: 'cmd' }, '0c-update settings\n0c-update set punctuation off -apply'));
+      h('pre', { class: 'cmd' }, cli + ' settings\n' + cli + ' set punctuation off -apply'));
   }
 
   function about(root) {
@@ -515,7 +566,7 @@
     if (items.length) root.append(h('div', { class: 'card' }, ...items.map((item) => itemRow(item, settings.file.read_only))));
   }
 
-  const RENDER = { overview, input, output, vocab: vocabPage, update, troubleshoot, about };
+  const RENDER = { overview, input, output, vocab: vocabPage, models: (root) => models.render(root), update, troubleshoot, about };
 
   function render() {
     const focused = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.focus : null;
@@ -543,6 +594,7 @@
   function show(name) {
     page = PAGES.includes(name) ? name : 'overview';
     if (page === 'overview' && vocabEnabled()) vocab.refreshOverview().then(() => { if (page === 'overview') render(); });
+    if (page === 'models') models.refresh().then(() => { if (page === 'models') render(); });
     render();
   }
 
@@ -554,6 +606,10 @@
       mcpPresent: () => !!(state.info && state.info.mcp_present),
       // 引擎是否在執行（status 的 runtime）；還不知道時 null。
       engineRunning: () => (state.status && state.status.runtime ? state.status.runtime.state === 'running' : null),
+    });
+    models = window.ZcModels({
+      h, invoke, toast, copyText, modelLabel, render,
+      visible: () => page === 'models' && !document.hidden,
     });
     document.querySelectorAll('.nav').forEach((button) => button.addEventListener('click', () => show(button.dataset.page)));
     try { state.info = await invoke('app_info'); } catch (_) { /* 關於頁顯示未知 */ }
@@ -567,6 +623,7 @@
     }
     render();
     refresh();
+    setInterval(() => models.poll(), 1000);
     setInterval(() => { if (!document.hidden) refresh(); }, 15000);
     setInterval(pollUpdate, 1000);
     window.addEventListener('focus', () => { refresh(); vocab.focus(); });

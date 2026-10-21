@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"math"
 	"os"
 	"os/exec"
@@ -28,14 +29,27 @@ var ErrTimeout = errors.New("neural deadline exceeded")
 
 // StartupError 是 worker 沒有回報就緒的原因，給狀態摘要與設定程式顯示（#80：精簡版 Windows 缺 C++ 執行階段時，
 // 使用者原本只看到「模型無法使用」）。Reason 是固定代碼，不含輸出內容。
-type StartupError struct{ Reason, what string }
+type StartupError struct {
+	Reason, what string
+	err          error // 啟動行程本身的錯誤（例如 Python 不存在）；只給紀錄，不含 worker 的輸出
+}
 
-func (e *StartupError) Error() string { return e.what + " startup failed: " + e.Reason }
+func (e *StartupError) Error() string {
+	if e.err != nil {
+		return e.what + " startup failed: " + e.Reason + ": " + e.err.Error()
+	}
+	return e.what + " startup failed: " + e.Reason
+}
+
+func (e *StartupError) Unwrap() error { return e.err }
 
 const (
 	ReasonMissingRuntime = "missing_runtime" // Python 擴充模組載入失敗：缺少系統 DLL
 	ReasonTimeout        = "timeout"         // 沒有在時限內回報就緒
 	ReasonFailed         = "failed"          // 其他原因：結束、回應不符
+	// ReasonRuntimeMissing：找不到 Python，或 Python 匯入不到 numpy、onnxruntime（Linux 系統安裝沒裝
+	// python3-numpy、python3-onnxruntime，#181）。health 的狀態直接報 runtime_missing，不當成模型故障。
+	ReasonRuntimeMissing = "runtime_missing"
 )
 
 // startupStderr 只收集 worker 回報就緒前的 stderr：此時還沒送出任何輸入文字，內容只會是載入錯誤；
@@ -77,20 +91,44 @@ func awaitExit(done <-chan struct{}) {
 func startupError(what string, err error, stderr string) *StartupError {
 	switch {
 	case strings.Contains(stderr, "DLL load failed"):
-		return &StartupError{ReasonMissingRuntime, what}
+		return &StartupError{Reason: ReasonMissingRuntime, what: what}
+	case strings.Contains(stderr, "No module named 'numpy'") || strings.Contains(stderr, "No module named 'onnxruntime'"):
+		return &StartupError{Reason: ReasonRuntimeMissing, what: what}
 	case errors.Is(err, ErrTimeout):
-		return &StartupError{ReasonTimeout, what}
+		return &StartupError{Reason: ReasonTimeout, what: what}
 	}
-	return &StartupError{ReasonFailed, what}
+	return &StartupError{Reason: ReasonFailed, what: what}
 }
 
-// startupReason 回傳 StartupError 的代碼；其他錯誤（例如找不到 python.exe）歸為 failed。
+// launchError 分類啟動 worker 行程本身（exec）的錯誤：Python 執行檔不存在（Linux 系統安裝沒裝 python3，
+// 或還沒裝好）是 runtime_missing；其他錯誤照原樣回傳，歸為 failed。只用在 cmd.Start：manifest、model.onnx、
+// vocab.json 讀不到同樣是 fs.ErrNotExist，那是模型檔的問題，不是缺推論環境（#181）。
+func launchError(what string, err error) error {
+	if errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist) {
+		return &StartupError{Reason: ReasonRuntimeMissing, what: what, err: err}
+	}
+	return err
+}
+
+// startupReason 回傳 StartupError 的代碼；其他錯誤（含模型檔讀不到）歸為 failed。
 func startupReason(err error) string {
 	var startup *StartupError
 	if errors.As(err, &startup) {
 		return startup.Reason
 	}
 	return ReasonFailed
+}
+
+// RuntimeMissingRetry 是缺少推論環境時重試啟動 worker 的間隔：使用者裝好 python3-onnxruntime 後
+// 不必重啟引擎，下一次重試就會載入；間隔夠長，缺套件時不會每幾秒啟動一次 Python。
+const RuntimeMissingRetry = 10 * time.Minute
+
+// retryCooldown 是啟動失敗後到下一次重試的冷卻。
+func retryCooldown(reason string, normal time.Duration) time.Duration {
+	if reason == ReasonRuntimeMissing {
+		return RuntimeMissingRetry
+	}
+	return normal
 }
 
 type Config struct {
@@ -216,11 +254,24 @@ func loadManifest(c Config) (Manifest, error) {
 	return m, nil
 }
 
+// NoTelemetryEnv 關掉 onnxruntime 的遙測，給所有會 import onnxruntime 的 Python 子行程（docs/46）。
+// 內附的 onnxruntime 1.30.0 在 import 時（建立全域 Env）就啟動遙測，變數必須在那之前就在環境裡：
+//   - Linux／macOS：1DS 每隔幾秒連 mobile.events.data.microsoft.com:443，並在 ~/.cache/Microsoft/DeveloperTools/.onnxruntime
+//     （macOS 為 ~/Library/Application Support/Microsoft/DeveloperTools/.onnxruntime）寫 deviceid 與 onnxruntime.db。
+//     ORT_DISABLE_TELEMETRY=1 是它公開的關閉方式，初始化時讀取。
+//   - Windows：不連網，改寫 ETW（Microsoft.ML.ONNXRuntime，交給系統的診斷資料服務），不讀 ORT_DISABLE_TELEMETRY。
+//     ORT_RUNNING_UNIT_TESTS=1 讓兩種實作都不註冊、不寫任何事件（1.30.0 只有遙測讀它；升級 onnxruntime 要重新確認）。
+//
+// worker 腳本另外再設一次並呼叫 disable_telemetry_events()。
+var NoTelemetryEnv = []string{"ORT_DISABLE_TELEMETRY=1", "ORT_RUNNING_UNIT_TESTS=1"}
+
 // pythonCommand 以隔離模式啟動 worker：不讀使用者的 PYTHON* 環境變數與 user site；
 // 不寫 bytecode（內附 Python 已預先編譯，安裝後的檔案必須維持與收據相同）；
-// stdio 一律 UTF-8（Windows 管道預設是系統碼頁，中文會變亂碼）；Windows 不開主控台視窗。
+// stdio 一律 UTF-8（Windows 管道預設是系統碼頁，中文會變亂碼）；Windows 不開主控台視窗；
+// onnxruntime 不連網（NoTelemetryEnv，覆蓋使用者環境裡的同名變數）。
 func pythonCommand(python, script string, args ...string) *exec.Cmd {
 	cmd := exec.Command(python, append([]string{"-I", "-B", "-X", "utf8", script}, args...)...)
+	cmd.Env = append(os.Environ(), NoTelemetryEnv...)
 	hideWindow(cmd)
 	return cmd
 }
@@ -240,7 +291,7 @@ func start(cmd *exec.Cmd, m Manifest, timeout time.Duration) (*Worker, error) {
 	if err = cmd.Start(); err != nil {
 		input.Close()
 		output.Close()
-		return nil, err
+		return nil, launchError("neural worker", err)
 	}
 	w := &Worker{cmd: cmd, input: input, output: bufio.NewScanner(output), manifest: m, timeout: timeout, done: make(chan struct{})}
 	w.output.Buffer(make([]byte, 4096), frameLimit)

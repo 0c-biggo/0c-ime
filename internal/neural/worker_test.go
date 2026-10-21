@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +28,10 @@ func TestWorkerProcess(t *testing.T) {
 		os.Exit(1)
 	}
 	if mode == "silent_exit" {
+		os.Exit(1)
+	}
+	if mode == "module_missing" { // 模擬系統 Python 沒裝 python3-onnxruntime（#181）
+		fmt.Fprintln(os.Stderr, "Traceback (most recent call last):\nModuleNotFoundError: No module named 'onnxruntime'")
 		os.Exit(1)
 	}
 	schema := os.Getenv("ZUIN_TEST_NEURAL_SCHEMA")
@@ -211,9 +217,49 @@ func TestPythonCommandIsIsolatedAndReadOnly(t *testing.T) {
 	}
 }
 
+// onnxruntime 的遙測在 import 時就啟動，worker 的環境一定要帶 ORT_DISABLE_TELEMETRY=1；
+// 使用者環境裡設成別的值也要被蓋掉（exec 對重複的鍵取最後一個），其他變數照常傳下去。
+func TestPythonCommandDisablesOnnxruntimeTelemetry(t *testing.T) {
+	t.Setenv("ORT_DISABLE_TELEMETRY", "0")
+	t.Setenv("ORT_RUNNING_UNIT_TESTS", "")
+	t.Setenv("ZC_TEST_KEEP", "1")
+	got := map[string]string{}
+	for _, kv := range pythonCommand("python", "punct_runtime.py", "--package", "p").Environ() {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			got[k] = v
+		}
+	}
+	for k, want := range map[string]string{"ORT_DISABLE_TELEMETRY": "1", "ORT_RUNNING_UNIT_TESTS": "1", "ZC_TEST_KEEP": "1"} {
+		if got[k] != want {
+			t.Errorf("env %s=%q, want %q", k, got[k], want)
+		}
+	}
+}
+
+// select、punct 與評測工具都經 Open／OpenPunct 啟動 worker；本套件不得在 pythonCommand 以外另開子行程，
+// 否則新的啟動點會漏掉 NoTelemetryEnv。
+func TestWorkersOnlyStartThroughPythonCommand(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n := strings.Count(string(b), "exec.Command"); n > 0 && !(f == "worker.go" && n == 1) {
+			t.Errorf("%s 有 %d 處 exec.Command；worker 一律經 pythonCommand 啟動", f, n)
+		}
+	}
+}
+
 func TestStartupFailureReason(t *testing.T) {
 	m := Manifest{Schema: "zuin-encoder-runtime-v1", DictionarySHA256: "dictionary", Files: map[string]string{"model.onnx": "model"}}
-	for mode, want := range map[string]string{"dll_missing": ReasonMissingRuntime, "silent_exit": ReasonFailed} {
+	for mode, want := range map[string]string{"dll_missing": ReasonMissingRuntime, "silent_exit": ReasonFailed, "module_missing": ReasonRuntimeMissing} {
 		cmd := exec.Command(os.Args[0], "-test.run=^TestWorkerProcess$")
 		cmd.Env = append(os.Environ(), "ZUIN_TEST_NEURAL_CHILD="+mode)
 		_, err := start(cmd, m, 20*time.Millisecond)
@@ -223,6 +269,25 @@ func TestStartupFailureReason(t *testing.T) {
 	}
 	if got := startupReason(errors.New("exec: python.exe not found")); got != ReasonFailed {
 		t.Fatalf("plain error reason %q", got)
+	}
+	// 找不到 Python 執行檔（系統沒有 python3）也是缺少推論環境。
+	_, err := start(exec.Command(filepath.Join(t.TempDir(), "python3")), m, 20*time.Millisecond)
+	if got := startupReason(err); got != ReasonRuntimeMissing {
+		t.Fatalf("missing python: reason %q (%v)", got, err)
+	}
+	// 模型檔（manifest、model.onnx、vocab.json）讀不到也是 fs.ErrNotExist，但那是模型的問題：照舊 failed，
+	// 3 秒冷卻重試，不報成缺推論環境（#181）。
+	if _, err := Open(Config{Python: "python3", Package: t.TempDir(), Threads: 1, Timeout: 50 * time.Millisecond}); !errors.Is(err, fs.ErrNotExist) || startupReason(err) != ReasonFailed {
+		t.Fatalf("missing manifest: reason %q (%v)", startupReason(err), err)
+	}
+	pkg := t.TempDir()
+	manifest := `{"schema":"zuin-encoder-runtime-v1","context_policy":"empty","dictionary_sha256":"` + strings.Repeat("a", 64) + `","weight":1}`
+	os.WriteFile(filepath.Join(pkg, "manifest.json"), []byte(manifest), 0o644)
+	if _, err := Open(Config{Python: "python3", Package: pkg, DictionarySHA256: strings.Repeat("a", 64), Threads: 1, Timeout: 50 * time.Millisecond}); !errors.Is(err, fs.ErrNotExist) || startupReason(err) != ReasonFailed {
+		t.Fatalf("missing model.onnx: reason %q (%v)", startupReason(err), err)
+	}
+	if got := startupReason(&fs.PathError{Op: "open", Path: "vocab.json", Err: fs.ErrNotExist}); got != ReasonFailed {
+		t.Fatalf("missing vocab.json: reason %q", got)
 	}
 }
 

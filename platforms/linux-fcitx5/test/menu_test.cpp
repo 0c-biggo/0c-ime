@@ -70,6 +70,10 @@ int main() {
     EXPECT(std::string(zuin::simplifiedLabel) == "輸出簡體字");
     EXPECT(zuin::simplifiedCommand(true) == (std::vector<std::string>{"set", "output-simplified", "on", "-apply", "-notify"}));
     EXPECT(zuin::simplifiedCommand(false)[2] == "off");
+    // 由系統套件管理員更新（#181）：選單不放更新列；舊版 0c-update 沒有 updates 欄位，照舊顯示。
+    EXPECT(!idle.packageManaged);
+    EXPECT(!zuin::parseStatus(R"({"updates":"self"})").packageManaged);
+    EXPECT(zuin::parseStatus(R"({"installed":"0.2.3","updates":"package-manager"})").packageManaged);
     // 以假的 0c-update 驗證參數傳遞、輸出讀取與逾時。
     char dir[] = "/tmp/zuin-menu-XXXXXX";
     if (!mkdtemp(dir)) { return 1; }

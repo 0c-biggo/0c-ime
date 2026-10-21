@@ -175,19 +175,111 @@ func TestRetireMacShellNewAppDefersTerm(t *testing.T) {
 	}
 }
 
-// 排程喚起時（使用中的任意時刻）要停手更久才關：結束到系統重新啟動之間按的鍵會以英文字母出現。
-func TestRetireMacShellScheduleNeedsLongerQuiet(t *testing.T) {
+// 背景交接（#178）：使用者在電腦前時，停手多久都不關——結束舊程式後已開著的 App 第一個按鍵會漏成英文；
+// 螢幕鎖定或關閉之後才關，回來時的解鎖就讓 App 連上新版。等待中途使用者回來就停下。
+func TestRetireMacShellOnlyWhenAway(t *testing.T) {
 	m := newMacShellRetire()
-	m.lastKey = 0 // 剛打完字
-	ctl := m.control()
-	ctl.quiet = 20 * time.Second
-	retired, left := retireProcesses(ctl, m.pending, 10*time.Second)
+	m.lastKey = 0
+	awayFrom, awayUntil := 40*time.Second, time.Duration(1<<62)
+	away := func() bool { return m.at() >= awayFrom && m.at() < awayUntil }
+	ctl := awayOnly(m.control(), away)
+	ctl.quiet = 2 * time.Second
+	// 30 秒沒按鍵，但人還在（沒鎖定）：不關。
+	retired, left := retireProcesses(ctl, m.pending, 30*time.Second)
 	if retired != 0 || len(left) != 1 || len(m.terms) != 0 {
-		t.Fatalf("stopped typing only 10s ago: retired=%d left=%v terms=%v", retired, left, m.terms)
+		t.Fatalf("present but idle: retired=%d left=%v terms=%v", retired, left, m.terms)
 	}
+	// 40 秒時鎖定螢幕：下一輪就關。
 	retired, left = retireProcesses(ctl, m.pending, 30*time.Second)
-	if retired != 1 || len(left) != 0 || len(m.terms) != 1 || m.terms[0] < 20*time.Second {
-		t.Fatalf("retired=%d left=%v terms=%v", retired, left, m.terms)
+	if retired != 1 || len(left) != 0 || len(m.terms) != 1 || m.terms[0] < awayFrom {
+		t.Fatalf("away: retired=%d left=%v terms=%v", retired, left, m.terms)
+	}
+
+	// 鎖定之後很快解鎖回來：還沒送出就停下，留給下一次離開。
+	m = newMacShellRetire()
+	m.lastKey = 0
+	awayFrom, awayUntil = 0, 0
+	ctl = awayOnly(m.control(), away)
+	ctl.quiet = 2 * time.Second
+	if retired, left := retireProcesses(ctl, m.pending, 30*time.Second); retired != 0 || len(left) != 1 || len(m.terms) != 0 {
+		t.Fatalf("came back: retired=%d left=%v terms=%v", retired, left, m.terms)
+	}
+}
+
+// 使用者在不在每次要跑 ioreg：retireProcesses 每 200 毫秒一輪、每個程序各問一次，以前等 30 秒要跑三百次；
+// 現在最多每秒一次。
+func TestAwayOnlyChecksAtMostOncePerSecond(t *testing.T) {
+	m := newMacShellRetire()
+	m.alive[12], m.exitAfter[12] = true, 30*time.Millisecond
+	m.lastKey = 0
+	calls := 0
+	away := func() bool { calls++; return false } // 人一直在：不關，等滿 30 秒
+	ctl := awayOnly(m.control(), away)
+	ctl.quiet = 2 * time.Second
+	if retired, left := retireProcesses(ctl, m.pending, 30*time.Second); retired != 0 || len(left) != 2 {
+		t.Fatalf("retired=%d left=%v", retired, left)
+	}
+	if calls > 32 {
+		t.Fatalf("30 秒內問了 %d 次", calls)
+	}
+}
+
+// 舊程式全部結束後才啟動新版（同一個 bundle ID 的兩份 App 會搶 IMK 連線名稱）；沒有結束任何程式時不啟動。
+func TestHandOverShellsRelaunchesOnlyAfterAllRetired(t *testing.T) {
+	m := newMacShellRetire()
+	launched := 0
+	relaunch := func() { launched++ }
+	if retired, left := handOverShells(m.control(), m.pending, 10*time.Second, relaunch); retired != 1 || len(left) != 0 || launched != 1 {
+		t.Fatalf("retired=%d left=%v launched=%d", retired, left, launched)
+	}
+	// 已經沒有舊程式：不再啟動。
+	if retired, _ := handOverShells(m.control(), m.pending, 10*time.Second, relaunch); retired != 0 || launched != 1 {
+		t.Fatalf("nothing to retire: retired=%d launched=%d", retired, launched)
+	}
+	// 兩個舊程式，其中一個（新版 App 在組字）沒結束：不啟動。
+	m = newMacShellRetire()
+	m.alive[12], m.exitAfter[12] = true, -1
+	if retired, left := handOverShells(m.control(), m.pending, 5*time.Second, relaunch); retired != 1 || len(left) != 1 || launched != 1 {
+		t.Fatalf("one left: retired=%d left=%v launched=%d", retired, left, launched)
+	}
+}
+
+// IOConsoleUsers 取自 macOS 15.7.7（tart VM）：平常、螢幕保護程式（未設密碼也標示鎖定）；另加快速切換使用者與
+// 全名裡有逗號、大括號的情況。
+func TestMacConsoleAway(t *testing.T) {
+	const (
+		present = `    | {
+      "IOConsoleLocked" = No
+      "IOConsoleUsers" = ({"kCGSSessionOnConsoleKey"=Yes,"kSCSecuritySessionID"=100003,"kCGSSessionSystemSafeBoot"=No,"kCGSessionLoginDoneKey"=Yes,"kCGSSessionIDKey"=257,"kCGSSessionUserNameKey"="admin","kCGSSessionGroupIDKey"=20,"CGSSessionUniqueSessionUUID"="F2F33480-6B38-4AEC-BA5F-75E436E6FA28","kCGSessionLongUserNameKey"="Managed via Tart","kCGSSessionAuditIDKey"=100003,"kCGSSessionLoginwindowSafeLogin"=No,"kCGSSessionUserIDKey"=501})
+      "IOKitDiagnostics" = {"Instance allocation"=2436264}
+`
+		locked = `      "IOConsoleLocked" = No
+      "IOConsoleUsers" = ({"kCGSSessionOnConsoleKey"=Yes,"kSCSecuritySessionID"=100003,"kCGSSessionSystemSafeBoot"=No,"kCGSessionLoginDoneKey"=Yes,"kCGSSessionIDKey"=257,"kCGSSessionUserNameKey"="admin","kCGSSessionGroupIDKey"=20,"CGSSessionUniqueSessionUUID"="F2F33480-6B38-4AEC-BA5F-75E436E6FA28","CGSSessionScreenLockedTime"=3939993391,"kCGSessionLongUserNameKey"="Managed via Tart","CGSSessionScreenIsLocked"=Yes,"kCGSSessionAuditIDKey"=100003,"kCGSSessionSecureInputPID"=154,"kCGSSessionLoginwindowSafeLogin"=No,"kCGSSessionUserIDKey"=501})
+`
+		// 501 切到別的使用者（502）：501 不在主控台。全名帶逗號與大括號、還有巢狀的值。
+		switched = `      "IOConsoleUsers" = ({"kCGSSessionOnConsoleKey"=No,"kCGSessionLongUserNameKey"="Lee, Roger {Mac}","kCGSSessionUserIDKey"=501,"nested"=("a,b",{"x"=1})},{"kCGSSessionOnConsoleKey"=Yes,"kCGSessionLongUserNameKey"="Other, User","kCGSSessionUserIDKey"=502})
+`
+		lockedNamed = `      "IOConsoleUsers" = ({"kCGSSessionOnConsoleKey"=Yes,"kCGSessionLongUserNameKey"="A, B} \"C\"","CGSSessionScreenIsLocked"=Yes,"kCGSSessionUserIDKey"=501})
+`
+	)
+	for _, tc := range []struct {
+		name string
+		out  string
+		uid  int
+		want bool
+	}{
+		{"使用中", present, 501, false},
+		{"螢幕保護程式／鎖定", locked, 501, true},
+		{"切換到別的使用者", switched, 501, true},
+		{"另一個使用者在主控台", switched, 502, false},
+		{"全名有特殊字元", lockedNamed, 501, true},
+		{"沒有自己的工作階段", present, 502, false},
+		{"沒有 IOConsoleUsers", "", 501, false},
+		{"輸出被截斷", `"IOConsoleUsers" = ({"CGSSessionScreenIsLocked"=Yes,"kCGSSessionUserIDKey"=501`, 501, false},
+	} {
+		if got := macConsoleAway(tc.out, tc.uid); got != tc.want {
+			t.Errorf("%s: away=%v, want %v (sessions %v)", tc.name, got, tc.want, macConsoleSessions(tc.out))
+		}
 	}
 }
 

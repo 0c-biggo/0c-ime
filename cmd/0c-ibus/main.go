@@ -21,8 +21,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
+	"github.com/0c-biggo/0c-ime/internal/installs"
 	"github.com/godbus/dbus/v5"
 )
 
@@ -132,7 +134,8 @@ func (s *service) updateProperty() property {
 	case s.updateFailure != "":
 		row = s.updateFailure + "（點此重試）"
 	}
-	return property{key: propUpdate, typ: propNormal, sensitive: true, label: row}
+	// 由系統套件管理員更新時（#181）沒有更新列：一律登錄、只改 visible（同「我的詞彙…」）。
+	return property{key: propUpdate, typ: propNormal, sensitive: true, label: row, hidden: s.update.packageManaged}
 }
 
 // refreshMenu 在鎖內呼叫：把設定、我的詞彙與更新列送給目前焦點的 engine（GNOME 只顯示它的屬性）。
@@ -183,7 +186,7 @@ func (s *service) queryStatus(command []string) {
 		if !ok {
 			out = ""
 		}
-		s.update = parseStatus(out)
+		s.update = readStatus(out)
 		if s.update.simplifiedKnown && seq == s.simplifiedSeq {
 			s.setSimplified(s.update.outputSimplified, s.update.simplifiedLive)
 		}
@@ -379,7 +382,9 @@ func (s *service) engineMethod(e *engine, member string, body []interface{}) ([]
 		case propSimplified:
 			e.toggleSimplified()
 		case propUpdate:
-			s.queryStatus(statusCommand(s.update))
+			if !s.update.packageManaged {
+				s.queryStatus(statusCommand(s.update))
+			}
 		}
 	case "SetCursorLocation", "PropertyShow", "PropertyHide", "ProcessHandWritingEvent", "CancelHandWriting",
 		"PanelExtensionReceived", "PanelExtensionRegisterKeys":
@@ -447,15 +452,39 @@ func ibusAddressFile() (string, error) {
 	return filepath.Join(config, "ibus/bus", strings.TrimSpace(string(id))+"-"+host+"-"+display), nil
 }
 
+// handOffToPersonal：ibus-daemon 帶起的是系統安裝的 0c-ibus，而這個帳號另外有官網安裝時，原地換成官網的
+// 0c-ibus（成功時不會返回）。兩個元件同名，IBUS_COMPONENT_PATH 常把 /usr/share 排在家目錄前面；不交給官網
+// 那一份的話，官網更新器換掉的外殼要等系統套件移除才生效（#181，.13 實測）。
+func handOffToPersonal() {
+	self, err := os.Executable()
+	if err != nil || !installs.Default().InSystem(self) {
+		return
+	}
+	if p, ok := installs.Default().Personal(); ok && p.IBus != "" {
+		err = syscall.Exec(p.IBus, append([]string{p.IBus}, os.Args[1:]...), os.Environ())
+		log.Printf("0c-ibus: 無法交給官網安裝的 %s，照常使用系統安裝：%v", p.IBus, err)
+	}
+}
+
 // component 是 ibus-daemon 讀的元件描述檔；路徑都是絕對路徑（ibus-daemon 不搜尋 PATH）。
+// component 是元件描述檔：官網安裝寫到 ~/.local/share/ibus/component（register），系統安裝由 make install 從
+// platforms/linux-ibus/0c.xml.in 產生（測試核對兩者一致）。
 func component(exe, home string) string {
+	icon := filepath.Join(home, ".local/share/icons/hicolor/scalable/status/0c-zhuyin.svg")
+	setup := updaterPath()
+	if l := installs.Default(); l.InSystem(exe) {
+		icon = filepath.Join(filepath.Dir(l.Data), "icons/hicolor/scalable/status/0c-zhuyin.svg")
+		setup = filepath.Join(l.Libexec, "0c-update")
+	}
+	return componentXML(exe, icon, setup)
+}
+
+func componentXML(exe, icon, setup string) string {
 	esc := func(s string) string {
 		var b strings.Builder
 		xml.EscapeText(&b, []byte(s))
 		return b.String()
 	}
-	icon := filepath.Join(home, ".local/share/icons/hicolor/scalable/status/0c-zhuyin.svg")
-	setup := updaterPath()
 	return `<?xml version="1.0" encoding="utf-8"?>
 <component>
     <name>` + componentName + `</name>
@@ -521,6 +550,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "0c-ibus 由 ibus-daemon 啟動；以 0c-ibus register 登錄到 IBus。")
 		os.Exit(2)
 	}
+	handOffToPersonal()
 	log.SetPrefix("0c-ibus: ")
 	if debug {
 		dir := filepath.Join(runtimeDir(), "0c")
@@ -536,7 +566,8 @@ func main() {
 	// 預設確認自己剛提交的文字供下一段選字（神經選字的必要條件）；
 	// ZUIN_DOCUMENT_CONTEXT=0 只供排錯時讓外殼完全不追蹤，與 Fcitx5 外殼相同。
 	s := &service{order: newOrderer(), client: newClient(), engines: map[dbus.ObjectPath]*engine{},
-		documentContext: os.Getenv("ZUIN_DOCUMENT_CONTEXT") != "0", lastKey: time.Now(), address: address}
+		documentContext: os.Getenv("ZUIN_DOCUMENT_CONTEXT") != "0", lastKey: time.Now(), address: address,
+		update: readStatus("")} // 第一次查詢前：套件管理員模式也不顯示更新列
 	conn, err := dbus.Connect(address, dbus.WithHandler(handler{s}), dbus.WithIncomingInterceptor(s.order.intercept))
 	if err != nil {
 		log.Fatalf("連不上 ibus-daemon：%v", err)

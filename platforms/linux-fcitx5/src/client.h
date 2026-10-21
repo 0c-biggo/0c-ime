@@ -3,6 +3,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 #include "nlohmann/json.hpp"
 
@@ -11,7 +12,7 @@ namespace zuin {
 class Client {
 public:
     // socketPath 為空時使用 $XDG_RUNTIME_DIR/0c/0c.sock，連不上再試舊版的 zuin/zuin.sock；
-    // serverPath 為空時先找 ~/.local/bin/0c-server，再找 PATH。
+    // serverPath 為空時依共用規則找（locate.h）：~/.local/bin/0c-server、系統安裝的 libexec/0c/0c-server，再找 PATH。
     Client(std::string socketPath = "", std::string serverPath = "");
     ~Client();
     Client(const Client &) = delete;
@@ -44,6 +45,7 @@ private:
     bool readAll(void *p, size_t n);
 
     std::string socketPath_, legacySocketPath_, serverPath_, error_;
+    std::vector<std::string> serverArgs_; // 系統安裝的引擎帶 -data <系統字典>
     int fd_ = -1;
     unsigned generation_ = 0;
 };

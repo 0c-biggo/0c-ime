@@ -11,11 +11,18 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import sys
 
 import numpy as np
+
+# onnxruntime 在 import 時（建立全域 Env）就啟動遙測：Linux／macOS 連到外部伺服器並在個人目錄寫裝置識別碼，
+# Windows 寫 ETW 給系統的診斷資料服務。這兩個變數只在那時讀取，必須在 import onnxruntime 之前設定；
+# 宿主也會設（internal/neural 的 NoTelemetryEnv，說明在那裡）。
+os.environ['ORT_DISABLE_TELEMETRY'] = '1'
+os.environ['ORT_RUNNING_UNIT_TESTS'] = '1'
 
 SCHEMA = 'zuin-punct-runtime-v1'
 LABELS = ['', '，', '。', '？', '！', '、', '；']
@@ -54,6 +61,8 @@ def eligible_boundaries(text):
 class Runtime:
     def __init__(self, package, threads=2):
         import onnxruntime as ort
+        if hasattr(ort, 'disable_telemetry_events'):   # 再保險一次：之後的 session 與推論事件也不記
+            ort.disable_telemetry_events()
         package = Path(package)
         self.manifest = m = json.loads((package / 'manifest.json').read_text())
         if m['schema'] != SCHEMA or m['labels'] != LABELS:

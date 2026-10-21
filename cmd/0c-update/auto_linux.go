@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/0c-biggo/0c-ime/internal/autoupdate"
+	"github.com/0c-biggo/0c-ime/internal/installs"
 	"github.com/godbus/dbus/v5"
 )
 
@@ -64,7 +65,8 @@ func relaunchElevated([]string) error {
 	return fmt.Errorf("不需要提權")
 }
 
-// startEngine 以穩定入口啟動引擎；它依 engine.json 轉交到目前的版本目錄。
+// startEngine 以穩定入口啟動引擎；它依 engine.json 轉交到目前的版本目錄。引擎依共用規則找（internal/installs，#181）：
+// 官網安裝的 ~/.local/bin/0c-server（不帶參數，與以前相同），沒有時是系統安裝的 libexec/0c/0c-server -data <系統字典>。
 //
 // 優先請 systemd user manager 以暫時性 service 啟動（#141）：行程由 manager 產生，不繼承呼叫者——
 // 自動更新排程 0c-update.service 的 Nice=10 與 idle I/O 類別；直接啟動的引擎會帶著這兩個設定
@@ -72,16 +74,15 @@ func relaunchElevated([]string) error {
 // manager 以 SIGTERM 正常結束（先存檔）。不能用 systemd-run --scope：scope 的行程由呼叫者產生，
 // 照樣繼承。沒有 systemd、沒有 user bus（ssh、su、容器）或單元建立失敗時退回直接啟動。
 func startEngine(string) error {
-	home, _ := os.UserHomeDir()
-	server := filepath.Join(home, ".local/bin/0c-server")
+	server, args := installs.Default().Server()
 	if _, err := os.Stat(server); err == nil {
-		err = startEngineUnit(server)
+		err = startEngineUnit(server, args...)
 		if err == nil {
 			return nil
 		}
 		fmt.Fprintln(os.Stderr, "0c-update: 改為直接啟動引擎：", err)
 	}
-	return spawnEngineDirect(server)
+	return spawnEngineDirect(server, args...)
 }
 
 // 測試替換用。
@@ -93,7 +94,7 @@ var (
 	spawnEngineDirect = spawnEngine
 )
 
-func startEngineUnit(server string) error {
+func startEngineUnit(server string, args ...string) error {
 	path, err := lookSystemdRun()
 	if err != nil {
 		return err
@@ -101,7 +102,7 @@ func startEngineUnit(server string) error {
 	// systemd-run 等到 manager 產生行程就返回（Type=simple）；manager 卡住時不能拖住交接。
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if out, err := runSystemdRun(ctx, path, engineUnitArgs(server, time.Now(), os.Getenv)); err != nil {
+	if out, err := runSystemdRun(ctx, path, engineUnitArgs(server, time.Now(), os.Getenv, args...)); err != nil {
 		return fmt.Errorf("systemd-run：%s (%w)", bytes.TrimSpace(out), err)
 	}
 	return nil
@@ -112,7 +113,7 @@ func startEngineUnit(server string) error {
 // 佔住名稱。manager 不傳呼叫者的環境，只帶引擎會讀的 HOME（個人資料與 engine.json）與
 // XDG_RUNTIME_DIR（socket），確保與等候交接的 dialEngine 同一個位置。不指定 Nice、
 // IOSchedulingClass：沿用 manager 的一般優先權（使用者也無權調低 nice 值，指定 0 反而可能失敗）。
-func engineUnitArgs(server string, now time.Time, getenv func(string) string) []string {
+func engineUnitArgs(server string, now time.Time, getenv func(string) string, serverArgs ...string) []string {
 	args := []string{"--user", "--collect", "--quiet",
 		"--unit=0c-server-" + strconv.FormatInt(now.UnixNano(), 10),
 		"--description=靈犀注音引擎"}
@@ -121,13 +122,13 @@ func engineUnitArgs(server string, now time.Time, getenv func(string) string) []
 			args = append(args, "--setenv="+k+"="+v)
 		}
 	}
-	return append(args, "--", server)
+	return append(append(args, "--", server), serverArgs...)
 }
 
 // spawnEngine 直接啟動引擎。新行程自成一個 session，排程服務結束時不會被一併停止
 // （0c-update.service 設 KillMode=process），但會繼承呼叫者的優先權與 cgroup。
-func spawnEngine(server string) error {
-	cmd := exec.Command(server)
+func spawnEngine(server string, args ...string) error {
+	cmd := exec.Command(server, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	devnull, err := os.Open(os.DevNull)
 	if err != nil {
@@ -257,6 +258,12 @@ func notify(n autoupdate.Notice) error {
 // notifyWithAction 顯示有「立即安裝／稍後」按鈕的通知，等到使用者按下（回傳動作名稱）、
 // 關閉通知或逾時（回傳空字串）。
 func notifyWithAction(ctx context.Context, n autoupdate.Notice) (string, error) {
+	return noticeWithActions(ctx, n, []string{n.Action, "立即安裝", "later", "稍後 1 小時"})
+}
+
+// noticeWithActions 顯示帶按鈕的通知（actions 是 D-Bus 的「動作代碼, 按鈕文字」成對清單），等使用者按下
+// （回傳動作代碼）、關閉通知或逾時（回傳空字串）。ZC_NOTIFY_ACK_FD=3 時在通知服務接受後回報父行程。
+func noticeWithActions(ctx context.Context, n autoupdate.Notice, actions []string) (string, error) {
 	conn, obj, err := notifyBus()
 	if err != nil {
 		return "", err
@@ -267,7 +274,7 @@ func notifyWithAction(ctx context.Context, n autoupdate.Notice) (string, error) 
 	}
 	signals := make(chan *dbus.Signal, 16)
 	conn.Signal(signals)
-	id, err := sendNotice(obj, n, []string{n.Action, "立即安裝", "later", "稍後 1 小時"})
+	id, err := sendNotice(obj, n, actions)
 	if err != nil {
 		return "", err
 	}

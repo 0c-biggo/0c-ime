@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/0c-biggo/0c-ime/core/decode"
 	"github.com/0c-biggo/0c-ime/core/english"
@@ -552,7 +553,8 @@ func (s *Session) mixedPunctSplit(raw string, tone rune) (int, zhuyin.Syllable, 
 // mixedSpaceNumber：只有數字與標點的待定按鍵接空白時是數字。前一個字是中文才當一聲（「我們」後打 10 空白 → 班）；在開頭，
 // 或接在空白、英文、數字後面是數字（「iPhone 15」「2026 」），與畫面照字面顯示一致（#78 後續）。
 // 要中文可按 ↓ 選注音解釋。只用數字鍵就拼得成一聲字的按鍵（20 單、18 八、5 之）不論位置都出中文（digitWord，#162），
-// 要數字按 Enter。不是數字寫法、一聲又組得成字的數字按鍵也照一般一聲組成中文（digitsReadAsChinese）：句首單打「當」「都」「周」。
+// 句首或空白、全形標點後單獨的 . ㄡ、, ㄝ 也是（punctKeyWord，#187：. 歐），要數字或標點按 Enter。
+// 不是數字寫法、一聲又組得成字的數字按鍵也照一般一聲組成中文（digitsReadAsChinese）：句首單打「當」「都」「周」。
 // 單一個數字鍵出的字（5 之）是中文，後面的數字照接在中文後面處理，不再把那個字改回原按鍵（#162：要數字一律按 Enter）。
 func (s *Session) mixedSpaceNumber(raw string, tone rune) bool {
 	return !strings.ContainsFunc(raw, unicode.IsLetter) && !s.mixedAfterChinese() &&
@@ -566,7 +568,7 @@ func (s *Session) mixedSpaceNumber(raw string, tone rune) bool {
 func (s *Session) mixedSpaceReading() (int, zhuyin.Syllable, bool) {
 	raw := s.mixed.raw
 	if raw == "" || s.english || s.englishWord || s.cand != nil || s.mixed.choice != 0 || s.mixed.accepted != "" ||
-		strings.ContainsFunc(raw, unicode.IsLetter) || !strings.ContainsFunc(raw, unicode.IsDigit) ||
+		strings.ContainsFunc(raw, unicode.IsLetter) || !strings.ContainsFunc(raw, unicode.IsDigit) && !s.punctKeyWord(raw) ||
 		s.vocabEnglish(raw) || s.mixedText() != raw {
 		return 0, "", false
 	}
@@ -585,13 +587,29 @@ func (s *Session) mixedSpaceReading() (int, zhuyin.Syllable, bool) {
 // 前後文決定；要數字按 Enter（2 0 Enter 送出 20），出字後 ↓ 第二個候選是原按鍵。看的是字典裡有沒有這個單音節的字，
 // 不是固定的鍵表：1 ㄅ、2 ㄉ 自己組不成字，照舊是數字；拼不成音節的（2026、100、12、15）也是數字。
 // 按鍵順序顛倒（05、81，日期與編號常見）不算；前面緊接著字面數字或數字標點時（318 的 18：3 是聲調鍵先照字面送出，
-// 3.18 的 .18）是更長的數字的一部分，照舊。標點鍵（- ㄦ、. ㄡ、, ㄝ、; ㄤ）不在這裡：「- 我」是條列。
+// 3.18 的 .18）是更長的數字的一部分，照舊。標點鍵只有 punctKeyWord 的 . ㄡ、, ㄝ 比照辦理。
 func (s *Session) digitWord(raw string, tone rune) bool {
-	if tone != zhuyin.Tone1 || raw == "" || strings.Trim(raw, "0123456789") != "" || !s.keysInSyllableOrder(raw) || s.literalNumberBefore() != "" {
+	if tone != zhuyin.Tone1 || raw == "" || strings.Trim(raw, "0123456789") != "" && !s.punctKeyWord(raw) ||
+		!s.keysInSyllableOrder(raw) || s.literalNumberBefore() != "" {
 		return false
 	}
 	done, ok := s.mixedReading(raw, tone)
 	return ok && done.ToneOf() == 1 && len(s.model.Source().Exact([]zhuyin.Syllable{done})) > 0
+}
+
+// punctKeyWord（#187）：標準排列單獨一個 . ㄡ 或 , ㄝ，在句首或接在空白、中文、全形標點後面時，跟 digitWord 的數字鍵
+// 一樣接空白出一聲的字（. 歐，. 5. tk 是歐洲車），要標點按 Enter，出字後 ↓ 第二個候選是原按鍵。緊接在字面的英文字、
+// 數字或半形標點後面（Tab 補完的 hello 後打的句點、3. 1, 的編號）照舊是標點。其他標點鍵不比照：; ㄤ（骯）、/ ㄥ（鞥）是罕用字，
+// 「A / B」「a ; b」與程式碼常見；- ㄦ 是條列（「- 我」）。字典裡沒有這個一聲字時（, 在內附字典沒有 ㄝ）照舊是標點。
+func (s *Session) punctKeyWord(raw string) bool {
+	if raw != "." && raw != "," {
+		return false
+	}
+	if s.cursor == 0 || !s.literals[s.cursor-1] || s.syls[s.cursor-1] == "" {
+		return true
+	}
+	last, _ := utf8.DecodeLastRuneInString(string(s.syls[s.cursor-1]))
+	return last > unicode.MaxASCII || unicode.IsSpace(last)
 }
 
 // digitToneNumber（#175，方案 b）：只用數字鍵、最後一鍵是聲調鍵（3 4 6 7）的待定按鍵，在下面三種情況照字面
@@ -620,7 +638,7 @@ func (s *Session) digitToneNumber(raw string, tone rune) bool {
 }
 
 // digitWordKeys：at 是只用數字鍵加空白打出的中文字（#134 的 5 之、#162 的 20 單），或只用數字鍵加聲調鍵打出的字
-// （#175：54 至、53 只），↓ 的原按鍵排第二個。
+// （#175：54 至、53 只），或單獨一個 . , 加空白打出的字（#187：. 歐），↓ 的原按鍵排第二個。
 func (s *Session) digitWordKeys(at int) bool {
 	if at < 0 || at >= len(s.syls) || s.literals[at] {
 		return false
@@ -630,7 +648,7 @@ func (s *Session) digitWordKeys(at int) bool {
 	if !ok && len(keys) > 1 && strings.ContainsAny(keys[len(keys)-1:], "3467") {
 		digits, ok = keys, true
 	}
-	return ok && digits != "" && strings.Trim(digits, "0123456789") == ""
+	return ok && digits != "" && (strings.Trim(digits, "0123456789") == "" || digits == "." || digits == ",")
 }
 
 // digitsReadAsChinese（#89、#114、#116）：含數字的待定按鍵接空白時，一聲組得成字，而且照字面不是數字寫法

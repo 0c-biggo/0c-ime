@@ -143,6 +143,7 @@ pub fn model_label(state: &str, runtime: &str, fallback: &str) -> String {
         "fallback" => format!("已退回{fallback}"),
         "disabled_by_setting" => "依設定關閉".into(),
         "not_installed" => format!("未附模型，使用{fallback}"),
+        "runtime_missing" => format!("缺少推論元件，使用{fallback}"),
         "closed" => format!("已停止，使用{fallback}"),
         _ => "狀態未知".into(),
     }
@@ -287,6 +288,7 @@ mod tests {
         assert!(needs_attention(&s));
         assert_eq!(model_label("ready", "not_running", "統計引擎"), "引擎未執行");
         assert_eq!(model_label("", "", "統計引擎"), "狀態未知");
+        assert_eq!(model_label("runtime_missing", "running", "統計引擎"), "缺少推論元件，使用統計引擎");
     }
 
     #[test]

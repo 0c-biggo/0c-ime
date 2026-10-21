@@ -64,7 +64,7 @@ func sessionOf(t *testing.T, pid int) int {
 }
 
 func TestPageWhitelist(t *testing.T) {
-	for in, want := range map[string]string{"update": "update", "input": "input", "": "overview", "account": "overview", "../x": "overview", "UPDATE": "overview"} {
+	for in, want := range map[string]string{"update": "update", "input": "input", "models": "models", "": "overview", "account": "overview", "../x": "overview", "UPDATE": "overview"} {
 		if got := Page(in); got != want {
 			t.Errorf("Page(%q) = %q，應為 %q", in, got, want)
 		}
@@ -308,5 +308,35 @@ func TestDesktopEntryRefusesPathsThatCouldChangeTheCommand(t *testing.T) {
 	// 含空白的路徑在引號內是安全的。
 	if _, err := EnsureDesktopEntry(t.TempDir(), "/home/a b/0c-update"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// 系統套件的設定程式（#181）沒有收據雜湊，改核對擁有者與權限。
+func TestLocateSystemChecksOwnerAndPermissions(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "0c-settings")
+	if _, err := LocateSystem(path); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing: %v", err)
+	}
+	os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755)
+	if _, err := LocateSystem(path); err == nil {
+		t.Fatal("a file owned by the test user is not a system file")
+	}
+	old := systemOwner
+	systemOwner = os.Getuid()
+	t.Cleanup(func() { systemOwner = old })
+	loc, err := LocateSystem(path)
+	if err != nil || loc.Path != path || loc.Source != SourceSystem {
+		t.Fatalf("got %+v %v", loc, err)
+	}
+	os.Chmod(path, 0o775)
+	if _, err := LocateSystem(path); err == nil {
+		t.Fatal("group-writable must be refused")
+	}
+	os.Chmod(path, 0o755)
+	link := filepath.Join(dir, "link")
+	os.Symlink(path, link)
+	if _, err := LocateSystem(link); err == nil {
+		t.Fatal("symlink must be refused")
 	}
 }

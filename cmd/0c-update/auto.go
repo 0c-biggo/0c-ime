@@ -16,6 +16,7 @@ import (
 
 	"github.com/0c-biggo/0c-ime/core/fuzzy"
 	"github.com/0c-biggo/0c-ime/internal/autoupdate"
+	"github.com/0c-biggo/0c-ime/internal/neural"
 	"github.com/0c-biggo/0c-ime/internal/settings"
 	"github.com/0c-biggo/0c-ime/internal/update"
 )
@@ -25,6 +26,10 @@ const DefaultFeed = "https://s3.biggo.com/0c-releases/feeds/public-beta.json"
 
 // pointerSince 是第一個認得引擎指標的完整安裝版本；更舊的外殼只能以完整安裝更新。
 const pointerSince = "0.1.0-dev.18"
+
+// unattendedInstall：這次安裝由背景自動更新執行、沒有使用者在看（macOS 的輸入法程式交接只在使用者離開時做，#178）。
+// 終端機、.pkg 與設定程式「立即安裝」（finish）都是使用者自己執行的安裝。這個程式一次只執行一個命令。
+var unattendedInstall bool
 
 // system 是真實作業系統上的 autoupdate.Platform。
 type system struct {
@@ -146,6 +151,8 @@ func (p *system) InstallShell(ctx context.Context, archive string) (bool, error)
 	if p.ReloadsShell() {
 		return p.installReloadableShell(ctx, root, r)
 	}
+	// 沒有使用者親自確認的安裝（背景自動更新）：macOS 只在使用者離開時交接輸入法程式（#178）。
+	unattendedInstall = !p.consent
 	if err = install(root, r); err != nil {
 		return false, err
 	}
@@ -538,6 +545,12 @@ func autoCommand(action string, args []string) (resultErr error) {
 		return co.Run(ctx)
 	}()
 	refreshPathUpdater(base)
+	if action == "auto" && !*asJSON && !*report {
+		// #179：安裝後啟動的背景清理沒做完（關機、被結束）時由排程補做；這次裝了新版就在這裡一起清，不另外啟動。
+		// 只在背景排程做，選單、設定程式等著結果的呼叫不做。
+		pruneInstalls(base)
+		pruneFrom = ""
+	}
 	if *report {
 		notifyOutcome(s, err)
 	}
@@ -631,6 +644,12 @@ func afterInstall() {
 	if os.Getenv("ZC_NO_SCHEDULE") != "" {
 		return
 	}
+	// 0.2.3 以前的 worker 會讓 onnxruntime 留下未送出的遙測事件；新版不再讀寫，安裝後刪掉，免得別的程式送出（docs/46）。
+	if home, err := os.UserHomeDir(); err == nil {
+		if err := neural.RemoveTelemetryQueue(home); err != nil {
+			fmt.Fprintln(os.Stderr, "0c-update: 舊的推論元件遙測暫存未刪除：", err)
+		}
+	}
 	if err := installSchedule(basePath()); err != nil {
 		fmt.Fprintln(os.Stderr, "0c-update: 自動更新排程未建立：", err)
 		return
@@ -713,7 +732,17 @@ func statusJSON(installed string, diagnostics bool) error {
 func statusMap(base, installed string, dial autoupdate.Dialer) map[string]any {
 	out := map[string]any{"schema": contractSchema, "installed": installed, "engine": autoupdate.PointerVersion(base)}
 	out["runtime"] = modelStatus(dial)
-	if s, err := autoupdate.Load(base); err == nil {
+	// #181：怎麼更新（self／package-manager），以及這台電腦上找得到的安裝（Linux；外殼用的那一份 active）。
+	managed := packageManaged()
+	out["updates"] = updatesMode()
+	if list := installList(); len(list) > 0 {
+		out["installs"] = list
+	}
+	if managed {
+		// 系統套件的引擎不跟官網安裝的核心更新指標（外殼以 -data 指定系統字典）；更新狀態也是官網安裝的。
+		out["engine"] = ""
+	}
+	if s, err := autoupdate.Load(base); err == nil && !managed {
 		appendUpdateStateStatus(out, s, time.Now())
 		if p := updaterProblem(base, s, platformRepair); p != "" {
 			out["updater"] = p

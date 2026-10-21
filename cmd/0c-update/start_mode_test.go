@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -42,5 +43,33 @@ func TestPrintSettingsListsEveryItem(t *testing.T) {
 	}
 	if !strings.Contains(text, "\nstart-mode=english（") {
 		t.Fatal(text)
+	}
+}
+
+// #184：不用 Shift 時開始模式固定為注音。引擎回報 zhuyin（它真的從注音開始）時不算「尚未套用」；
+// 設定檔仍是 english，介面靠 effective 畫成注音並停用。
+func TestStartModeLockedWithoutShiftIsNotPending(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows 有 Ctrl＋空白鍵，不固定")
+	}
+	base := t.TempDir()
+	writeSettings(t, base, `{"toggle_key":"none","start_mode":"english"}`)
+	for _, tc := range []struct {
+		running string
+		pending bool
+	}{{"zhuyin", false}, {"english", true}} { // english：還是改設定前的舊引擎
+		doc := buildSettingsDoc(base, modelStatusDial(map[string]string{"toggle_key": "none", "start_mode": tc.running}, true))
+		it := item(t, doc, "start-mode")
+		if it.Value != "english" || it.Effective != "zhuyin" || !it.Disabled || it.Pending != tc.pending || doc.PendingRestart != tc.pending {
+			t.Fatalf("running %s：%+v", tc.running, it)
+		}
+	}
+	s := settings.Default()
+	s.Set("toggle-key", "none")
+	s.Set("start-mode", "english")
+	var out bytes.Buffer
+	listSettings(&out, settings.Report{Path: "/tmp/settings.json", Settings: s}, "/tmp/settings.json")
+	if !strings.Contains(out.String(), "\nstart-mode=english（開始時的中英模式：zhuyin 注音；english 英文；目前不用 Shift 切換，固定從注音開始）") {
+		t.Fatal(out.String())
 	}
 }

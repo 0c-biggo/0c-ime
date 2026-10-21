@@ -10,6 +10,7 @@ import (
 // 要測啟動流程的測試自己再換一次（engine_service_*_test.go）。
 func TestMain(m *testing.M) {
 	cleanup := isolateResidentEngine()
+	startPrune = func(string) error { return nil } // 不在測試機上啟動真的背景清理（#179）
 	code := m.Run()
 	cleanup()
 	os.Exit(code)

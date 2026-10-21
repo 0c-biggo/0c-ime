@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"runtime"
 
 	"github.com/0c-biggo/0c-ime/internal/autoupdate"
 )
@@ -24,7 +25,7 @@ func modelStatus(dial autoupdate.Dialer) map[string]any {
 		}
 		state[key] = value
 	}
-	for _, key := range []string{"selection_reason", "punctuation_reason"} {
+	for _, key := range []string{"selection_reason", "punctuation_reason", "selection_source", "punctuation_source"} {
 		if info[key] != "" {
 			state[key] = info[key]
 		}
@@ -46,9 +47,21 @@ func printModelStatus(w io.Writer, state map[string]any) {
 		fmt.Fprintln(w, "暫時無法查詢模型運作狀態。")
 	default:
 		fmt.Fprintf(w, "模型運作狀態（引擎 %s）：\n神經選字：%s\n補標點：%s\n",
-			state["version"], modelStateLabel(state["selection_state"], "統計引擎")+reasonLabel(state["selection_reason"]),
-			modelStateLabel(state["punctuation_state"], "原文提交")+reasonLabel(state["punctuation_reason"]))
+			state["version"], modelStateLabel(state["selection_state"], "統計引擎")+reasonLabel(state["selection_reason"])+sourceLabel(state["selection_source"]),
+			modelStateLabel(state["punctuation_state"], "原文提交")+reasonLabel(state["punctuation_reason"])+sourceLabel(state["punctuation_source"]))
 	}
+}
+
+// modelHintOS 決定 runtime_missing 的提示；測試換成別的平台。
+var modelHintOS = runtime.GOOS
+
+// runtimeMissingLabel：只有 Linux（系統安裝用系統的 python3）提示要裝的 Debian 套件；macOS、Windows 的
+// Python 與推論元件內附在安裝包裡，不提 apt 的套件名（與設定程式、Windows 選單相同）。
+func runtimeMissingLabel(goos, fallback string) string {
+	if goos == "linux" {
+		return "缺少推論元件（請安裝 python3-numpy、python3-onnxruntime），使用" + fallback
+	}
+	return "缺少推論元件，使用" + fallback
 }
 
 func modelStateLabel(value any, fallback string) string {
@@ -63,11 +76,21 @@ func modelStateLabel(value any, fallback string) string {
 		return "依設定關閉"
 	case "not_installed":
 		return "未附模型，使用" + fallback
+	case "runtime_missing": // #181：找到模型，但沒有 python3，或它缺 numpy、onnxruntime
+		return runtimeMissingLabel(modelHintOS, fallback)
 	case "closed":
 		return "已停止，使用" + fallback
 	default:
 		return "未知（引擎未提供即時狀態）"
 	}
+}
+
+// sourceLabel 說明模型從哪裡載入（#181）；安裝包內建的不另外註明。
+func sourceLabel(value any) string {
+	if value == "user" {
+		return "（個人目錄的模型）"
+	}
+	return ""
 }
 
 // reasonLabel 說明模型退回的原因（引擎的 *_reason 代碼）；沒有原因時為空字串。

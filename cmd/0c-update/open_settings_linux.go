@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/0c-biggo/0c-ime/internal/autoupdate"
+	"github.com/0c-biggo/0c-ime/internal/installs"
 	"github.com/0c-biggo/0c-ime/internal/settingsapp"
 )
 
@@ -20,10 +21,19 @@ func newSettingsOpener() settingsOpener {
 	base := basePath()
 	home, _ := os.UserHomeDir()
 	updater, _ := os.Executable()
+	entry := ensureSettingsEntry
+	locate := func() (settingsapp.Location, error) {
+		return settingsapp.Locate(base, filepath.Join(home, installedSettings), receiptHash(installedSettings))
+	}
+	if packageManaged() {
+		// 系統套件（#181）：設定程式是 <bin>/0c-settings，應用程式選單的項目由套件放在系統目錄，不另外寫到家目錄。
+		entry = func() {}
+		locate = func() (settingsapp.Location, error) {
+			return settingsapp.LocateSystem(filepath.Join(installs.Default().Bin, "0c-settings"))
+		}
+	}
 	return settingsOpener{
-		locate: func() (settingsapp.Location, error) {
-			return settingsapp.Locate(base, filepath.Join(home, installedSettings), receiptHash(installedSettings))
-		},
+		locate:  locate,
 		display: settingsapp.DisplayAvailable,
 		missing: settingsapp.MissingLibraries,
 		launch:  settingsapp.Launch,
@@ -32,7 +42,7 @@ func newSettingsOpener() settingsOpener {
 				_ = notify(autoupdate.Notice{Title: title, Body: body})
 			}
 		},
-		entry:   ensureSettingsEntry,
+		entry:   entry,
 		hint:    func(libs []string) string { return installHint(libs, readOSRelease()) },
 		updater: updater,
 		log:     filepath.Join(base, "settings-last.log"),
