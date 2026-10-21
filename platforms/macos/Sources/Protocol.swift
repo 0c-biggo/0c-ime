@@ -35,6 +35,7 @@ struct Snapshot: Decodable {
         let page: Int
         let pages: Int
         let highlight: Int
+        var length: Int? = nil // 替換格數；0 是插入符號、選未完成注音、混打按鍵或 Emoji 選單
         var columns: Int? = nil
         var kind: String? = nil
         var title: String? = nil
