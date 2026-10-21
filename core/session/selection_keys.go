@@ -24,6 +24,16 @@ func (s *Session) selectionKeys() string {
 	return keys
 }
 
+// selectionKeyColumns 是多排候選（含 Emoji）每排最多幾個（#112）：選字鍵分在鍵盤幾排，候選就照著排。
+// 1234qweras 每排 4 個，1234／qwer／as 對上鍵盤三排；1234567890、asdfghjkl; 在同一排，維持 5 個。
+// 一頁照舊 10 個（4／4／2），翻頁不變；顏文字（2 個）與片語（直排）本來就比較少，不受影響。
+func (s *Session) selectionKeyColumns() int {
+	if s.selectionKeys() == "1234qweras" {
+		return 4
+	}
+	return 5
+}
+
 // selectionIndex 回報按鍵選的是這一頁的第幾項（0 起算），不是選字鍵時為 -1。
 // 選字鍵優先；數字 1–0 不論設定都照位置選字，舊外殼與自己畫候選窗的程式只顯示數字也能用。
 func (s *Session) selectionIndex(k string) int {

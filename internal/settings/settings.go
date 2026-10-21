@@ -763,7 +763,7 @@ func specs() []spec {
 		{"candidate-cursor", "修改字詞的位置", "按 ↓（開啟空白鍵選字、沒開中英混打時也可按空白鍵）開候選時，修改游標前方或後方的字詞；橫排時前方是左側，後方是右側。游標在句尾時後方沒有字，一律修改前方的詞", Default().CandidateCursor, []string{"before", "after"}, func(s Settings) string { return s.CandidateCursor }},
 		{"advance-after-select", "選字後游標移到下一個字", "從候選窗選好字後，游標跳到所選的詞後面，可以接著按 ↓ 改下一個字；修改游標前方字詞時往後移一個字。游標在句尾時不動", "off", []string{"on", "off"},
 			func(s Settings) string { return onOff(s.AdvanceAfterSelect) }},
-		{"candidate-layout", "選字排列", "直排，或每排五個的多排選字；Linux 原生候選窗依桌面介面呈現", "vertical", []string{"vertical", "grid"}, func(s Settings) string { return s.CandidateLayout }},
+		{"candidate-layout", "選字排列", "直排，或每排五個的多排選字（選字鍵 1234qweras 時每排四個）；Linux 原生候選窗依桌面介面呈現", "vertical", []string{"vertical", "grid"}, func(s Settings) string { return s.CandidateLayout }},
 		{"output-simplified", "輸出簡體字", "組字和候選仍顯示繁體，送出時才轉成簡體字；我的詞彙與我的片語也一起轉，英文、數字與標點不變", "off", []string{"on", "off"},
 			func(s Settings) string { return onOff(s.OutputSimplified) }},
 		{"emoji-shortcut", "Emoji 選單", "在注音模式按 = 開啟選單；Tab 切換顏文字，選過的排前面", "equals", []string{"off", "equals"}, func(s Settings) string { return s.EmojiShortcut }},
