@@ -117,7 +117,7 @@ type Session struct {
 	mixedKeys             map[int]string      // completed phonetic position → original keys, retained until edited/committed
 	mixedOrigins          map[int]mixedOrigin // literal positions: independently typed vs system-assisted
 	pendingToneKey        *toneKeyPending     // 上一鍵是單獨的聲調鍵：緊接著的空白換成聲調符號（#135）
-	toneMarkKeys          map[int]string      // 聲調鍵打出的聲調符號位置 → 原按鍵，↓ 可選回數字（#135）
+	literalKeys           map[int]string      // 照字面留下的符號位置 → 原按鍵，↓ 第二項可選回（#135 聲調符號、#190 混打的「，」「。」）
 	retypeLiteral         bool                // 上一鍵剛把沒有字的音節原樣留下：緊接著的同類介音／韻母是在改它（#85）
 	// DocumentContextOff 由宿主依使用者設定：外殼送來的前文確認一律忽略，不以前文選字。
 	DocumentContextOff bool
@@ -714,7 +714,7 @@ func (s *Session) key(k string) (handled bool, commit string) {
 	// 標點保留在組字區，可移動、替換候選；Enter 才提交。
 	if p, ok := s.layout.Punct(runes[0]); ok {
 		s.insertPendingLiteral()
-		s.insertLiteral(p)
+		s.insertPunctKey(k, p)
 		return true, ""
 	}
 	// 其他可見字元（Shift＋字母、@、#、落單聲調鍵等）在游標處逐字保留。
@@ -844,7 +844,7 @@ func (s *Session) eraseBeforeCursor() {
 // 完全在編輯點之前的鎖定不動；完全在之後的平移；被這次編輯切到的解除。
 func (s *Session) shiftLocks(at, delta int) {
 	s.shiftMixedKeys(at, delta)
-	s.toneMarkKeys = shiftKeys(s.toneMarkKeys, at, delta)
+	s.literalKeys = shiftKeys(s.literalKeys, at, delta)
 	s.shiftMixedOrigins(at, delta)
 	s.shiftLiterals(at, delta)
 	s.shiftPendingLiterals(at, delta)
@@ -988,7 +988,7 @@ func (s *Session) openCandidates(length int) {
 		for _, r := range s.syls[start:end] {
 			text.WriteString(string(r))
 		}
-		s.openSymbols(s.toneMarkAlternatives(symbolAlternatives(text.String()), start, end-start), start, end-start, false)
+		s.openSymbols(s.literalKeyAlternatives(symbolAlternatives(text.String()), start, end-start), start, end-start, false)
 		return
 	}
 	anchor := pos
@@ -1435,7 +1435,7 @@ func (s *Session) reset() {
 	s.clearMixed()
 	s.mixedKeys = nil
 	s.mixedOrigins = nil
-	s.pendingToneKey, s.toneMarkKeys = nil, nil
+	s.pendingToneKey, s.literalKeys = nil, nil
 	s.clearDocumentContext()
 	s.rerankCache = nil
 	s.hint = nil

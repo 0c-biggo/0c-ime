@@ -1,6 +1,7 @@
 package session
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/0c-biggo/0c-ime/core/lexicon"
@@ -20,6 +21,7 @@ func digitToneSession(mixed bool) *Session {
 		{"我", "ㄨㄛˇ", 1e-2}, {"是", "ㄕˋ", 5e-3}, {"歲", "ㄙㄨㄟˋ", 3e-4},
 		{"之", "ㄓ", 1e-3}, {"只", "ㄓˇ", 2e-3}, {"至", "ㄓˋ", 1e-3}, {"只是", "ㄓˇ ㄕˋ", 1e-3},
 		{"班", "ㄅㄢ", 3e-4}, {"把", "ㄅㄚˇ", 2e-3}, {"啊", "ㄚ˙", 1e-3},
+		{"大", "ㄉㄚˋ", 2e-3}, {"打", "ㄉㄚˇ", 1e-3},
 	} {
 		lex.Add(lexicon.Entry{Surface: e.w, Reading: zhuyin.ParseReading(e.r), PRW: 1})
 		sys.SetUni(e.w, e.p)
@@ -31,18 +33,24 @@ func digitToneSession(mixed bool) *Session {
 
 func TestMixedDigitToneStaysNumber(t *testing.T) {
 	for _, tc := range []struct{ keys, want string }{
-		{"57", "57"},       // ㄓ˙ 沒有字，不退回一聲的「之」
-		{"57 ", "57 "},     // 接空白是數字
-		{"ji357", "我57"},   // 接在中文後面也一樣
-		{"57njo4", "57歲"},  // 後面直接接中文
-		{"107", "107"},     // ㄅㄢ˙ 沒有字
-		{"354", "354"},     // 54 緊接在字面的 3 後面，是數字的一部分
-		{"813", "813"},     // ㄚㄅ 順序顛倒
-		{"53", "只"},        // 有字的照舊出字
-		{"54", "至"},        //
-		{"87", "啊"},        // ㄚ˙ 有字
-		{"183", "把"},       //
-		{"ji353g4", "我只是"}, //
+		{"57", "57"},         // ㄓ˙ 沒有字，不退回一聲的「之」
+		{"57 ", "57 "},       // 接空白是數字
+		{"ji357", "我57"},     // 接在中文後面也一樣
+		{"57njo4", "57歲"},    // 後面直接接中文
+		{"107", "107"},       // ㄅㄢ˙ 沒有字
+		{"354", "354"},       // 54 緊接在字面的 3 後面，是數字的一部分
+		{"813", "813"},       // ㄚㄅ 順序顛倒
+		{"824", "824"},       // 句首的反序照舊是數字（#190）
+		{"ji3 824", "我 824"}, // 空白後也是
+		{"ji3824", "我大"},     // 緊接在中文後面的反序照讀音出字（#190）
+		{"ji3823", "我打"},     //
+		{"ji3813", "我把"},     //
+		{"ji3017", "我017"},   // ㄢㄅ˙ 沒有字，照舊是數字
+		{"53", "只"},          // 有字的照舊出字
+		{"54", "至"},          //
+		{"87", "啊"},          // ㄚ˙ 有字
+		{"183", "把"},         //
+		{"ji353g4", "我只是"},   //
 	} {
 		s := digitToneSession(true)
 		if snap := mixedType(s, tc.keys); snap.Text() != tc.want {
@@ -70,6 +78,7 @@ func TestMixedDigitToneDownOffersNumberSecond(t *testing.T) {
 	for _, tc := range []struct{ keys, first, number string }{
 		{"54", "至", "54"},
 		{"53", "只", "53"},
+		{"ji3824", "大", "824"}, // #190：中文後面反序出的字也一樣
 	} {
 		s := digitToneSession(true)
 		mixedType(s, tc.keys)
@@ -77,7 +86,7 @@ func TestMixedDigitToneDownOffersNumberSecond(t *testing.T) {
 		if len(items) < 2 || items[0] != tc.first || items[1] != tc.number {
 			t.Fatalf("%q 按 ↓：%q", tc.keys, items)
 		}
-		if snap := s.Handle(proto.Request{Type: proto.Select, Index: 1}); snap.Text() != tc.number {
+		if snap := s.Handle(proto.Request{Type: proto.Select, Index: 1}); !strings.HasSuffix(snap.Text(), tc.number) {
 			t.Fatalf("%q 選回數字：%q", tc.keys, snap.Text())
 		}
 	}

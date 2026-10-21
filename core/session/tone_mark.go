@@ -44,7 +44,7 @@ func (s *Session) toneKey(k string, sym rune) bool {
 	return true
 }
 
-// finishToneKey 把緊接在空白之前的單獨聲調鍵換成聲調符號；原按鍵記在 toneMarkKeys，↓ 可選回數字。
+// finishToneKey 把緊接在空白之前的單獨聲調鍵換成聲調符號；原按鍵記在 literalKeys，↓ 可選回數字。
 func (s *Session) finishToneKey(p *toneKeyPending) bool {
 	if p == nil || !s.comp.Empty() || s.cursor != p.at+1 || !s.literals[p.at] || string(s.syls[p.at]) != p.key {
 		return false
@@ -55,21 +55,26 @@ func (s *Session) finishToneKey(p *toneKeyPending) bool {
 	}
 	s.eraseBeforeCursor()
 	s.insertLiteral(string(sym))
-	if s.toneMarkKeys == nil {
-		s.toneMarkKeys = map[int]string{}
-	}
-	s.toneMarkKeys[p.at] = p.key
+	s.setLiteralKey(p.at, p.key)
 	return true
 }
 
-// toneMarkAlternatives：聲調鍵打出的聲調符號按 ↓ 時，原本的數字排第二個（同 #134 單鍵出字的原按鍵）。
-// 反過來，落單的聲調鍵還是數字時（中英混打一律如此，#153；沒開混打時是還沒按空白），↓ 第一個仍是
-// 數字，第二個給這個鍵的聲調符號。
-func (s *Session) toneMarkAlternatives(items []string, start, length int) []string {
+// setLiteralKey 記下照字面留下的符號是哪個按鍵打出的，↓ 第二項可選回；編輯時隨位置平移，被換掉或刪除時一起消失。
+func (s *Session) setLiteralKey(at int, key string) {
+	if s.literalKeys == nil {
+		s.literalKeys = map[int]string{}
+	}
+	s.literalKeys[at] = key
+}
+
+// literalKeyAlternatives：聲調鍵打出的聲調符號、混打的 Shift＋, Shift＋. 打出的「，」「。」（#190）按 ↓ 時，
+// 原按鍵排第二個（同 #134 單鍵出字的原按鍵）。反過來，落單的聲調鍵還是數字時（中英混打一律如此，#153；
+// 沒開混打時是還沒按空白），↓ 第一個仍是數字，第二個給這個鍵的聲調符號。
+func (s *Session) literalKeyAlternatives(items []string, start, length int) []string {
 	if length != 1 || len(items) == 0 {
 		return items
 	}
-	if k := s.toneMarkKeys[start]; k != "" {
+	if k := s.literalKeys[start]; k != "" {
 		return slices.Insert(items, 1, k)
 	}
 	if sym, ok := s.loneToneKeyAt(start); ok {
