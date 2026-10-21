@@ -2607,7 +2607,9 @@ class HFModelsTests(unittest.TestCase):
         weights = self.hf.fetch(self.weights, lock_path=self.lock)
         out = self.hf.replace_models(old, self.data, self.root / "new/neural", weights, self.lock)
         self.assertEqual((out / "python/bin/python3").read_text(), "old python/bin/python3")
-        self.assertEqual((out / "sequence_runtime.py").read_text(), "old sequence_runtime.py")
+        # worker 不沿用舊 neural/ 的：一律是 repo 的版本（例如關掉 onnxruntime 遙測的修正才會出貨）
+        for name in self.hf.WORKER_NAMES:
+            self.assertEqual((out / name).read_bytes(), (self.hf.WORKERS / name).read_bytes(), name)
         self.assertFalse((out / "pairing.lock.json").exists())
         self.assertEqual(sorted(p.name for p in (out / "select").iterdir()), ["LICENSE", "README.md", "manifest.json", "model.onnx", "vocab.json"])
         dictionary = installer.digest(self.data / "manifest.json")
@@ -2623,6 +2625,13 @@ class HFModelsTests(unittest.TestCase):
         # 內部匯出的 neural/（manifest 不是上游的）不能當公開包出貨
         with self.assertRaisesRegex(ValueError, "不是公開版模型配對出貨字典的結果"):
             self.hf.check_shipped(old, self.data, self.lock)
+        # worker 跟 repo 不同（沿用舊版或手改）不能出貨
+        for name in self.hf.WORKER_NAMES:
+            original = (out / name).read_bytes()
+            (out / name).write_bytes(original + b"\n")
+            with self.assertRaisesRegex(ValueError, f"neural/{name} 與 platforms/neural/runtime/{name} 不同"):
+                self.hf.check_shipped(out, self.data, self.lock)
+            (out / name).write_bytes(original)
         # 只換掉權重（例如沿用舊的 model.onnx）也擋下
         shutil.copyfile(old / "select/model.onnx", out / "select/model.onnx")
         with self.assertRaisesRegex(ValueError, "官網套件要內建 Hugging Face 公開版"):
@@ -2637,6 +2646,8 @@ class HFModelsTests(unittest.TestCase):
         neural = self.root / "neural"
         neural.mkdir()
         self.hf.write_packages(weights, installer.digest(self.data / "manifest.json"), neural, self.lock)
+        for name in self.hf.WORKER_NAMES:
+            shutil.copyfile(self.hf.WORKERS / name, neural / name)
         shipped = packager.prepare_data_manifest(self.data, neural)
         self.assertEqual(shipped, installer.digest(self.data / "manifest.json"))
         self.assertEqual(json.loads(self.hf.check_shipped(neural, self.data, self.lock))["dictionary_manifest_sha256"], shipped)

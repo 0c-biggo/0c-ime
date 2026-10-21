@@ -217,6 +217,46 @@ func TestPythonCommandIsIsolatedAndReadOnly(t *testing.T) {
 	}
 }
 
+// onnxruntime 的遙測在 import 時就啟動，worker 的環境一定要帶 ORT_DISABLE_TELEMETRY=1；
+// 使用者環境裡設成別的值也要被蓋掉（exec 對重複的鍵取最後一個），其他變數照常傳下去。
+func TestPythonCommandDisablesOnnxruntimeTelemetry(t *testing.T) {
+	t.Setenv("ORT_DISABLE_TELEMETRY", "0")
+	t.Setenv("ORT_RUNNING_UNIT_TESTS", "")
+	t.Setenv("ZC_TEST_KEEP", "1")
+	got := map[string]string{}
+	for _, kv := range pythonCommand("python", "punct_runtime.py", "--package", "p").Environ() {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			got[k] = v
+		}
+	}
+	for k, want := range map[string]string{"ORT_DISABLE_TELEMETRY": "1", "ORT_RUNNING_UNIT_TESTS": "1", "ZC_TEST_KEEP": "1"} {
+		if got[k] != want {
+			t.Errorf("env %s=%q, want %q", k, got[k], want)
+		}
+	}
+}
+
+// select、punct 與評測工具都經 Open／OpenPunct 啟動 worker；本套件不得在 pythonCommand 以外另開子行程，
+// 否則新的啟動點會漏掉 NoTelemetryEnv。
+func TestWorkersOnlyStartThroughPythonCommand(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n := strings.Count(string(b), "exec.Command"); n > 0 && !(f == "worker.go" && n == 1) {
+			t.Errorf("%s 有 %d 處 exec.Command；worker 一律經 pythonCommand 啟動", f, n)
+		}
+	}
+}
+
 func TestStartupFailureReason(t *testing.T) {
 	m := Manifest{Schema: "zuin-encoder-runtime-v1", DictionarySHA256: "dictionary", Files: map[string]string{"model.onnx": "model"}}
 	for mode, want := range map[string]string{"dll_missing": ReasonMissingRuntime, "silent_exit": ReasonFailed, "module_missing": ReasonRuntimeMissing} {

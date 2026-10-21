@@ -254,11 +254,24 @@ func loadManifest(c Config) (Manifest, error) {
 	return m, nil
 }
 
+// NoTelemetryEnv 關掉 onnxruntime 的遙測，給所有會 import onnxruntime 的 Python 子行程（docs/46）。
+// 內附的 onnxruntime 1.30.0 在 import 時（建立全域 Env）就啟動遙測，變數必須在那之前就在環境裡：
+//   - Linux／macOS：1DS 每隔幾秒連 mobile.events.data.microsoft.com:443，並在 ~/.cache/Microsoft/DeveloperTools/.onnxruntime
+//     （macOS 為 ~/Library/Application Support/Microsoft/DeveloperTools/.onnxruntime）寫 deviceid 與 onnxruntime.db。
+//     ORT_DISABLE_TELEMETRY=1 是它公開的關閉方式，初始化時讀取。
+//   - Windows：不連網，改寫 ETW（Microsoft.ML.ONNXRuntime，交給系統的診斷資料服務），不讀 ORT_DISABLE_TELEMETRY。
+//     ORT_RUNNING_UNIT_TESTS=1 讓兩種實作都不註冊、不寫任何事件（1.30.0 只有遙測讀它；升級 onnxruntime 要重新確認）。
+//
+// worker 腳本另外再設一次並呼叫 disable_telemetry_events()。
+var NoTelemetryEnv = []string{"ORT_DISABLE_TELEMETRY=1", "ORT_RUNNING_UNIT_TESTS=1"}
+
 // pythonCommand 以隔離模式啟動 worker：不讀使用者的 PYTHON* 環境變數與 user site；
 // 不寫 bytecode（內附 Python 已預先編譯，安裝後的檔案必須維持與收據相同）；
-// stdio 一律 UTF-8（Windows 管道預設是系統碼頁，中文會變亂碼）；Windows 不開主控台視窗。
+// stdio 一律 UTF-8（Windows 管道預設是系統碼頁，中文會變亂碼）；Windows 不開主控台視窗；
+// onnxruntime 不連網（NoTelemetryEnv，覆蓋使用者環境裡的同名變數）。
 func pythonCommand(python, script string, args ...string) *exec.Cmd {
 	cmd := exec.Command(python, append([]string{"-I", "-B", "-X", "utf8", script}, args...)...)
+	cmd.Env = append(os.Environ(), NoTelemetryEnv...)
 	hideWindow(cmd)
 	return cmd
 }

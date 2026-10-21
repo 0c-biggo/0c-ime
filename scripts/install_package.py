@@ -341,8 +341,10 @@ def runtime_check(bundle, release):
         subprocess.run([str(bundle / "bin/0c-ibus"), "-version"], check=True, capture_output=True)
     if (bundle / "neural").is_dir():
         # The portable Python needs a compatible glibc; fail before touching the installation.
+        # onnxruntime 一 import 就啟動遙測並連到外部伺服器；環境同 internal/neural 的 NoTelemetryEnv。
         subprocess.run([str(bundle / "neural/python/bin/python3"), "-I", "-B", "-c", "import numpy, onnxruntime"],
-                       check=True, capture_output=True)
+                       check=True, capture_output=True,
+                       env={**os.environ, "ORT_DISABLE_TELEMETRY": "1", "ORT_RUNNING_UNIT_TESTS": "1"})
     subprocess.run([str(bundle / "bin/0c-server"), "-check-data", "-data", str(bundle / "data")],
                    check=True, capture_output=True)
     if not fcitx:

@@ -23,7 +23,6 @@ import zipfile
 import hf_models
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKERS = ROOT / "platforms/neural/runtime"
 PYTHON_VERSION = "3.14"
 # CPython 3.14.7 for both platforms; python.org stopped shipping Windows binaries for 3.12.
 RUNTIMES = {
@@ -207,8 +206,8 @@ def build(args):
                 compiler_archive = fetch(*RUNTIMES["linux-amd64"]["python"], args.cache, args.compiler_archive)
                 install_python("linux-amd64", compiler_archive, Path(temp) / "python")
                 precompile(site, Path(temp) / "python/bin/python3")
-        for name in ("sequence_runtime.py", "punct_runtime.py"):
-            shutil.copy2(WORKERS / name, stage / name)
+        for name in hf_models.WORKER_NAMES:
+            shutil.copy2(hf_models.WORKERS / name, stage / name)
         hf_models.write_packages(weights, dictionary, stage)
         (stage / "README.txt").write_text(
             "靈犀注音內附的神經選字與提交時補標點：可攜 Python " + PYTHON_VERSION +
