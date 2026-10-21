@@ -25,6 +25,7 @@ type retryFixture struct {
 	// enabled：不補做時查詢到的狀態（使用者自己在系統設定加入、或之後才按「允許」）；queries 是查詢次數。
 	enabled bool
 	queries int
+	query   bool // 背景排程的 auto（預設）；false 是設定程式、選單、通知按鈕
 	t0      time.Time
 	boot    time.Time
 }
@@ -47,12 +48,12 @@ func newRetryFixture(t *testing.T) *retryFixture {
 		t.Fatal(err)
 	}
 	t0 := time.Date(2026, 10, 22, 9, 0, 0, 0, time.UTC)
-	return &retryFixture{t: t, base: base, t0: t0, boot: t0.Add(-time.Hour)}
+	return &retryFixture{t: t, base: base, t0: t0, boot: t0.Add(-time.Hour), query: true}
 }
 
 // run 模擬一次排程喚起：目前的登入工作階段 asid，距安裝 minutes 分鐘。
 func (f *retryFixture) run(asid uint64, minutes int) error {
-	return retryInputSource(f.base, loginStamp{ASID: asid, At: f.t0.Add(time.Duration(minutes) * time.Minute)}, f.boot, func(string, string, ...bool) error {
+	return retryInputSource(f.base, loginStamp{ASID: asid, At: f.t0.Add(time.Duration(minutes) * time.Minute)}, f.boot, f.query, func(string, string, ...bool) error {
 		f.calls++
 		return f.fail
 	}, func(string, string) bool {
@@ -284,8 +285,9 @@ func TestMacGUILogin(t *testing.T) {
 	}
 }
 
-// 停止補做後使用者自己到「系統設定 → 鍵盤 → 文字輸入」加入靈犀注音：之後的喚起只查詢（不跑啟用工具、不跳詢問），
-// 查到已啟用就清掉記號與紀錄，狀態摘要不再顯示停止補做與舊的錯誤。同一個工作階段之後才按「允許」也一樣。
+// 停止補做後使用者自己到「系統設定 → 鍵盤 → 文字輸入」加入靈犀注音：之後的排程只查詢（不跑啟用工具、不跳詢問），
+// 一個登入工作階段只查一次，最晚下一次登入查到已啟用就清掉記號與紀錄，狀態摘要不再顯示停止補做與舊的錯誤。
+// 安裝當下沒成功、之後才在系統詢問按「允許」的，那個工作階段的第一次排程就查到。
 func TestInputSourceRetryClearsOnceEnabledElsewhere(t *testing.T) {
 	f := newRetryFixture(t)
 	f.fail = errors.New("已要求啟用，但系統尚未啟用 (exit status 2)")
@@ -293,9 +295,12 @@ func TestInputSourceRetryClearsOnceEnabledElsewhere(t *testing.T) {
 	if err := f.run(10, 60); err != nil || f.calls != 0 || f.queries != 1 || !f.pending() {
 		t.Fatalf("stopped, not enabled yet: err=%v calls=%d queries=%d pending=%v", err, f.calls, f.queries, f.pending())
 	}
-	f.enabled = true
-	if err := f.run(10, 75); err != nil || f.calls != 0 || f.pending() || onDisk(inputSourceRetryFile(f.base)) {
-		t.Fatalf("enabled by the user: err=%v calls=%d pending=%v", err, f.calls, f.pending())
+	f.enabled = true // 同一個工作階段稍後自己加入
+	if err := f.run(10, 75); err != nil || f.calls != 0 || f.queries != 1 || !f.pending() {
+		t.Fatalf("already queried in this session: err=%v calls=%d queries=%d pending=%v", err, f.calls, f.queries, f.pending())
+	}
+	if err := f.run(11, 24*60); err != nil || f.calls != 0 || f.queries != 2 || f.pending() || onDisk(inputSourceRetryFile(f.base)) {
+		t.Fatalf("next login finds it enabled: err=%v calls=%d queries=%d pending=%v", err, f.calls, f.queries, f.pending())
 	}
 
 	f = newRetryFixture(t)
@@ -303,6 +308,68 @@ func TestInputSourceRetryClearsOnceEnabledElsewhere(t *testing.T) {
 	f.enabled = true                                                  // 之後才在系統詢問按「允許」
 	if err := f.run(7, 15); err != nil || f.calls != 0 || f.queries != 1 || f.pending() {
 		t.Fatalf("allowed later in the same session: err=%v calls=%d queries=%d pending=%v", err, f.calls, f.queries, f.pending())
+	}
+}
+
+// 第三輪檢查：記號在、不補做時每次喚起（約 15 分鐘）都跑 plutil＋0c 查詢，停止補做後也永遠如此；設定程式「立即安裝」
+// （finish -json）也要等它最多 10 秒。改成只有背景排程查、一個登入工作階段只查一次。
+func TestInputSourceQueryOncePerLoginAndOnlyWhenScheduled(t *testing.T) {
+	f := newRetryFixture(t)
+	f.fail = errors.New("已要求啟用，但系統尚未啟用 (exit status 2)")
+	saveInputSourceRetry(f.base, inputSourceRetry{ASID: 9, At: f.t0, Failed: inputSourceRetrySessions, Error: f.fail.Error()})
+	f.query = false // 設定程式、選單、通知按鈕
+	for m := 15; m <= 60; m += 15 {
+		if err := f.run(10, m); err != nil || f.queries != 0 {
+			t.Fatalf("finish must not query: err=%v queries=%d", err, f.queries)
+		}
+	}
+	f.query = true
+	for m := 75; m <= 24*60; m += 15 { // 一整天的排程
+		if err := f.run(10, m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if f.queries != 1 || f.calls != 0 {
+		t.Fatalf("one query per login session: queries=%d calls=%d", f.queries, f.calls)
+	}
+	for asid := uint64(11); asid <= 13; asid++ {
+		for m := 0; m < 4; m++ {
+			_ = f.run(asid, int(asid)*24*60+m*15)
+		}
+	}
+	if f.queries != 4 || f.calls != 0 || !f.pending() {
+		t.Fatalf("one query in each later login: queries=%d calls=%d pending=%v", f.queries, f.calls, f.pending())
+	}
+	// 查詢時有圖形登入但沒記到 ASID：之後第一次取得 ASID 只記下來（同一個工作階段），ASID 改變才再查。
+	r := loadInputSourceRetry(f.base)
+	r.Queried = &loginStamp{At: f.t0.Add(14 * 24 * time.Hour)}
+	saveInputSourceRetry(f.base, *r)
+	_ = f.run(14, 14*24*60+15)
+	_ = f.run(14, 14*24*60+30)
+	if f.queries != 4 {
+		t.Fatalf("an ASID-less query stamp adopts the first ASID: queries=%d", f.queries)
+	}
+	if _ = f.run(15, 15*24*60); f.queries != 5 {
+		t.Fatalf("the next login queries: queries=%d", f.queries)
+	}
+	// 補做本身（跨過登入、還沒停止）不受 query 影響：設定程式「立即安裝」也照舊試。
+	f = newRetryFixture(t)
+	saveInputSourceRetry(f.base, inputSourceRetry{ASID: 7, At: f.t0})
+	f.query = false
+	if err := f.run(8, 60); err != nil || f.calls != 1 || f.queries != 0 || f.pending() {
+		t.Fatalf("retry after login: err=%v calls=%d queries=%d pending=%v", err, f.calls, f.queries, f.pending())
+	}
+}
+
+// 只用不會改選的 --query-input-source（0.2.4 起）；更早的 App 只有會改選的 --confirm-input-source，不查。
+func TestQueryInputSourceSupported(t *testing.T) {
+	for v, want := range map[string]bool{
+		"0.2.4": true, "0.2.5": true, "0.3.0": true,
+		"0.2.3": false, "0.2.4-rc.1": false, "0.1.0-dev.61": false, "bundle 37": false, "": false,
+	} {
+		if got := queryInputSourceSupported(v); got != want {
+			t.Errorf("queryInputSourceSupported(%q) = %v, want %v", v, got, want)
+		}
 	}
 }
 

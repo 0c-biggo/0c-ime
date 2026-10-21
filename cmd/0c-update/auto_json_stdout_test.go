@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -72,6 +73,40 @@ func TestFinishJSONStdoutHasOnlyTheResult(t *testing.T) {
 		}
 		if s.ProfileAtLogin {
 			t.Fatal("ProfileAtLogin stays set after the input method was added")
+		}
+	}
+}
+
+// #195 第三輪檢查：不補做時的查詢（macOS 的 --query-input-source）只有背景排程的 auto 做；設定程式「立即安裝」
+// （finish -json）、等著結果的 auto -json 不等它。
+func TestOnlyScheduledAutoQueriesInputSource(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	base := basePath()
+	if err := os.MkdirAll(base, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := autoupdate.EditState(base, func(s *autoupdate.State) error {
+		s.Mode, s.Feed, s.ProfileAtLogin = autoupdate.ModeAsk, "https://127.0.0.1:1/feed.json", true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	savedEvery, savedRetry := retriesInputMethodEveryRun, retryLoginInputMethod
+	t.Cleanup(func() { retriesInputMethodEveryRun, retryLoginInputMethod = savedEvery, savedRetry })
+	retriesInputMethodEveryRun = true
+	var got []bool
+	retryLoginInputMethod = func(scheduled bool) error { got = append(got, scheduled); return errors.New("not yet") }
+	for _, c := range []struct {
+		action string
+		args   []string
+		want   bool
+	}{{"finish", []string{"-json"}, false}, {"auto", []string{"-json"}, false}, {"auto", nil, true}} {
+		got = nil
+		_, _ = captureStdout(t, func() error { return autoCommand(c.action, c.args) })
+		if len(got) != 1 || got[0] != c.want {
+			t.Errorf("%s %v: scheduled = %v, want [%v]", c.action, c.args, got, c.want)
 		}
 	}
 }

@@ -511,10 +511,11 @@ func autoCommand(action string, args []string) (resultErr error) {
 	}
 	// macOS 的 launchd 在登入時以 auto 喚起（不帶 -login）；新安裝的輸入法要重新登入後才登記得到，所以每次都補試。
 	// macOS 看安裝時留下的記號（inputSourcePending），不看 ProfileAtLogin（#195）；記號留著時每個登入工作階段補試一次，
-	// 失敗的重試只會一直跳系統詢問，連續幾個工作階段都失敗就停止（addInputMethod）。
+	// 失敗的重試只會一直跳系統詢問，連續幾個工作階段都失敗就停止（addInputMethod）。不補做時只有背景排程的 auto
+	// 查詢使用者是不是已經自己加入（一個工作階段一次）；設定程式「立即安裝」、選單、通知按鈕不必等這個查詢。
 	if *login || retriesInputMethodEveryRun {
 		if s, err := autoupdate.Load(base); err == nil && (s.ProfileAtLogin || inputSourcePending(base)) {
-			if err := addInputMethod(); err != nil {
+			if err := retryLoginInputMethod(action == "auto" && !*asJSON && !*report); err != nil {
 				fmt.Fprintln(os.Stderr, "0c-update: 加入輸入法清單失敗：", err)
 			} else if s.ProfileAtLogin { // macOS 只有記號時不必改狀態檔；改了也不印狀態，免得混進 -json 的結果
 				_, _ = autoupdate.EditState(base, func(s *autoupdate.State) error { s.ProfileAtLogin = false; return nil })
@@ -573,6 +574,9 @@ func autoCommand(action string, args []string) (resultErr error) {
 
 // retriesInputMethodEveryRun：每次 auto／finish 都補做登入時的輸入法清單（macOS，見 autoCommand 裡的說明）；測試在 Linux 上打開它走同一條路。
 var retriesInputMethodEveryRun = runtime.GOOS == "darwin"
+
+// retryLoginInputMethod 是 autoCommand 補做輸入法清單的入口（retryInputMethod）；測試替換用，確認只有背景排程會查詢。
+var retryLoginInputMethod = retryInputMethod
 
 // notifyOutcome 回報使用者親自要求（選單、通知按鈕）的結果；背景排程不發這類通知。
 func notifyOutcome(s *autoupdate.State, err error) {

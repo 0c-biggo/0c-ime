@@ -8,6 +8,9 @@ if (arguments.count == 3 || (arguments.count == 4 && arguments[3] == "--force"))
 if arguments.count == 3, arguments[1] == "--confirm-input-source" {
     exit(InputSourceSetup.reportState(appPath: arguments[2]))
 }
+if arguments.count == 3, arguments[1] == "--query-input-source" {
+    exit(InputSourceSetup.reportState(appPath: arguments[2], select: false))
+}
 if arguments.count == 3, arguments[1] == "--update-agent" {
     exit(UpdateAgent.run(arguments[2]))
 }
