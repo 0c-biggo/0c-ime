@@ -46,7 +46,16 @@ func TestVocabOverIPCPersistsAndRespectsGate(t *testing.T) {
 		if err := server.Start(); err != nil {
 			t.Fatal(err)
 		}
-		defer func() { server.Process.Signal(os.Interrupt); server.Wait() }()
+		// 讀 logs 之前要先等行程結束：exec 在另一個 goroutine 把 stderr 抄進 logs（-race 會抓到）。
+		stopped := false
+		stop := func() {
+			if !stopped {
+				stopped = true
+				server.Process.Signal(os.Interrupt)
+				server.Wait()
+			}
+		}
+		defer stop()
 		waitDial(t, sock)
 		conn, err := net.Dial("unix", sock)
 		if err != nil {
@@ -64,6 +73,8 @@ func TestVocabOverIPCPersistsAndRespectsGate(t *testing.T) {
 			}
 			return r
 		})
+		conn.Close()
+		stop()
 		return logs.String()
 	}
 	add := &engine.VocabRequest{Op: engine.VocabAdd, Words: []vocab.Entry{{Text: name, Readings: []string{reading}}}}
