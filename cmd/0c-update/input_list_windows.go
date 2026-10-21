@@ -31,43 +31,38 @@ func listInputMethod(base string) {
 // 這次安裝其實裝在那個帳號。
 func listsOwnDesktop() bool {
 	elevated := windows.GetCurrentProcessToken().IsElevated()
-	var process, session account
-	var err error
-	process.sid, err = processUserSID()
+	process, err := processUser()
+	var session account
 	if err == nil {
 		session, err = sessionAccount()
-	}
-	if err == nil && session.sid == "" && session.name != "" {
-		process.name, err = processAccount() // 工作階段使用者的 SID 查不到時退回比名稱
 	}
 	if ownsDesktop(process, session, err, elevated) {
 		return true
 	}
 	if elevated && err == nil && session.name != "" {
-		if process.name == "" {
-			if process.name, err = processAccount(); err != nil {
-				process.name = process.sid
-			}
+		who := process.name
+		if who == "" {
+			who = process.sid
 		}
 		// 這時整套安裝都在那個管理員帳號（見 ownsDesktop），不只是清單。
 		fmt.Fprintf(os.Stderr, "0c-update: 系統管理員權限是以另一個帳號（%[1]s）確認的：這次安裝的程式、自動更新與登入啟動都在 %[1]s，"+
 			"不在目前桌面使用者（%[2]s），也沒有加入輸入法清單。要給 %[2]s 使用，請以 %[2]s 自己的帳號確認系統管理員權限重新安裝\n",
-			process.name, session.name)
+			who, session.name)
 	}
 	return false
 }
 
-// processAccount 是這個程序的帳號名稱（網域\帳號）。
-func processAccount() (string, error) {
+// processUser 是這個程序 token 上的使用者：SID 與帳號名稱（網域\帳號），token 只查一次；名稱查不到時留空字串。
+func processUser() (account, error) {
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {
-		return "", err
+		return account{}, err
 	}
-	name, domain, _, err := user.User.Sid.LookupAccount("")
-	if err != nil {
-		return "", err
+	a := account{sid: user.User.Sid.String()}
+	if name, domain, _, err := user.User.Sid.LookupAccount(""); err == nil {
+		a.name = domain + `\` + name
 	}
-	return domain + `\` + name, nil
+	return a, nil
 }
 
 // accountSID 以帳號名稱（網域\帳號）查 SID；查不到時為空字串。
