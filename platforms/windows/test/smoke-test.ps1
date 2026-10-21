@@ -194,6 +194,14 @@ public static class TSFProbe {
     $box.Focus() | Out-Null; $box.Clear(); Pump 300
     Send 'su3{ENTER}'
     Expect '你' 'normal_field_after_password' # 只手選過一次「妳」不會改變預設（代名詞性別只依反覆的明確選取）
+    # 組字中焦點移到別的欄位：組字照舊送出到原欄位（#189 只在宿主把組字搬到新的焦點文件時才繼續組字）。
+    # 回到原欄位按 Esc：組字還在的話會被取消，已送出就不受影響。
+    $box.Clear(); Pump 200
+    Send 'su3'
+    $password.Focus() | Out-Null; Pump 500
+    $box.Focus() | Out-Null; Pump 300
+    Send '{ESC}'
+    Expect '你' 'focus_change_commits_composition'
     $module = (Get-Process -Id $PID).Modules | Where-Object ModuleName -eq '0c_tsf.dll' | Select-Object -First 1
     $report.dll = $module.FileName
     if ($report.dll -ne $ExpectedDLL) { throw "host loaded unexpected DLL: $($report.dll)" }
