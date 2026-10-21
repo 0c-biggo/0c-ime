@@ -9,6 +9,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/0c-biggo/0c-ime/core/emoji"
 	"github.com/0c-biggo/0c-ime/core/english"
@@ -170,6 +171,8 @@ type Model struct {
 	Now func() int64
 	// prunedDay 是這個行程最後一次清理的日子（PruneIfDue）；不存檔。
 	prunedDay int64
+	// undo 是 Undoable 執行期間記錄改動的複本；其餘時候是 nil（見 recording）。
+	undo *Undo
 }
 
 func NewModel(lex lexicon.Source, sys lm.System) *Model {
@@ -436,6 +439,9 @@ func (m *Model) dropBi(left, w string) {
 	k := pair(left, w)
 	before := m.Store.Bi[k]
 	valid := m.diversityValid()
+	r := m.recording()
+	noteFloat(r.bi, m.Store.Bi, k)
+	noteFloat(r.ctx, m.Store.Ctx, left)
 	m.Store.Ctx[left] -= before
 	delete(m.Store.Bi, k)
 	if valid {
@@ -571,62 +577,157 @@ func (m *Model) seePhrase(ph, readingKey, left string, weight float64) {
 
 // Forget 是「不再學」：撤銷與 w 有關的一切學習並留下 tombstone，被動使用不得學回，
 // 只有再次明確手選、親手加詞或「恢復學習」（Relearn）才解除。
-func (m *Model) Forget(w string) {
-	m.Unlearn(w)
-	m.tombstoneEnglish(w)
-	m.Store.Tombstones[w] = true
+func (m *Model) Forget(w string) { m.ForgetAll([]string{w}) }
+
+// ForgetAll 等於對 ws 逐一 Forget，但每類學習資料只掃一遍（「靈犀學到的」頁勾選多個詞，#182）。
+func (m *Model) ForgetAll(ws []string) {
+	m.UnlearnAll(ws)
+	r := m.recording()
+	for _, w := range ws {
+		m.tombstoneEnglish(w)
+		note(r.tombstones, m.Store.Tombstones, w)
+		m.Store.Tombstones[w] = true
+	}
 }
 
 // Unlearn 是「移除」（#182）：撤銷與 w 有關的一切學習，但不留 tombstone；之後照常打字、選字會再學回來。
-func (m *Model) Unlearn(w string) {
+func (m *Model) Unlearn(w string) { m.UnlearnAll([]string{w}) }
+
+// UnlearnAll 等於對 ws 逐一 Unlearn：清掉的是「含有任何一個詞」的項目，與逐一清的聯集相同，
+// 但每類資料只掃一遍。個人資料到上限時（詞對 20 萬筆）掃一遍約 10 ms；逐詞各掃一遍的話，勾 100 個詞
+// 要 0.6 秒、1,000 個詞要 6 秒，期間引擎鎖住、打字會卡（#182）。
+func (m *Model) UnlearnAll(ws []string) {
+	if len(ws) == 0 {
+		return
+	}
 	m.Gen++
-	m.forgetEnglish(w)
-	m.forgetCorrections(w)
-	m.forgetPronouns(w)
+	has := containsAny(ws)
+	word := make(map[string]bool, len(ws))
+	for _, w := range ws {
+		word[w] = true
+	}
+	isWord := func(x string) bool { return word[x] }
+	r := m.recording()
+	for _, w := range ws {
+		m.forgetEnglish(w)
+		m.forgetPronouns(w)
+	}
+	m.forgetCorrections(has)
 	s := m.Store
+	// 「左詞\t詞」的鍵：先看整個鍵（左詞或詞含有某個詞，整個鍵一定也含有），絕大多數不相干的鍵不必切開。
 	for k := range s.EvidenceByContext {
-		l, x, _ := strings.Cut(k, "\t")
-		if strings.Contains(l, w) || strings.Contains(x, w) {
+		if !has(k) {
+			continue
+		}
+		if l, x, _ := strings.Cut(k, "\t"); has(l) || has(x) {
+			note(r.byContext, s.EvidenceByContext, k)
 			delete(s.EvidenceByContext, k)
+			note(r.byWord, s.EvidenceByWord, x)
 			delete(s.EvidenceByWord, x) // 回退聚合無法拆回各上下文；避免撤銷後仍有殘留加權
 		}
 	}
 	for x := range s.EvidenceByWord {
-		if strings.Contains(x, w) {
+		if has(x) {
+			note(r.byWord, s.EvidenceByWord, x)
 			delete(s.EvidenceByWord, x)
 		}
 	}
 	for k := range s.Bi {
-		if l, x, _ := strings.Cut(k, "\t"); strings.Contains(l, w) || strings.Contains(x, w) {
+		if !has(k) {
+			continue
+		}
+		if l, x, _ := strings.Cut(k, "\t"); has(l) || has(x) {
 			m.dropBi(l, x)
 		}
 	}
-	s.Total -= s.Uni[w]
-	delete(s.Uni, w)
-	delete(s.Uses, w)
-	for syl, ws := range s.Picked {
-		s.Picked[syl] = filter(ws, func(x string) bool { return x != w })
+	dropUni := func(w string) {
+		noteFloat(r.uni, s.Uni, w)
+		noteFloat(r.uses, s.Uses, w)
+		s.Total -= s.Uni[w]
+		delete(s.Uni, w)
+		delete(s.Uses, w)
+	}
+	for _, w := range ws {
+		dropUni(w)
+	}
+	for syl, xs := range s.Picked {
+		if slices.ContainsFunc(xs, isWord) {
+			note(r.picked, s.Picked, syl)
+			s.Picked[syl] = filter(xs, func(x string) bool { return !word[x] })
+		}
 	}
 	for k := range s.Readings {
-		if x, _, _ := strings.Cut(k, "\t"); strings.Contains(x, w) {
+		if !has(k) {
+			continue
+		}
+		if x, _, _ := strings.Cut(k, "\t"); has(x) {
+			note(r.readings, s.Readings, k)
 			delete(s.Readings, k)
 		}
 	}
 	for ph := range s.Phrases {
-		if strings.Contains(ph, w) {
+		if has(ph) {
+			note(r.phrases, s.Phrases, ph)
 			delete(s.Phrases, ph)
-			s.Total -= s.Uni[ph]
-			delete(s.Uni, ph)
-			delete(s.Uses, ph)
+			dropUni(ph)
 		}
 	}
 	s.PhraseOrder = filter(s.PhraseOrder, func(ph string) bool { _, ok := s.Phrases[ph]; return ok })
 	for ph := range s.PhraseSeen {
-		if strings.Contains(ph, w) {
+		if has(ph) {
+			note(r.phraseSeen, s.PhraseSeen, ph)
 			delete(s.PhraseSeen, ph)
 		}
 	}
 }
+
+// containsAny 回報字串是否含有 ws 任何一個（strings.Contains 的聯集）。詞少時逐一比對；
+// 詞多時改成查表：每個字元位置先看是不是某個詞的第一個字（位元表），是的話才查從這裡開始、
+// 長度與某個詞相同的子字串，成本跟詞數幾乎無關。
+func containsAny(ws []string) func(string) bool {
+	if len(ws) <= containsAnyLoop || slices.ContainsFunc(ws, func(w string) bool { return !utf8.ValidString(w) }) {
+		// 不是合法 UTF-8 的詞可能從字元中間開始比對到，查表只看字元開頭，所以照逐一比對。
+		return func(s string) bool {
+			for _, w := range ws {
+				if strings.Contains(s, w) {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	set := make(map[string]bool, len(ws))
+	var lens []int
+	var first [0x10000 / 64]uint64 // 基本多文種平面的首字；其他字元一律查表
+	for _, w := range ws {
+		if w == "" {
+			return func(string) bool { return true } // strings.Contains(s, "") 恆為真
+		}
+		set[w] = true
+		if !slices.Contains(lens, len(w)) {
+			lens = append(lens, len(w))
+		}
+		if c, _ := utf8.DecodeRuneInString(w); c < 0x10000 {
+			first[c/64] |= 1 << (c % 64)
+		}
+	}
+	return func(s string) bool {
+		for i, c := range s {
+			if c < 0x10000 && first[c/64]&(1<<(c%64)) == 0 {
+				continue
+			}
+			for _, n := range lens {
+				if i+n <= len(s) && set[s[i:i+n]] {
+					return true
+				}
+			}
+		}
+		return false
+	}
+}
+
+// containsAnyLoop：詞數不超過這個值時逐一 strings.Contains 比較快（BenchmarkContainsAny）。
+const containsAnyLoop = 4
 
 func filter[T any](xs []T, keep func(T) bool) []T {
 	out := xs[:0:0]

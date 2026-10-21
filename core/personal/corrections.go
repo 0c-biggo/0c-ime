@@ -3,7 +3,6 @@ package personal
 import (
 	"slices"
 	"sort"
-	"strings"
 
 	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
@@ -317,9 +316,12 @@ func (m *Model) CorrectionUsage(syls []zhuyin.Syllable) func(int, string) float6
 	return func(start int, word string) float64 { return byStart[start][word] }
 }
 
-func (m *Model) forgetCorrections(word string) {
+// forgetCorrections 清掉詞本身或左右鄰接詞符合 has 的更正（UnlearnAll）。
+func (m *Model) forgetCorrections(has func(string) bool) {
+	r := m.recording()
 	for k, c := range m.Store.Corrections {
-		if strings.Contains(c.Word, word) || strings.Contains(c.LeftWord, word) || strings.Contains(c.RightWord, word) {
+		if has(c.Word) || has(c.LeftWord) || has(c.RightWord) {
+			note(r.corrections, m.Store.Corrections, k)
 			delete(m.Store.Corrections, k)
 		}
 	}

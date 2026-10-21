@@ -37,7 +37,7 @@ func LearningOp(op string) bool {
 func (e *Engine) learnedOp(req VocabRequest, resp *VocabResponse) error {
 	m := e.Model
 	now := e.expireLearnedUndo()
-	defer func() { resp.ForgottenCount = len(m.Forgotten()) }()
+	defer func() { resp.ForgottenCount = m.ForgottenCount() }()
 	switch req.Op {
 	case VocabForgotten:
 		resp.Forgotten = m.Forgotten()
@@ -64,14 +64,15 @@ func (e *Engine) learnedOp(req VocabRequest, resp *VocabResponse) error {
 	if len(texts) == 0 {
 		return &vocab.Error{Code: vocab.CodeEmpty, Item: -1, Msg: "沒有選任何詞"}
 	}
+	// 勾選多個詞時一次處理：每類學習資料只掃一遍，不是每個詞各掃一遍（都在引擎鎖裡）。
 	u := m.Undoable(func() {
-		for _, t := range texts {
-			switch req.Op {
-			case VocabForget:
-				m.Forget(t)
-			case VocabUnlearn:
-				m.Unlearn(t)
-			case VocabRelearn:
+		switch req.Op {
+		case VocabForget:
+			m.ForgetAll(texts)
+		case VocabUnlearn:
+			m.UnlearnAll(texts)
+		case VocabRelearn:
+			for _, t := range texts {
 				m.Relearn(t)
 			}
 		}

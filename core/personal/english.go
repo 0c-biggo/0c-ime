@@ -168,6 +168,7 @@ func (s *Store) cleanEnglish() {
 
 func (m *Model) forgetEnglish(text string) {
 	if EnglishToken(text) {
+		note(m.recording().english, m.Store.English, strings.ToLower(text))
 		delete(m.Store.English, strings.ToLower(text))
 	}
 }
@@ -175,6 +176,7 @@ func (m *Model) forgetEnglish(text string) {
 // tombstoneEnglish 讓英文詞的正規化寫法也不再學（Forget）。
 func (m *Model) tombstoneEnglish(text string) {
 	if EnglishToken(text) {
+		note(m.recording().tombstones, m.Store.Tombstones, strings.ToLower(text))
 		m.Store.Tombstones[strings.ToLower(text)] = true
 	}
 }

@@ -192,7 +192,7 @@ func (e *Engine) vocabLocked(req VocabRequest) VocabResponse {
 		}
 	case VocabLearned:
 		resp.Learned = e.learned()
-		resp.ForgottenCount = len(m.Forgotten())
+		resp.ForgottenCount = m.ForgottenCount()
 	case VocabKeep:
 		var entries []vocab.Entry
 		learned := map[string][]string{}
