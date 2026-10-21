@@ -550,6 +550,10 @@ func (s *Session) key(k string) (handled bool, commit string) {
 		default:
 			if n := s.selectionIndex(k); n >= 0 {
 				s.selectCandidate(s.candidateID(s.cand.page()*perPage + n))
+			} else if k == "j" { // 選字鍵優先：asdfghjkl; 時上面已選字（#193）
+				s.stepCandidate(-1)
+			} else if k == "k" {
+				s.stepCandidate(1)
 			}
 		}
 		return true, "" // 候選開啟時吃掉所有按鍵（含 Shift+Tab 等沒有作用的鍵），不與注音鍵同時解讀、不交給應用程式
@@ -1025,6 +1029,35 @@ func (s *Session) openCandidates(length int) {
 			return
 		}
 	}
+}
+
+// stepCandidate 把要修改的字往前（d=-1，j）或往後（d=1，k）換一格並重開候選（#193，照新酷音）：
+// 不必 Esc、←／→、再 ↓。「要修改的字」是緊貼游標的那個字：後方模式是候選的第一個字，前方模式是最後一個字；
+// 標點等原樣文字整段算一格。換到的位置照 ↓ 的規則開窗（前方／後方模式、優先用現有分詞），
+// 後方模式從句尾開的前方候選也以最後一個字為準往前換，不會開回同一個字。已在頭尾時不動。
+// 只用於改字的候選：Emoji／顏文字、中英混打的按鍵候選、注音打到一半與 ` 的符號選單都不套用。
+func (s *Session) stepCandidate(d int) {
+	c := s.cand
+	if c.kind != "" || c.direct || c.mixed || c.english || c.pending || c.length == 0 ||
+		!s.comp.Empty() || s.mixed.raw != "" || s.englishWord {
+		return
+	}
+	at := c.start
+	if c.before {
+		at = s.literalFloor(c.start + c.length - 1)
+	}
+	if d < 0 && at == 0 {
+		return
+	}
+	next := s.literalStep(at, d)
+	if next >= len(s.syls) {
+		return
+	}
+	s.cursor = next
+	if s.CandidateBeforeCursor {
+		s.cursor = s.literalStep(next, 1)
+	}
+	s.openCandidates(0)
 }
 
 // candidateBefore 決定這次開窗選游標前方還是後方的詞。後方模式的游標在組字尾端時後面沒有字，

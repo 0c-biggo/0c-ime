@@ -76,7 +76,11 @@ final class CandidatePanel: NSPanel {
                 }
             }
             finishRow()
-            let keys = columns > 1 ? "方向鍵移動 · PgUp/PgDn 翻頁" : "← → 翻頁"
+            var keys = columns > 1 ? "方向鍵移動 · PgUp/PgDn 翻頁" : "← → 翻頁"
+            // 改字的候選按 j／k 換前後一個字（#193）；選字鍵是 asdfghjkl;（第一個鍵標 a，這頁不滿 7 個也一樣）時 j、k 是選字，不寫。
+            if (candidates.length ?? 0) > 0, (candidates.kind ?? "").isEmpty, candidates.items.first?.key != "a" {
+                keys += " · J\u{00A0}K\u{00A0}換\u{2060}字" // 窄的候選窗換行時「J K 換字」整段移到下一行
+            }
             let footer = NSTextField(wrappingLabelWithString: "\(candidates.page + 1) / \(candidates.pages)　\(keys)")
             footer.font = .systemFont(ofSize: 12)
             stack.addArrangedSubview(footer)
