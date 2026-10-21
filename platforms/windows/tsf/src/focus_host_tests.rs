@@ -302,3 +302,76 @@ fn switching_documents_commits_to_the_composition_context() {
     assert_eq!((edits_a.get(), edits_b.get()), (0, 0), "不送到 A、B");
     service.state.borrow_mut().callback = None;
 }
+
+/// 拿不到範圍的組字（宿主那一端的組字範圍或 context 已失效，composing 仍為 true）。
+#[implement(ITfComposition)]
+struct DeadComp;
+impl ITfComposition_Impl for DeadComp_Impl {
+    fn GetRange(&self) -> R<ITfRange> {
+        no()
+    }
+    fn ShiftStart(&self, _: u32, _: Ref<'_, ITfRange>) -> R<()> {
+        no()
+    }
+    fn ShiftEnd(&self, _: u32, _: Ref<'_, ITfRange>) -> R<()> {
+        no()
+    }
+    fn EndComposition(&self, _: u32) -> R<()> {
+        no()
+    }
+}
+
+fn break_composition(service: &ComObject<TextService>) {
+    let composition: ITfComposition = ComObject::new(DeadComp).into_interface();
+    service.state.borrow_mut().composition = Some(composition);
+}
+
+#[test]
+fn focus_to_null_then_another_document_with_a_dead_range_commits_to_the_original() {
+    // 發版前 code review 第三輪：A → NULL 之後組字範圍失效（composition_context() 拿不到），焦點接著落到 B。
+    // 第二次焦點變化的原文件是 NULL，組字範圍也沒有 context：只剩焦點移到 NULL 時記下的 A，沒有它打到一半的字就沒地方送。
+    let Some((service, doc_a, edits_a, doc_b, edits_b)) = composing_in_a() else {
+        return;
+    };
+    let sink: ITfThreadMgrEventSink = service.to_interface();
+    unsafe { sink.OnSetFocus(None::<&ITfDocumentMgr>, &doc_a) }.unwrap();
+    assert_eq!(edits_a.get(), 0);
+    break_composition(&service);
+    unsafe { sink.OnSetFocus(&doc_b, None::<&ITfDocumentMgr>) }.unwrap();
+    assert!(edits_a.get() > 0, "組字要送到 A");
+    assert_eq!(edits_b.get(), 0, "不送到 B");
+    assert!(service.state.borrow().left_from.is_none(), "送出後不再記著 A");
+    service.state.borrow_mut().callback = None;
+}
+
+#[test]
+fn settling_with_a_dead_range_commits_to_the_original() {
+    // 同上，焦點停在 NULL、等到佇列空下來才確認（settle_focus）：一樣送到焦點移到 NULL 時記下的 A。
+    let Some((service, doc_a, edits_a, _doc_b, edits_b)) = composing_in_a() else {
+        return;
+    };
+    let sink: ITfThreadMgrEventSink = service.to_interface();
+    unsafe { sink.OnSetFocus(None::<&ITfDocumentMgr>, &doc_a) }.unwrap();
+    // 宿主連續移開兩次：第二次沒有原文件，保留第一次記下的 A。
+    unsafe { sink.OnSetFocus(None::<&ITfDocumentMgr>, None::<&ITfDocumentMgr>) }.unwrap();
+    break_composition(&service);
+    service.settle_focus();
+    assert!(edits_a.get() > 0, "組字要送到 A");
+    assert_eq!(edits_b.get(), 0);
+    service.state.borrow_mut().callback = None;
+}
+
+#[test]
+fn focus_handed_back_forgets_the_original() {
+    // A → NULL → A（繼續組字）之後不再記著 A：之後的送出照組字範圍與那次的原文件決定，不會送到舊的記錄。
+    let Some((service, doc_a, _edits_a, _doc_b, _)) = composing_in_a() else {
+        return;
+    };
+    let sink: ITfThreadMgrEventSink = service.to_interface();
+    unsafe { sink.OnSetFocus(None::<&ITfDocumentMgr>, &doc_a) }.unwrap();
+    assert!(service.state.borrow().left_from.is_some());
+    unsafe { sink.OnSetFocus(&doc_a, None::<&ITfDocumentMgr>) }.unwrap();
+    assert!(service.state.borrow().left_from.is_none());
+    assert!(service.state.borrow().composing);
+    service.state.borrow_mut().callback = None;
+}
