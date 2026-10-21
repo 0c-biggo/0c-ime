@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/0c-biggo/0c-ime/internal/installs"
+	"github.com/0c-biggo/0c-ime/internal/neural"
 )
 
 // checkModelRuntime 回報系統 Python 缺少的 Debian 套件名；結果快取在個人目錄（models_runtime.go），設定程式
@@ -27,7 +28,9 @@ func probeModelRuntime(python string) (runtimeProbe, error) {
 	failed := runtimeProbe{Missing: []string{"python3-numpy", "python3-onnxruntime"}}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, python, "-I", "-B", "-c", script).Output()
+	cmd := exec.CommandContext(ctx, python, "-I", "-B", "-c", script)
+	cmd.Env = append(os.Environ(), neural.NoTelemetryEnv...) // import onnxruntime 就會啟動它的遙測（見 NoTelemetryEnv）
+	out, err := cmd.Output()
 	if err != nil {
 		return failed, err
 	}

@@ -10,8 +10,11 @@
 - 配對：manifest.json、vocab.json 用 repo 裡的 models/upstream（同樣先核對 models.lock），依 pairing_lock.py 的
   metadata()（與 0c-ime scripts/pair_models.py 相同）只改 dictionary_sha256 與 manifest 記的 vocab 雜湊，權重不動。
   結果必須等於這份字典的 pairing.lock.json。
+- worker：sequence_runtime.py、punct_runtime.py 一律換成 repo 的 platforms/neural/runtime/ 版本（不沿用舊 neural/ 的），
+  worker 的修正（例如關掉 onnxruntime 遙測）才會跟著出貨。
 - 核對（check）：出貨的 neural/ 兩個模型的 manifest.json、vocab.json 等於出貨字典的 pairing.lock，model.onnx（與
-  LICENSE、README.md）等於 models.lock。公開包打包時（package_release／package_windows／package_macos）自動執行。
+  LICENSE、README.md）等於 models.lock，兩個 worker 與 repo 的逐位相同。公開包打包時（package_release／package_windows／
+  package_macos）自動執行。
 
 0.2.2 以前官網套件內建的 model.onnx（cef689f1…、2d98c7c6…）與公開版權重相同、只差匯出資訊，記在
 models/equivalent.json；model_identity() 兩種都認，給比較新舊套件的發版檢查用。發版出貨的一律是公開版原檔。
@@ -40,6 +43,8 @@ EQUIVALENT = ROOT / "models/equivalent.json"
 CACHE = ROOT / "build/cache/models"
 HF = "https://huggingface.co"
 METADATA = ("manifest.json", "vocab.json")  # 由 models/upstream 配對產生，不從權重來源拿
+WORKERS = ROOT / "platforms/neural/runtime"
+WORKER_NAMES = ("sequence_runtime.py", "punct_runtime.py")
 
 
 def digest(path):
@@ -181,8 +186,8 @@ def dictionary_of(data):
     return digest(Path(data) / "manifest.json")
 
 
-def replace_models(neural, data, out, weights, lock_path=LOCK):
-    """複製現有的 neural/（可攜 Python、worker），把 select/、punct/ 換成配對到 data 的公開版模型。"""
+def replace_models(neural, data, out, weights, lock_path=LOCK, workers=WORKERS):
+    """複製現有的 neural/（沿用可攜 Python），把 select/、punct/ 換成配對到 data 的公開版模型，worker 換成 repo 的版本。"""
     neural, out = Path(neural), Path(out)
     if out.exists():
         raise ValueError(f"輸出已存在：{out}")
@@ -190,7 +195,7 @@ def replace_models(neural, data, out, weights, lock_path=LOCK):
         raise ValueError(f"不是 neural/ 目錄：{neural}")
     if any(p.is_symlink() for p in neural.rglob("*")):
         raise ValueError("神經套件不接受符號連結")
-    skip = set(ROLES) | {"pairing.lock.json"}
+    skip = set(ROLES) | {"pairing.lock.json"} | set(WORKER_NAMES)
     out.parent.mkdir(parents=True, exist_ok=True)
     stage = Path(tempfile.mkdtemp(prefix=".neural-", dir=out.parent))
     try:
@@ -201,6 +206,8 @@ def replace_models(neural, data, out, weights, lock_path=LOCK):
                 shutil.copytree(entry, stage / entry.name)
             else:
                 shutil.copy2(entry, stage / entry.name)
+        for name in WORKER_NAMES:
+            shutil.copyfile(Path(workers) / name, stage / name)
         write_packages(weights, dictionary_of(data), stage, lock_path)
         os.replace(stage, out)
     except BaseException:
@@ -209,9 +216,10 @@ def replace_models(neural, data, out, weights, lock_path=LOCK):
     return out
 
 
-def check_shipped(neural, data, lock_path=LOCK):
+def check_shipped(neural, data, lock_path=LOCK, workers=WORKERS):
     """出貨的 neural/ 是公開版模型、配對 data 的 manifest：manifest.json、vocab.json 等於 pairing.lock，
-    model.onnx、LICENSE、README.md 等於 models.lock。回傳這份字典的 pairing.lock 位元組。"""
+    model.onnx、LICENSE、README.md 等於 models.lock；worker 等於 repo 的 platforms/neural/runtime。
+    回傳這份字典的 pairing.lock 位元組。"""
     lock = load_lock(lock_path)
     neural = Path(neural)
     expected = pairing_lock(dictionary_of(data), lock_path)
@@ -228,6 +236,10 @@ def check_shipped(neural, data, lock_path=LOCK):
                     check_file(path, lock["models"][role]["files"][name], f"neural/{role}/{name}")
                 except ValueError as error:
                     raise ValueError(f"{error}；官網套件要內建 Hugging Face 公開版（models.lock）") from None
+    for name in WORKER_NAMES:
+        path = neural / name
+        if not path.is_file() or path.read_bytes() != (Path(workers) / name).read_bytes():
+            raise ValueError(f"neural/{name} 與 platforms/neural/runtime/{name} 不同；用 hf_models.py neural 重新產生 neural/")
     return expected
 
 
@@ -244,7 +256,7 @@ def main():
         commands[name].add_argument("--expect-char", action="append", default=[], help="新字典新增讀音的字，必須在模型 vocab 內")
         commands[name].add_argument("--expect-base", action="append", default=[], help="新字典新增讀音的音節（不含聲調），必須在模型 vocab 內")
     commands["pair"].add_argument("--out", type=Path, required=True, help="輸出目錄：寫出 select/、punct/ 與 pairing.lock.json（必須不存在）")
-    commands["neural"].add_argument("--neural", type=Path, required=True, help="現有的 neural/（沿用它的可攜 Python 與 worker）")
+    commands["neural"].add_argument("--neural", type=Path, required=True, help="現有的 neural/（沿用它的可攜 Python；worker 用 repo 的）")
     commands["neural"].add_argument("--out", type=Path, required=True, help="新的 neural/（必須不存在）")
     commands["check"].add_argument("--neural", type=Path, required=True, help="要核對的 neural/")
     args = parser.parse_args()
