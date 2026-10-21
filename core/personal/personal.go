@@ -569,9 +569,16 @@ func (m *Model) seePhrase(ph, readingKey, left string, weight float64) {
 	}
 }
 
-// Forget 撤銷與 w 有關的一切學習並留下 tombstone：被動使用不得學回，
-// 只有再次明確手選才解除。
+// Forget 是「不再學」：撤銷與 w 有關的一切學習並留下 tombstone，被動使用不得學回，
+// 只有再次明確手選、親手加詞或「恢復學習」（Relearn）才解除。
 func (m *Model) Forget(w string) {
+	m.Unlearn(w)
+	m.tombstoneEnglish(w)
+	m.Store.Tombstones[w] = true
+}
+
+// Unlearn 是「移除」（#182）：撤銷與 w 有關的一切學習，但不留 tombstone；之後照常打字、選字會再學回來。
+func (m *Model) Unlearn(w string) {
 	m.Gen++
 	m.forgetEnglish(w)
 	m.forgetCorrections(w)
@@ -619,7 +626,6 @@ func (m *Model) Forget(w string) {
 			delete(s.PhraseSeen, ph)
 		}
 	}
-	s.Tombstones[w] = true
 }
 
 func filter[T any](xs []T, keep func(T) bool) []T {

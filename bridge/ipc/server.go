@@ -297,7 +297,7 @@ func (s *Server) do(env Envelope, sessions map[uint64]bool, startDrain *bool) Re
 			return Reply{Error: "缺少詞彙指令"}
 		}
 		resp := s.Engine.Vocab(*env.Vocab)
-		if resp.Changed && env.Vocab.Op == engine.VocabForget { // 改的是學習資料：照輸入法的忘記處理
+		if resp.Changed && engine.LearningOp(env.Vocab.Op) { // 改的是學習資料（不再學、移除、恢復學習、復原）：照輸入法的忘記處理
 			if s.OnCommit != nil {
 				s.OnCommit()
 			}
