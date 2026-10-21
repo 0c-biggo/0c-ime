@@ -13,10 +13,14 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/0c-biggo/0c-ime/bridge/ipc"
+	"github.com/0c-biggo/0c-ime/core/engine"
+	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/vocab"
 	"github.com/0c-biggo/0c-ime/internal/settings"
 	"github.com/0c-biggo/0c-ime/internal/vocabapi"
 )
@@ -230,3 +234,121 @@ type vocabFile struct {
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }
+
+// #196／#122：刪自訂詞也清掉指向它的學習資料（user.json）。經本機 API 或 IPC 刪詞後不再打字就結束，
+// 結束前也要把 user.json 重寫，重啟後不留指向已刪除自訂詞的使用紀錄與更正。
+func TestVocabRemoveRewritesUserStoreWithoutTyping(t *testing.T) {
+	binary := buildServer(t)
+	dir := t.TempDir()
+	data, _ := filepath.Abs("../../testdata/toy")
+	sock := filepath.Join(dir, "api.sock")
+	user := filepath.Join(dir, "user.json")
+	l, _ := net.Listen("tcp", "127.0.0.1:0")
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+	if err := vocabapi.SaveConfig(dir, vocabapi.Config{Enabled: true, Port: port}); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(dir, settings.FileName), []byte(`{"schema":1,"selection":"statistical"}`), 0o600)
+	var logs bytes.Buffer
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("引擎日誌：\n%s", logs.String())
+		}
+	})
+	ipcCall := func(c net.Conn, env ipc.Envelope) ipc.Reply {
+		t.Helper()
+		if err := ipc.WriteFrame(c, env); err != nil {
+			t.Fatal(err)
+		}
+		var r ipc.Reply
+		if err := ipc.ReadFrame(c, &r); err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	start := func() (*exec.Cmd, net.Conn) {
+		t.Helper()
+		server := exec.Command(binary, "-data", data, "-user", user, "-socket", sock)
+		server.Stderr = &logs
+		if err := server.Start(); err != nil {
+			t.Fatal(err)
+		}
+		waitDial(t, sock)
+		c, err := net.Dial("unix", sock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// IPC 回得了話時已經裝好結束訊號的處理（API 比它早開始監聽）：之後的 SIGTERM 會照常存檔再結束。
+		ipcCall(c, ipc.Envelope{Op: ipc.OpHealth})
+		return server, c
+	}
+	post := func(path, body string) int {
+		t.Helper()
+		for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+			tok, err := vocabapi.LoadToken(dir)
+			if err == nil {
+				req, _ := http.NewRequest("POST", "http://127.0.0.1:"+itoa(port)+path, strings.NewReader(body))
+				req.Header.Set("Authorization", "Bearer "+tok.Value)
+				req.Header.Set("Content-Type", "application/json")
+				var resp *http.Response
+				if resp, err = (&http.Client{Timeout: 3 * time.Second}).Do(req); err == nil {
+					resp.Body.Close()
+					return resp.StatusCode
+				}
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("連不上本機 API：%v", err)
+			}
+		}
+	}
+	stop := func(server *exec.Cmd, c net.Conn) {
+		c.Close()
+		server.Process.Signal(syscall.SIGTERM)
+		server.Wait()
+	}
+
+	ipcVocab := func(c net.Conn, req engine.VocabRequest) {
+		t.Helper()
+		if r := ipcCall(c, ipc.Envelope{Op: ipc.OpVocab, Vocab: &req}); !r.OK || r.Vocab == nil || !r.Vocab.OK {
+			t.Fatalf("%s：%+v", req.Op, r)
+		}
+	}
+	// 本機 API（savingDoer）與設定程式走的 IPC（OnVocab）兩條路都要。
+	for _, via := range []string{"api", "ipc"} {
+		// 加詞、打出來提交：user.json 記下這個詞的使用紀錄。
+		server, c := start()
+		if via == "api" {
+			if code := post("/v1/words", `{"words":[{"word":"麻婆","readings":["ㄇㄚˊ ㄆㄛˊ"]}]}`); code != 200 {
+				t.Fatalf("加詞：%d", code)
+			}
+		} else {
+			ipcVocab(c, engine.VocabRequest{Op: engine.VocabAdd, Words: []vocab.Entry{{Text: "麻婆", Readings: []string{"ㄇㄚˊ ㄆㄛˊ"}}}})
+		}
+		open := ipcCall(c, ipc.Envelope{Op: ipc.OpOpen, Version: proto.Version})
+		for _, k := range "a86qi6" {
+			ipcCall(c, ipc.Envelope{Op: ipc.OpHandle, Session: open.Session, Req: &proto.Request{Type: proto.Key, Key: string(k)}})
+		}
+		if r := ipcCall(c, ipc.Envelope{Op: ipc.OpHandle, Session: open.Session, Req: &proto.Request{Type: proto.Key, Key: proto.KeyEnter}}); r.Snapshot == nil || r.Snapshot.Commit != "麻婆" {
+			t.Fatalf("%s 提交：%+v", via, r)
+		}
+		stop(server, c)
+		if b, err := os.ReadFile(user); err != nil || !bytes.Contains(b, []byte(`"麻婆"`)) {
+			t.Fatalf("%s 提交後 user.json 要有這個詞的使用紀錄：%v %s", via, err, b)
+		}
+
+		// 重啟後只刪詞，不打字就結束（SIGTERM）。
+		server, c = start()
+		if via == "api" {
+			if code := post("/v1/words/remove", `{"words":["麻婆"]}`); code != 200 {
+				t.Fatalf("刪詞：%d", code)
+			}
+		} else {
+			ipcVocab(c, engine.VocabRequest{Op: engine.VocabRemove, Texts: []string{"麻婆"}})
+		}
+		stop(server, c)
+		if b, err := os.ReadFile(user); err != nil || bytes.Contains(b, []byte(`麻婆"`)) {
+			t.Fatalf("%s 刪詞後 user.json 要重寫、不留指向它的學習資料：%v %s", via, err, b)
+		}
+	}
+}
