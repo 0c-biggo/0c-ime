@@ -43,12 +43,17 @@ type account struct{ sid, name string }
 // 工作階段裡切換鍵盤。這時不加入，只提示。不會有之後補上的時候：提權的安裝程式本來就把整套安裝（%LOCALAPPDATA%\Zuin 的
 // 程式與收據、自動更新與登入工作）都寫在那個管理員帳號，桌面使用者沒有登入工作；要以桌面使用者自己的帳號確認系統管理員權限
 // 重新安裝才會裝到它那邊（並加入它的清單）。
-// 以 SID 比對：Azure AD 與 Microsoft 帳號的電腦上，token 查到的名稱與工作階段的使用者名稱寫法可能不同。工作階段使用者的
-// SID 查不到時才退回比名稱。session 兩者皆空是沒有登入使用者（服務、SSH），不加入；查不到工作階段（err）時，
-// 系統管理員權限的程序不加入，一般權限的照舊加入（自己的帳號）。
+// 一般權限的程序（登入工作、每日檢查，以 runas 執行的也一樣）一律加入、不查身分：InstallLayoutOrTip 與記號都落在它自己的帳號，
+// 只有提權時 UAC 可能換成另一個帳號。
+// 提權時以 SID 比對：工作階段使用者的 SID 取自桌面 shell 的擁有者（見 sessionAccount），不靠名稱；Azure AD 與 Microsoft 帳號的
+// 電腦上，token 查到的名稱與工作階段的使用者名稱寫法可能不同。拿不到工作階段使用者的 SID 時才退回比名稱。session 兩者皆空是
+// 沒有登入使用者（服務、SSH），不加入；查不到工作階段（err）時，提權的程序不加入。
 func ownsDesktop(process, session account, err error, elevated bool) bool {
+	if !elevated {
+		return true
+	}
 	if err != nil {
-		return !elevated
+		return false
 	}
 	if process.sid != "" && session.sid != "" {
 		return strings.EqualFold(process.sid, session.sid)
