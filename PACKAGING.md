@@ -42,7 +42,9 @@ build/0c-cli -data assets/data
 
 Go module 相依須預先備妥，之後可用 `GOPROXY=off GOSUMDB=off` 離線建置；不需要 `.git` 或重新編譯 bigram。平台外殼依各平台 README 建置。
 
-神經選字與補標點使用模型 tarball 的 `models/select/`、`models/punct/`，可另外打包成選用套件（例如 Debian 的 non-free）；版本與配對檢查見 [模型說明](models/README.md)，worker 與系統 Python、NumPy、ONNX Runtime 的整合方式見 [神經推論](platforms/neural/README.md)。工具鏈、執行相依套件與安裝規則由發行版自行提供。逐檔的著作權人與授權以 DEP-5 格式列在 [legal/copyright](legal/copyright)，可直接作為 `debian/copyright` 的基礎。
+要把外殼（Fcitx5、IBus）、引擎、設定程式與字典整套裝到系統目錄時，用根目錄的 `make build PREFIX=/usr VERSION=<版本>` 與 `make install PREFIX=/usr VERSION=<版本> DESTDIR=<暫存根目錄>`；這種安裝由套件管理員更新，不會自己檢查或下載更新。變數、安裝路徑與建置／執行相依見 [Linux 系統安裝](platforms/linux-system/README.md)。
+
+神經選字與補標點使用模型 tarball 的 `models/select/`、`models/punct/`，可另外打包成選用套件（例如 Debian 的 non-free）；版本與配對檢查見 [模型說明](models/README.md)，worker 與系統 Python、NumPy、ONNX Runtime 的整合方式見 [神經推論](platforms/neural/README.md)。工具鏈與執行相依套件由發行版自行提供。逐檔的著作權人與授權以 DEP-5 格式列在 [legal/copyright](legal/copyright)，可直接作為 `debian/copyright` 的基礎。
 
 ## 從原始碼重建字典
 
