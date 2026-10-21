@@ -180,6 +180,13 @@ bool Session::simplifiedAtOpen() const {
     return value != serverInfo_.end() && value->is_string() && value->get<std::string>() == "true";
 }
 
+bool Session::simplifiedHotkey() {
+    if (client_.connected()) { client_.alive(); } // 斷了就關掉，下面重連
+    if (!client_.connect() || !ensureOpen() || !simplifiedLive()) { return false; }
+    auto value = serverInfo_.find("simplified_hotkey");
+    return value != serverInfo_.end() && value->is_string() && value->get<std::string>() == "true";
+}
+
 bool Session::ctrlPunct() {
     if (!client_.connect() || !ensureOpen()) { return false; }
     auto value = serverInfo_.find("ctrl_punctuation");

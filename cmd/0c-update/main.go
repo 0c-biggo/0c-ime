@@ -85,6 +85,7 @@ func listSettings(w io.Writer, r settings.Report, path string) {
 	fmt.Fprintf(w, "candidate-layout=%s（選字排列）\nemoji-shortcut=%s（表情自選快捷鍵）\n", s.CandidateLayout, s.EmojiShortcut)
 	fmt.Fprintf(w, "emoji-equals-first=%s（將 = 放在 Emoji 第一項）\n", onOff(s.EmojiEqualsFirst))
 	fmt.Fprintf(w, "output-simplified=%s（輸出簡體字：組字和候選仍是繁體，送出時轉成簡體）\n", onOff(s.OutputSimplified))
+	fmt.Fprintf(w, "simplified-hotkey=%s（按 %s 切換輸出簡體字；關閉時這個鍵交給應用程式）\n", onOff(s.SimplifiedHotkey), settings.SimplifiedHotkeyLabel(runtime.GOOS))
 	fmt.Fprintf(w, "selection-keys=%s（選字鍵：1234567890、1234qweras 或 asdfghjkl;；換成字母時數字仍照位置選字）\n", s.SelectionKeys)
 	fmt.Fprintf(w, "ctrl-punctuation=%s（注音模式按 Ctrl＋, . ' ; 與 Ctrl＋Shift＋/ 1 打全形標點；關閉時交給應用程式）\n", onOff(s.CtrlPunctuation))
 	if settings.CapsLockEnglishSetting(runtime.GOOS) {

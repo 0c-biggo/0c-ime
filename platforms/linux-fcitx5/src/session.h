@@ -126,6 +126,10 @@ public:
     // 引擎能即時切換「輸出簡體字」（open 回覆的 output_simplified_live，#169）。不連線，只看這個 session 開啟時的回覆；
     // 還沒開 session 時為 false，呼叫端先 ensureLive。
     bool simplifiedLive() const;
+    // 「用快捷鍵切換簡體字」開著、引擎也能即時切換（open 回覆的 simplified_hotkey 與 output_simplified_live，#192）。
+    // 只在按下那個鍵時問：設定改了一定會重啟引擎，所以先看連線還在不在（不送請求），斷了就重連、重開 session 拿新的值，
+    // 剛在設定程式打開或關掉後第一次按就照新設定。引擎沒在執行時照常啟動（使用者自己按的快捷鍵）；舊引擎沒有這一項時為 false。
+    bool simplifiedHotkey();
     // 連上引擎、開好 session 後回報 simplifiedLive；引擎不可用時 false。
     bool ensureLive() { return client_.connect() && ensureOpen() && simplifiedLive(); }
     // 開啟 open 回覆裡引擎當時的「輸出簡體字」（output_simplified）；之後以快照的 outputSimplified 為準。

@@ -313,6 +313,14 @@ func run() throws {
         session.reset()
         stop()
     }
+    // #192：「用快捷鍵切換簡體字」預設關（設定檔沒有這一項）；打開後引擎重啟，下一次 open 就回報，⌃⇧F11 才攔。
+    check(!session.simplifiedHotkey, "simplified_hotkey defaults off")
+    try Data(#"{"schema":1,"selection":"statistical","punctuation":false,"simplified_hotkey":true}"#.utf8)
+        .write(to: directory.appendingPathComponent("settings.json"))
+    _ = try key(" ")
+    check(session.simplifiedHotkey, "open reply carries simplified_hotkey=true once the setting is on")
+    session.reset()
+    stop()
 
     try Data(#"{"schema":1,"selection":"statistical","punctuation":false,"english_autocomplete":true,"left_shift":true}"#.utf8)
         .write(to: directory.appendingPathComponent("settings.json"))
@@ -391,6 +399,16 @@ func run() throws {
     for (code, flags) in [(UInt16(43), NSEvent.ModifierFlags.command), (43, []), (43, [.control, .option]), (43, [.control, .command]),
                           (43, [.control, .shift]), (44, .control), (18, .control), (33, .control), (0, .control)] {
         check(KeyMapping.ctrlPunct(code: code, modifiers: flags) == nil, "not ctrl punct: \(code) \(flags.rawValue)")
+    }
+    // #192：⌃⇧F11（F 鍵事件帶 .function，Caps Lock 不影響）；少了 Shift／Control、多了 Command／Option、別的 F 鍵（F2 是 120）、字母 F 都不是。
+    for flags: NSEvent.ModifierFlags in [[.control, .shift], [.control, .shift, .function], [.control, .shift, .function, .capsLock]] {
+        check(KeyMapping.simplifiedHotkey(code: KeyMapping.f11Code, modifiers: flags), "simplified hotkey \(flags.rawValue)")
+    }
+    let notHotkey: [(UInt16, NSEvent.ModifierFlags)] = [(KeyMapping.f11Code, [.control, .function]), (KeyMapping.f11Code, [.shift, .function]),
+        (KeyMapping.f11Code, [.function]), (KeyMapping.f11Code, [.control, .shift, .command, .function]),
+        (KeyMapping.f11Code, [.control, .shift, .option, .function]), (120, [.control, .shift, .function]), (3, [.control, .shift])]
+    for (code, flags) in notHotkey {
+        check(!KeyMapping.simplifiedHotkey(code: code, modifiers: flags), "not simplified hotkey: \(code) \(flags.rawValue)")
     }
     check(KeyMapping.key(code: 117, characters: "\u{F728}", modifiers: []) == "Delete", "forward delete maps to core grapheme editing")
     check(KeyMapping.key(code: 0, characters: "😀", modifiers: []) == nil, "non-ASCII passes through")

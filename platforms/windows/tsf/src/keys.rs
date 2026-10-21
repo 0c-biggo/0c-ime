@@ -3,7 +3,7 @@
 //! 只有中文模式的 Ctrl＋標點（#168，見 [`ctrl_punct`]）例外。
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetKeyState, GetKeyboardState, ToUnicode, VK_BACK, VK_CAPITAL, VK_CONTROL,
-    VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_HOME, VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LSHIFT,
+    VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F11, VK_HOME, VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LSHIFT,
     VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR, VK_RCONTROL, VK_RETURN, VK_RIGHT, VK_RMENU, VK_RSHIFT,
     VK_RWIN, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
 };
@@ -209,6 +209,29 @@ pub fn ctrl_punct(vk: u32, lparam: isize) -> Option<&'static str> {
         return None;
     }
     ctrl_punct_name(&printable(vk, lparam, false)?)
+}
+
+/// 切換「輸出簡體字」的鍵（#192，settings.SimplifiedHotkeyLabel 的 Ctrl＋Shift＋F11）。
+pub const VK_SIMPLIFIED_HOTKEY: u32 = VK_F11.0 as u32;
+
+/// 這一鍵是不是切換簡體字的 Ctrl＋Shift＋F11（#192）：只按著 Ctrl 與 Shift，沒有 Alt、Win。
+/// 要不要攔由呼叫端看引擎回報的 simplified_hotkey。
+pub fn simplified_hotkey(vk: u32) -> bool {
+    unsafe {
+        is_simplified_hotkey(
+            vk,
+            GetKeyState(VK_CONTROL.0 as i32) < 0,
+            GetKeyState(VK_SHIFT.0 as i32) < 0,
+            GetKeyState(VK_MENU.0 as i32) < 0
+                || GetKeyState(VK_LWIN.0 as i32) < 0
+                || GetKeyState(VK_RWIN.0 as i32) < 0,
+        )
+    }
+}
+
+/// [`simplified_hotkey`] 的判斷本身（測試用）。
+pub fn is_simplified_hotkey(vk: u32, ctrl: bool, shift: bool, other: bool) -> bool {
+    vk == VK_SIMPLIFIED_HOTKEY && ctrl && shift && !other
 }
 
 /// 不按 Ctrl 時的字元對應的 Ctrl＋標點鍵名。
@@ -583,6 +606,19 @@ mod tests {
             assert!(!differs || layout_dependent(&c), "{c} 的答案依排列而不同，必須查排列");
         }
         assert!(layout_dependent("=") && !layout_dependent("a"));
+    }
+
+    #[test]
+    fn simplified_hotkey_is_only_ctrl_shift_f11() {
+        let f11 = VK_SIMPLIFIED_HOTKEY;
+        assert_eq!(f11, 0x7A);
+        assert!(is_simplified_hotkey(f11, true, true, false));
+        assert!(!is_simplified_hotkey(f11, true, false, false), "Ctrl＋F11");
+        assert!(!is_simplified_hotkey(f11, false, true, false), "Shift＋F11");
+        assert!(!is_simplified_hotkey(f11, false, false, false), "F11（全螢幕）");
+        assert!(!is_simplified_hotkey(f11, true, true, true), "多按 Alt／Win");
+        assert!(!is_simplified_hotkey(0x7B, true, true, false), "Ctrl＋Shift＋F12");
+        assert!(!is_simplified_hotkey(0x46, true, true, false), "Ctrl＋Shift＋F");
     }
 
     #[test]

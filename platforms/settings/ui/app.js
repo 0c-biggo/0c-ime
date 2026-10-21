@@ -416,7 +416,7 @@
     const capsLock = items.find((item) => item.key === 'caps-lock-english'); // #173：鍵盤卡片最後；只有 Windows、Linux 有
     const selectionKeys = items.find((item) => item.key === 'selection-keys'); // #112：跟鍵盤排列放在同一張卡
     const rest = items.filter((item) => !item.key.startsWith('fuzzy-') && item.key !== 'keyboard-layout' && item.key !== 'selection-keys' && item.key !== 'ctrl-punctuation' && item.key !== 'caps-lock-english' &&
-      item.key !== 'output-simplified' && (!emoji || item.key !== 'emoji-equals-first'));
+      item.key !== 'output-simplified' && item.key !== 'simplified-hotkey' && (!emoji || item.key !== 'emoji-equals-first'));
     const rows = rest.map((item) => {
       const parent = itemRow(item, locked ||
         (item.key === 'emoji-shortcut' && state.busy.has('emoji-equals-first')));
@@ -562,7 +562,8 @@
     if (problem(root)) return;
     const settings = state.settings;
     root.append(...fileNotices(settings));
-    const items = (settings.items || []).filter((item) => item.key === 'output-simplified');
+    // 「用快捷鍵切換簡體字」（#192）排在「輸出簡體字」下面；說明由 0c-update 依平台寫出快捷鍵。
+    const items = ['output-simplified', 'simplified-hotkey'].map((key) => (settings.items || []).find((item) => item.key === key)).filter(Boolean);
     if (items.length) root.append(h('div', { class: 'card' }, ...items.map((item) => itemRow(item, settings.file.read_only))));
   }
 

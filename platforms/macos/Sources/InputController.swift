@@ -112,6 +112,12 @@ final class LingxiInputController: IMKInputController {
         rightShift.otherKey()
         leftShift.otherKey()
         toggleArmed = false // 交還 App 的快捷鍵與未對應的按鍵也算切換之後的操作
+        // 用快捷鍵切換簡體字（#192）：設定開著（引擎回報 simplified_hotkey）時吃掉 ⌃⇧F11，跟選單的「輸出簡體字」同一條路：
+        // 組字不動、游標旁提示「已切換為輸出簡體字／繁體字」，選單打勾跟著變。設定關閉或舊引擎時照一般快捷鍵交給 App。
+        if KeyMapping.simplifiedHotkey(code: event.keyCode, modifiers: event.modifierFlags), session.simplifiedHotkey {
+            simplifiedMenuAction(nil)
+            return true
+        }
         syncCaps(event.modifierFlags.contains(.capsLock), client: client, showHint: false)
         // Ctrl＋標點打全形（#168）：注音模式、引擎回報 ctrl_punctuation 時交給引擎插進組字區，沒在組字時也一樣。
         // 引擎沒處理（設定剛關掉、模式不同步）就照下面的一般快捷鍵先送出組字再交給 App。
