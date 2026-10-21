@@ -626,15 +626,17 @@ func (s *Session) punctKeyWord(raw string) bool {
 // digitToneNumber（#175，方案 b）：只用數字鍵、最後一鍵是聲調鍵（3 4 6 7）的待定按鍵，在下面三種情況照字面
 // 留成數字，不組成中文：
 //   - 帶調讀音在詞庫沒有字，要靠 #69 的輕聲退回一聲才組得成（57 ㄓ˙→之、107 ㄅㄢ˙→班、07 ㄢ˙→安）；
-//   - 按鍵順序顛倒（813 的 ㄚㄅ、017 的 ㄢㄅ），真的在打注音時不會這樣打；
+//   - 在句首或接在空白、英文、標點後面，按鍵順序顛倒（813 的 ㄚㄅ、017 的 ㄢㄅ），真的在打注音時不會這樣打；
 //   - 前面緊接著字面數字或數字標點（354 的 3 已照字面送出），是更長的數字的一部分。
 //
-// 其餘（53 只、54 至、84 阿、104 辦）照舊，跟常見注音輸入法的混打一樣按下聲調就出字。
+// 其餘（53 只、54 至、84 阿、104 辦）照舊，跟常見注音輸入法的混打一樣按下聲調就出字。緊接在中文後面的
+// 反序按鍵也出字（#190：大概這麼 824 → 大、中英混 823 → 打）：一般注音模式與接空白的一聲本來就不看順序，
+// 中文後面緊接著打、又會這樣組成反序音節的數字很少（PTT 語料 24,383 次中 23 次）；要數字按 ↓ 選第二項的原按鍵。
 func (s *Session) digitToneNumber(raw string, tone rune) bool {
 	if raw == "" || strings.Trim(raw, "0123456789") != "" {
 		return false
 	}
-	if s.literalNumberBefore() != "" || !s.keysInSyllableOrder(raw) {
+	if s.literalNumberBefore() != "" || !s.keysInSyllableOrder(raw) && !s.mixedAfterChinese() {
 		return true
 	}
 	c, ok := s.mixedComposer(raw)
@@ -797,7 +799,7 @@ func (s *Session) mixedKey(k string) bool {
 			s.insertMixedLiteral(k, false, false)
 		} else {
 			p, _ := s.layout.Punct(rs[0])
-			s.insertLiteral(p)
+			s.insertPunctKey(k, p)
 		}
 		return true
 	}

@@ -131,6 +131,16 @@ func (s *Session) insertLiteral(text string) {
 	}
 }
 
+// insertPunctKey 在游標處插入標點鍵 k 打出的全形標點 p。中英混打時 Shift＋, Shift＋. 的「，」「。」記下原按鍵，
+// ↓ 第二項是半形 < >（#190）：混打的注音鍵、數字鍵出字後 ↓ 第二項都是原按鍵（#162、#175、#187），這兩個鍵比照辦理，
+// 不切英文也打得出大於、小於。只限這兩個鍵在混打下；一般注音模式與其他標點維持全形（#177），Ctrl＋標點（#168）也不附。
+func (s *Session) insertPunctKey(k, p string) {
+	s.insertLiteral(p)
+	if s.mixedInput() && (k == "<" || k == ">") {
+		s.setLiteralKey(s.cursor-1, k)
+	}
+}
+
 func (s *Session) insertPendingLiteral() {
 	if s.comp.Empty() {
 		return
