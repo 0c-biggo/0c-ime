@@ -107,7 +107,9 @@ struct State {
     openclose: Option<(ITfCompartment, u32)>,
     /// 最近一次看到的鍵盤開關值（沒有值當成 0）；只有值真的改變才處理。
     openclose_value: i32,
-    /// 組字中焦點移到 NULL 時的原文件（#189）：之後確認焦點沒回到組字所在的文件，就照舊送出到這裡。
+    /// 組字中焦點移到 NULL 時組字所在的 context（沒有就是那次的原文件，#189）：送出時組字範圍與這次焦點變化的原文件都拿不到
+    /// context（範圍或 context 已失效，A→NULL→B 第二次的原文件是 NULL）才送到這裡，免得打到一半的字沒地方送。
+    left_from: Option<ITfContext>,
     /// OnTestKeyDown 對 Ctrl＋Shift＋F11 的決定（#192），OnKeyDown 沿用。
     hotkey_tested: keys::Tested,
 }
@@ -153,10 +155,10 @@ fn focus_change<T: PartialEq>(focus: Option<&T>, owner: Option<&T>) -> FocusChan
 enum FocusStep<C> {
     /// 繼續組字。
     Keep,
-    /// 等訊息佇列空下來再確認（settle_focus）。
-    Wait,
-    /// 送出組字並清掉欄位狀態。組字一律送到組字範圍本身的 context（宿主可能已經把組字搬到別的文件）；
-    /// 沒有組字範圍時才用這個（這次焦點變化的原文件的 context）。
+    /// 等訊息佇列空下來再確認（settle_focus）。帶著這次的原文件的 context，記下來當送出時的最後退路。
+    Wait(Option<C>),
+    /// 送出組字並清掉欄位狀態。組字送到組字範圍本身的 context（宿主可能已經把組字搬到別的文件）；拿不到時才用這個
+    /// （這次焦點變化的原文件的 context），再拿不到就用焦點移到 NULL 時記下的（follow_focus）。
     Leave(Option<C>),
 }
 
@@ -164,8 +166,8 @@ enum FocusStep<C> {
 /// NULL 時為 None），`can_wait`：有回呼視窗可以稍後確認；沒有就照舊立即送出。泛型只為了能在測試裡用一般型別代替
 /// ITfDocumentMgr（T）與 ITfContext（C）。
 ///
-/// 不必記下焦點移到 NULL 前的原文件：要等（Undecided）一定是在組字，送出時組字範圍就是送出的目標，A→NULL→B 在確認前
-/// 換到 B 也一樣；記下的原文件反而可能不是組字現在所在的文件（確認前宿主把組字搬走，發版前 code review）。
+/// 送出的目標以組字範圍為準，A→NULL→B 在確認前換到 B 也一樣；焦點移到 NULL 前的原文件只是最後的退路：記下的原文件可能不是
+/// 組字現在所在的文件（確認前宿主把組字搬走，發版前 code review），但組字範圍失效、拿不到 context 時沒有它字就沒地方送（第三輪）。
 fn focus_step<T: PartialEq, C>(
     focus: Option<&T>,
     owner: Option<&T>,
@@ -174,7 +176,7 @@ fn focus_step<T: PartialEq, C>(
 ) -> FocusStep<C> {
     match focus_change(focus, owner) {
         FocusChange::CompositionMoved => FocusStep::Keep,
-        FocusChange::Undecided if can_wait => FocusStep::Wait,
+        FocusChange::Undecided if can_wait => FocusStep::Wait(previous),
         _ => FocusStep::Leave(previous),
     }
 }
@@ -302,6 +304,7 @@ impl TextService {
                 notes: caret::Notes::default(),
                 openclose: None,
                 openclose_value: 0,
+                left_from: None,
                 hotkey_tested: keys::Tested::default(),
             }),
             applying: Cell::new(0),
@@ -575,6 +578,7 @@ impl TextService_Impl {
             st.ui.present(&message, owner, document.clone());
             if !st.composing {
                 st.anchor = None;
+                st.left_from = None;
             }
             st.shown = match ctx.filter(|_| show) {
                 Some(ctx) => Some(Shown {
@@ -888,17 +892,29 @@ impl TextService_Impl {
     /// 照 focus_step／settle_step 的決定繼續組字、稍後確認或送出組字；`focused`：焦點落在某個文件（不是 NULL）。
     fn follow_focus(&self, step: FocusStep<ITfContext>, focused: bool) {
         if let Some(window) = self.state.borrow().callback.as_ref() {
-            if matches!(step, FocusStep::Wait) {
+            if matches!(step, FocusStep::Wait(_)) {
                 window.settle_focus_later();
             } else {
                 window.cancel_settle_focus();
             }
         }
         match step {
-            FocusStep::Keep => zdebug!("焦點落在組字所在的文件，繼續組字"),
-            FocusStep::Wait => zdebug!("組字中焦點移到 NULL，稍後確認"),
+            FocusStep::Keep => {
+                self.state.borrow_mut().left_from = None;
+                zdebug!("焦點落在組字所在的文件，繼續組字");
+            }
+            FocusStep::Wait(previous) => {
+                // 記下組字現在所在的 context（拿不到就用這次的原文件）；連續兩次移到 NULL 時保留第一次的。
+                let from = self.composition_context().or(previous);
+                let mut st = self.state.borrow_mut();
+                if st.left_from.is_none() {
+                    st.left_from = from;
+                }
+                zdebug!("組字中焦點移到 NULL，稍後確認");
+            }
             FocusStep::Leave(previous) => {
-                let target = self.composition_context().or(previous);
+                let left_from = self.state.borrow_mut().left_from.take();
+                let target = self.composition_context().or(previous).or(left_from);
                 self.leave_document(target.as_ref(), focused);
             }
         }
@@ -965,6 +981,7 @@ impl TextService_Impl {
         st.session.reset();
         st.composing = false;
         st.composition = None;
+        st.left_from = None;
         false
     }
 
@@ -1202,6 +1219,7 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
                 st.callback = None;
                 st.composition = None;
                 st.composing = false;
+                st.left_from = None;
                 st.eaten.clear();
                 st.reset_shift();
                 st.selection = None;
@@ -1466,6 +1484,7 @@ impl ITfCompositionSink_Impl for TextService_Impl {
                 let mut st = self.state.borrow_mut();
                 st.composition = None;
                 st.composing = false;
+                st.left_from = None;
                 st.ui.hide();
             }
             self.forget_candidates();
@@ -1661,7 +1680,7 @@ mod focus_tests {
     #[test]
     fn excel_handover_waits_then_keeps_composing() {
         // #189：grid → NULL → editor，組字搬到 editor。等確認時焦點已在組字所在的文件：繼續組字。
-        assert_eq!(focus_step(None, Some(&"grid"), Some("grid ctx"), true), FocusStep::Wait);
+        assert_eq!(focus_step(None, Some(&"grid"), Some("grid ctx"), true), FocusStep::Wait(Some("grid ctx")));
         assert_eq!(focus_step(Some(&"editor"), Some(&"editor"), None::<&str>, true), FocusStep::Keep);
         assert_eq!(settle_step(Some(&"editor"), Some(&"editor")), FocusStep::<&str>::Keep);
     }
@@ -1670,7 +1689,7 @@ mod focus_tests {
     fn focus_to_null_then_another_document_commits() {
         // code review（#189 回歸）：組字中焦點 A → NULL → B，第二次焦點變化在確認之前（50ms 內）就來了。
         // 第二次的原文件是 NULL：照樣送出，目標是組字範圍本身的 context（follow_focus），不是這次的原文件。
-        assert_eq!(focus_step(None, Some(&"A"), Some("A ctx"), true), FocusStep::Wait);
+        assert_eq!(focus_step(None, Some(&"A"), Some("A ctx"), true), FocusStep::Wait(Some("A ctx")));
         assert_eq!(focus_step(Some(&"B"), Some(&"A"), None::<&str>, true), FocusStep::Leave(None));
         // 確認時焦點仍不在組字所在的文件（A → NULL → NULL 也一樣）：送出。
         assert_eq!(settle_step(Some(&"B"), Some(&"A")), FocusStep::<&str>::Leave(None));
