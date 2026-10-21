@@ -237,17 +237,26 @@ pub fn is_simplified_hotkey(vk: u32, ctrl: bool, shift: bool, other: bool) -> bo
 /// OnTestKeyDown 對一個鍵的決定，留給接著的 OnKeyDown 沿用（#192）：要問引擎的決定（health IPC）在 TestKeyDown 問一次，
 /// 兩次答案不會因為引擎剛好在中間斷線或改了設定而不同（TestKeyDown 說要吃、OnKeyDown 卻交給應用程式），
 /// 宿主的 UI 執行緒每按一次也只多一次同步往返。
+///
+/// 只給緊接的那一次 OnKeyDown 用：OnKeyDown 一進來就取走（不論之後是否在 allowed() 提早回傳），OnTestKeyDown 與放開按鍵
+/// 一進來就清掉（TestKeyDown 說不吃時 TSF 不會再呼叫 OnKeyDown）。否則留下的舊決定會被之後宿主沒先 TestKeyDown、直接呼叫的
+/// OnKeyDown 拿去用（發版前 code review）。
 #[derive(Default)]
 pub struct Tested(Option<(u32, bool)>);
 impl Tested {
     pub fn record(&mut self, vk: u32, decision: bool) {
         self.0 = Some((vk, decision));
     }
-    /// OnKeyDown：TestKeyDown 剛為同一個鍵決定過就沿用（只用一次）；宿主沒先呼叫 TestKeyDown（或是別的鍵）才呼叫 `ask`。
-    pub fn take(&mut self, vk: u32, ask: impl FnOnce() -> bool) -> bool {
+    /// OnTestKeyDown、OnTestKeyUp、OnKeyUp 一進來就呼叫。
+    pub fn forget(&mut self) {
+        self.0 = None;
+    }
+    /// OnKeyDown 一進來就呼叫：TestKeyDown 剛為同一個鍵決定過就回傳那個決定（只用一次）；None 時（宿主沒先呼叫
+    /// TestKeyDown，或是別的鍵）由呼叫端自己問。
+    pub fn take(&mut self, vk: u32) -> Option<bool> {
         match self.0.take() {
-            Some((tested, decision)) if tested == vk => decision,
-            _ => ask(),
+            Some((tested, decision)) if tested == vk => Some(decision),
+            _ => None,
         }
     }
 }
@@ -642,17 +651,40 @@ mod tests {
     #[test]
     fn key_down_reuses_the_test_key_down_decision() {
         // #192 code review：TestKeyDown 說要吃 Ctrl＋Shift＋F11，OnKeyDown 時引擎剛好斷線也照樣吃，不再問一次。
+        let f11 = VK_SIMPLIFIED_HOTKEY;
         let mut tested = Tested::default();
-        tested.record(VK_SIMPLIFIED_HOTKEY, true);
-        assert!(tested.take(VK_SIMPLIFIED_HOTKEY, || panic!("不應再問引擎")));
+        tested.record(f11, true);
+        assert_eq!(tested.take(f11), Some(true));
         // 只用一次：下一次（宿主直接呼叫 OnKeyDown、沒先 TestKeyDown）重新問。
-        assert!(!tested.take(VK_SIMPLIFIED_HOTKEY, || false));
+        assert_eq!(tested.take(f11), None);
         // TestKeyDown 說不吃，OnKeyDown 也不吃。
-        tested.record(VK_SIMPLIFIED_HOTKEY, false);
-        assert!(!tested.take(VK_SIMPLIFIED_HOTKEY, || panic!("不應再問引擎")));
-        // 記下的是別的鍵：照常問。
+        tested.record(f11, false);
+        assert_eq!(tested.take(f11), Some(false));
+        // 記下的是別的鍵：照常問，而且那個舊決定也一起丟掉。
         tested.record(0x41, false);
-        assert!(tested.take(VK_SIMPLIFIED_HOTKEY, || true));
+        assert_eq!(tested.take(f11), None);
+        assert_eq!(tested.take(0x41), None);
+    }
+
+    #[test]
+    fn test_key_down_decision_does_not_outlive_its_key_press() {
+        // #192 發版前 code review 第二輪：OnKeyDown 在 allowed() 提早回傳時，原本沒取走 TestKeyDown 的決定，
+        // 之後宿主沒先 TestKeyDown 就直接呼叫 OnKeyDown 時沿用了舊的「要吃」。
+        let f11 = VK_SIMPLIFIED_HOTKEY;
+        let mut tested = Tested::default();
+        // OnTestKeyDown 說要吃 → OnKeyDown 一進來就取走（接著在 allowed() 提早回傳，沒用到）。
+        tested.record(f11, true);
+        let _ = tested.take(f11);
+        // 之後宿主直接呼叫 OnKeyDown：沒有舊決定，重新問。
+        assert_eq!(tested.take(f11), None);
+        // TestKeyDown 說不吃，TSF 不再呼叫 OnKeyDown；放開（OnTestKeyUp／OnKeyUp）一進來就清掉。
+        tested.record(f11, false);
+        tested.forget();
+        assert_eq!(tested.take(f11), None);
+        // OnTestKeyDown 在 allowed() 提早回傳（沒走到記錄）：一進來就清掉上一次的決定。
+        tested.record(f11, true);
+        tested.forget();
+        assert_eq!(tested.take(f11), None);
     }
 
     #[test]

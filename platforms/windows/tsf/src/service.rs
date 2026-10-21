@@ -259,9 +259,9 @@ impl State {
         decision
     }
 
-    fn key_simplified_hotkey(&mut self, vk: u32) -> bool {
-        let mut tested = std::mem::take(&mut self.hotkey_tested);
-        tested.take(vk, || self.simplified_hotkey(vk))
+    /// `tested`：OnKeyDown 一進來就從 hotkey_tested 取走的 TestKeyDown 決定；沒有時才問。
+    fn key_simplified_hotkey(&mut self, vk: u32, tested: Option<bool>) -> bool {
+        tested.unwrap_or_else(|| self.simplified_hotkey(vk))
     }
 
     fn tap(&mut self, side: keys::Side) -> &mut keys::ShiftTap {
@@ -1311,6 +1311,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
         lparam: LPARAM,
     ) -> windows_core::Result<BOOL> {
         crate::guarded("OnTestKeyDown", || {
+            self.state.borrow_mut().hotkey_tested.forget(); // 上一次按鍵的決定不留給這一次（keys::Tested）
             if !self.allowed(pic.as_ref()) {
                 return Ok(false.into());
             }
@@ -1339,6 +1340,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
         lparam: LPARAM,
     ) -> windows_core::Result<BOOL> {
         crate::guarded("OnTestKeyUp", || {
+            self.state.borrow_mut().hotkey_tested.forget();
             if !self.allowed(pic.as_ref()) {
                 return Ok(false.into());
             }
@@ -1368,15 +1370,17 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
         lparam: LPARAM,
     ) -> windows_core::Result<BOOL> {
         crate::guarded("OnKeyDown", || {
+            let vk = wparam.0 as u32;
+            // TestKeyDown 的決定一進來就取走，在 allowed() 提早回傳時也不留給之後的按鍵（keys::Tested）。
+            let tested = self.state.borrow_mut().hotkey_tested.take(vk);
             if !self.allowed(pic.as_ref()) {
                 return Ok(false.into());
             }
-            let vk = wparam.0 as u32;
             self.observe_shift(vk, lparam.0);
             // 用快捷鍵切換簡體字（#192）：跟輸入指示器選單的「輸出簡體字」同一條路，組字不動、提示「已切換為…」、
             // 工作列「中」↔「简」。沿用 TestKeyDown 的決定（不再問引擎）：說要吃就一定吃，切換失敗（引擎剛好斷線）也照樣吃掉，
             // 按鍵不會半途交給應用程式（F11 在瀏覽器、Excel 是全螢幕），放開時 OnTestKeyUp 看 eaten 也一致。
-            if self.state.borrow_mut().key_simplified_hotkey(vk) {
+            if self.state.borrow_mut().key_simplified_hotkey(vk, tested) {
                 let on = !self.state.borrow().session.simplified().unwrap_or(false);
                 let switched = self.set_output_simplified(on);
                 zdebug!("OnKeyDown vk={} 切換簡體字 on={} ok={}", vk, on, switched);
@@ -1426,6 +1430,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
         lparam: LPARAM,
     ) -> windows_core::Result<BOOL> {
         crate::guarded("OnKeyUp", || {
+            self.state.borrow_mut().hotkey_tested.forget();
             if !self.allowed(pic.as_ref()) {
                 return Ok(false.into());
             }
