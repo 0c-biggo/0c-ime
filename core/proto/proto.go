@@ -178,6 +178,9 @@ type CandidateList struct {
 	Columns   int    `json:"columns,omitempty"` // 0/1: legacy vertical; 2..5: row-major grid.
 	Kind      string `json:"kind,omitempty"`    // emoji / kaomoji; absent for ordinary candidates.
 	Title     string `json:"title,omitempty"`
+	// StepKeys：這是改字的候選，小寫 j／k 把要修改的字換到前一個／後一個字（#193）。外殼據此顯示「J K 換字」；
+	// 舊核心沒有這個欄位，也沒有 j／k 換字。
+	StepKeys bool `json:"step_keys,omitempty"`
 }
 
 // SuggestionEdit 描述按 Tab 後替換的組字範圍，位置單位是顯示字元（rune）。

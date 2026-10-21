@@ -53,7 +53,8 @@ let completion = try JSONDecoder().decode(Snapshot.self, from: Data(#"{"handled"
 panel.show(completion, at: NSRect(x: bounds.minX + 40, y: bounds.minY + 40, width: 1, height: 20))
 panel.contentView!.layoutSubtreeIfNeeded()
 precondition(descendants(panel.contentView!, of: NSButton.self).map(\.title) == ["hello", "help"], "English completions have no key labels")
-// #193：改字的候選（length > 0）頁尾寫 J K 換字；插入符號、Emoji、選字鍵 asdfghjkl;（j、k 是選字）不寫。
+// #193：核心說 j/k 會換字（step_keys）時頁尾才寫 J K 換字；混打按鍵、注音打到一半、英文補字、Emoji、
+// 選字鍵 asdfghjkl; 等核心不送，外殼不自己從 length、kind、選字鍵猜（以前猜錯時頁尾寫了、按 j/k 沒反應）。
 func footerHasJK(_ candidates: String) -> Bool {
     let json = #"{"handled":true,"cursor":{"utf16":1},"mode":"zhuyin","candidates":"# + candidates + "}"
     let snap = try! JSONDecoder().decode(Snapshot.self, from: Data(json.utf8))
@@ -61,12 +62,11 @@ func footerHasJK(_ candidates: String) -> Bool {
     panel.contentView!.layoutSubtreeIfNeeded()
     return descendants(panel.contentView!, of: NSTextField.self).contains { $0.stringValue.hasSuffix("J\u{00A0}K\u{00A0}換\u{2060}字") }
 }
-precondition(footerHasJK(#"{"items":[{"id":1,"text":"是","key":"1"}],"page":0,"pages":1,"highlight":0,"start":0,"length":1}"#), "ordinary candidates show the J/K hint")
-precondition(footerHasJK(#"{"items":[{"id":1,"text":"是","key":"1"}],"page":0,"pages":1,"highlight":0,"start":0,"length":2,"columns":5}"#), "ordinary grid shows the J/K hint")
-precondition(!footerHasJK(#"{"items":[{"id":1,"text":"是","key":"a"}],"page":0,"pages":1,"highlight":0,"start":0,"length":1}"#), "j/k select with asdfghjkl;")
-precondition(!footerHasJK(#"{"items":[{"id":1,"text":"，","key":"1"}],"page":0,"pages":1,"highlight":0,"start":0,"length":0}"#), "inserting symbols has no J/K hint")
-precondition(!footerHasJK(#"{"items":[{"id":1,"text":"😀","key":"1"}],"page":0,"pages":1,"highlight":0,"start":0,"length":1,"kind":"emoji","columns":5}"#), "emoji has no J/K hint")
-precondition(!footerHasJK(#"{"items":[{"id":1,"text":"是"}],"page":0,"pages":1,"highlight":0}"#), "legacy payload without length has no J/K hint")
+precondition(footerHasJK(#"{"items":[{"id":1,"text":"是","key":"1"}],"page":0,"pages":1,"highlight":0,"start":0,"length":1,"step_keys":true}"#), "ordinary candidates show the J/K hint")
+precondition(footerHasJK(#"{"items":[{"id":1,"text":"是","key":"1"}],"page":0,"pages":1,"highlight":0,"start":0,"length":2,"columns":5,"step_keys":true}"#), "ordinary grid shows the J/K hint")
+precondition(!footerHasJK(#"{"items":[{"id":1,"text":"是","key":"1"}],"page":0,"pages":1,"highlight":0,"start":0,"length":1}"#), "no step_keys (mixed keys, pending zhuyin, asdfghjkl;) has no J/K hint even with length > 0")
+precondition(!footerHasJK(#"{"items":[{"id":1,"text":"是","key":"1"}],"page":0,"pages":1,"highlight":0,"start":0,"length":1,"step_keys":false}"#), "step_keys false has no J/K hint")
+precondition(!footerHasJK(#"{"items":[{"id":1,"text":"是"}],"page":0,"pages":1,"highlight":0}"#), "legacy payload without step_keys has no J/K hint")
 
 // Grids retain stable engine IDs and actual row/column geometry. Cache the
 // rendered NSView only when an explicit output directory is supplied.

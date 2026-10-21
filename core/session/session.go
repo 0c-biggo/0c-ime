@@ -1037,11 +1037,10 @@ func (s *Session) openCandidates(length int) {
 // 後方模式從句尾開的前方候選也以最後一個字為準往前換，不會開回同一個字。已在頭尾時不動。
 // 只用於改字的候選：Emoji／顏文字、中英混打的按鍵候選、注音打到一半與 ` 的符號選單都不套用。
 func (s *Session) stepCandidate(d int) {
-	c := s.cand
-	if c.kind != "" || c.direct || c.mixed || c.english || c.pending || c.length == 0 ||
-		!s.comp.Empty() || s.mixed.raw != "" || s.englishWord {
+	if !s.canStepCandidate() {
 		return
 	}
+	c := s.cand
 	at := c.start
 	if c.before {
 		at = s.literalFloor(c.start + c.length - 1)
@@ -1058,6 +1057,14 @@ func (s *Session) stepCandidate(d int) {
 		s.cursor = s.literalStep(next, 1)
 	}
 	s.openCandidates(0)
+}
+
+// canStepCandidate：目前的候選是改字的候選，j／k 會換前後一個字（stepCandidate）。快照的 StepKeys 也依它判斷，
+// 外殼的「J K 換字」提示跟實際行為一致（#193）。
+func (s *Session) canStepCandidate() bool {
+	c := s.cand
+	return c != nil && c.kind == "" && !c.direct && !c.mixed && !c.english && !c.pending && c.length > 0 &&
+		s.comp.Empty() && s.mixed.raw == "" && !s.englishWord
 }
 
 // candidateBefore 決定這次開窗選游標前方還是後方的詞。後方模式的游標在組字尾端時後面沒有字，
@@ -1592,6 +1599,8 @@ func (s *Session) snapshot() proto.Snapshot {
 		if !s.cand.literal && !s.cand.mixed && cl.Length > 0 {
 			cl.Title = "修改「" + s.candidateText() + "」 · Tab 切換詞長"
 		}
+		// 選字鍵含 j、k（asdfghjkl;）時它們是選字，不是換字。
+		cl.StepKeys = s.canStepCandidate() && s.selectionIndex("j") < 0 && s.selectionIndex("k") < 0
 		lo := s.cand.page() * perPage
 		for id := lo; id < min(lo+perPage, len(s.cand.items)); id++ {
 			item := proto.CandidateItem{ID: s.candidateID(id), Text: s.cand.items[id].Entry.Surface}
