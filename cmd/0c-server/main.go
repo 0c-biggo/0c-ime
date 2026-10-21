@@ -363,9 +363,11 @@ func serve() string {
 	// vocabEdited 在自訂詞彙指令改了詞彙後呼叫（IPC 與本機 API 都是）：立即寫 vocab.json，並標記 user.json 要存。
 	// 加詞、刪詞、改讀音與復原也會改學習資料（刪詞清掉指向它的手選、更正與證據，加詞解除 tombstone、
 	// 取代衝突的舊更正，#122）；只存 vocab.json 的話，之後沒打字就結束或交接，user.json 不會重寫，
-	// 重啟後留著指向已刪除自訂詞的更正（#196）。照明確刪除學習處理：不等使用者停下來。
+	// 重啟後留著指向已刪除自訂詞的更正（#196）。只標記、不加急：組字中加詞與候選窗反悔鍵也走這裡，
+	// 加急會在下一秒整份重寫 user.json，打字中途就存；交接（BeforeDrain）與結束（含 SIGTERM／SIGHUP、
+	// 閒置結束）一定會 save()，所以照一般學習等使用者停下來或最長間隔即可。
 	vocabEdited := func() error {
-		schedule.changed(time.Now(), true)
+		schedule.changed(time.Now(), false)
 		return saveVocab()
 	}
 	if eng.Preview02 && vocabDisabled == "" { // 本機 API 只能動自訂詞彙：詞彙不能改時不開（#126）
