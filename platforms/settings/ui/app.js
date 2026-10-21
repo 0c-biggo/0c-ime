@@ -370,7 +370,7 @@
 
   function control(item, locked) {
     const values = item.values || [];
-    // item.disabled：另一個設定讓這一項不起作用（倚天 41 鍵時的混打與 Emoji，#83）。開關顯示實際狀態（關閉），
+    // item.disabled：另一個設定讓這一項不起作用（倚天 41 鍵時的混打與 Emoji，#83；不用 Shift 時的開始模式，#184）。開關顯示實際狀態（關閉），
     // 設定檔中的值不動，條件解除後照舊。
     const disabled = locked || state.busy.has(item.key) || !!item.disabled;
     const labelId = 'label-' + item.key;
@@ -382,10 +382,12 @@
         'data-focus': item.key, disabled, onclick: () => change(item.key, checked ? 'off' : on),
       });
     }
+    // 選項也畫實際使用的值：不用 Shift 時開始模式固定為注音（#184，item.effective），設定檔裡的英文保留到改回 Shift。
+    const shown = item.disabled && item.effective ? item.effective : item.value;
     return h('fieldset', { class: 'choices', 'aria-labelledby': labelId, disabled },
       ...values.map((value) => h('label', {},
         h('input', {
-          type: 'radio', name: item.key, value, checked: item.value === value, 'data-focus': item.key + ':' + value,
+          type: 'radio', name: item.key, value, checked: shown === value, 'data-focus': item.key + ':' + value,
           onchange: () => change(item.key, value),
         }), (item.value_labels && item.value_labels[value]) || VALUE[value] || value)));
   }

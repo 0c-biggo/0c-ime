@@ -464,6 +464,48 @@ if window_up; then
 else bad "eten/input 視窗沒有出現"; cat /tmp/app-eten-input.log; fi
 stop_app
 
+# ---- 不用 Shift 切換（#184）：開始時的中英模式固定為注音、反灰並附原因，設定檔的 english 保留；改回用 Shift 照原本的英文 ----
+new_home noshift
+printf '{"schema":1,"toggle_key":"none","start_mode":"english"}\n' > "$(base_of noshift)/settings.json"
+run_update noshift settings -json > "$OUT/noshift-settings.json"
+check "不用 Shift 時契約標示開始模式停用、實際是注音，值保留 english" python3 - "$OUT/noshift-settings.json" <<'PY_NOSHIFT'
+import json,sys
+items={x['key']:x for x in json.load(open(sys.argv[1]))['items']}
+it=items['start-mode']
+sys.exit(0 if it.get('disabled') and it.get('disabled_reason')=='不用 Shift 切換時固定從注音開始' and it['value']=='english' and it.get('effective')=='zhuyin' else 1)
+PY_NOSHIFT
+noshift_value() { # toggle_key 期望值 → 設定檔寫入，start_mode 仍是 english
+  python3 - "$(settings_of noshift)" "$1" <<'PY_NOSHIFT_FILE'
+import json,sys,time
+for _ in range(80):
+    try: value=json.load(open(sys.argv[1]))
+    except FileNotFoundError: time.sleep(.1); continue
+    if value.get('toggle_key')==sys.argv[2] and value.get('start_mode')=='english':sys.exit(0)
+    time.sleep(.1)
+sys.exit(1)
+PY_NOSHIFT_FILE
+}
+start_mode_shown() { # 期望畫面：disabled／enabled → 契約與畫面用的欄位
+  run_update noshift settings -json | python3 -c "import json,sys; it=next(x for x in json.load(sys.stdin)['items'] if x['key']=='start-mode'); sys.exit(0 if bool(it.get('disabled'))==(sys.argv[1]=='disabled') and it['value']=='english' and (it.get('effective')=='zhuyin')==(sys.argv[1]=='disabled') else 1)" "$1"
+}
+launch noshift input
+if window_up; then
+  sleep 2.5
+  import -window root "$OUT/noshift-input.png"
+  # 8 個導覽、選字方式、補標點、前文、混打、英文補字 → 中英切換鍵（第 14 個，焦點在「不用 Shift」），↑ 選左 Shift。
+  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Up
+  check "改成左 Shift，開始時的英文照舊保留" noshift_value left
+  sleep 2
+  check "有 Shift 可以切換時開始模式恢復可改、是英文" start_mode_shown enabled
+  import -window root "$OUT/noshift-left-shift.png"
+  xdotool key Down
+  check "再改回不用 Shift" noshift_value none
+  sleep 2
+  check "不用 Shift 時開始模式又固定為注音" start_mode_shown disabled
+  import -window root "$OUT/noshift-again.png"
+else bad "noshift/input 視窗沒有出現"; cat /tmp/app-noshift-input.log; fi
+stop_app
+
 # ---- 背景更新持鎖：手動檢查提示進度，輸入設定仍可保存 ----
 new_home checking
 state_json checking idle ''

@@ -270,8 +270,28 @@ const (
 	StartEnglish = "english"
 )
 
-// StartsEnglish 回報開始時是否為英文模式。
-func (s Settings) StartsEnglish() bool { return s.StartMode == StartEnglish }
+// StartsEnglish 回報開始時是否為英文模式：設定檔的 start_mode，但沒有 Shift 能切回注音時一律是注音（#184）。
+func (s Settings) StartsEnglish() bool { return s.startsEnglish(runtime.GOOS) }
+
+func (s Settings) startsEnglish(goos string) bool {
+	return s.StartMode == StartEnglish && !s.startModeLocked(goos)
+}
+
+// EffectiveStartMode 是實際使用的開始模式（zhuyin／english），引擎回報給外殼與設定程式的就是它。
+func (s Settings) EffectiveStartMode() string {
+	if s.StartsEnglish() {
+		return StartEnglish
+	}
+	return StartZhuyin
+}
+
+// startModeLocked：中英切換鍵設為不用 Shift、這個平台又沒有其他切回注音的方法時，開始時的模式固定是注音（#184）。
+// 不然開始時英文就再也打不出注音：macOS 的 Caps Lock 短按切換的是系統輸入來源、按住只是暫時的大寫英文，
+// Fcitx5 沒有切換中英的選單項目。Windows 一律可以按 Ctrl＋空白鍵或點工作列的中／英，不受限制。
+// 設定檔的值不動，改回用 Shift 切換就照原本的選擇。
+func (s Settings) startModeLocked(goos string) bool {
+	return s.ToggleKey == ToggleNone && goos != "windows"
+}
 
 // defaultModeMemory：照各平台使用者的習慣：macOS 系統的輸入方式預設全域共用；
 // Windows 的注音輸入法每個程式各自記住、Linux 的框架沒有一致的習慣，維持平台原本的做法。
@@ -691,14 +711,25 @@ func (s Settings) valueLabels(key string) map[string]string {
 // disabledReason 回報某一項目前是否因其他設定而不起作用，以及給人讀的原因；空字串表示可用。
 // 中英混打與 = 開 Emoji 選單依標準排列設計，倚天 41 鍵時停用（#83）；已儲存的值不動，切回標準排列就照舊。
 func (s Settings) disabledReason(key string) string {
+	return s.disabledReasonOn(runtime.GOOS, key)
+}
+
+func (s Settings) disabledReasonOn(goos, key string) string {
 	switch key {
 	case "mixed-input", "emoji-shortcut", "emoji-equals-first":
 		if s.KeyboardLayout == LayoutETen {
 			return "倚天 41 鍵時關閉"
 		}
+	case "start-mode":
+		if s.startModeLocked(goos) {
+			return startModeLockedReason
+		}
 	}
 	return ""
 }
+
+// startModeLockedReason：不用 Shift 切換時沒有鍵能從英文切回注音，所以固定從注音開始（#184）。
+const startModeLockedReason = "不用 Shift 切換時固定從注音開始"
 
 func onOff(v bool) string {
 	if v {
@@ -860,6 +891,9 @@ type Item struct {
 	// 旁邊顯示 DisabledReason。Value 仍是設定檔中的值，條件解除後照舊生效。舊版介面忽略這兩個欄位。
 	Disabled       bool   `json:"disabled,omitempty"`
 	DisabledReason string `json:"disabled_reason,omitempty"`
+	// Effective：停用期間實際使用、與 Value 不同的值（不用 Shift 時的開始模式固定為注音，#184）；
+	// 介面照它顯示選項，0c-update 拿它跟引擎載入的值比較。沒有時就是 Value。舊版介面忽略。
+	Effective string `json:"effective,omitempty"`
 	// ValueLabels 是選項的顯示名稱（例如 native 在 Windows 是「每個程式各自記住」）；舊版介面忽略，照自己的對照表。
 	ValueLabels map[string]string `json:"value_labels,omitempty"`
 }
@@ -870,8 +904,12 @@ func (s Settings) Items() []Item {
 	out := make([]Item, 0, len(list))
 	for _, sp := range list {
 		reason := s.disabledReason(sp.key)
-		out = append(out, Item{Key: sp.key, Type: "choice", Values: sp.values, Default: sp.def, Value: sp.value(s), Label: sp.label, Description: sp.description,
-			Disabled: reason != "", DisabledReason: reason, ValueLabels: s.valueLabels(sp.key)})
+		value, effective := sp.value(s), ""
+		if sp.key == "start-mode" && reason != "" && value != StartZhuyin {
+			effective = StartZhuyin
+		}
+		out = append(out, Item{Key: sp.key, Type: "choice", Values: sp.values, Default: sp.def, Value: value, Label: sp.label, Description: sp.description,
+			Disabled: reason != "", DisabledReason: reason, Effective: effective, ValueLabels: s.valueLabels(sp.key)})
 	}
 	return out
 }

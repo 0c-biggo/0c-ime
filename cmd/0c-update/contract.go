@@ -267,7 +267,11 @@ func buildSettingsDoc(base string, dial autoupdate.Dialer) settingsDoc {
 		item := settingsItem{Item: it}
 		if v, ok := running[it.Key]; ok {
 			item.Running = &v
-			item.Pending = v != it.Value
+			want := it.Value
+			if it.Effective != "" { // 停用期間實際用的值（#184）
+				want = it.Effective
+			}
+			item.Pending = v != want
 		}
 		doc.PendingRestart = doc.PendingRestart || item.Pending
 		doc.Items = append(doc.Items, item)
