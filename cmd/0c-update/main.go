@@ -182,6 +182,10 @@ func run(args []string) error {
 		return fmt.Errorf("用法：0c-update status|settings|set|models|vocab|api|open-settings|engine|auto|finish|mode|pause|resume|snooze|schedule|verify|check|download|download-now|apply|install|rollback|uninstall [選項]")
 	}
 	action := args[0]
+	// macOS 以 root 執行時（sudo installer、MDM）改以登入的使用者身分重新執行，成功時不會返回（#198）
+	if err := dropRoot(args); err != nil {
+		return err
+	}
 	delegateToPersonal(args) // 系統安裝的 0c-update、而官網安裝也在時，交給官網那一份（成功時不會返回）
 	if err := refusePackageManaged(action, args[1:]); err != nil {
 		return err
@@ -262,6 +266,12 @@ func run(args []string) error {
 			return err
 		}
 	}
+	// 之前以 root 安裝留下的檔案，這個帳號改不動；先說明修復指令，不要做到一半才 permission denied（#198）
+	if action == "install" || action == "apply" || action == "rollback" || action == "uninstall" {
+		if err := refuseForeignOwned(args); err != nil {
+			return err
+		}
+	}
 	switch action {
 	case "status":
 		version, err := installedVersion()
@@ -285,6 +295,9 @@ func run(args []string) error {
 		}
 		fmt.Printf("靈犀注音（0c）：%s\n平台：%s/%s\n收據：%s\n", version, runtime.GOOS, runtime.GOARCH, receiptPath())
 		if line := installIntegrity(); line != "" {
+			fmt.Println(line)
+		}
+		if line := ownershipLine(); line != "" {
 			fmt.Println(line)
 		}
 		if engine := autoupdate.PointerVersion(basePath()); engine != "" {

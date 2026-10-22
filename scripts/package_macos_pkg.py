@@ -21,7 +21,8 @@ from macos_version import bundle_version
 IDENTIFIER = "com.biggo.inputmethod.0c.pkg"
 
 POSTINSTALL = """#!/bin/sh
-# 由 macOS 安裝程式以目前使用者身分執行；輸出記在 /var/log/install.log。
+# 雙擊安裝時由 macOS 安裝程式以目前使用者身分執行；輸出記在 /var/log/install.log。
+# sudo installer -target /、MDM 會以 root 執行，0c-update 自己改以登入的使用者身分安裝（#198）。
 set -eu
 BUNDLE="$(cd "$(dirname "$0")" && pwd)/{name}"
 exec "$BUNDLE/0c-update" install -bundle "$BUNDLE" -channel {channel} </dev/null

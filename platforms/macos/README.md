@@ -57,6 +57,8 @@ python3 scripts/package_macos.py --preview --version 0.1.0-dev.17 \
 
 一般使用者用 `.pkg` 安裝檔：雙擊後依畫面安裝，只裝到目前使用者帳號、不需要系統管理員密碼。pkg 由 `scripts/package_macos_pkg.py` 從完整套件產生：不直接放檔案，而是把整個套件放在安裝腳本目錄，由 postinstall 以使用者身分執行套件內的 `0c-update install -bundle`，因此核對、備份、排程與輸入來源啟用都與下面的指令相同；輸出記在 `/var/log/install.log`。
 
+用 `sudo installer -pkg … -target /`、MDM 或 Homebrew Cask 安裝時，postinstall 以 root 執行（雙擊或 `-target CurrentUserHomeDirectory` 才是使用者身分）。0.2.5 起 `0c-update` 以 root 執行時會改以使用者的身分重新執行同一個命令（`launchctl asuser` ＋ `sudo -u`，家目錄取自帳號資料庫、不信 `HOME`）：直接 `sudo 0c-update` 是下指令的人，安裝程式與 MDM 是螢幕前登入的使用者；沒有人登入、或 `HOME` 是另一個帳號的家目錄時不安裝、不碰任何家目錄。降權前先結束以 root 執行的靈犀注音程序，並把靈犀注音自己的路徑（`0c.app`、`Application Support/0c`、`Caches/0c`、排程 plist，含舊的 Zuin 名稱）中屬於 root 的項目改回使用者（不跟隨連結、不改有多個硬連結的檔案），所以 0.2.4 以前用 sudo 裝壞的帳號，再用 sudo 裝一次新版就會修好。一般帳號改不動 root 的目錄，使用者身分執行 install／apply／rollback／uninstall 時遇到這種檔案會直接說明要執行的 `sudo installer` 指令（#198）。
+
 用終端機時，完整套件解開後執行（不需要 sudo）：
 
 ```sh
