@@ -117,6 +117,6 @@ Windows 完整更新視窗驗收另有 `test/settings-update-test.ps1`：在沒�
 
 輸入設定的「輸出簡體字」（`output-simplified`，`settings.json` 的 `output_simplified`）預設關閉，在設定程式左側獨立的「輸出設定」頁（`--page output`）。開啟後組字和候選仍顯示繁體，送出時才轉成簡體字（OpenCC ver.1.4.2 的 tw2s 字典，編在 `0c-server` 裡，見 `internal/simplified/opencc`）；我的詞彙與我的片語也一起轉，英文、數字、標點與 Emoji 不變，學習照常記繁體（#118）。這一項可以即時切換（#169）：開關照樣執行 `0c-update set output-simplified on|off -apply -json`，0c-update 寫好設定後，引擎回報 `output_simplified_live=true` 就請它即時切換（`apply.state` 是 `applied`），不重啟引擎，組字中也立即生效；舊引擎照舊交接重啟。四個外殼的輸入法選單也有可以打勾的「輸出簡體字」，從選單切換時由引擎寫 `settings.json`，設定程式的開關下一次讀取（切回視窗或重新整理）就跟著變。
 
-輸出設定頁的「用快捷鍵切換簡體字」（`simplified-hotkey`，`settings.json` 的 `simplified_hotkey`，[#192](#192)）預設關閉，排在「輸出簡體字」下面；說明由 `0c-update settings` 依平台寫出快捷鍵（Windows／Linux Ctrl＋Shift＋F11、macOS ⌃⇧F11，提醒 F 鍵是媒體鍵時加按 Fn／fn）。開啟後四個外殼攔這個鍵，跟輸入法選單一樣即時切換「輸出簡體字」；這個開關本身照一般設定交接重啟引擎套用。
+輸出設定頁的「用快捷鍵切換簡體字」（`simplified-hotkey`，`settings.json` 的 `simplified_hotkey`，#192）預設關閉，排在「輸出簡體字」下面；說明由 `0c-update settings` 依平台寫出快捷鍵（Windows／Linux Ctrl＋Shift＋F11、macOS ⌃⇧F11，提醒 F 鍵是媒體鍵時加按 Fn／fn）。開啟後四個外殼攔這個鍵，跟輸入法選單一樣即時切換「輸出簡體字」；這個開關本身照一般設定交接重啟引擎套用。
 
 輸入設定的「選字後游標移到下一個字」（`advance-after-select`，`settings.json` 的 `advance_after_select`）預設關閉，選字後游標留在原處。開啟後從候選窗選好字（數字鍵、Enter、滑鼠都算），游標移到所選詞的後面，可以接著按 ↓ 改下一個字；修改游標前方字詞時往後移一個字（同新酷音的 autoShiftCur），游標在句尾時不動（#133）。符號、Emoji 與原樣注音本來就插入在游標處、游標停在它們後面。引擎讀設定，套用（引擎重啟）後生效，外殼不必改。
