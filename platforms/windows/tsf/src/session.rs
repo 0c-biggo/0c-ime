@@ -358,18 +358,23 @@ impl Session {
 
     /// 沒在組字時這個鍵要不要交給引擎（見 idle_key_from）。TestKeyDown 只查設定，不送按鍵：答錯時 WPF 會掉鍵，
     /// 或吃掉應用程式的鍵（關閉 Emoji 捷徑時的 =、許氏的數字與 q）。只在答案依排列或設定而不同的鍵（keys::layout_dependent）查詢；
-    /// health 的答案跟著連線快取（設定一改引擎就重啟、連線跟著斷），連線還在時不再往返。引擎不可用時為 false，交還宿主。
+    /// health 的答案跟著連線快取（設定一改引擎就重啟、連線跟著斷），連線還在時不再往返。
+    /// 問不到（引擎正在交接、剛重啟還沒起來、連線錯誤）時不交還宿主：OnKeyDown 的 handle() 會等交接結束再送，
+    /// 這裡說不吃的字母卻直接以英文打進文件（改設定後的第一個字）。沿用上一次問到的答案；從沒問到過就照沒有設定資訊的
+    /// 舊推算（字母交給引擎，同 0.2.4 的本地判斷）。不記代數，下一個鍵重新問。英文模式、Ctrl／Alt 組合不會走到這裡（wants_key）。
     pub fn idle_key(&mut self, key: &str) -> bool {
         let fresh = self.idle_info.is_some()
             && self.client.connected()
             && self.idle_generation == self.client.generation()
             && self.client.alive();
         if !fresh {
-            let Some(reply) = self.client.call(&json!({"op": "health"})).filter(|r| r["ok"] == true) else {
-                return false;
-            };
-            self.idle_info = Some(reply["info"].clone());
-            self.idle_generation = self.client.generation();
+            match self.client.call(&json!({"op": "health"})).filter(|r| r["ok"] == true) {
+                Some(reply) => {
+                    self.idle_info = Some(reply["info"].clone());
+                    self.idle_generation = self.client.generation();
+                }
+                None => return idle_key_from(self.idle_info.as_ref().unwrap_or(&Value::Null), key),
+            }
         }
         self.idle_info.as_ref().is_some_and(|info| idle_key_from(info, key))
     }
@@ -1418,6 +1423,25 @@ mod tests {
         assert_eq!(snap.commit, "你好");
         drop(s);
         assert_eq!(server.finish(), 1, "replacement must receive the key once");
+    }
+
+    // #183 code review：改設定讓引擎重啟時，交接中的第一個字母 TestKeyDown 問不到 idle_keys。不能交還宿主（中文模式直接打出
+    // 英文字母）：沿用上一次的答案，從沒問到過就照舊推算；OnKeyDown 的 handle() 等交接結束，新引擎收到這個鍵一次。
+    #[test]
+    fn idle_letters_during_handoff_go_to_the_engine() {
+        let server =
+            HandoffServer::new("引擎正在切換", Some(std::time::Duration::from_millis(500)));
+        let mut s = Session::with_client(Client::with_pipe(&server.name));
+        assert!(s.idle_key("a"), "從沒問到過：字母交給引擎（同 0.2.4）");
+        assert!(s.client.handoff_pending(), "引擎回了「引擎正在切換」");
+        // 上一次在舊連線上問到的答案（許氏：數字交還宿主、字母交給引擎）照樣適用，不因交接把數字也吃掉。
+        s.idle_info = Some(json!({"idle_keys": "!\"&'(),.:;<=>?[\\]^_`abcdefghijklmnoprstuvwxyz{}~"}));
+        assert!(s.idle_key("a") && s.idle_key("j"));
+        assert!(!s.idle_key("1") && !s.idle_key("q"));
+        let snap = s.key("a");
+        assert!(snap.ok && snap.handled, "OnKeyDown 等交接結束才送");
+        drop(s);
+        assert_eq!(server.finish(), 1, "新引擎收到這個鍵一次");
     }
 
     #[test]
