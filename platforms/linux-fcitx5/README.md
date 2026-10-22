@@ -95,7 +95,7 @@ gdbus call --session --dest org.fcitx.Fcitx5 --object-path /controller --method 
 
 ## 目前的限制
 
-- 排列由核心決定（標準或倚天 41 鍵，`keyboard-layout`，#83）；外殼把所有可見按鍵交給核心，不另外判斷注音鍵。左 Shift 依 Fcitx5 設定切換輸入來源；中英切換鍵依設定交給引擎。重新啟用 Zuin 會恢復注音；服務重連時，有未提交組字則還原當時的中英模式，無組字則恢復注音。Shift＋標點仍輸入全形標點。
+- 排列由核心決定（標準、倚天 41 鍵或許氏，`keyboard-layout`，#83、#183）；外殼把所有可見按鍵交給核心，不另外判斷注音鍵。左 Shift 依 Fcitx5 設定切換輸入來源；中英切換鍵依設定交給引擎。重新啟用 Zuin 會恢復注音；服務重連時，有未提交組字則還原當時的中英模式，無組字則恢復注音。Shift＋標點仍輸入全形標點。
 - 「中英切換鍵」（`0c-update set toggle-key right|both|left|none -apply`，預設 `right`，#117；取代舊的 `left-shift`，舊設定 `left-shift on` 讀成 `both`）：外殼每次確定是單按 Shift 的放開時向引擎查詢 health 的 `right_shift`、`shift_tap_ms`（左 Shift 在按下時查 `left_shift`），設定套用後下一次按 Shift 就生效；舊引擎沒有 `right_shift` 時右 Shift 照舊切換，沒有 `shift_tap_ms` 時門檻 300 ms。按下到放開超過門檻（預設 0.3 秒）不算切換，按著 Shift 猶豫後放開不會誤切；中間按了別的鍵也不算。右 Shift 不在切換鍵裡時（`left`、`none`）按下與放開都交給應用程式。
 - 左 Shift：Fcitx5 預設把左 Shift 設為「暫時切換輸入法」（全域選項 `AltTriggerKeys`），框架會在輸入法之前攔下。切換鍵含左 Shift（`both`、`left`）時，目前輸入法是靈犀就由外殼在更早的階段接手左 Shift：單按切換注／英（與右 Shift 相同：保留已組好的字、清掉未打完的注音），Shift＋字母仍是大寫，Fcitx5 的暫時切換在靈犀裡不再生效；切到其他輸入法時左 Shift 照 Fcitx5 設定。不含左 Shift 時外殼完全不處理左 Shift。
 - 「切換視窗後的中英模式」（`0c-update set mode-memory native|shared -apply`，#115）：`native`（Linux 預設）時換輸入框或視窗回到開始時的模式（「開始時的中英模式」`start-mode`，預設注音，#160；Fcitx5 每次聚焦都會呼叫 activate，外殼的模式跟 open 回覆的 `start_mode` 不同時送「設定模式」，舊引擎沒有回報時當成注音）；新的 session 由核心從開始時的模式起，引擎已連上時新的輸入框一聚焦注／英指示就對；`shared` 時所有輸入框共用中英模式，在 A 切到英文、換到 B 也是英文。共用模式由核心處理：外殼聚焦時一律送「設成中文」，核心改成回到共用的模式，注／英指示一換過去就是共用的模式（只用現有連線，聚焦不為此啟動 `0c-server`）。用左 Shift 切到系統英文鍵盤是 Fcitx5 的狀態，換視窗時依 Fcitx5 的「共享輸入法狀態」，不受這個設定影響。GNOME Wayland 上 GTK4 程式都經 GNOME Shell 走 Fcitx5 的 IBus 前端、共用一個輸入框，換視窗是同一個輸入框的失焦／聚焦。

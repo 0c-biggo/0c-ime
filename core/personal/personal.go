@@ -418,6 +418,9 @@ type RejectedSeg struct {
 	Word       string
 	Start, End int
 	Correction bool
+	// Reading 是被推翻的修正詞條自己的讀音；空的時候用 Commit.Syls 的那段（打聲調時兩者相同）。
+	// 聲調選填（#150）時 Syls 是最後路徑上換上去的詞的讀音，拒絕次數要記在修正詞條的讀音上才停用得了。
+	Reading []zhuyin.Syllable
 }
 
 func (m *Model) observe(left, w string, weight float64) {
@@ -462,10 +465,17 @@ func (m *Model) Learn(c Commit) {
 
 	// 推翻自動修正：只計拒絕次數，該範圍的文字不進入一般學習。
 	// 故意打的錯字是例外而非偏好，不該影響之後的選字。
+	// 讀音還帶「沒打聲調」記號（#150，沒能換回詞庫讀音）時不計次數，範圍照樣不學。
 	var noLearn [][2]int
 	for _, r := range c.Rejected {
 		if r.Correction {
-			s.Rejects[pair(r.Word, zhuyin.Key(c.Syls[r.Start:r.End]))]++
+			reading := c.Syls[r.Start:r.End]
+			if len(r.Reading) == r.End-r.Start {
+				reading = r.Reading
+			}
+			if !zhuyin.HasUntoned(reading) {
+				s.Rejects[pair(r.Word, zhuyin.Key(reading))]++
+			}
 			noLearn = append(noLearn, [2]int{r.Start, r.End})
 		}
 	}
@@ -545,7 +555,11 @@ func (m *Model) Learn(c Commit) {
 }
 
 // noteManual 記下明確手選：解除 tombstone、候選視窗的單字手選與個人讀音自適應。
+// 讀音帶「沒打聲調」記號（#150）時什麼都不記：呼叫端應已標成 Fuzzy，這裡是最後一道防線。
 func (m *Model) noteManual(syls []zhuyin.Syllable, g Seg) {
+	if zhuyin.HasUntoned(syls[g.Start:g.End]) {
+		return
+	}
 	s := m.Store
 	delete(s.Tombstones, g.Word) // 明確的手動選取可解除 tombstone
 	if g.End-g.Start == 1 && !m.PickedSingle(syls[g.Start], g.Word) {

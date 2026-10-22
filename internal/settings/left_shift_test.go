@@ -4,16 +4,19 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
 func TestLeftShiftDefaultsOffAndPersists(t *testing.T) {
 	path := filepath.Join(t.TempDir(), FileName)
-	if s, err := Load(path); err != nil || s.LeftShift {
-		t.Fatalf("預設要關閉：%+v %v", s, err)
+	// 預設跟著平台的中英切換鍵：Windows 左右 Shift（#206）時開，其他平台關。
+	on := defaultToggleKey(runtime.GOOS) == ToggleBoth
+	if s, err := Load(path); err != nil || s.LeftShift != on {
+		t.Fatalf("預設：%+v %v", s, err)
 	}
-	if v, _ := Default().Value("left-shift"); v != "off" {
+	if v, _ := Default().Value("left-shift"); v != onOff(on) {
 		t.Fatalf("命令列預設值：%q", v)
 	}
 	if err := os.WriteFile(path, []byte(`{"selection":"statistical","future":42}`), 0600); err != nil {
@@ -45,7 +48,7 @@ func TestLeftShiftUnknownValueRetainedUntilExplicitChange(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"left_shift":"both","punctuation":true}`), &s); err != nil {
 		t.Fatal(err)
 	}
-	if s.LeftShift || !s.Punctuation {
+	if s.LeftShift != Default().LeftShift || !s.Punctuation {
 		t.Fatal("讀不懂的值只讓這一欄退回預設")
 	}
 	s.Set("selection", Statistical)

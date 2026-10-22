@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/0c-biggo/0c-ime/core/fuzzy"
@@ -79,6 +80,22 @@ func TestToneMarkKeysFollowMixedInputAndLayout(t *testing.T) {
 	}
 	if e.Layout = layout.ETen; !e.ToneMarkKeys() {
 		t.Fatal("倚天排列停用混打，聲調鍵由輸入法處理")
+	}
+}
+
+// #183：外殼查詢的閒置按鍵依排列與設定；許氏的數字不是注音鍵，交還應用程式。
+func TestIdleKeysFollowLayout(t *testing.T) {
+	e := testEngine()
+	if got := e.IdleKeys(); !strings.Contains(got, "1") || !strings.Contains(got, "=") {
+		t.Fatalf("標準排列：1 是 ㄅ、= 開 Emoji：%q", got)
+	}
+	e.Layout = layout.Hsu
+	if got := e.IdleKeys(); strings.ContainsAny(got, "0123456789") || !strings.Contains(got, "a") || !strings.Contains(got, ",") {
+		t.Fatalf("許氏：%q", got)
+	}
+	e.EmojiShortcut = "off"
+	if strings.Contains(e.IdleKeys(), "=") {
+		t.Fatal("關閉 Emoji 選單時 = 交還應用程式")
 	}
 }
 

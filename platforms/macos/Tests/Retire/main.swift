@@ -19,6 +19,11 @@ check(!HandoverPolicy.replaced(launched: a, current: a), "same executable: nothi
 check(HandoverPolicy.replaced(launched: a, current: b), "executable replaced by an update: hand over")
 check(!HandoverPolicy.replaced(launched: a, current: nil), "app removed: nothing to start instead")
 check(!HandoverPolicy.replaced(launched: nil, current: b), "unknown launch file: do not guess")
+// #205：被更新移入備份後（啟動路徑上換成新版或已移除）不再碰 SMAppService，免得背景項目的登記被拉到備份。
+check(HandoverPolicy.atLaunchPath(launched: a, current: a), "still the launched executable: query the schedule")
+check(!HandoverPolicy.atLaunchPath(launched: a, current: b), "moved into a backup, new version at the launch path: hands off")
+check(!HandoverPolicy.atLaunchPath(launched: a, current: nil), "uninstalled while running: hands off")
+check(!HandoverPolicy.atLaunchPath(launched: nil, current: b), "unknown launch file: do not claim the location")
 let t0 = Date()
 check(HandoverPolicy.due(last: nil, now: t0), "first time away: kick the schedule")
 check(!HandoverPolicy.due(last: t0, now: t0.addingTimeInterval(5)), "lock then display sleep: kick once")

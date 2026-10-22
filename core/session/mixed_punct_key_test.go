@@ -158,7 +158,8 @@ func TestMixedPunctuationKeyWordHint(t *testing.T) {
 }
 
 // #190：混打時 Shift＋, Shift＋. 照舊出全形「，」「。」，按 ↓ 第二個候選是原按鍵 < >（比照 #162／#175／#187
-// 的「↓ 第二項是原按鍵」），選了變回半形。句首、中文後面、空白後面都一樣；緊接在英數後面本來就是半形。
+// 的「↓ 第二項是原按鍵」），選了變回半形。句首、中文後面、空白後面都一樣；緊接在照字面的英數後面也一樣（#201：
+// 以前是半形，我2026<、我OK<、我18>）。
 func TestMixedShiftCommaPeriodDownOffersKey(t *testing.T) {
 	for _, tc := range []struct{ keys, before, full, half string }{
 		{"<", "", "，", "<"},
@@ -166,6 +167,13 @@ func TestMixedShiftCommaPeriodDownOffersKey(t *testing.T) {
 		{"ji3<", "我", "，", "<"},
 		{"ji3>", "我", "。", ">"},
 		{"ji3 <", "我 ", "，", "<"},
+		{"ji32026<", "我2026", "，", "<"},
+		{"ji3OK<", "我OK", "，", "<"},
+		{"ji318>", "我18", "。", ">"},
+		{"hello<", "hello", "，", "<"},
+		{"ji3hello>", "我hello", "。", ">"},
+		{"2026>", "2026", "。", ">"},
+		{"A-<", "A-", "，", "<"},
 	} {
 		s := punctKeySession()
 		if snap := mixedType(s, tc.keys); snap.Text() != tc.before+tc.full {

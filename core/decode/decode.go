@@ -304,15 +304,7 @@ func (d *Decoder) forward(lat input.Lattice, locks map[int]Lock) [][]state {
 			continue
 		}
 		// 從 i 出發的詞與狀態無關：只列舉一次
-		var arcs []arc
-		d.spans(lat, i, func(reading []zhuyin.Syllable, cost float64) {
-			j := i + len(reading)
-			for _, e := range d.Lex.Exact(reading) {
-				if allowed(locks, i, j, e.Surface) {
-					arcs = append(arcs, arc{j, e, cost})
-				}
-			}
-		})
+		arcs := d.wordArcs(lat, i, locks)
 		for _, st := range d.frontier(best[i]) {
 			for _, a := range arcs {
 				sc := st.score + d.repeatScore(lat, locks, st.path, i, a.j, a.e.Surface, d.arcLog(i, a.j, st.last, a.e, a.cost))

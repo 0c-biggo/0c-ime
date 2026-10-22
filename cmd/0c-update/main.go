@@ -91,7 +91,8 @@ func listSettings(w io.Writer, r settings.Report, path string) {
 	if settings.CapsLockEnglishSetting(runtime.GOOS) {
 		fmt.Fprintf(w, "caps-lock-english=%s（Caps Lock 開著時直接打英文：字母大寫、數字與符號半形，關掉回到注音；關閉時注音模式不理 Caps Lock）\n", onOff(s.CapsLockEnglish))
 	}
-	fmt.Fprintf(w, "keyboard-layout=%s（鍵盤排列：standard 標準；eten 倚天 41 鍵，這時不提供 Emoji 選單與中英混打）\n", s.KeyboardLayout)
+	fmt.Fprintf(w, "toneless=%s（不打聲調也能選字：沒打聲調的字依前後文決定，有打的照聲調，組字中的 ' 切字；只在標準排列有效；開啟時中英混打停用）\n", onOff(s.Toneless))
+	fmt.Fprintf(w, "keyboard-layout=%s（鍵盤排列：standard 標準；eten 倚天 41 鍵，這時不提供 Emoji 選單與中英混打；hsu 許氏，這時不提供中英混打）\n", s.KeyboardLayout)
 	fuzzyConfig := s.FuzzyConfig()
 	for _, p := range fuzzy.Pairs() {
 		fmt.Fprintf(w, "fuzzy-%s=%s（%s 模糊音：off 關閉；select 開候選時合併近音；auto 另在語境明顯支持近音時自動改字，實驗）\n", p.ID(), fuzzyConfig.Mode(p), p.Symbols())
@@ -182,9 +183,18 @@ func run(args []string) error {
 		return fmt.Errorf("用法：0c-update status|settings|set|models|vocab|api|open-settings|engine|auto|finish|mode|pause|resume|snooze|schedule|verify|check|download|download-now|apply|install|rollback|uninstall [選項]")
 	}
 	action := args[0]
+	// macOS 以 root 執行時（sudo installer、MDM）改以登入的使用者身分重新執行，成功時不會返回（#198）
+	if err := dropRoot(args); err != nil {
+		return err
+	}
 	delegateToPersonal(args) // 系統安裝的 0c-update、而官網安裝也在時，交給官網那一份（成功時不會返回）
 	if err := refusePackageManaged(action, args[1:]); err != nil {
 		return err
+	}
+	switch action {
+	case "status", "check", "auto", "finish":
+		// macOS：背景項目的登記留在已安裝的 App（#205）；舊輸入法程式的選單、設定程式與排程都經過這幾個命令。
+		adoptSchedule(action != "status")
 	}
 	switch action {
 	case "settings":
@@ -214,6 +224,13 @@ func run(args []string) error {
 			return fmt.Errorf("deploy-tsf 不接受參數")
 		}
 		return deployTSF()
+	case "check-account":
+		// 內部用：Windows 安裝程式開始安裝前呼叫（#199），系統管理員權限由另一個帳號確認時以 otherAccountExit 結束並說明，
+		// 不列在用法裡。
+		if len(args) != 1 {
+			return fmt.Errorf("check-account 不接受參數")
+		}
+		return refuseOtherAccount()
 	case "prune":
 		// 內部用：安裝、回復、解除安裝成功後在背景清理舊版（#179，Windows），不列在用法裡。
 		if len(args) != 1 {
@@ -249,6 +266,18 @@ func run(args []string) error {
 	if action == "check" && *feedURL == "" && *archive == "" {
 		return checkCommand(*asJSON)
 	}
+	if action == "apply" || action == "install" {
+		// 以另一個帳號提權時不裝（#199）；安裝程式在 check-account 已擋過，這裡涵蓋 install.ps1 與直接執行。
+		if err := refuseOtherAccount(); err != nil {
+			return err
+		}
+	}
+	// 之前以 root 安裝留下的檔案，這個帳號改不動；先說明修復指令，不要做到一半才 permission denied（#198）
+	if action == "install" || action == "apply" || action == "rollback" || action == "uninstall" {
+		if err := refuseForeignOwned(args); err != nil {
+			return err
+		}
+	}
 	switch action {
 	case "status":
 		version, err := installedVersion()
@@ -272,6 +301,9 @@ func run(args []string) error {
 		}
 		fmt.Printf("靈犀注音（0c）：%s\n平台：%s/%s\n收據：%s\n", version, runtime.GOOS, runtime.GOARCH, receiptPath())
 		if line := installIntegrity(); line != "" {
+			fmt.Println(line)
+		}
+		if line := ownershipLine(); line != "" {
 			fmt.Println(line)
 		}
 		if engine := autoupdate.PointerVersion(basePath()); engine != "" {
@@ -438,6 +470,9 @@ func main() {
 	}
 	launchPrune() // 安裝、回復、解除安裝成功過才有；其餘步驟都做完了，最後才啟動（#179）
 	flush()
+	if errors.Is(err, errOtherAccount) {
+		os.Exit(otherAccountExit) // 安裝程式靠這個結束碼擋下安裝（#199）
+	}
 	if err != nil {
 		os.Exit(1)
 	}

@@ -17,3 +17,7 @@ func (p *system) RecoverShell(context.Context) (bool, error) { return false, nil
 
 // restoreStuckInputMethod：只有 Linux 的 Fcitx5 有 #93 卡住後要補回的輸入法清單。
 func restoreStuckInputMethod(string, bool) {}
+
+// finishKWinIM、repairKWinFcitx：只有 Linux 的 KDE Plasma Wayland 由 KWin 啟動輸入法（#204）。
+func finishKWinIM(string)    {}
+func repairKWinFcitx(string) {}

@@ -297,36 +297,142 @@ class UpgradeTests(unittest.TestCase):
             self.assertIn('/old/addons', env['FCITX_ADDON_DIRS'])
         self.assert_preserved()
 
-    def test_kwin_launched_fcitx_is_restarted_through_kwin(self):
-        # KDE Plasma Wayland：KWin 帶著 WAYLAND_SOCKET 啟動 Fcitx5；改 kwinrc 讓 KWin 重新啟動，不執行 fcitx5 -r。
+    def kwin_desktop(self, user_value=True, tools=('kreadconfig6', 'kwriteconfig6', 'busctl'), ignores=False):
+        """假的 KDE Plasma Wayland：KWin（PID 100）帶著 WAYLAND_SOCKET 啟動的 Fcitx5（PID 123）。清空 InputMethod
+        時 KWin 停用並結束 Fcitx5，寫回時重新啟動（ignores 時沒有反應）。回傳 (fake_run, running, kwinrc 狀態)。"""
         proc = self.root / 'proc/123'
         proc.mkdir(parents=True)
-        (proc / 'environ').write_bytes(b'WAYLAND_SOCKET=27\0XDG_RUNTIME_DIR=/run/user/1000\0')
+        config = self.root / 'config'
+        config.mkdir()
+        desktop = '/usr/share/applications/org.fcitx.Fcitx5.desktop'
+        if user_value:
+            (config / 'kwinrc').write_text(f'[Wayland]\nInputMethod[$e]={desktop}\n')
+        (proc / 'environ').write_bytes(b'WAYLAND_SOCKET=27\0XDG_RUNTIME_DIR=/run/user/1000\0XDG_CONFIG_HOME='
+                                       + bytes(config) + b'\0')
         (proc / 'stat').write_text('123 (fcitx5) S 100 123 123 0')
         (self.root / 'proc/100').mkdir()
         (self.root / 'proc/100/comm').write_text('kwin_wayland\n')
-        desktop = '/usr/share/applications/org.fcitx.Fcitx5.desktop'
         running = [proc]
+        kwinrc = {'value': desktop, 'available': True}
+
+        def current():
+            # 使用者的 kwinrc 有這個鍵時讀它，否則是系統預設（desktop）。
+            path = config / 'kwinrc'
+            if upgrade.user_sets_input_method(path):
+                return kwinrc['value']
+            return desktop
+
+        def notified():
+            if ignores:
+                return
+            if current():
+                kwinrc['available'] = True
+                if proc not in running:
+                    running.append(proc)
+            else:
+                kwinrc['available'] = False
+                running.clear()  # KWin 收到清空通知後結束舊的 Fcitx5
 
         def fake_run(*args, **kwargs):
-            if args[-1] == '':
-                running.clear()  # KWin 收到清空通知後結束舊的 Fcitx5
-            elif args[-1] == desktop:
-                running.append(proc)
-            return subprocess.CompletedProcess(args, 0, stdout=desktop + '\n' if 'kreadconfig6' in args[0] else 'abc\n')
+            name = Path(args[0]).name
+            if name.startswith(('kwriteconfig', 'kreadconfig', 'busctl')):
+                self.assertNotIn('WAYLAND_SOCKET', kwargs['env'])
+            if name.startswith('kreadconfig'):
+                return subprocess.CompletedProcess(args, 0, stdout=current() + '\n', stderr='')
+            if name == 'busctl' and 'get-property' in args:
+                return subprocess.CompletedProcess(args, 0, stdout=f"b {str(kwinrc['available']).lower()}\n", stderr='')
+            if name.startswith('kwriteconfig'):
+                kwinrc['value'] = args[-1]
+                (config / 'kwinrc').write_text(f'[General]\nX=1\n\n[Wayland]\nInputMethod[$e]={args[-1]}\n')
+                if '--notify' in args:
+                    notified()
+            if name == 'busctl' and 'emit' in args:
+                notified()
+            return subprocess.CompletedProcess(args, 0, stdout='abc\n', stderr='')
+        which = lambda name: '/usr/bin/' + name if name in tools else None
+        return fake_run, which, running, kwinrc
+
+    def apply_kwin(self, fake_run, which, running):
         with patch.object(upgrade, 'run', side_effect=fake_run) as run, \
-                patch.object(upgrade.shutil, 'which', side_effect=lambda name: '/usr/bin/' + name), \
+                patch.object(upgrade.shutil, 'which', side_effect=which), \
                 patch.object(upgrade, 'check_data'), \
                 patch.object(upgrade, 'processes', side_effect=lambda name: list(running)), \
                 patch.object(upgrade, 'addon_loaded', return_value=True), \
+                patch.object(upgrade, 'wait', side_effect=lambda seconds, ready: ready()), \
                 patch.object(upgrade, 'stop_old_servers'), patch.object(upgrade.time, 'sleep'):
             upgrade.apply()
-            self.assertFalse(any(call.args[0] == 'fcitx5' for call in run.call_args_list))
-            kwin = [call for call in run.call_args_list if 'kwriteconfig6' in call.args[0]]
-            key = ('--file', 'kwinrc', '--group', 'Wayland', '--key', 'InputMethod')
-            self.assertEqual([call.args[1:] for call in kwin],
-                             [(*key, '--notify', ''), (*key, '--type', 'path', '--notify', desktop)])
-            self.assertNotIn('WAYLAND_SOCKET', kwin[0].kwargs['env'])
+        return run.call_args_list
+
+    KWIN_KEY = ('--file', 'kwinrc', '--group', 'Wayland', '--key', 'InputMethod')
+
+    def test_kwin_launched_fcitx_is_restarted_through_kwin(self):
+        # KDE Plasma Wayland：KWin 帶著 WAYLAND_SOCKET 啟動 Fcitx5；改 kwinrc 讓 KWin 重新啟動，不執行 fcitx5 -r。
+        # 寫檔不帶 --notify（Plasma 5 的 kwriteconfig5 沒有），由 busctl 送 KConfig 的變更通知。
+        fake_run, which, running, kwinrc = self.kwin_desktop()
+        calls = self.apply_kwin(fake_run, which, running)
+        self.assertFalse(any(call.args[0] == 'fcitx5' for call in calls))
+        writes = [call.args[1:] for call in calls if 'kwriteconfig6' in call.args[0]]
+        desktop = '/usr/share/applications/org.fcitx.Fcitx5.desktop'
+        self.assertEqual(writes, [(*self.KWIN_KEY, ''), (*self.KWIN_KEY, '--type', 'path', desktop)])
+        emits = [call.args for call in calls if call.args[0].endswith('busctl') and 'emit' in call.args]
+        self.assertEqual(len(emits), 2)
+        self.assertEqual(emits[0][1:7], ('--user', 'emit', '/kwinrc', 'org.kde.kconfig.notify', 'ConfigChanged', 'a{saay}'))
+        self.assertEqual(bytes(int(b) for b in emits[0][11:]), b'InputMethod')
+        self.assertEqual(kwinrc['value'], desktop)
+        self.assertEqual(len(running), 1)
+
+    def test_kwin_restart_keeps_a_system_default_inherited(self):
+        # 使用者的 kwinrc 沒有 InputMethod（值來自 /etc/xdg/kwinrc）：寫回時刪掉鍵，不寫死在使用者設定。
+        # 也不用 kwriteconfig --delete：有系統預設時它寫 InputMethod[$d]，把預設遮掉。
+        fake_run, which, running, _ = self.kwin_desktop(user_value=False)
+        calls = self.apply_kwin(fake_run, which, running)
+        writes = [call.args[1:] for call in calls if 'kwriteconfig6' in call.args[0]]
+        self.assertEqual(writes, [(*self.KWIN_KEY, '')])
+        self.assertEqual((self.root / 'config/kwinrc').read_text(), '[General]\nX=1\n\n[Wayland]\n')
+        self.assertEqual(len(running), 1)
+
+    def test_kwin_restart_without_busctl_uses_kwriteconfig_notify(self):
+        fake_run, which, running, _ = self.kwin_desktop(tools=('kreadconfig6', 'kwriteconfig6'))
+        calls = self.apply_kwin(fake_run, which, running)
+        desktop = '/usr/share/applications/org.fcitx.Fcitx5.desktop'
+        writes = [call.args[1:] for call in calls if 'kwriteconfig6' in call.args[0]]
+        self.assertEqual(writes, [(*self.KWIN_KEY, '--notify', ''), (*self.KWIN_KEY, '--notify', '--type', 'path', desktop)])
+
+    def test_kwin_restart_falls_back_when_kwin_does_not_react(self):
+        # KWin 沒有停用輸入法：kwinrc 寫回原值，改為直接啟動，不帶失效的 WAYLAND_SOCKET。
+        fake_run, which, running, kwinrc = self.kwin_desktop(ignores=True)
+        calls = self.apply_kwin(fake_run, which, running)
+        self.assertEqual(kwinrc['value'], '/usr/share/applications/org.fcitx.Fcitx5.desktop')
+        direct = [call for call in calls if call.args[0] == 'fcitx5']
+        self.assertEqual([call.args for call in direct], [('fcitx5', '-r', '-d')])
+        self.assertNotIn('WAYLAND_SOCKET', direct[0].kwargs['env'])
+
+    def test_kwin_restart_falls_back_without_kde_tools(self):
+        # 找不到 kreadconfig／kwriteconfig：照原本的 fcitx5 -r，不帶 WAYLAND_SOCKET，安裝照常完成。
+        fake_run, which, running, _ = self.kwin_desktop(tools=())
+        calls = self.apply_kwin(fake_run, lambda name: None, running)
+        direct = [call for call in calls if call.args[0] == 'fcitx5']
+        self.assertEqual(len(direct), 1)
+        self.assertNotIn('WAYLAND_SOCKET', direct[0].kwargs['env'])
+
+    def test_restart_unit_under_kwin_is_handed_back(self):
+        # 0.2.4 以前的更新器自己啟動的 Fcitx5（0c-fcitx5-*.service）：KWin 在執行、虛擬鍵盤是 Fcitx 時交還 KWin。
+        proc = self.root / 'proc/123'
+        proc.mkdir(parents=True)
+        (proc / 'stat').write_text('123 (fcitx5) S 1 123 123 0')
+        (proc / 'cgroup').write_text('0::/user.slice/user-1000.slice/user@1000.service/app.slice/0c-fcitx5-17926.service\n')
+        (self.root / 'proc/100').mkdir()
+        (self.root / 'proc/100/comm').write_text('kwin_wayland\n')
+        value = ['/usr/share/applications/org.fcitx.Fcitx5.desktop\n']
+        fake = lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout=value[0], stderr='')
+        with patch.object(upgrade, 'run', side_effect=fake), \
+                patch.object(upgrade.shutil, 'which', side_effect=lambda name: '/usr/bin/' + name):
+            self.assertTrue(upgrade.kwin_launched(proc, {}))
+            value[0] = '/usr/share/applications/com.github.maliit.keyboard.desktop\n'
+            self.assertFalse(upgrade.kwin_launched(proc, {}))
+            value[0] = '/usr/share/applications/org.fcitx.Fcitx5.desktop\n'
+            (self.root / 'proc/100/comm').write_text('gnome-shell\n')
+            self.assertFalse(upgrade.kwin_launched(proc, {}))
 
     def test_kwin_wayland_launcher_is_restarted_through_kwin(self):
         # 「Fcitx 5 Wayland Launcher」：fcitx5 由 D-Bus 叫起，沒有 WAYLAND_SOCKET；KWin 的子行程是 launcher。

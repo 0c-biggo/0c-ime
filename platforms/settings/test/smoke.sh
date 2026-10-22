@@ -42,13 +42,29 @@ shoot() { # 場景 頁面
   stop_app
 }
 run_update() { local name=$1; shift; HOME=$(home_of "$name") "$UPDATE_BIN" "$@"; }
+# 側欄的導覽按鈕數（總覽、中英切換、選字、鍵盤與符號、輸出設定、我的詞彙、模型、更新、問題排解、關於；#207）。
+# 每一頁的第一個控制項是第 NAV+1 個 Tab；vocab.sh、models.sh 也用它。
+NAV=10
+tabs() { local n=$1; local keys=(); for _ in $(seq "$n"); do keys+=(Tab); done; xdotool key --delay 120 "${keys[@]}"; }
 
 # SMOKE_ONLY=vocab／models：只跑「我的詞彙」（vocab.sh）或「模型」（models.sh），開發時省時間。
 if [ -z "${SMOKE_ONLY:-}" ]; then
 
 # ---- 場景 A：全新安裝，沒有設定檔也沒有引擎 ----
 new_home fresh
-for page in overview input output update troubleshoot about; do shoot fresh "$page"; done
+for page in overview mode candidates keyboard output update troubleshoot about; do shoot fresh "$page"; done
+
+# ---- 舊的頁名 input（0.2.5 以前的「輸入設定」，#207）導到「中英切換」：第一個控制項是中英切換鍵 ----
+new_home alias
+launch alias input
+if window_up; then
+  sleep 2.5
+  import -window root "$OUT/alias-input.png"
+  tabs $((NAV + 1)); xdotool key Down
+  sleep 3
+  check "--page input 開在中英切換（第一項中英切換鍵可改成左右 Shift）" grep -q '"toggle_key": "both"' "$(settings_of alias)"
+else bad "alias/input 視窗沒有出現"; cat /tmp/app-alias-input.log; fi
+stop_app
 
 # ---- 問題排解：匯出狀態摘要到「下載」資料夾，提示寫明寄到哪裡（#152，看截圖） ----
 new_home export
@@ -56,8 +72,8 @@ mkdir -p "$(home_of export)/Downloads"
 launch export troubleshoot
 if window_up; then
   sleep 2.5
-  # 8 個導覽（含我的詞彙、輸出設定、模型）→ 匯出按鈕（第 9 個）。
-  xdotool key --delay 150 Tab Tab Tab Tab Tab Tab Tab Tab Tab space
+  # 導覽之後第一個是匯出按鈕。
+  tabs $((NAV + 1)); xdotool key space
   sleep 3
   import -window root "$OUT/export-troubleshoot.png"
   check "匯出的狀態摘要寫進「下載」資料夾" bash -c "ls '$(home_of export)'/Downloads/0c-status-*.json >/dev/null 2>&1"
@@ -68,12 +84,12 @@ stop_app
 new_home configured
 printf '{"schema":1,"selection":"statistical","fuzzy":{"z-zh":"select"},"future":{"x":1}}\n' > "$(base_of configured)/settings.json"
 state_json configured idle ',"last_check":"2026-10-06T01:00:00Z","last_success":"2026-10-06T01:00:00Z","next_check":"2026-10-06T07:00:00Z"'
-shoot configured input
+shoot configured candidates
 shoot configured update
 
 # ---- 場景 C：設定檔損毀、場景 D：來自較新版本 ----
 new_home corrupt; printf 'not json {{' > "$(base_of corrupt)/settings.json"; shoot corrupt overview
-new_home newer; printf '{"schema":9,"selection":"statistical"}\n' > "$(base_of newer)/settings.json"; shoot newer input
+new_home newer; printf '{"schema":9,"selection":"statistical"}\n' > "$(base_of newer)/settings.json"; shoot newer candidates
 
 # ---- 場景 E：有新版 ----
 new_home update
@@ -110,14 +126,14 @@ check "引擎已啟動" test -S "$XDG_RUNTIME_DIR/0c/0c.sock"
 check "更新器看得到執行中的引擎" bash -c "'$UPDATE_BIN' settings -json | python3 -c \"import json,sys; sys.exit(0 if json.load(sys.stdin)['engine']['state']=='running' else 1)\""
 check "補標點 Beta 預設關閉且引擎未啟用" bash -c "'$UPDATE_BIN' settings -json | python3 -c \"import json,sys; it=next(x for x in json.load(sys.stdin)['items'] if x['key']=='punctuation'); sys.exit(0 if it['value']=='off' and it['running']=='off' and it['default']=='off' and 'Beta' in it['label'] else 1)\""
 check "補標點狀態為依設定關閉" bash -c "'$UPDATE_BIN' status -json | python3 -c \"import json,sys; sys.exit(0 if json.load(sys.stdin)['runtime']['punctuation_state']=='disabled_by_setting' else 1)\""
-launch live input
+# 鍵盤路徑：「鍵盤與符號」的鍵盤排列（一組單選）、Ctrl＋標點 → 「提交時補標點（Beta）」開關，按空白鍵開啟。
+launch live keyboard
 if window_up; then
   sleep 2.5
-  import -window root "$OUT/live-input-before.png"
-  # 鍵盤路徑：8 個導覽按鈕（含我的詞彙、輸出設定、模型）→ 選字方式（一組單選）→ 「提交時補標點（Beta）」開關，按空白鍵開啟。
-  xdotool key --delay 150 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab space
+  import -window root "$OUT/live-keyboard-before.png"
+  tabs $((NAV + 3)); xdotool key space
   sleep 6
-  import -window root "$OUT/live-input-after.png"
+  import -window root "$OUT/live-keyboard-after.png"
   check "自行開啟後新路徑 settings.json 的 punctuation 為 true" grep -q '"punctuation": true' "$(settings_of live)"
   check "套用後引擎已交接退出（下一個按鍵才以新設定重新啟動）" bash -c "! [ -S '$XDG_RUNTIME_DIR/0c/0c.sock' ] || ! python3 - <<'PY'
 import socket,sys
@@ -128,16 +144,14 @@ PY"
   xdotool key space
   sleep 3
   check "再按一次可關閉補標點" grep -q '"punctuation": false' "$(settings_of live)"
-  # 前文、混打之後是獨立的英文自動補字開關。
-  xdotool key --delay 150 Tab Tab Tab space
-  sleep 3
-  check "英文自動補字開關可保存 on" grep -q '"english_autocomplete": true' "$(settings_of live)"
-  import -window root "$OUT/english-autocomplete-on.png"
-  xdotool key space
-  sleep 3
-  check "英文自動補字開關可改回 off" grep -q '"english_autocomplete": false' "$(settings_of live)"
-  # 下一個是中英切換鍵（一組單選，預設右 Shift，#117）：↓ 選「左右 Shift」，舊欄位 left_shift 跟著寫 true。
-  xdotool key Tab Down
+else bad "live/keyboard 視窗沒有出現"; cat /tmp/app-live-keyboard.log; fi
+stop_app
+# 「中英切換」：中英切換鍵、開始時的中英模式、切換視窗後的中英模式、中英混打、英文模式自動補字。
+launch live mode
+if window_up; then
+  sleep 2.5
+  # 第一個是中英切換鍵（一組單選，預設右 Shift，#117）：↓ 選「左右 Shift」，舊欄位 left_shift 跟著寫 true。
+  tabs $((NAV + 1)); xdotool key Down
   sleep 3
   check "中英切換鍵可保存左右 Shift" bash -c "grep -q '\"toggle_key\": \"both\"' '$(settings_of live)' && grep -q '\"left_shift\": true' '$(settings_of live)'"
   import -window root "$OUT/toggle-key-both.png"
@@ -161,16 +175,23 @@ PY"
   xdotool key Up
   sleep 3
   check "切換視窗後的中英模式可改回 native" grep -q '"mode_memory": "native"' "$(settings_of live)"
-  # 再下一個是按 Esc 清除整段組字，預設開啟。
-  xdotool key Tab space
+  # 混打之後是獨立的英文自動補字開關。
+  xdotool key --delay 150 Tab Tab space
   sleep 3
-  check "Esc 清除整段組字開關可保存 off" grep -q '"esc_clear": false' "$(settings_of live)"
-  import -window root "$OUT/esc-clear-off.png"
+  check "英文自動補字開關可保存 on" grep -q '"english_autocomplete": true' "$(settings_of live)"
+  import -window root "$OUT/english-autocomplete-on.png"
   xdotool key space
   sleep 3
-  check "Esc 清除整段組字開關可改回 on" grep -q '"esc_clear": true' "$(settings_of live)"
-  # 再下一個是空白鍵選字，預設開啟（#107、#110）。
-  xdotool key Tab space
+  check "英文自動補字開關可改回 off" grep -q '"english_autocomplete": false' "$(settings_of live)"
+else bad "live/mode 視窗沒有出現"; cat /tmp/app-live-mode.log; fi
+stop_app
+# 「選字」：選字方式（一組單選）、依前文選字 → 空白鍵選字、修改字詞的位置 → 選字後游標、選字排列、選字鍵 → Esc。
+launch live candidates
+if window_up; then
+  sleep 2.5
+  import -window root "$OUT/live-candidates.png"
+  # 空白鍵選字，預設開啟（#107、#110）。
+  tabs $((NAV + 3)); xdotool key space
   sleep 3
   check "空白鍵選字開關可保存 off" grep -q '"space_selects": false' "$(settings_of live)"
   import -window root "$OUT/space-selects-off.png"
@@ -178,14 +199,22 @@ PY"
   sleep 3
   check "空白鍵選字開關可改回 on" grep -q '"space_selects": true' "$(settings_of live)"
   # 修改字詞的位置（一組單選）之後是選字後游標移到下一個字，預設關閉（#133）。
-  xdotool key Tab Tab space
+  xdotool key --delay 150 Tab Tab space
   sleep 3
   check "選字後游標開關可保存 on" grep -q '"advance_after_select": true' "$(settings_of live)"
   import -window root "$OUT/advance-after-select-on.png"
   xdotool key space
   sleep 3
   check "選字後游標開關可改回 off" grep -q '"advance_after_select": false' "$(settings_of live)"
-else bad "live/input 視窗沒有出現"; cat /tmp/app-live-input.log; fi
+  # 選字排列、選字鍵（兩組單選）之後是按 Esc 清除整段組字，預設開啟。
+  xdotool key --delay 150 Tab Tab Tab space
+  sleep 3
+  check "Esc 清除整段組字開關可保存 off" grep -q '"esc_clear": false' "$(settings_of live)"
+  import -window root "$OUT/esc-clear-off.png"
+  xdotool key space
+  sleep 3
+  check "Esc 清除整段組字開關可改回 on" grep -q '"esc_clear": true' "$(settings_of live)"
+else bad "live/candidates 視窗沒有出現"; cat /tmp/app-live-candidates.log; fi
 # 單一實例：再啟動一次，不該多出視窗，也不該卡住。
 sleep 1
 HOME=$live_home ZC_UPDATER=$UPDATE_BIN timeout 10 "$SETTINGS_BIN" --page update >/tmp/second.log 2>&1
@@ -197,11 +226,11 @@ import -window root "$OUT/live-second-instance.png"
 stop_app
 unset HOME
 
-# 輸出設定是左側獨立一頁（#118）：8 個導覽 → 輸出簡體字開關（第 9 個），預設關閉。
+# 輸出設定是左側獨立一頁（#118）：導覽之後第一個是輸出簡體字開關，預設關閉。
 launch live output
 if window_up; then
   sleep 2.5
-  xdotool key --delay 150 Tab Tab Tab Tab Tab Tab Tab Tab Tab space
+  tabs $((NAV + 1)); xdotool key space
   sleep 3
   check "輸出簡體字開關可保存 on" grep -q '"output_simplified": true' "$(settings_of live)"
   import -window root "$OUT/output-simplified-on.png"
@@ -276,7 +305,7 @@ live_runtime() { # 期望值 → 引擎回報能即時切換，而且目前的�
 }
 if window_up; then
   sleep 2.5
-  xdotool key --delay 150 Tab Tab Tab Tab Tab Tab Tab Tab Tab space
+  tabs $((NAV + 1)); xdotool key space
   sleep 3
   check "輸出簡體字：引擎在執行時開啟，寫入設定" grep -q '"output_simplified": true' "$(settings_of outputlive)"
   check "輸出簡體字：引擎沒有重啟（同一個行程）" kill -0 "$ENGINE_PID"
@@ -332,13 +361,12 @@ for _ in range(80):
 sys.exit(1)
 PY
 }
-launch toggles input
+# Emoji 在「鍵盤與符號」：鍵盤排列（一組單選）、Ctrl＋標點、補標點 → Emoji（導覽後第 4 個）→ 等號首項（子選項）。
+launch toggles keyboard
 if window_up; then
   sleep 2.5
   import -window root "$OUT/toggles-before.png"
-  # 8 個導覽（含我的詞彙、輸出設定、模型）、選字方式、補標點、前文、混打、英文補字、中英切換鍵、開始時的中英模式、切換視窗後的中英模式、Esc、空白選字、修改位置、選字後游標、排列 → Emoji（第21個）。
-  # 輸出簡體字在後面的「輸出設定」一節（模糊音之後），不在這段。
-  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab space
+  tabs $((NAV + 4)); xdotool key space
   check "預設啟用的 Emoji 開關可以關閉，保留未知設定" toggle_value emoji_off
   sleep 1
   xdotool key space
@@ -350,30 +378,39 @@ if window_up; then
   xdotool key space
   check "可以恢復第一項的等號" toggle_value first_on
   sleep 1
-  xdotool key Tab space
-  check "預設開啟的模糊音總開關一次關閉四組，保留未知設定" toggle_value fuzzy_off
-  sleep 1
-  xdotool key space
-  check "單一模糊音開關一次恢復四組 select" toggle_value fuzzy_on
-  sleep 1
   import -window root "$OUT/toggles-on.png"
-  xdotool key shift+Tab shift+Tab space
+  xdotool key shift+Tab space
   check "Emoji 開關可以關閉" toggle_value emoji_off
   sleep 1
   import -window root "$OUT/toggles-off.png"
+  # 子選項停用時不在 Tab 順序裡：Emoji 是這一頁最後一個能按的，Tab＋空白不會改到等號首項。
   xdotool key Tab space
-  check "Emoji 關閉時 Tab 跳過停用的子選項，直接操作模糊音" toggle_value fuzzy_off
-  check "關閉 Emoji 保留等號首項原值" toggle_value first_on
   sleep 1
-  xdotool key space
-  check "跳過子選項後可正常重新開啟模糊音" toggle_value fuzzy_on
-  sleep 1
-  xdotool key shift+Tab space
+  check "Emoji 關閉時 Tab 跳過停用的子選項，保留等號首項原值" toggle_value first_on
+  check "Tab＋空白之後 Emoji 仍是關閉" toggle_value emoji_off
+else bad "toggles/keyboard 視窗沒有出現"; cat /tmp/app-toggles-keyboard.log; fi
+stop_app
+launch toggles keyboard
+if window_up; then
+  sleep 2.5
+  tabs $((NAV + 4)); xdotool key space
   check "停用子選項後仍可重新啟用 Emoji" toggle_value emoji_on
   sleep 1
   xdotool key Tab space
   check "Emoji 重新啟用後子選項可再次操作" toggle_value first_off
-else bad "toggles/input 視窗沒有出現"; cat /tmp/app-toggles-input.log; fi
+else bad "toggles/keyboard 重新開啟失敗"; cat /tmp/app-toggles-keyboard.log; fi
+stop_app
+# 模糊音在「選字」最後：選字方式、前文、空白選字、修改位置、選字後游標、排列、選字鍵、Esc、不打聲調（#150）→ 模糊音（導覽後第 10 個）。
+launch toggles candidates
+if window_up; then
+  sleep 2.5
+  tabs $((NAV + 10)); xdotool key space
+  check "預設開啟的模糊音總開關一次關閉四組，保留未知設定" toggle_value fuzzy_off
+  sleep 1
+  import -window root "$OUT/toggles-fuzzy-off.png"
+  xdotool key space
+  check "單一模糊音開關一次恢復四組 select" toggle_value fuzzy_on
+else bad "toggles/candidates 視窗沒有出現"; cat /tmp/app-toggles-candidates.log; fi
 stop_app
 
 # GUI 的第一次修改建立新路徑，舊檔原樣保留；後續查詢以新檔為主。
@@ -402,34 +439,34 @@ for _ in range(80):
 sys.exit(1)
 PY_CURSOR
 }
-launch cursor input
+# 「選字」：選字方式、前文、空白選字 → 修改字詞的位置（導覽後第 4 個）。
+launch cursor candidates
 if window_up; then
   sleep 2.5
-  # 8 個導覽（含我的詞彙、輸出設定、模型）、選字方式、補標點、前文、混打、英文補字、中英切換鍵、開始時的中英模式、切換視窗後的中英模式、Esc、空白選字 → 修改字詞的位置（第18個）。
-  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Left
+  tabs $((NAV + 4)); xdotool key Left
   check "游標前方單選儲存 before，保留未知設定" cursor_value before
   sleep 1
   import -window root "$OUT/cursor-before.png"
-else bad "cursor/input 視窗沒有出現"; fi
+else bad "cursor/candidates 視窗沒有出現"; fi
 stop_app
-launch cursor input
+launch cursor candidates
 if window_up; then
   sleep 2.5
-  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Right
+  tabs $((NAV + 4)); xdotool key Right
   check "重新開啟設定後可改回游標後方，保留未知設定" cursor_value after
   sleep 1
   import -window root "$OUT/cursor-after.png"
-else bad "cursor/input 重新開啟失敗"; fi
+else bad "cursor/candidates 重新開啟失敗"; fi
 stop_app
 
 # ---- 倚天 41 鍵（#83）：混打與 Emoji 反灰並提示原因；切回標準排列恢復原本的值 ----
 new_home eten
 printf '{"schema":1,"keyboard_layout":"eten","mixed_input":true,"future":{"x":1}}\n' > "$(base_of eten)/settings.json"
 run_update eten settings -json > "$OUT/eten-settings.json"
-check "倚天時契約標示混打與 Emoji 停用並附原因，值保留" python3 - "$OUT/eten-settings.json" <<'PY_ETEN'
+check "倚天時契約標示混打、Emoji 與不打聲調停用並附原因，值保留" python3 - "$OUT/eten-settings.json" <<'PY_ETEN'
 import json,sys
 items={x['key']:x for x in json.load(open(sys.argv[1]))['items']}
-ok=all(items[k].get('disabled') and items[k].get('disabled_reason')=='倚天 41 鍵時關閉' for k in ('mixed-input','emoji-shortcut','emoji-equals-first'))
+ok=all(items[k].get('disabled') and items[k].get('disabled_reason')=='倚天 41 鍵時關閉' for k in ('mixed-input','emoji-shortcut','emoji-equals-first','toneless'))
 ok=ok and items['mixed-input']['value']=='on' and items['keyboard-layout']['value']=='eten' and not items['space-selects'].get('disabled')
 sys.exit(0 if ok else 1)
 PY_ETEN
@@ -444,21 +481,32 @@ for _ in range(80):
 sys.exit(1)
 PY_LAYOUT
 }
-launch eten input
+# 「中英切換」：停用的混打不在 Tab 順序裡，原因（鍵盤排列）在另一頁，所以下面多一個「到「鍵盤與符號」修改「鍵盤排列」」，
+# 是中英切換鍵、開始時的中英模式、切換視窗後的中英模式之後的第 4 個；按了切到鍵盤與符號、焦點在選中的倚天，← 選標準。
+launch eten mode
 if window_up; then
   sleep 2.5
-  import -window root "$OUT/eten-input.png"
-  # 停用的混打、Emoji、等號首項不在 Tab 順序裡：8 個導覽（含我的詞彙、輸出設定、模型）、選字方式、補標點、前文、英文補字、中英切換鍵、開始時的中英模式、
-  # 切換視窗後的中英模式、Esc、空白選字、修改位置、選字後游標、排列、模糊音 → 鍵盤排列（第22個；輸出簡體字在輸出設定頁），← 選標準。
-  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab
-  sleep 1
-  import -window root "$OUT/eten-input-keyboard.png"
+  import -window root "$OUT/eten-mode.png"
+  tabs $((NAV + 4)); xdotool key space
+  sleep 1.5
+  import -window root "$OUT/eten-goto-keyboard.png"
   xdotool key Left
-  check "切回標準排列，保留混打原值與未知設定" layout_value standard
+  check "從混打的說明跳到鍵盤排列，切回標準排列，保留混打原值與未知設定" layout_value standard
   sleep 2
   import -window root "$OUT/eten-back-to-standard.png"
-  # 鍵盤排列的下一個是選字鍵（一組單選，預設 1234567890，#112）：↓ 選 1234qweras，再 ↓ 選 asdfghjkl;，按兩次 ↑ 改回。
-  xdotool key Tab Down
+  # 鍵盤排列之後是「Ctrl＋標點打全形」（#168），預設開啟；空白鍵關閉。
+  xdotool key Tab space
+  sleep 3
+  check "Ctrl＋標點開關可關閉" grep -q '"ctrl_punctuation": false' "$(settings_of eten)"
+  import -window root "$OUT/ctrl-punctuation-off.png"
+else bad "eten/mode 視窗沒有出現"; cat /tmp/app-eten-mode.log; fi
+stop_app
+# 選字鍵在「選字」（一組單選，預設 1234567890，#112）：選字方式、前文、空白選字、修改位置、選字後游標、排列之後第 7 個。
+# ↓ 選 1234qweras，再 ↓ 選 asdfghjkl;，按兩次 ↑ 改回。
+launch eten candidates
+if window_up; then
+  sleep 2.5
+  tabs $((NAV + 7)); xdotool key Down
   sleep 3
   check "選字鍵可保存 1234qweras，保留未知設定" bash -c "grep -q '\"selection_keys\": \"1234qweras\"' '$(settings_of eten)' && grep -q '\"future\"' '$(settings_of eten)'"
   import -window root "$OUT/selection-keys-qwer.png"
@@ -470,17 +518,69 @@ if window_up; then
   xdotool key Up
   sleep 3
   check "選字鍵可改回 1234567890" grep -q '"selection_keys": "1234567890"' "$(settings_of eten)"
-  # 鍵盤排列之後是「Ctrl＋標點打全形」（#168），預設開啟；空白鍵關閉。
-  xdotool key Tab space
-  sleep 3
-  check "Ctrl＋標點開關可關閉" grep -q '"ctrl_punctuation": false' "$(settings_of eten)"
-  import -window root "$OUT/ctrl-punctuation-off.png"
-  # 最後是「Caps Lock 開著時直接打英文」（#173，Windows、Linux），預設關閉；空白鍵開啟。
-  xdotool key Tab space
+else bad "eten/candidates 視窗沒有出現"; cat /tmp/app-eten-candidates.log; fi
+stop_app
+# 「Caps Lock 開著時直接打英文」（#173，Windows、Linux）在「中英切換」最後，預設關閉；已切回標準排列，混打可以按，
+# 前面是中英切換鍵、開始模式、切換視窗後、混打、英文補字，第 6 個；空白鍵開啟。
+launch eten mode
+if window_up; then
+  sleep 2.5
+  tabs $((NAV + 6)); xdotool key space
   sleep 3
   check "Caps Lock 英文開關可開啟" grep -q '"caps_lock_english": true' "$(settings_of eten)"
   import -window root "$OUT/caps-lock-english-on.png"
-else bad "eten/input 視窗沒有出現"; cat /tmp/app-eten-input.log; fi
+else bad "eten/mode 重新開啟失敗"; cat /tmp/app-eten-mode.log; fi
+stop_app
+
+# ---- 許氏（#183）：中英混打與不打聲調（#150）反灰並提示原因，Emoji 選單照舊；鍵盤排列有「許氏」選項 ----
+new_home hsu
+printf '{"schema":1,"keyboard_layout":"hsu","mixed_input":true}\n' > "$(base_of hsu)/settings.json"
+run_update hsu settings -json > "$OUT/hsu-settings.json"
+check "許氏時契約只標示混打與不打聲調停用並附原因，值保留" python3 - "$OUT/hsu-settings.json" <<'PY_HSU'
+import json,sys
+items={x['key']:x for x in json.load(open(sys.argv[1]))['items']}
+disabled=[k for k,x in items.items() if x.get('disabled') and k!='start-mode']
+ok=disabled==['mixed-input','toneless'] and items['mixed-input'].get('disabled_reason')=='許氏排列時關閉' and items['mixed-input']['value']=='on'
+ok=ok and items['toneless'].get('disabled_reason')=='許氏排列時關閉'  # 不打聲調只在標準排列有效（#150）
+ok=ok and items['keyboard-layout']['value']=='hsu' and items['keyboard-layout']['values']==['standard','eten','hsu']
+ok=ok and items['keyboard-layout'].get('value_labels',{}).get('hsu')=='許氏'
+sys.exit(0 if ok else 1)
+PY_HSU
+launch hsu mode
+if window_up; then
+  sleep 2.5
+  import -window root "$OUT/hsu-mode.png"
+  # 混打反灰、寫「許氏排列時關閉」，下面的「到「鍵盤與符號」修改「鍵盤排列」」切過去，鍵盤排列選中「許氏」。
+  tabs $((NAV + 4)); xdotool key Return
+  sleep 1.5
+  import -window root "$OUT/hsu-goto-keyboard.png"
+else bad "hsu/mode 視窗沒有出現"; cat /tmp/app-hsu-mode.log; fi
+stop_app
+check "許氏時從混打的說明跳過去，沒有改到任何設定" test ! -e "$(settings_of hsu)"
+shoot hsu keyboard
+
+# ---- 不打聲調（#150）：中英混打反灰並附原因，設定檔的 mixed_input 保留 ----
+new_home toneless
+printf '{"schema":1,"toneless":true,"mixed_input":true}\n' > "$(base_of toneless)/settings.json"
+run_update toneless settings -json > "$OUT/toneless-settings.json"
+check "不打聲調時契約標示混打停用，值保留 on" python3 - "$OUT/toneless-settings.json" <<'PY_TONELESS'
+import json,sys
+items={x['key']:x for x in json.load(open(sys.argv[1]))['items']}
+it=items['mixed-input']
+sys.exit(0 if it.get('disabled') and it.get('disabled_reason')=='不打聲調時關閉' and it['value']=='on' and items['toneless']['value']=='on' else 1)
+PY_TONELESS
+# 中英切換頁：混打反灰、寫「不打聲調時關閉」，附到「選字」改「不打聲調也能選字」的連結。
+shoot toneless mode
+# 「選字」頁：不打聲調排在其他選字項目之後、模糊音之前（導覽後第 9 個）；空白鍵關閉，混打的原值不動。
+launch toneless candidates
+if window_up; then
+  sleep 2.5
+  import -window root "$OUT/toneless-candidates.png"
+  tabs $((NAV + 9)); xdotool key space
+  sleep 3
+  check "不打聲調開關可關閉，保留混打原值" bash -c "grep -q '\"toneless\": false' '$(settings_of toneless)' && grep -q '\"mixed_input\": true' '$(settings_of toneless)'"
+  import -window root "$OUT/toneless-off.png"
+else bad "toneless/candidates 視窗沒有出現"; cat /tmp/app-toneless-candidates.log; fi
 stop_app
 
 # ---- 不用 Shift 切換（#184）：開始時的中英模式固定為注音、反灰並附原因，設定檔的 english 保留；改回用 Shift 照原本的英文 ----
@@ -507,12 +607,12 @@ PY_NOSHIFT_FILE
 start_mode_shown() { # 期望畫面：disabled／enabled → 契約與畫面用的欄位
   run_update noshift settings -json | python3 -c "import json,sys; it=next(x for x in json.load(sys.stdin)['items'] if x['key']=='start-mode'); sys.exit(0 if bool(it.get('disabled'))==(sys.argv[1]=='disabled') and it['value']=='english' and (it.get('effective')=='zhuyin')==(sys.argv[1]=='disabled') else 1)" "$1"
 }
-launch noshift input
+launch noshift mode
 if window_up; then
   sleep 2.5
-  import -window root "$OUT/noshift-input.png"
-  # 8 個導覽、選字方式、補標點、前文、混打、英文補字 → 中英切換鍵（第 14 個，焦點在「不用 Shift」），↑ 選左 Shift。
-  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Tab Up
+  import -window root "$OUT/noshift-mode.png"
+  # 第一個是中英切換鍵（焦點在「不用 Shift」），↑ 選左 Shift。
+  tabs $((NAV + 1)); xdotool key Up
   check "改成左 Shift，開始時的英文照舊保留" noshift_value left
   sleep 2
   check "有 Shift 可以切換時開始模式恢復可改、是英文" start_mode_shown enabled
@@ -522,7 +622,11 @@ if window_up; then
   sleep 2
   check "不用 Shift 時開始模式又固定為注音" start_mode_shown disabled
   import -window root "$OUT/noshift-again.png"
-else bad "noshift/input 視窗沒有出現"; cat /tmp/app-noshift-input.log; fi
+  # 原因（中英切換鍵）就在同一頁，開始模式下面不另外放連結：停用的開始模式跳過，下一個就是切換視窗後的中英模式。
+  xdotool key Tab Down
+  sleep 3
+  check "同一頁的停用原因不多一個連結，Tab 直接到切換視窗後的中英模式" grep -q '"mode_memory": "shared"' "$(settings_of noshift)"
+else bad "noshift/mode 視窗沒有出現"; cat /tmp/app-noshift-mode.log; fi
 stop_app
 
 # ---- 背景更新持鎖：手動檢查提示進度，輸入設定仍可保存 ----
@@ -535,7 +639,7 @@ check "背景更新期間仍可儲存輸入設定" run_update checking set punct
 launch checking update
 if window_up; then
   sleep 2.5
-  xdotool key --delay 100 Tab Tab Tab Tab Tab Tab Tab Tab Tab space
+  tabs $((NAV + 1)); xdotool key space
   sleep 3
   import -window root "$OUT/checking-in-progress.png"
   check "背景更新忙碌時設定視窗仍正常執行" kill -0 "$APP_PID"
@@ -576,16 +680,16 @@ install -m 0755 "$SERVER_BIN" "$eb/$dir/0c-server"
 install -m 0755 "$SETTINGS_BIN" "$eb/$dir/0c-settings"
 printf '{"schema":1,"files":{"0c-settings":"%s"}}\n' "$(sha "$eb/$dir/0c-settings")" > "$eb/$dir/core-files.json"
 printf '{"schema":1,"directory":"%s","version":"0.1.0-dev.43"}\n' "$dir" > "$eb/engine.json"
-HOME=$eh "$eh/.local/bin/0c-update" open-settings overview >/tmp/open2.log 2>&1; code=$?
-check "open-settings（核心版本目錄）結束碼 0" test "$code" -eq 0
+HOME=$eh "$eh/.local/bin/0c-update" open-settings candidates >/tmp/open2.log 2>&1; code=$?
+check "open-settings candidates（核心版本目錄）結束碼 0" test "$code" -eq 0
 window_up; sleep 1
-check "啟動的是核心版本目錄的較新版本" test "$(app_exe overview)" = "$eb/$dir/0c-settings"
+check "啟動的是核心版本目錄的較新版本" test "$(app_exe candidates)" = "$eb/$dir/0c-settings"
 kill_apps
 
 # 核心目錄的檔案被竄改：拒絕它，退回完整安裝的副本（仍核對過）
 echo "tampered" >> "$eb/$dir/0c-settings"
 HOME=$eh "$eh/.local/bin/0c-update" open-settings input >/tmp/open3.log 2>&1; code=$?
-check "核心目錄被竄改時退回安裝的副本而不是啟動它" test "$code" -eq 0
+check "核心目錄被竄改時退回安裝的副本而不是啟動它（舊的頁名 input 照樣接受）" test "$code" -eq 0
 window_up; sleep 1
 check "啟動的是安裝副本，不是被竄改的檔案" test "$(app_exe input)" = "$eh/.local/bin/0c-settings"
 kill_apps

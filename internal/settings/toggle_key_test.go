@@ -15,7 +15,7 @@ func TestToggleKeyMigrationAndCompat(t *testing.T) {
 		t.Fatalf("舊檔：%+v", s)
 	}
 	json.Unmarshal([]byte(`{}`), &s)
-	if s.ToggleKey != Default().ToggleKey || s.LeftShift {
+	if s.ToggleKey != Default().ToggleKey || s.LeftShift != s.TogglesLeft() {
 		t.Fatalf("缺漏欄位沿用平台預設：%+v", s)
 	}
 	json.Unmarshal([]byte(`{"toggle_key":"left","left_shift":false}`), &s)
@@ -44,16 +44,13 @@ func TestToggleKeyMigrationAndCompat(t *testing.T) {
 }
 
 func TestToggleKeyDefaultAndSavedChoices(t *testing.T) {
-	want := ToggleRight
-	if runtime.GOOS == "darwin" {
-		want = ToggleNone
-	}
+	want := defaultToggleKey(runtime.GOOS)
 	for _, body := range []string{`{}`, `{"left_shift":false}`, `{"mixed_input":true}`} {
 		var s Settings
 		if err := json.Unmarshal([]byte(body), &s); err != nil {
 			t.Fatal(err)
 		}
-		if s.ToggleKey != want || s.TogglesRight() != (want == ToggleRight) || s.TogglesLeft() {
+		if s.ToggleKey != want || s.TogglesRight() != (want != ToggleNone) || s.TogglesLeft() != (want == ToggleBoth) {
 			t.Fatalf("缺少切換鍵設定時使用平台預設：%s → %+v", body, s)
 		}
 	}
@@ -77,6 +74,21 @@ func TestToggleKeyDefaultAndSavedChoices(t *testing.T) {
 	for _, item := range Default().Items() {
 		if item.Key == "toggle-key" && (item.Default != want || item.Value != want) {
 			t.Fatalf("設定程式的預設與目前值應一致：%+v", item)
+		}
+	}
+}
+
+// #206：Windows 比照系統內建注音，左右 Shift 都切換；macOS 不用 Shift（#167），Linux 維持右 Shift（Fcitx5 的左 Shift 是暫時切換輸入法）。
+func TestToggleKeyDefaultsByPlatform(t *testing.T) {
+	if defaultToggleKey("windows") != ToggleBoth || defaultToggleKey("darwin") != ToggleNone || defaultToggleKey("linux") != ToggleRight {
+		t.Fatal(defaultToggleKey("windows"), defaultToggleKey("darwin"), defaultToggleKey("linux"))
+	}
+	if !strings.Contains(toggleKeyDescription("windows"), "預設左右 Shift 都可以切換，不想讓左 Shift 切換可改成「右 Shift」") {
+		t.Fatal(toggleKeyDescription("windows"))
+	}
+	for _, goos := range []string{"linux", "darwin"} {
+		if strings.Contains(toggleKeyDescription(goos), "左右") {
+			t.Fatal(goos, toggleKeyDescription(goos))
 		}
 	}
 }

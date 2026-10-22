@@ -34,3 +34,22 @@ func TestToggleKeySettingContractReportsPendingAndUnknownRuntime(t *testing.T) {
 	}
 	t.Fatal("設定程式看不到中英切換鍵")
 }
+
+// #206：Windows 上自己設定中英切換鍵（新鍵或舊鍵）就記下來，新版引擎啟動時不把右 Shift 換成左右 Shift；改別的設定不算。
+func TestChoosingToggleKeyKeepsItFromBothShiftAdoption(t *testing.T) {
+	for _, tc := range []struct {
+		goos  string
+		pairs [][2]string
+		want  bool
+	}{
+		{"windows", [][2]string{{"toggle-key", "right"}}, true},
+		{"windows", [][2]string{{"selection", "statistical"}, {"left-shift", "off"}}, true},
+		{"windows", [][2]string{{"selection-keys", "1234qweras"}}, false},
+		{"linux", [][2]string{{"toggle-key", "right"}}, false},
+		{"darwin", [][2]string{{"toggle-key", "right"}}, false},
+	} {
+		if got := choosesToggleKey(tc.goos, tc.pairs); got != tc.want {
+			t.Fatalf("%s %v：%v", tc.goos, tc.pairs, got)
+		}
+	}
+}

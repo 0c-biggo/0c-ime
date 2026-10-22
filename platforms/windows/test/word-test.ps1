@@ -57,6 +57,13 @@ public static class WordProbe {
  }
  public static void Key(byte key) {keybd_event(key,0,0,UIntPtr.Zero);System.Threading.Thread.Sleep(30);keybd_event(key,0,2,UIntPtr.Zero);}
  public static void SelectAll() {keybd_event(0x11,0,0,UIntPtr.Zero);System.Threading.Thread.Sleep(30);Key(0x41);System.Threading.Thread.Sleep(30);keybd_event(0x11,0,2,UIntPtr.Zero);}
+ // 左 Shift 一律以 VK_LSHIFT 與掃描碼 0x2A 送出（#206）。
+ public static void LShift(bool down) {keybd_event(0xA0,0x2A,down?0u:2u,UIntPtr.Zero);}
+ public static void LShiftTap() {LShift(true);System.Threading.Thread.Sleep(80);LShift(false);}
+ public static void ShiftLeft() {LShift(true);System.Threading.Thread.Sleep(60);Key(0x25);System.Threading.Thread.Sleep(60);LShift(false);}
+ [DllImport("user32.dll")] static extern bool SetCursorPos(int x,int y);
+ [DllImport("user32.dll")] static extern void mouse_event(uint flags,int dx,int dy,uint data,UIntPtr extra);
+ public static void ShiftClick(int x,int y) {LShift(true);System.Threading.Thread.Sleep(40);SetCursorPos(x,y);mouse_event(2,0,0,0,UIntPtr.Zero);System.Threading.Thread.Sleep(30);mouse_event(4,0,0,0,UIntPtr.Zero);System.Threading.Thread.Sleep(60);LShift(false);}
  public static void CtrlSpace() {keybd_event(0x11,0x1D,0,UIntPtr.Zero);System.Threading.Thread.Sleep(60);keybd_event(0x20,0x39,0,UIntPtr.Zero);System.Threading.Thread.Sleep(60);keybd_event(0x20,0x39,2,UIntPtr.Zero);System.Threading.Thread.Sleep(60);keybd_event(0x11,0x1D,2,UIntPtr.Zero);}
 }
 '@
@@ -84,6 +91,14 @@ public static class WordProbe {
         elseif($keys -eq '{ENTER}'){[WordProbe]::Key(13)}
         elseif($keys -eq '{ESC}'){[WordProbe]::Key(27)}
         elseif($keys -eq '{BACKSPACE}'){[WordProbe]::Key(8)}
+        elseif($keys -eq '{LSHIFT}'){[WordProbe]::LShiftTap()}
+        elseif($keys -eq '+{LEFT}'){[WordProbe]::ShiftLeft()}
+        elseif($keys -eq '+{CLICKEND}'){
+            # 按著左 Shift 在文件最後一個字右邊點一下（Shift＋點選延伸選取）。
+            $end=$doc.Content;$end.SetRange($end.End-1,$end.End-1)
+            $l=0;$t=0;$w=0;$h=0;$word.ActiveWindow.GetPoint([ref]$l,[ref]$t,[ref]$w,[ref]$h,$end)
+            [WordProbe]::ShiftClick($l+40,$t+[int]($h/2))
+        }
         else{throw "Unsupported Word test key $keys"}
         Pump 500
     }
@@ -117,6 +132,12 @@ public static class WordProbe {
     # 系統的輸入法開關熱鍵 Ctrl＋Space：Word 收到熱鍵當下不給同步鎖，0.2.0 沒有切換、還清掉組字狀態（#164）。
     Send 'su3';Send '{ENTER}';Send '^{SPACE}';Send 'ab';Expect '你ab' 'word_ctrl_space_english'
     Send '^{SPACE}';Send 'su3';Send '{ENTER}';Expect '你ab你' 'word_ctrl_space_back'
+    ClearDocument
+    # #206：Windows 預設左右 Shift：單按左 Shift 切英文再切回；按著左 Shift 點文件（延伸選取）、Shift＋← 選取都不切換。
+    Send 'su3';Send '{ENTER}';Send '{LSHIFT}';Send 'ab';Expect '你ab' 'word_left_shift_english'
+    Send '{LSHIFT}';Send 'su3';Send '{ENTER}';Expect '你ab你' 'word_left_shift_back'
+    Send '+{CLICKEND}';Send 'su3';Send '{ENTER}';Expect '你ab你你' 'word_shift_click_no_toggle'
+    Send '+{LEFT}';Send 'su3';Send '{ENTER}';Expect '你ab你你' 'word_shift_left_select_no_toggle'
     ClearDocument
     $table=$doc.Tables.Add($word.Selection.Range,1,1)
     $table.Cell(1,1).Range.Select();$word.Selection.Collapse(1)

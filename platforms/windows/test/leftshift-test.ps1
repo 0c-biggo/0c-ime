@@ -1,5 +1,6 @@
-﻿# 左 Shift 切換中英驗收（#65）：預設關閉時左 Shift 照系統原本的用途、放開事件交給應用程式；
-# 以 0c-update set left-shift on -apply 開啟後，單按左 Shift 像右 Shift 一樣切換並保留組字，
+﻿# 左 Shift 切換中英驗收（#65、#206）：Windows 的中英切換鍵預設左右 Shift（#206），單按左 Shift 切換，按住超過 0.3 秒、
+# 按著 Shift 點滑鼠（Shift＋點選延伸選取）不切換；以 0c-update set left-shift off -apply 關掉後左 Shift 照系統原本的用途、
+# 放開事件交給應用程式；再以 set left-shift on -apply 開啟後，單按左 Shift 像右 Shift 一樣切換並保留組字，
 # Shift＋字母、左右同按、Ctrl／Alt＋Shift 不切換，放開後 Shift 不會卡住；Edge、Chrome 一般與無痕視窗同樣可切換；
 # 關回 off 後恢復系統行為。左 Shift 一律以 VK_LSHIFT（0xA0）與掃描碼 0x2A 送出。
 # 本測試自己管理隔離引擎：LOCALAPPDATA 指到結果目錄內的沙盒，0c-update 寫入的設定就是重啟後引擎讀的那份。
@@ -7,7 +8,12 @@ param([Parameter(Mandatory=$true)][string]$ResultDir, [Parameter(Mandatory=$true
 $ErrorActionPreference='Stop'
 $report=[ordered]@{passed=$false;checks=@();error='';layouts=[ordered]@{};cli=[ordered]@{};browsers=[ordered]@{}}
 $form=$null;$server=$null
+# 0.1.0-dev.62 起註冊的是固定路徑 Zuin\tsf\0c_tsf.dll（#121）：引擎與 0c-update 在收據記下的版本目錄。
 $installed=Split-Path -Parent $ExpectedDLL
+if(-not(Test-Path (Join-Path $installed '0c-server.exe'))){
+ $receipt=Get-Content (Join-Path $env:LOCALAPPDATA 'Zuin\install-receipt.json') -Raw|ConvertFrom-Json
+ $installed=Join-Path (Join-Path $env:LOCALAPPDATA 'Zuin') $receipt.directory
+}
 $la=Join-Path $ResultDir 'la'
 New-Item -ItemType Directory -Force "$la\Zuin" | Out-Null
 $env:LOCALAPPDATA=$la
@@ -43,6 +49,9 @@ public static class LeftShiftProbe {
  [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
  [DllImport("user32.dll")] public static extern IntPtr GetKeyboardLayout(uint thread);
  [DllImport("user32.dll")] public static extern void keybd_event(byte key, byte scan, uint flags, UIntPtr extra);
+ [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+ [DllImport("user32.dll")] public static extern void mouse_event(uint flags, int dx, int dy, uint data, UIntPtr extra);
+ public static void Click(int x, int y) { SetCursorPos(x, y); mouse_event(2, 0, 0, 0, UIntPtr.Zero); System.Threading.Thread.Sleep(30); mouse_event(4, 0, 0, 0, UIntPtr.Zero); }
  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
  public static string Title(IntPtr h) { var s = new StringBuilder(1024); GetWindowText(h, s, 1024); return s.ToString(); }
  public static IntPtr Find(string marker) {
@@ -105,6 +114,12 @@ public static class LeftShiftProbe {
  function ClearBox {$box.Clear();Pump 150}
  function LTap {[LeftShiftProbe]::Key(0xA0,0x2A,$true);Pump 80;[LeftShiftProbe]::Key(0xA0,0x2A,$false);Pump 500}
  function LChord([byte]$vk){[LeftShiftProbe]::Key(0xA0,0x2A,$true);Pump 80;[LeftShiftProbe]::Tap($vk);Pump 80;[LeftShiftProbe]::Key(0xA0,0x2A,$false);Pump 400}
+ function LHold {[LeftShiftProbe]::Key(0xA0,0x2A,$true);Pump 600;[LeftShiftProbe]::Key(0xA0,0x2A,$false);Pump 500}
+ # 按著左 Shift 在文字框右端點一下（Shift＋點選延伸選取，#206）：放開在 0.3 秒內，只差中間點了滑鼠。
+ function ShiftClick {
+  $r=$box.RectangleToScreen($box.ClientRectangle)
+  [LeftShiftProbe]::Key(0xA0,0x2A,$true);Pump 40;[LeftShiftProbe]::Click($r.Right-12,[int](($r.Top+$r.Bottom)/2));Pump 60;[LeftShiftProbe]::Key(0xA0,0x2A,$false);Pump 500
+ }
  function BothShifts {[LeftShiftProbe]::Key(0xA0,0x2A,$true);Pump 60;[LeftShiftProbe]::Key(0xA1,0x36,$true);Pump 60;[LeftShiftProbe]::Key(0xA1,0x36,$false);Pump 60;[LeftShiftProbe]::Key(0xA0,0x2A,$false);Pump 500}
  # Ctrl／Alt（左側）＋左 Shift：系統的輸入法／語言切換熱鍵。不得被靈犀當成單按；若系統真的換了配置就換回來。
  function SystemHotkey([byte]$vk,[byte]$scan,[string]$name){
@@ -133,14 +148,28 @@ public static class LeftShiftProbe {
  }
  function Warmup {ClearBox;Send 'su3{ESC}';Pump 300;ClearBox}
 
- # 外層驗收啟動的引擎讀的是另一份設定；換成本測試管理的引擎（設定檔不存在＝預設關閉）。
+ # 外層驗收啟動的引擎讀的是另一份設定；換成本測試管理的引擎（設定檔不存在＝預設左右 Shift，#206）。
  StopServers;StartServer 'default'
  $form.Show();$form.Activate();$box.Focus()|Out-Null;Pump 500
  [LeftShiftProbe]::Activate();Pump 500;NativeFocus;Warmup
  $report.dll=((Get-Process -Id $PID).Modules|Where-Object ModuleName -eq '0c_tsf.dll'|Select-Object -First 1).FileName
  Check ($report.dll -eq $ExpectedDLL) 'native_loads_test_dll' $report.dll
 
- # ---- 1. 預設（關閉）----
+ # ---- 0. 預設（#206：Windows 左右 Shift 都切換）----
+ $n=$script:shiftUps;NativeFocus;LTap
+ Check ($script:shiftUps -eq $n) 'default_left_shift_up_owned_by_ime' "app saw $($script:shiftUps-$n) Shift key-ups"
+ Check (-not [LeftShiftProbe]::ShiftDown()) 'default_shift_not_stuck' 'Shift still down after owned key-up'
+ Send 'abc';Expect 'abc' 'default_left_tap_english'
+ NativeFocus;LTap;Send 'su3{ENTER}';Expect 'abc你' 'default_left_tap_back_to_zhuyin'
+ ClearBox;Send 'su3{ENTER}';NativeFocus;ShiftClick;Send 'su3{ENTER}';Expect '你你' 'default_shift_click_no_toggle'
+ Check (-not [LeftShiftProbe]::ShiftDown()) 'default_shift_click_not_stuck' 'Shift still down after Shift+click'
+ ClearBox;NativeFocus;LHold;Send 'su3{ENTER}';Expect '你' 'default_long_hold_no_toggle'
+ ClearBox;NativeFocus;LChord 0x41;Send 'su3{ENTER}';Expect 'A你' 'default_shift_letter_uppercase_no_toggle'
+ ClearBox;NativeFocus;Send 'su3{ENTER}';LChord 0x25;Send 'su3{ENTER}';Expect '你' 'default_shift_arrow_select_no_toggle'
+ ClearBox
+
+ # ---- 1. 關閉左 Shift（只剩右 Shift）----
+ SetLeftShift 'off';NativeFocus;Warmup
  $n=$script:shiftUps;NativeFocus;LTap
  Check ($script:shiftUps -eq $n+1) 'off_left_shift_up_reaches_app' "app saw $($script:shiftUps-$n) Shift key-ups"
  Check (-not [LeftShiftProbe]::ShiftDown()) 'off_shift_not_stuck' 'Shift still down'

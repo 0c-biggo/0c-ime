@@ -57,6 +57,8 @@ python3 scripts/package_macos.py --preview --version 0.1.0-dev.17 \
 
 一般使用者用 `.pkg` 安裝檔：雙擊後依畫面安裝，只裝到目前使用者帳號、不需要系統管理員密碼。pkg 由 `scripts/package_macos_pkg.py` 從完整套件產生：不直接放檔案，而是把整個套件放在安裝腳本目錄，由 postinstall 以使用者身分執行套件內的 `0c-update install -bundle`，因此核對、備份、排程與輸入來源啟用都與下面的指令相同；輸出記在 `/var/log/install.log`。
 
+用 `sudo installer -pkg … -target /`、MDM 或 Homebrew Cask 安裝時，postinstall 以 root 執行（雙擊或 `-target CurrentUserHomeDirectory` 才是使用者身分）。0.2.5 起 `0c-update` 以 root 執行時會改以使用者的身分重新執行同一個命令（`launchctl asuser` ＋ `sudo -u`，家目錄取自帳號資料庫、不信 `HOME`）：直接 `sudo 0c-update` 是下指令的人，安裝程式與 MDM 是螢幕前登入的使用者；沒有人登入、或 `HOME` 是另一個帳號的家目錄時不安裝、不碰任何家目錄。降權前先結束以 root 執行的靈犀注音程序，並把靈犀注音自己的路徑（`0c.app`、`Application Support/0c`、`Caches/0c`、排程 plist，含舊的 Zuin 名稱）中屬於 root 的項目改回使用者（不跟隨連結、不改有多個硬連結的檔案），所以 0.2.4 以前用 sudo 裝壞的帳號，再用 sudo 裝一次新版就會修好。一般帳號改不動 root 的目錄，使用者身分執行 install／apply／rollback／uninstall 時遇到這種檔案會直接說明要執行的 `sudo installer` 指令（#198）。
+
 用終端機時，完整套件解開後執行（不需要 sudo）：
 
 ```sh
@@ -81,7 +83,7 @@ tar -xzf 0c-<版本>-macos-arm64-preview.tar.gz && cd 0c-<版本>-macos-arm64-pr
 
 ## 行為與儲存位置
 
-- 標準或倚天 41 鍵注音排列（核心依 `keyboard-layout` 設定解讀，外殼把按鍵原樣交給核心）；啟用時要求 US 鍵盤配置。組字、游標、退格、標點、候選分頁／反白、數字選字、Enter／Esc 與 Tab 補全沿用核心。
+- 標準、倚天 41 鍵或許氏注音排列（核心依 `keyboard-layout` 設定解讀，外殼把按鍵原樣交給核心）；啟用時要求 US 鍵盤配置。組字、游標、退格、標點、候選分頁／反白、數字選字、Enter／Esc 與 Tab 補全沿用核心。
 - 候選面板支援滑鼠點選。補全顯示在面板中，接受前不放進應用程式的組字區；同音替換先顯示「原詞 → 新詞」。
 - 候選面板與中／英提示採系統半透明毛玻璃、圓角及陰影，跟隨 macOS 亮／暗外觀；開啟「減少透明度」時改為實色背景，候選文字不降低透明度。右側顯示「常用」「關聯」或「個人常用」：依系統詞頻、相鄰詞的機率提升與有時間衰減的個人使用證據判定，非依排名或反白決定；無足夠證據時不標示，近音候選優先保留讀音附註。標籤不改變排序、翻頁或選字 ID。
 - Home／End（鍵碼 115／119，筆電是 Fn＋←／→）、PageUp／PageDown（116／121）與 Shift+Tab（送 `BackTab`）交給核心：組字中 Home／End 移到組字區頭尾，↑、PageUp／PageDown、Shift+Tab 與沒有補全的 Tab 吃掉不動作；候選窗開著時 Home／End 到第一個／最後一個候選，Backspace／Delete 同 Esc 關窗；沒在組字時交還應用程式（#106）。Command＋←／→ 是 App 的快捷鍵，照下一條處理。
@@ -128,6 +130,6 @@ tar -xzf 0c-<版本>-macos-arm64-preview.tar.gz && cd 0c-<版本>-macos-arm64-pr
 
 ### 選字位置
 
-設定 → 輸入設定 →「修改字詞的位置」可選游標前方／後方。macOS 預設前方：`他│好` 按 ↓ 修改「他」，詞尾按 ↓ 可重選整個詞；候選內 Tab 切換詞長時向左延伸或縮短。選字後游標位置保持不變。若習慣原有方式，可選「游標後方」，或執行 `0c-update set candidate-cursor after -apply`；改回前方使用 `before`。尚未儲存這項設定的既有安裝也採前方預設。
+設定 → 選字 →「修改字詞的位置」可選游標前方／後方。macOS 預設前方：`他│好` 按 ↓ 修改「他」，詞尾按 ↓ 可重選整個詞；候選內 Tab 切換詞長時向左延伸或縮短。選字後游標位置保持不變。若習慣原有方式，可選「游標後方」，或執行 `0c-update set candidate-cursor after -apply`；改回前方使用 `before`。尚未儲存這項設定的既有安裝也採前方預設。
 
 候選窗標示 `修改「他」 · Tab 切換詞長`，讓單字與整詞的替換範圍可見；多排上下鍵可跨頁並在頭尾切換詞長。

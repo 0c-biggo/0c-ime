@@ -10,6 +10,9 @@ import "github.com/0c-biggo/0c-ime/core/zhuyin"
 type Hyp struct {
 	Syl  zhuyin.Syllable
 	Cost float64
+	// Untoned：這個假設是沒打聲調的音節（#150）展開出來的其中一個聲調。解碼器據此裁切這些位置的弧數；
+	// 全部打了聲調時沒有這種假設。
+	Untoned bool
 }
 
 // Lattice 的每個元素是一個位置的所有假設。
@@ -20,12 +23,19 @@ type Frontend interface {
 	Expand(syls []zhuyin.Syllable) Lattice
 }
 
-// Exact 是精確通道：使用者打什麼就是什麼。
+// Exact 是精確通道：使用者打什麼就是什麼。沒打聲調的音節（#150，只在使用者開啟「聲調選填」時出現）
+// 展開成五個聲調，成本都是 0，由語言模型依前後文決定；其他音節只有自己。
 type Exact struct{}
 
 func (Exact) Expand(syls []zhuyin.Syllable) Lattice {
 	lat := make(Lattice, len(syls))
 	for i, s := range syls {
+		if s.Untoned() {
+			for _, y := range s.Tones() {
+				lat[i] = append(lat[i], Hyp{Syl: y, Untoned: true})
+			}
+			continue
+		}
 		lat[i] = []Hyp{{Syl: s}}
 	}
 	return lat

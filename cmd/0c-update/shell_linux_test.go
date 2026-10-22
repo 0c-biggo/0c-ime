@@ -259,14 +259,21 @@ func TestUpdaterSurvivesLegacyShellClosingOutput(t *testing.T) {
 // KDE Plasma Wayland：Fcitx5 由 KWin 帶著 WAYLAND_SOCKET 啟動。交接時記下 kwinrc 的 InputMethod，
 // 重新啟動時交還 KWin（先清空再寫回並通知），不自己執行 fcitx5，也不保存那個 fd。
 func TestKWinLaunchedFcitxIsRestartedThroughKWin(t *testing.T) {
-	previous, savedTool, savedRun, savedAvail := procRoot, kconfigTool, runKConfig, kwinIMAvailable
+	previous, savedTool, savedRun, savedAvail, savedEmit := procRoot, kconfigTool, runKConfig, kwinIMAvailable, emitKConfigChanged
 	procRoot = t.TempDir()
-	t.Cleanup(func() { procRoot, kconfigTool, runKConfig, kwinIMAvailable = previous, savedTool, savedRun, savedAvail })
+	t.Cleanup(func() {
+		procRoot, kconfigTool, runKConfig, kwinIMAvailable, emitKConfigChanged = previous, savedTool, savedRun, savedAvail, savedEmit
+	})
+	config := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", config)
 	dir := filepath.Join(procRoot, "123")
 	if err := os.Mkdir(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
 	const desktop = "/usr/share/applications/org.fcitx.Fcitx5.desktop"
+	if err := os.WriteFile(filepath.Join(config, "kwinrc"), []byte("[Wayland]\nInputMethod[$e]="+desktop+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(dir, "cmdline"), []byte("/usr/bin/fcitx5\x00"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -287,9 +294,22 @@ func TestKWinLaunchedFcitxIsRestartedThroughKWin(t *testing.T) {
 		if filepath.Base(path) == "kreadconfig6" {
 			return []byte(desktop + "\n"), nil
 		}
+		if args[len(args)-1] == desktop { // KWin 讀到寫回的值，重新啟動 fcitx5
+			os.Mkdir(dir, 0700)
+			os.WriteFile(filepath.Join(dir, "stat"), []byte("123 (fcitx5) S 100 123 123 0"), 0600)
+			os.WriteFile(filepath.Join(dir, "comm"), []byte("fcitx5\n"), 0600)
+		}
 		return nil, nil
 	}
-	kwinIMAvailable = func(context.Context) (bool, error) { return false, nil }
+	kwinIMAvailable = func(context.Context, *dbus.Conn) (bool, error) { return false, nil }
+	var emitted int
+	emitKConfigChanged = func(_ *dbus.Conn, file, group, key string) error {
+		if file != "kwinrc" || group != "Wayland" || key != "InputMethod" {
+			t.Fatalf("通知 %s %s %s", file, group, key)
+		}
+		emitted++
+		return nil
+	}
 	// 其他合成器（例如 Weston）也可能以 WAYLAND_SOCKET 啟動 Fcitx5：父行程不是 kwin_wayland 時不碰 kwinrc。
 	for _, other := range []string{"weston", "gnome-shell", "systemd"} {
 		if err := os.WriteFile(filepath.Join(parent, "comm"), []byte(other+"\n"), 0600); err != nil {
@@ -341,12 +361,13 @@ func TestKWinLaunchedFcitxIsRestartedThroughKWin(t *testing.T) {
 	}
 	os.RemoveAll(dir) // Fcitx5 已交接退出
 	ran = nil
-	if err = startFcitx(state); err != nil {
+	if err = startFcitx(new(dbus.Conn), state); err != nil {
 		t.Fatal(err)
 	}
+	// 不用 kwriteconfig --notify（Plasma 5 的 kwriteconfig5 沒有）：寫檔後自己送 KConfig 的變更通知。
 	key := "--file kwinrc --group Wayland --key InputMethod"
-	want := []string{"kwriteconfig6 " + key + " --notify ", "kwriteconfig6 " + key + " --type path --notify " + desktop}
-	if !slices.Equal(ran, want) {
-		t.Fatalf("應由 KWin 重新啟動：%q", ran)
+	want := []string{"kwriteconfig6 " + key + " ", "kwriteconfig6 " + key + " --type path " + desktop}
+	if !slices.Equal(ran, want) || emitted != 2 {
+		t.Fatalf("應由 KWin 重新啟動：%q，通知 %d 次", ran, emitted)
 	}
 }

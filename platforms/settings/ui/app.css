@@ -195,6 +195,8 @@ button.link {
   font: inherit; font-size: 13px; background: transparent; border: 0; color: var(--accent); cursor: pointer; padding: 4px 6px; border-radius: 6px;
 }
 button.link:hover { background: var(--accent-soft); }
+/* 停用原因在另一頁時的「到「鍵盤與符號」修改…」（#207）：跟說明文字對齊。 */
+.row .desc button.link.goto { padding: 2px 4px; margin-left: -4px; }
 button.primary.small, button.secondary.small { font-size: 13px; padding: 3px 12px; }
 button.icon {
   font: inherit; width: 28px; height: 28px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: var(--text); cursor: pointer;

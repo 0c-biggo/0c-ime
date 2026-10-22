@@ -21,7 +21,7 @@ import (
 	"github.com/0c-biggo/0c-ime/internal/simplified"
 )
 
-const help = `直接輸入按鍵（預設標準注音排列，-keyboard-layout eten 為倚天 41 鍵；空白鍵是一聲），按 Enter 送出這一行的按鍵。
+const help = `直接輸入按鍵（預設標準注音排列，-keyboard-layout eten 為倚天 41 鍵、hsu 為許氏；空白鍵是一聲），按 Enter 送出這一行的按鍵。
 空行＝提交。以 : 起始的是指令：
   :c [詞長]   開候選（不給詞長則優先目前分詞）    :n ID      選候選
   :p 頁碼     換頁          :x  關閉候選            :tab       接受補全／候選內切詞長
@@ -41,6 +41,7 @@ func main() {
 	record := flag.String("record", "", "把本次操作的請求錄成 JSONL")
 	fuzzyPairs := flag.String("fuzzy", "", "啟用的模糊音配對，逗號分隔：z-zh、c-ch、s-sh、en-eng；預設是「僅供選字」，寫成 z-zh=auto 則另啟用自動修正；空白為全部關閉。錄製的請求要用相同的設定重播")
 	mixedInput := flag.Bool("mixed-input", false, "中英混打試用；重播需使用相同開關，預設關閉")
+	toneless := flag.Bool("toneless", false, "不打聲調也能選字（#150）：沒打聲調的音節由解碼決定，開啟時停用混打。重播需使用相同開關")
 	candidateLayout := flag.String("candidate-layout", "vertical", "選字排列：vertical 或 grid")
 	emojiShortcut := flag.String("emoji-shortcut", "equals", "表情選單：off 或 equals；= 開選單，== 輸入等號，Tab 切顏文字")
 	emojiEqualsFirst := flag.Bool("emoji-equals-first", true, "將 = 放在 Emoji 第一項；關閉仍可按 == 輸入等號")
@@ -51,12 +52,13 @@ func main() {
 	outputSimplified := flag.Bool("output-simplified", false, "送出時轉成簡體字（組字與候選仍是繁體）")
 	spaceSelects := flag.Bool("space-selects", true, "注音打完按空白選字；關閉時空白輸入空格、↓ 選字。重播需使用相同開關")
 	selectionKeys := flag.String("selection-keys", "1234567890", "選字鍵：1234567890、1234qweras 或 asdfghjkl;（數字仍照位置選字）。重播需使用相同選字鍵")
-	keyboardLayout := flag.String("keyboard-layout", "standard", "鍵盤排列：standard 或 eten（倚天 41 鍵，停用混打與 = 開 Emoji）。重播需使用相同排列")
+	keyboardLayout := flag.String("keyboard-layout", "standard", "鍵盤排列：standard、eten（倚天 41 鍵，停用混打與 = 開 Emoji）或 hsu（許氏，停用混打）。重播需使用相同排列")
 	flag.Parse()
 
 	eng, err := datadir.Open(*data)
 	check(err)
 	eng.MixedInput = *mixedInput
+	eng.Toneless = *toneless
 	if *candidateLayout != "vertical" && *candidateLayout != "grid" {
 		check(fmt.Errorf("未知選字排列 %q", *candidateLayout))
 	}
@@ -83,7 +85,7 @@ func main() {
 	eng.SelectionKeys = *selectionKeys
 	kb, ok := layout.ByName(*keyboardLayout)
 	if !ok {
-		check(fmt.Errorf("未知鍵盤排列 %q（standard、eten）", *keyboardLayout))
+		check(fmt.Errorf("未知鍵盤排列 %q（standard、eten、hsu）", *keyboardLayout))
 	}
 	eng.Layout = kb
 	for _, id := range strings.FieldsFunc(*fuzzyPairs, func(r rune) bool { return r == ',' }) {
@@ -129,6 +131,9 @@ func main() {
 		}
 		if *capsLockEnglish {
 			fmt.Fprintln(rec, "# 重播需要相同的 Caps Lock 設定：0c-cli -caps-lock-english")
+		}
+		if *toneless {
+			fmt.Fprintln(rec, "# 重播需要相同的聲調選填設定：0c-cli -toneless")
 		}
 		if *advanceAfterSelect {
 			fmt.Fprintln(rec, "# 重播需要相同的選字後游標設定：0c-cli -advance-after-select")

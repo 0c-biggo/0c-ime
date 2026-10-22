@@ -302,6 +302,46 @@ func TestMacRollbackTarget(t *testing.T) {
 	}
 }
 
+// #205：平台為了背景項目把備份裡的檔案改了名，回復時在核對之前（持有安裝鎖）先改回，放回的 App 與收據一致。
+func TestMacRollbackPreparesTargetUnderLock(t *testing.T) {
+	home := t.TempDir()
+	p := MacPaths{InputMethods: filepath.Join(home, "Library/Input Methods"), Support: filepath.Join(home, "Library/Application Support/0c")}
+	for _, v := range []string{"0.1.0-dev.38", "0.1.0-dev.39"} {
+		if _, _, err := InstallMac(macBundle(t, v), "arm64", p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	target, err := MacRollbackTarget(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := filepath.Join(target, "Contents/MacOS/0c-server")
+	if err := os.Rename(server, server+".inactive"); err != nil {
+		t.Fatal(err)
+	}
+	var prepared []string
+	p.PrepareRollback = func(app string) {
+		if _, err := os.Stat(filepath.Join(p.Support, "update.lock")); err != nil {
+			t.Errorf("PrepareRollback must run while holding the install lock: %v", err)
+		}
+		prepared = append(prepared, app)
+		os.Rename(filepath.Join(app, "Contents/MacOS/0c-server.inactive"), filepath.Join(app, "Contents/MacOS/0c-server"))
+	}
+	r, err := RollbackMac(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prepared) == 0 || prepared[0] != target {
+		t.Fatalf("PrepareRollback not called with the target: %v", prepared)
+	}
+	if r.Restored != nil {
+		t.Fatalf("restored app must match its receipt after PrepareRollback: %v", r.Restored)
+	}
+	if appVersion(t, p) != "0.1.0-dev.38 "+MacApp+"/Contents/MacOS/0c-server" {
+		t.Fatalf("rolled back to %q", appVersion(t, p))
+	}
+}
+
 func plistWithID(id string) []byte {
 	return []byte(`<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0"><dict>

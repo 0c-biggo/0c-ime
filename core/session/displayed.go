@@ -31,5 +31,5 @@ func (s *Session) fallbackDisplay(pos int, syl zhuyin.Syllable) (string, string)
 	if (len(s.literals) > 0 || s.nearReading) && s.displayed[pos] != "" {
 		return s.displayed[pos], proto.StyleNormal
 	}
-	return string(syl), proto.StylePending
+	return syl.Text(), proto.StylePending
 }

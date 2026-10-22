@@ -21,7 +21,8 @@ from macos_version import bundle_version
 IDENTIFIER = "com.biggo.inputmethod.0c.pkg"
 
 POSTINSTALL = """#!/bin/sh
-# 由 macOS 安裝程式以目前使用者身分執行；輸出記在 /var/log/install.log。
+# 雙擊安裝時由 macOS 安裝程式以目前使用者身分執行；輸出記在 /var/log/install.log。
+# sudo installer -target /、MDM 會以 root 執行，0c-update 自己改以登入的使用者身分安裝（#198）。
 set -eu
 BUNDLE="$(cd "$(dirname "$0")" && pwd)/{name}"
 exec "$BUNDLE/0c-update" install -bundle "$BUNDLE" -channel {channel} </dev/null
@@ -78,7 +79,7 @@ CONCLUSION = """<h2>安裝完成</h2>
 <p>從舊版升級時不必登出：下一次切換到「靈犀注音」或開始打字，就是新版。</p>
 <p>第一次安裝時，選單列找不到的話，到「系統設定 → 鍵盤 → 文字輸入 → 編輯 → ＋ → 繁體中文」加入「靈犀注音」。</p>
 <p><b>如果輸入來源清單一直沒有出現「靈犀注音」，請先儲存工作，登出目前帳號再重新登入，然後回到上述設定加入。</b></p>
-<p>切換：第一次安裝預設用系統的輸入來源切換（例如 Control＋空白鍵或地球鍵）；從舊版升級的保留原本的單按右 Shift。要開啟或關閉單按 Shift 切換注音／英文，可以在設定程式「輸入設定」的「中英切換鍵」調整。</p>
+<p>切換：第一次安裝預設用系統的輸入來源切換（例如 Control＋空白鍵或地球鍵）；從舊版升級的保留原本的單按右 Shift。要開啟或關閉單按 Shift 切換注音／英文，可以在設定程式「中英切換」頁的「中英切換鍵」調整。</p>
 <p>移除：在終端機執行 <code>~/Library/Application\\ Support/0c/bin/0c-update uninstall</code>。</p>"""
 
 

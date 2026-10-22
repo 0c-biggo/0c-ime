@@ -27,6 +27,13 @@ enum HandoverPolicy {
         return launched != current
     }
 
+    /// 這個行程仍在啟動時的位置執行：啟動路徑上的執行檔就是啟動時那一個。更新把 App 移入備份後不再成立（路徑上換成新版，
+    /// 或解除安裝後不存在）；讀不到啟動時的檔案時也當作不成立。
+    static func atLaunchPath(launched: FileID?, current: FileID?) -> Bool {
+        guard let launched, let current else { return false }
+        return launched == current
+    }
+
     static func due(last: Date?, now: Date) -> Bool {
         guard let last else { return true }
         return now.timeIntervalSince(last) >= minGap || now < last
@@ -55,6 +62,12 @@ final class HandoverMonitor {
         for name in [NSWorkspace.screensDidSleepNotification, NSWorkspace.sessionDidResignActiveNotification] {
             tokens.append(workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.away() })
         }
+    }
+
+    /// 還在 Input Methods 裡啟動時的位置（沒有被更新移入備份）。start() 之前、啟動時讀不到執行檔時一律為 true（照舊）。
+    var atLaunchPath: Bool {
+        guard let executable, launched != nil else { return true }
+        return HandoverPolicy.atLaunchPath(launched: launched, current: HandoverPolicy.fileID(executable))
     }
 
     private func away() {

@@ -51,6 +51,9 @@ type MacPaths struct {
 	// InUse 回報備份目錄（絕對路徑）是否仍在使用：有程式從裡面執行或開著其中的檔案，或系統的背景項目登記指向裡面的 App。
 	// 使用中的備份不清理（#179）；nil 表示都沒有在用（測試）。
 	InUse func(dir string) bool
+	// PrepareRollback 在回復持有安裝鎖、核對備份之前，對要放回的 App（備份裡的絕對路徑）呼叫一次：平台把為了背景項目
+	// 改過名的檔案改回來（#205），放回的 App 與收據一致。nil 表示不需要。
+	PrepareRollback func(app string)
 }
 
 func (p MacPaths) app() string                 { return filepath.Join(p.InputMethods, MacApp) }
@@ -458,6 +461,13 @@ func RollbackMac(p MacPaths) (MacRollback, error) {
 	}
 	if current == nil {
 		return result, fmt.Errorf("no rollback receipt")
+	}
+	if p.PrepareRollback != nil && SafeName(current.Previous) && strings.HasPrefix(current.Previous, "backups/macos-") {
+		for _, name := range macApps {
+			if app := filepath.Join(p.Support, filepath.FromSlash(current.Previous), name); noLinks(app) == nil {
+				p.PrepareRollback(app)
+			}
+		}
 	}
 	previous, restored, err := loadMacBackup(p, current.Previous)
 	if err != nil {

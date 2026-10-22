@@ -58,8 +58,8 @@ func (s *Session) rerankPath() {
 		for end < len(s.syls) && !s.literals[end] {
 			end++
 		}
-		if n := end - start; n >= 2 && n <= 32 || n == 1 && opt.TextWeight > 0 {
-			s.rerankSegment(lat, start, end)
+		if n := end - start; (n >= 2 && n <= 32 || n == 1 && opt.TextWeight > 0) && !zhuyin.HasUntoned(s.syls[start:end]) {
+			s.rerankSegment(lat, start, end) // 有沒打聲調音節（#150）的段落沒有共用讀音可送，照統計引擎
 		}
 		start = end
 	}

@@ -72,6 +72,8 @@ type shellRestart struct {
 	// KWinIM：Fcitx5 由 KDE Plasma Wayland 的 KWin 啟動時，kwinrc [Wayland] InputMethod 的值（.desktop 路徑）。
 	// 有值就交還 KWin 重新啟動，不自己執行 fcitx5。
 	KWinIM string `json:"kwin_input_method,omitempty"`
+	// KWinIMInherited：KWinIM 來自系統預設（使用者的 kwinrc 沒有這個鍵），寫回時刪掉鍵而不是寫死。
+	KWinIMInherited bool `json:"kwin_input_method_inherited,omitempty"`
 }
 
 func shellJournal(base string) string { return filepath.Join(base, "update", "shell-restart.json") }
@@ -233,10 +235,20 @@ func captureFcitx(pid int) (*shellRestart, error) {
 	//   - Fcitx 5 Wayland Launcher：KWin 啟動 fcitx5-wayland-launcher，由它經 D-Bus 叫起 fcitx5 再交出連線，
 	//     fcitx5 本身不帶 WAYLAND_SOCKET，父行程也不是 KWin；Fcitx5 結束時 launcher 跟著正常結束，KWin 不會重開。
 	// 其他會用 WAYLAND_SOCKET 啟動輸入法的合成器（例如 Weston）和 GNOME、X11 等桌面照原本的方式重新啟動。
-	if kwin && parentComm(dir) == "kwin_wayland" || kwinLauncherRunning() {
-		if s.KWinIM, err = kwinInputMethod(append(os.Environ(), s.Env...)); err != nil || s.KWinIM == "" {
-			fmt.Fprintln(os.Stderr, "0c-update: Fcitx5 由 KWin 啟動，但讀不到 kwinrc 的 InputMethod：", err)
-			s.KWinIM = ""
+	// 0.2.4 以前的更新器在 Plasma Wayland 也自己啟動 Fcitx5（0c-fcitx5-*.service）：虛擬鍵盤仍選 Fcitx 時同樣交還 KWin，
+	// 這次更新順便修好（一次性修復見 repairKWinFcitx）。
+	byKWin := kwin && parentComm(dir) == "kwin_wayland" || kwinLauncherRunning()
+	stray := !byKWin && inFcitxRestartUnit(dir) && kwinWaylandRunning()
+	if byKWin || stray {
+		im, err := readKWinIM(kconfigEnv(s.Env))
+		switch {
+		case err != nil || im.Value == "":
+			if byKWin {
+				fmt.Fprintln(os.Stderr, "0c-update: Fcitx5 由 KWin 啟動，但讀不到 kwinrc 的 InputMethod：", err)
+			}
+		case stray && !im.fcitx(): // 虛擬鍵盤不是 Fcitx：照原本的方式重新啟動
+		default:
+			s.KWinIM, s.KWinIMInherited = im.Value, im.Inherited
 		}
 	}
 	return s, nil
@@ -244,22 +256,9 @@ func captureFcitx(pid int) (*shellRestart, error) {
 
 // kwinLauncherRunning：目前使用者有 KWin 啟動的 fcitx5-wayland-launcher（comm 截成 15 字元：fcitx5-wayland-）。
 func kwinLauncherRunning() bool {
-	entries, err := os.ReadDir(procRoot)
-	if err != nil {
-		return false
-	}
-	for _, e := range entries {
-		dir := filepath.Join(procRoot, e.Name())
-		var st syscall.Stat_t
-		if _, err := strconv.Atoi(e.Name()); err != nil || syscall.Stat(dir, &st) != nil || int(st.Uid) != os.Getuid() {
-			continue
-		}
-		comm, _ := os.ReadFile(filepath.Join(dir, "comm"))
-		if strings.HasPrefix(strings.TrimSpace(string(comm)), "fcitx5-wayland") && parentComm(dir) == "kwin_wayland" {
-			return true
-		}
-	}
-	return false
+	return userProcessRunning(func(dir, comm string) bool {
+		return strings.HasPrefix(comm, "fcitx5-wayland") && parentComm(dir) == "kwin_wayland"
+	})
 }
 
 // parentComm 回傳 /proc/PID（dir）父行程的名稱；讀不到時為空字串。
@@ -282,85 +281,6 @@ func parentComm(dir string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(comm))
-}
-
-// 測試替換用。
-var (
-	kconfigTool = func(names ...string) (string, error) {
-		var err error
-		for _, name := range names {
-			var path string
-			if path, err = exec.LookPath(name); err == nil {
-				return path, nil
-			}
-		}
-		return "", err
-	}
-	runKConfig = func(ctx context.Context, env []string, path string, args ...string) ([]byte, error) {
-		cmd := exec.CommandContext(ctx, path, args...)
-		cmd.Env = env
-		return cmd.Output()
-	}
-	kwinIMAvailable = func(ctx context.Context) (bool, error) {
-		conn, err := dbus.ConnectSessionBus()
-		if err != nil {
-			return false, err
-		}
-		defer conn.Close()
-		v, err := conn.Object("org.kde.KWin", "/VirtualKeyboard").GetProperty("org.kde.kwin.VirtualKeyboard.available")
-		if err != nil {
-			return false, err
-		}
-		available, ok := v.Value().(bool)
-		if !ok {
-			return false, fmt.Errorf("VirtualKeyboard.available：%v", v)
-		}
-		return available, nil
-	}
-)
-
-var kwinrcArgs = []string{"--file", "kwinrc", "--group", "Wayland", "--key", "InputMethod"}
-
-// kwinInputMethod 讀 kwinrc [Wayland] InputMethod（「系統設定 → 鍵盤 → 虛擬鍵盤」選的 .desktop）。
-func kwinInputMethod(env []string) (string, error) {
-	tool, err := kconfigTool("kreadconfig6", "kreadconfig5")
-	if err != nil {
-		return "", err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	out, err := runKConfig(ctx, env, tool, kwinrcArgs...)
-	return strings.TrimSpace(string(out)), err
-}
-
-// restartKWinIM 依 KDE 建議的方式重新啟動輸入法：等同在「虛擬鍵盤」先選「無」再選回原本的項目。
-// KWin 監看 kwinrc，InputMethod 改變才會重新啟動輸入法；直接執行的 fcitx5 拿不到 KWin 的 WAYLAND_SOCKET，
-// 原生 Wayland 程式就無法輸入。兩次寫入之間等 KWin 處理完清空，否則它重讀設定時只看到相同的值而不動作。
-func restartKWinIM(im string, env []string) error {
-	tool, err := kconfigTool("kwriteconfig6", "kwriteconfig5")
-	if err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if out, err := runKConfig(ctx, env, tool, append(append([]string{}, kwinrcArgs...), "--notify", "")...); err != nil {
-		return fmt.Errorf("清除 kwinrc InputMethod：%s (%w)", bytes.TrimSpace(out), err)
-	}
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		available, err := kwinIMAvailable(ctx)
-		if err == nil && !available {
-			break
-		}
-		if time.Now().After(deadline) {
-			break // 舊版 KWin 沒有這個屬性：給它足夠時間處理通知
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	if out, err := runKConfig(ctx, env, tool, append(append([]string{}, kwinrcArgs...), "--type", "path", "--notify", im)...); err != nil {
-		return fmt.Errorf("恢復 kwinrc InputMethod=%s：%s (%w)", im, bytes.TrimSpace(out), err)
-	}
-	return nil
 }
 
 func controller(ctx context.Context, conn *dbus.Conn, method string, args ...any) *dbus.Call {
@@ -411,16 +331,21 @@ func waitServersStopped(ctx context.Context) error {
 	}
 }
 
-func startFcitx(s *shellRestart) error {
+func startFcitx(conn *dbus.Conn, s *shellRestart) error {
 	pids, err := fcitxProcesses()
 	if err != nil || len(pids) > 0 {
 		return err
 	}
 	if s.KWinIM != "" {
-		if err := restartKWinIM(s.KWinIM, append(os.Environ(), s.Env...)); err == nil {
+		im := kwinIM{Value: s.KWinIM, Inherited: s.KWinIMInherited}
+		if err := restartKWinIM(context.Background(), conn, kwinStateDir(), im, kconfigEnv(s.Env)); err == nil {
 			return nil
 		} else {
 			fmt.Fprintln(os.Stderr, "0c-update: 無法交由 KWin 重新啟動 Fcitx5，改為直接啟動：", err)
+			noteKWinFallback()
+		}
+		if pids, err := fcitxProcesses(); err != nil || len(pids) > 0 {
+			return err // KWin 晚了一步才啟動
 		}
 	}
 	args := []string{}
@@ -430,7 +355,7 @@ func startFcitx(s *shellRestart) error {
 		}
 	}
 	home, _ := os.UserHomeDir()
-	env := fcitxRestartEnv(append(os.Environ(), s.Env...), home)
+	env := fcitxRestartEnv(withoutWaylandSocket(append(os.Environ(), s.Env...)), home)
 	// 交給 user manager 產生行程：直接啟動的 Fcitx5 會帶著自動更新排程 0c-update.service 的 Nice=10 與
 	// idle I/O 留在它的 cgroup 裡，之後外殼自己啟動的引擎（設定 -apply、當掉後、引擎服務的退路）也跟著
 	// 低優先權（#141 的另一條路）。沒有 systemd-run 或建立失敗時照舊直接啟動。
@@ -511,7 +436,7 @@ func validEnvName(key string) bool {
 }
 
 func restoreFcitx(ctx context.Context, conn *dbus.Conn, s *shellRestart) error {
-	if err := startFcitx(s); err != nil {
+	if err := startFcitx(conn, s); err != nil {
 		return err
 	}
 	deadline := time.Now().Add(15 * time.Second)

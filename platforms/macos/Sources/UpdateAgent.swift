@@ -88,7 +88,12 @@ final class UpdateAgentMonitor: NSObject, UNUserNotificationCenterDelegate {
     private var statusQuerying = false
     private var lastStatusRefresh = -TimeInterval.infinity
 
+    /// 被更新移入備份後仍在執行時不碰 SMAppService：macOS 15 會把背景項目的登記改成呼叫者現在所在的位置（備份），
+    /// 排程就一直執行備份裡的舊 0c-update（#205）。這時選單不顯示排程狀態，交接後由新版的行程接手。
+    private var servedHere: Bool { HandoverMonitor.shared.atLaunchPath }
+
     func refreshStatus(minimumInterval: TimeInterval = 0, now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        guard servedHere else { status = nil; return }
         guard !statusQuerying, now - lastStatusRefresh >= minimumInterval else { return }
         statusQuerying = true
         lastStatusRefresh = now
@@ -113,6 +118,7 @@ final class UpdateAgentMonitor: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func check(now: Date = Date()) {
+        guard servedHere else { return } // 見 servedHere：備份裡的 App 補註冊會讓排程指著備份
         defer { refreshStatus() } // 補註冊後選單跟著顯示新狀態
         let agent = UpdateAgent.service
         let prefs = Self.loadPreferences()

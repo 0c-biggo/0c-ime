@@ -66,15 +66,26 @@ fn probe(ctx: &ITfContext, client: u32, ui_less: bool) -> Option<Field> {
         match ctx.RequestEditSession(client, &edit, TF_ES_SYNC | TF_ES_READ) {
             Ok(hr) if hr.is_ok() => Some(probe.field.get()),
             Ok(hr) => {
-                crate::log::zdebug!("field policy read session={:?}", hr);
+                unreadable(hr);
                 None
             }
             Err(error) => {
-                crate::log::zdebug!("field policy request={:?}", error.code());
+                unreadable(error.code());
                 None
             }
         }
     }
+}
+
+/// 讀不到欄位政策（宿主拒絕同步唯讀鎖，或讀 InputScope 時出錯）：按鍵放行、熱鍵照常切換（#164）。
+/// 預設在 tsf.log 每個行程、每種 HRESULT 記一次（#209）。
+fn unreadable(hr: windows_core::HRESULT) {
+    crate::log::once(&format!(
+        "欄位政策：讀不到（{:?}），按鍵放行給程式、Ctrl＋Space 照常切換 exe={}",
+        hr,
+        crate::log::exe_name()
+    ));
+    crate::log::zdebug!("field policy unreadable={:?}", hr);
 }
 
 fn context_disabled(ctx: &ITfContext) -> bool {
@@ -160,15 +171,16 @@ fn document_canvas(class: &str) -> bool {
     class == "OneNote::DocumentCanvas"
 }
 
-/// IMM32 程式（系統相容層建立的暫時 context，TF_SS_TRANSITORY）與自行繪製候選的宿主（UI-less，
-/// 例如英雄聯盟遊戲內聊天，#86）多半是自訂視窗：沒有 InputScope、也不是標準編輯框或 MSAA 文字。
-/// 焦點在本 context、視窗可用、不是密碼／唯讀的標準編輯框、MSAA 也沒標成保護或唯讀時，以 Private
-/// 組字（不學習、不讀前文）。宿主在密碼欄等處取消輸入法關聯時，context_disabled 已先擋下。
-fn custom_field_allows(ctx: &ITfContext, ui_less: bool) -> bool {
-    let transitory = unsafe { ctx.GetStatus() }.is_ok_and(|s| s.dwStaticFlags & TF_SS_TRANSITORY != 0);
-    if !transitory && !ui_less {
-        return false;
-    }
+/// 缺 InputScope、也不是上面已知控制項的自訂欄位：IMM32 程式（系統相容層建立的暫時 context，TF_SS_TRANSITORY）、
+/// 自行繪製候選的宿主（UI-less，例如英雄聯盟遊戲內聊天，#86），以及自己實作 TSF 文字儲存的程式——Unreal Engine 的
+/// UnrealWindow（UE4、UE5 同一份 FTextStoreACP）的 RequestSupportedAttrs 回 S_OK 卻不提供任何屬性，讀 InputScope 回
+/// E_FAIL，靜態旗標只有 TS_SS_NOHIDDENTEXT（WARDOGS、《二之國：交錯世界》的聊天框，#209、#210）。原本只放行前兩種，
+/// 第三種整個被當成無法判斷而放行給宿主：按鍵直接以英文進入，Shift、Ctrl＋Space 也切不了中英。
+/// UE 的密碼框同樣不停用輸入法、也不標 InputScope，其他輸入法（新酷音、小狼毫、PIME 只看停用／空 context）照常組字。
+/// 焦點在本 context、本行程且可用，不是密碼／唯讀的標準編輯框，MSAA 也沒標成保護、唯讀或停用時，以 Private
+/// 組字（不學習、不讀前文）。宿主在密碼欄等處取消輸入法關聯或改用空 context 時，context_disabled 已先擋下；
+/// 標了 IS_PASSWORD 等的欄位讀得到 InputScope，不會走到這裡。
+fn custom_field_allows(ctx: &ITfContext) -> bool {
     let Some(focus) = focused_window(ctx) else {
         return false;
     };
@@ -369,7 +381,13 @@ impl ITfEditSession_Impl for ScopeProbe_Impl {
             self.ctx
                 .GetSelection(ec, TF_DEFAULT_SELECTION, &mut selected, &mut fetched)?;
             let range = std::mem::ManuallyDrop::take(&mut selected[0].range);
-            let Some(range) = range else { return Ok(()) };
+            let Some(range) = range else {
+                crate::log::once(&format!(
+                    "欄位政策：宿主沒有回報選取範圍，無法判斷，按鍵放行給程式 exe={}",
+                    crate::log::exe_name()
+                ));
+                return Ok(());
+            };
             let mut value = match prop.GetValue(ec, &range) {
                 Ok(value) => value,
                 // 部分 RichEdit（含 Windows 11 記事本）沒有 InputScope，回傳 E_FAIL。
@@ -379,18 +397,29 @@ impl ITfEditSession_Impl for ScopeProbe_Impl {
                         Field::Open
                     } else if let Some(field) = xaml_island_field(&self.ctx) {
                         field
-                    } else if custom_field_allows(&self.ctx, self.ui_less) {
+                    } else if custom_field_allows(&self.ctx) {
                         Field::Private
                     } else {
                         Field::Blocked
                     };
-                    crate::log::zdebug!(
-                        "field policy missing scope={:?} ui_less={} {} field={:?}",
+                    let detail = format!(
+                        "scope={:?} ui_less={} {} field={:?}",
                         error.code(),
                         self.ui_less,
                         missing_scope_context(&self.ctx),
                         field
                     );
+                    // 降級成私人組字或放行給宿主時，預設在 tsf.log 記一次（每個行程同樣的情況只記一次，#209）；
+                    // 只有欄位類別與旗標，不含文字與鍵碼。
+                    if field != Field::Open {
+                        crate::log::once(&format!(
+                            "欄位政策：讀不到 InputScope，{} exe={} {}",
+                            if field == Field::Private { "以私人方式組字" } else { "無法判斷，按鍵放行給程式" },
+                            crate::log::exe_name(),
+                            detail
+                        ));
+                    }
+                    crate::log::zdebug!("field policy missing {}", detail);
                     self.field.set(field);
                     return Ok(());
                 }
@@ -425,6 +454,10 @@ impl ITfEditSession_Impl for ScopeProbe_Impl {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "privacy_host_tests.rs"]
+mod host_tests;
 
 #[cfg(test)]
 mod tests {

@@ -255,13 +255,14 @@ impl State {
         }
     }
 
-    /// 這次 Shift 放開是否切換：單按、設定開啟這一側、而且沒超過時限。只有單按時才向引擎查設定。
+    /// 這次 Shift 放開是否切換：單按（中間沒有別的鍵、沒點滑鼠）、設定開啟這一側、而且沒超過時限。只有單按時才向引擎查設定。
     fn shift_toggles(&mut self, side: keys::Side, modified: bool, now: u64) -> bool {
-        if !self.tap(side).solo(modified) {
+        let mouse = keys::mouse_state();
+        if !self.tap(side).solo(modified, mouse) {
             return false;
         }
         let config = self.session.shift_config();
-        config.toggles(side) && self.tap(side).tap(modified, now, config.tap_ms)
+        config.toggles(side) && self.tap(side).tap(modified, mouse, now, config.tap_ms)
     }
 
     fn reset_shift(&mut self) {
@@ -1054,8 +1055,9 @@ impl TextService_Impl {
         let mut st = self.state.borrow_mut();
         let now = keys::now_ms();
         let (right, left) = (keys::right_shift(vk, lparam), keys::left_shift(vk, lparam));
-        st.right_shift.observe(right, repeat, modified, now);
-        st.left_shift.observe(left, repeat, modified, now);
+        let mouse = keys::mouse_state();
+        st.right_shift.observe(right, repeat, modified, now, mouse);
+        st.left_shift.observe(left, repeat, modified, now, mouse);
         // Shift 以外的任何按鍵（包含不問核心就交還宿主的快捷鍵與英文字母）都讓下一次切換不再還原注音（#90）。
         if !right && !left {
             st.session.bypassed();
@@ -1094,20 +1096,12 @@ impl TextService_Impl {
         }
         keys::printable(vk, lparam, false) // 中文模式不理 Caps Lock（#168）
             .map(|key| {
-                // 鍵盤排列只影響少數幾個鍵（#83）；其他鍵不多查一次引擎。
-                let layout = if keys::layout_dependent(&key) && st.session.eten_layout() {
-                    keys::Layout::ETen
+                // 答案依鍵盤排列與設定而不同的鍵（數字、= - /）問引擎：引擎回報它沒在組字時處理哪些鍵（#183），
+                // 涵蓋倚天的 1–4、許氏的數字交還宿主、= 的 Emoji 設定、聲調鍵的設定（#83、#135、#175）。其他鍵不多查一次引擎。
+                if keys::layout_dependent(&key) {
+                    st.session.idle_key(&key)
                 } else {
-                    keys::Layout::Standard
-                };
-                if key == "=" && layout == keys::Layout::Standard {
-                    st.session.emoji_shortcut()
-                } else if keys::tone_key(layout, &key) {
-                    // 聲調鍵：沒開中英混打時引擎先把數字留在組字區，緊接空白換成聲調符號（#135）；中英混打時
-                    // 照字面留在組字區，354 才整串留數字（#175）。
-                    st.session.tone_mark_keys()
-                } else {
-                    keys::starts_composition(layout, &key)
+                    keys::starts_composition(keys::Layout::Standard, &key)
                 }
             })
             .unwrap_or(false)
