@@ -121,6 +121,33 @@ func TestMixedDigitWordBeforeNumberPunct(t *testing.T) {
 	}
 }
 
+// #201：數字鍵＋聲調鍵出的字緊接在中文後面、自己緊接著半形 . , / 再打數字時，也改回原按鍵（我53,082 不是「我只,082」）。
+// 冒號（答案：1）、-（負數：大-800）、中間隔著照字面送出的數字（至3.5、至6,762：「降至3.5」）照舊是中文。
+func TestMixedDigitWordAfterChineseBeforeNumberPunct(t *testing.T) {
+	for _, tc := range []struct{ keys, want string }{
+		{"ji353,082", "我53,082"},
+		{"ji353.5", "我53.5"},
+		{"ji354.88", "我54.88"},
+		{"ji384.73", "我84.73"},
+		{"ji304/09", "我04/09"},
+		{"ji3 53,082", "我 53,082"},
+		// 照舊
+		{"28604:1", "答案：1"},
+		{"ji304:10", "我案：10"},
+		{"ji3284-800", "我大-800"},
+		{"ji3543.5", "我至3.5"},
+		{"ji3546,762", "我至6,762"},
+		{"ji3294-3", "我戴爾"},
+		{"ji353.", "我只."},
+	} {
+		s := numberWritingSession()
+		mixedType(s, tc.keys)
+		if got := key(s, proto.KeyEnter).Commit; got != tc.want {
+			t.Errorf("%q 提交 %q，要 %q", tc.keys, got, tc.want)
+		}
+	}
+}
+
 // #176：緊接在字面數字後面的 Shift＋;（:）是半形，與 10:30 一樣併進待定按鍵（3:00 不是「3：00」）。
 // 前面不是字面數字時照舊是全形「：」。
 func TestMixedColonAfterLiteralDigit(t *testing.T) {

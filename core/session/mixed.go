@@ -700,8 +700,10 @@ func (s *Session) numberAfterLiteral(raw, key string) bool {
 // reviseDigitWord（#176）：數字鍵＋聲調鍵出的字（#175 的 03 俺、04 案、53 只、84 阿、103 版），可能隔著照字面送出的數字
 // （846,000 的 6），後面緊接著一個數字標點再打數字時（03:00、04:10、53,082、846,000、04-06），是時間或數字寫法：
 // 把那個字改回原按鍵，後面的按鍵照數字寫法接上（: 在字後面已打成全形「：」，改回半形）。比照 #69 的 i 回頭改成英文。
-// 只限那個字前面不是中文（句首、空白、英文、標點後；「答案：1」不改）、沒有選過字（鎖定）；標點鍵和這個聲調鍵
-// 組得成有字的音節時是中文（294-3 戴爾、284-6 大而），也不改。不是數字的（「只：」「案」後面接中文）照舊。
+// 沒有選過字（鎖定）才改；標點鍵和這個聲調鍵組得成有字的音節時是中文（294-3 戴爾、284-6 大而），也不改。
+// 不是數字的（「只：」「案」後面接中文）照舊。那個字緊接在中文後面時（#201）只在它自己緊接著半形 . , /
+// 再打數字時改回（我53,082、毛利率54.88、莫忘04/09）：冒號是「答案：1」，- 是負數（三大-800、跌至-13），
+// 中間隔著照字面送出的數字是那個字本身加上數字（高達3.2、降至6,762），都照舊。
 func (s *Session) reviseDigitWord(k string) {
 	if len(k) != 1 || k[0] < '0' || k[0] > '9' || s.mixed.choice != 0 || s.mixed.accepted != "" {
 		return
@@ -727,7 +729,8 @@ func (s *Session) reviseDigitWord(k string) {
 		at--
 	}
 	keys := s.mixedKeys[at]
-	if at < 0 || s.literals[at] || at > 0 && !s.literals[at-1] || len(keys) < 2 ||
+	afterChinese := at > 0 && !s.literals[at-1]
+	if at < 0 || s.literals[at] || afterChinese && (colon || raw == "-" || at < end-1) || len(keys) < 2 ||
 		strings.Trim(keys, "0123456789") != "" || !strings.ContainsAny(keys[len(keys)-1:], "3467") {
 		return
 	}
@@ -908,7 +911,9 @@ func (s *Session) mixedKey(k string) bool {
 			return true
 		}
 		s.flushMixed()
-		if literal {
+		// 緊接在照字面的英數後面，Shift＋, Shift＋. 也是「，」「。」（#201：我2026，我、我OK，），↓ 第二項是原按鍵 < >；
+		// 其他標點照字面（hello! 、x^2）。
+		if literal && k != "<" && k != ">" {
 			s.insertMixedLiteral(k, false, false)
 		} else {
 			p, _ := s.layout.Punct(rs[0])
