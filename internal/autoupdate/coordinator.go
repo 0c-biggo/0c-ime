@@ -241,6 +241,8 @@ func (c *Coordinator) save(s *State) error {
 			// scheduler, not by this coordinator's download snapshot.
 			s.ScheduleRemoved = latest.ScheduleRemoved
 			s.UpdaterRepairs, s.UpdaterBroken, s.UpdaterNotified = latest.UpdaterRepairs, latest.UpdaterBroken, latest.UpdaterNotified
+			// 登入時補做輸入法設定由安裝器（可能就在這次 InstallShell 裡）記下、由排程清除，協調器不改它（#195）。
+			s.ProfileAtLogin = latest.ProfileAtLogin
 		}
 		*latest = *s
 		return nil

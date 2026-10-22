@@ -222,6 +222,7 @@ func (m *Model) forgetPronouns(w string) {
 	rs := []rune(w)
 	for i, r := range rs {
 		if p, ok := pronounPairs[r]; ok && p.isVariant && (len(rs) == 1 || m.Lex.Has(SwapPronoun(w, i))) {
+			note(m.recording().pronouns, m.Store.Pronouns, string(p.neutral))
 			delete(m.Store.Pronouns, string(p.neutral))
 		}
 	}

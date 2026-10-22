@@ -269,6 +269,17 @@ func (s *session) ensureLive() bool {
 	return s.client.connect() && s.ensureOpen() && s.info["output_simplified_live"] == "true"
 }
 
+// simplifiedHotkey 回報「用快捷鍵切換簡體字」開著、引擎也能即時切換（open 回覆的 simplified_hotkey 與
+// output_simplified_live，#192）。只在按下那個鍵時問：設定改了一定會重啟引擎，所以先看連線還在不在（不送請求），
+// 斷了就重連、重開 session 拿新的值，剛在設定程式打開或關掉後第一次按就照新設定。引擎沒在執行時照常啟動
+// （這是使用者自己按的快捷鍵）；舊引擎沒有這一項時為 false，照舊交給應用程式。
+func (s *session) simplifiedHotkey() bool {
+	if s.client.conn != nil {
+		s.client.alive() // 斷了就關掉，下面重連
+	}
+	return s.client.connect() && s.ensureOpen() && s.info["simplified_hotkey"] == "true" && s.info["output_simplified_live"] == "true"
+}
+
 // outputSimplified 切換「輸出簡體字」（#169）：引擎立即改變之後送出的文字並寫進設定檔，組字不動；不記進重播紀錄。
 func (s *session) outputSimplified(on bool) snapshot {
 	return s.handle(proto.Request{Type: proto.OutputSimplified, On: on})

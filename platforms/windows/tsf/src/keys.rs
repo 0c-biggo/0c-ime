@@ -3,7 +3,7 @@
 //! 只有中文模式的 Ctrl＋標點（#168，見 [`ctrl_punct`]）例外。
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetKeyState, GetKeyboardState, ToUnicode, VK_BACK, VK_CAPITAL, VK_CONTROL,
-    VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_HOME, VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LSHIFT,
+    VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F11, VK_HOME, VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LSHIFT,
     VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR, VK_RCONTROL, VK_RETURN, VK_RIGHT, VK_RMENU, VK_RSHIFT,
     VK_RWIN, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
 };
@@ -209,6 +209,56 @@ pub fn ctrl_punct(vk: u32, lparam: isize) -> Option<&'static str> {
         return None;
     }
     ctrl_punct_name(&printable(vk, lparam, false)?)
+}
+
+/// 切換「輸出簡體字」的鍵（#192，settings.SimplifiedHotkeyLabel 的 Ctrl＋Shift＋F11）。
+pub const VK_SIMPLIFIED_HOTKEY: u32 = VK_F11.0 as u32;
+
+/// 這一鍵是不是切換簡體字的 Ctrl＋Shift＋F11（#192）：只按著 Ctrl 與 Shift，沒有 Alt、Win。
+/// 要不要攔由呼叫端看引擎回報的 simplified_hotkey。
+pub fn simplified_hotkey(vk: u32) -> bool {
+    unsafe {
+        is_simplified_hotkey(
+            vk,
+            GetKeyState(VK_CONTROL.0 as i32) < 0,
+            GetKeyState(VK_SHIFT.0 as i32) < 0,
+            GetKeyState(VK_MENU.0 as i32) < 0
+                || GetKeyState(VK_LWIN.0 as i32) < 0
+                || GetKeyState(VK_RWIN.0 as i32) < 0,
+        )
+    }
+}
+
+/// [`simplified_hotkey`] 的判斷本身（測試用）。
+pub fn is_simplified_hotkey(vk: u32, ctrl: bool, shift: bool, other: bool) -> bool {
+    vk == VK_SIMPLIFIED_HOTKEY && ctrl && shift && !other
+}
+
+/// OnTestKeyDown 對一個鍵的決定，留給接著的 OnKeyDown 沿用（#192）：要問引擎的決定（health IPC）在 TestKeyDown 問一次，
+/// 兩次答案不會因為引擎剛好在中間斷線或改了設定而不同（TestKeyDown 說要吃、OnKeyDown 卻交給應用程式），
+/// 宿主的 UI 執行緒每按一次也只多一次同步往返。
+///
+/// 只給緊接的那一次 OnKeyDown 用：OnKeyDown 一進來就取走（不論之後是否在 allowed() 提早回傳），OnTestKeyDown 與放開按鍵
+/// 一進來就清掉（TestKeyDown 說不吃時 TSF 不會再呼叫 OnKeyDown）。否則留下的舊決定會被之後宿主沒先 TestKeyDown、直接呼叫的
+/// OnKeyDown 拿去用（發版前 code review）。
+#[derive(Default)]
+pub struct Tested(Option<(u32, bool)>);
+impl Tested {
+    pub fn record(&mut self, vk: u32, decision: bool) {
+        self.0 = Some((vk, decision));
+    }
+    /// OnTestKeyDown、OnTestKeyUp、OnKeyUp 一進來就呼叫。
+    pub fn forget(&mut self) {
+        self.0 = None;
+    }
+    /// OnKeyDown 一進來就呼叫：TestKeyDown 剛為同一個鍵決定過就回傳那個決定（只用一次）；None 時（宿主沒先呼叫
+    /// TestKeyDown，或是別的鍵）由呼叫端自己問。
+    pub fn take(&mut self, vk: u32) -> Option<bool> {
+        match self.0.take() {
+            Some((tested, decision)) if tested == vk => Some(decision),
+            _ => None,
+        }
+    }
 }
 
 /// 不按 Ctrl 時的字元對應的 Ctrl＋標點鍵名。
@@ -583,6 +633,58 @@ mod tests {
             assert!(!differs || layout_dependent(&c), "{c} 的答案依排列而不同，必須查排列");
         }
         assert!(layout_dependent("=") && !layout_dependent("a"));
+    }
+
+    #[test]
+    fn simplified_hotkey_is_only_ctrl_shift_f11() {
+        let f11 = VK_SIMPLIFIED_HOTKEY;
+        assert_eq!(f11, 0x7A);
+        assert!(is_simplified_hotkey(f11, true, true, false));
+        assert!(!is_simplified_hotkey(f11, true, false, false), "Ctrl＋F11");
+        assert!(!is_simplified_hotkey(f11, false, true, false), "Shift＋F11");
+        assert!(!is_simplified_hotkey(f11, false, false, false), "F11（全螢幕）");
+        assert!(!is_simplified_hotkey(f11, true, true, true), "多按 Alt／Win");
+        assert!(!is_simplified_hotkey(0x7B, true, true, false), "Ctrl＋Shift＋F12");
+        assert!(!is_simplified_hotkey(0x46, true, true, false), "Ctrl＋Shift＋F");
+    }
+
+    #[test]
+    fn key_down_reuses_the_test_key_down_decision() {
+        // #192 code review：TestKeyDown 說要吃 Ctrl＋Shift＋F11，OnKeyDown 時引擎剛好斷線也照樣吃，不再問一次。
+        let f11 = VK_SIMPLIFIED_HOTKEY;
+        let mut tested = Tested::default();
+        tested.record(f11, true);
+        assert_eq!(tested.take(f11), Some(true));
+        // 只用一次：下一次（宿主直接呼叫 OnKeyDown、沒先 TestKeyDown）重新問。
+        assert_eq!(tested.take(f11), None);
+        // TestKeyDown 說不吃，OnKeyDown 也不吃。
+        tested.record(f11, false);
+        assert_eq!(tested.take(f11), Some(false));
+        // 記下的是別的鍵：照常問，而且那個舊決定也一起丟掉。
+        tested.record(0x41, false);
+        assert_eq!(tested.take(f11), None);
+        assert_eq!(tested.take(0x41), None);
+    }
+
+    #[test]
+    fn test_key_down_decision_does_not_outlive_its_key_press() {
+        // #192 發版前 code review 第二輪：OnKeyDown 在 allowed() 提早回傳時，原本沒取走 TestKeyDown 的決定，
+        // 之後宿主沒先 TestKeyDown 就直接呼叫 OnKeyDown 時沿用了舊的「要吃」。
+        let f11 = VK_SIMPLIFIED_HOTKEY;
+        let mut tested = Tested::default();
+        // OnTestKeyDown 說要吃 → OnKeyDown 一進來就取走（接著在 allowed() 提早回傳，沒用到）。
+        tested.record(f11, true);
+        let _ = tested.take(f11);
+        // 之後宿主直接呼叫 OnKeyDown：沒有舊決定，重新問。
+        assert_eq!(tested.take(f11), None);
+        // TestKeyDown 說不吃，TSF 不再呼叫 OnKeyDown；放開（OnTestKeyUp／OnKeyUp）一進來就清掉。
+        tested.record(f11, false);
+        tested.forget();
+        assert_eq!(tested.take(f11), None);
+        // OnTestKeyDown 在 allowed() 提早回傳（沒走到記錄）：一進來就清掉上一次的決定。
+        tested.record(f11, true);
+        tested.forget();
+        assert_eq!(tested.take(f11), None);
     }
 
     #[test]

@@ -20,14 +20,15 @@ import (
 // 放開後才讀檔，所以不會有兩個寫入者。
 //
 // 限制：離線加詞只改 vocab.json，不碰學習資料（user.json）：加詞取代以前不一致手選的那一步（personal.vocabChanged）
-// 要等引擎執行時才會發生；刪詞也不會留下 tombstone。標注音與排名載入資料包計算（第一次約一兩百毫秒）。
+// 要等引擎執行時才會發生；刪詞也不會清掉它的學習紀錄。標注音與排名載入資料包計算（第一次約一兩百毫秒）。
 
 var errEngineBusy = errors.New("另一個引擎正在使用個人資料")
 
 // offlineVocabOp：不需要引擎狀態、可以只靠 vocab.json 與資料包回答的指令。
 func offlineVocabOp(op string) bool {
 	switch op {
-	case engine.VocabLearned, engine.VocabKeep, engine.VocabForget:
+	case engine.VocabLearned, engine.VocabKeep, engine.VocabForget, engine.VocabUnlearn, engine.VocabForgotten,
+		engine.VocabRelearn, engine.VocabLearnedUndo:
 		return false // 要讀寫學習資料，只能交給引擎
 	}
 	return true

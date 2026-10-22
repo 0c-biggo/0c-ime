@@ -33,7 +33,10 @@ const vocabUsage = `用法：0c-update vocab <指令> [參數] [-json] [-source 
   annotate 詞 [詞 ...]           依詞庫建議讀音，標出要確認的破音字
   learned                        自動學到的片語
   keep 詞 [詞 ...]               學到的片語轉成自訂詞
-  forget 詞 [詞 ...]             撤銷自動學到的詞
+  unlearn 詞 [詞 ...]            移除學到的詞：清掉學習紀錄，之後照常學回來
+  forget 詞 [詞 ...]             不再學：清掉學習紀錄，之後也不再學
+  forgotten                      不再學的詞
+  relearn 詞 [詞 ...]            恢復學習：從不再學的詞拿掉
   phrases | phrase-add 文字 ... | phrase-remove 編號 ... | phrase-move 編號 位置
   watch [-since 版本]            版本改變時印出一行 JSON（給管理頁即時同步）
   request                        從標準輸入讀一個完整的指令（JSON），印出結果`
@@ -57,7 +60,7 @@ func vocabCommand(args []string) error {
 	req.Offset, _ = strconv.Atoi(opts["offset"])
 	req.Limit, _ = strconv.Atoi(opts["limit"])
 	switch op {
-	case engine.VocabStatus, engine.VocabList, engine.VocabLearned, engine.VocabPhrases:
+	case engine.VocabStatus, engine.VocabList, engine.VocabLearned, engine.VocabPhrases, engine.VocabForgotten:
 		if len(params) > 0 {
 			return usageError(vocabUsage)
 		}
@@ -72,7 +75,8 @@ func vocabCommand(args []string) error {
 		if req.Words, ok = addArgs(params); !ok {
 			return usageError(vocabUsage)
 		}
-	case engine.VocabRemove, engine.VocabKeep, engine.VocabForget, engine.VocabPhraseAdd, engine.VocabAnnotate:
+	case engine.VocabRemove, engine.VocabKeep, engine.VocabForget, engine.VocabUnlearn, engine.VocabRelearn,
+		engine.VocabPhraseAdd, engine.VocabAnnotate:
 		if len(params) == 0 {
 			return usageError(vocabUsage)
 		}
@@ -305,6 +309,11 @@ func printVocab(w io.Writer, op string, r engine.VocabResponse) {
 			}
 			fmt.Fprintf(w, "%s\t%s\t%d 次%s\n", x.Text, x.Reading, x.Uses, mark)
 		}
+	case r.Forgotten != nil || op == engine.VocabForgotten:
+		for _, x := range r.Forgotten {
+			fmt.Fprintln(w, x)
+		}
+		fmt.Fprintf(w, "共 %d 個不再學的詞\n", len(r.Forgotten))
 	case r.Batches != nil || op == engine.VocabBatches && r.Batch == nil:
 		for _, b := range r.Batches {
 			state := ""
@@ -319,6 +328,14 @@ func printVocab(w io.Writer, op string, r engine.VocabResponse) {
 		}
 	case r.Batch != nil:
 		fmt.Fprintf(w, "批次 %d（%s）：%d 筆變更\n", r.Batch.ID, r.Batch.Op, len(r.Batch.Changes))
+	}
+	if engine.LearningOp(op) { // 改的是學習資料，不是自訂詞
+		if r.Changed {
+			fmt.Fprintf(w, "已更新學到的詞；不再學的詞 %d 個\n", r.ForgottenCount)
+		} else {
+			fmt.Fprintln(w, "沒有需要更改的學習紀錄")
+		}
+		return
 	}
 	if op == engine.VocabStatus || r.Changed {
 		fmt.Fprintf(w, "自訂詞 %d／%d，版本 %d\n", r.Count, r.Limit, r.Version)

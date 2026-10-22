@@ -146,6 +146,7 @@ func install(bundle string, release *update.Release) error {
 		return nil
 	}
 	os.Remove(reloginMarker(basePath()))
+	clearInputSource(basePath()) // 之前的安裝沒啟用成功留下的記號：這次已啟用（#195）
 	fmt.Println("已啟用「靈犀注音」輸入方式（系統詢問時請允許）。")
 	// 使用者自己安裝：停手後立即交接並啟動新版。背景自動安裝（unattendedInstall）只在使用者離開時交接，
 	// 沒交接的由之後的排程在使用者離開時補上（#178）。
@@ -258,7 +259,9 @@ func rollback(_ string, restoreUser bool) error {
 	relogin := false
 	if r.App != "" {
 		if tool := filepath.Join(r.Backup, update.MacApp, "Contents/MacOS/0c"); fileExists(tool) {
-			if err = activateInputSource(tool, r.App); err != nil {
+			if err = activateInputSource(tool, r.App); err == nil {
+				clearInputSource(basePath())
+			} else {
 				relogin = true
 				markRelogin(basePath())
 				if e := deferInputSource(tool, r.App); e != nil {

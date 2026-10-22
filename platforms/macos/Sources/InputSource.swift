@@ -123,7 +123,9 @@ enum InputSourceSetup {
 
     // 子行程（0c --confirm-input-source <App 路徑>）：逐行輸出「<ID> enabled|disabled|missing」。
     // 可選取的來源已啟用時，若目前選取的是靈犀注音的其他來源（例如升級前的父項），改選這一版的來源，再輸出「<ID> selected」。
-    static func reportState(appPath: String) -> Int32 {
+    // select 為 false（0c --query-input-source，0.2.4 起；排程在背景確認使用者是不是自己加入了，#195）時只查詢，
+    // 絕不改選：背景的喚起不能切換使用者正在用的輸入來源。
+    static func reportState(appPath: String, select: Bool = true) -> Int32 {
         guard let plan = plan(appPath) else { return 1 }
         let list = sources(includeAll: true)
         var ready = false
@@ -133,7 +135,7 @@ enum InputSourceSetup {
             if id == plan.selectable { ready = enabled }
             print("\(id) \(source == nil ? "missing" : enabled ? "enabled" : "disabled")")
         }
-        guard ready else { return 0 }
+        guard ready, select else { return 0 }
         let current = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
         if plan.shouldSelect(currentID: string(current, kTISPropertyInputSourceID), currentBundle: string(current, kTISPropertyBundleID)),
            let source = list.first(where: { string($0, kTISPropertyInputSourceID) == plan.selectable }),

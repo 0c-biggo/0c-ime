@@ -310,6 +310,34 @@ func serve() string {
 	}
 	lg.Printf("已載入 %s（%v）", *data, time.Since(start).Round(time.Millisecond))
 
+	// 存檔共用一把鎖；自訂詞彙要在本機 API 開始服務前就能存（#196），所以先定義。
+	var saveMu sync.Mutex
+	// 自訂詞彙在指令改了它時立即寫（IPC 與本機 API 都是）；失敗時記下。交接前與結束時，
+	// 寫入失敗過、或引擎裡的版本跟最後寫入的不同（漏存的路徑）都再寫一次。
+	vocabVersion := eng.VocabVersion
+	var vocabDirty bool
+	savedVocab := vocabVersion()
+	saveVocab := func() error {
+		saveMu.Lock()
+		defer saveMu.Unlock()
+		if vocabDisabled != "" {
+			return nil
+		}
+		v := vocabVersion() // 寫入前讀：寫進去的只會更新，之後最多多存一次，不會漏存
+		if err := datadir.SaveVocab(eng, vocabPath); err != nil {
+			vocabDirty = true
+			lg.Printf("自訂詞彙存檔失敗：%v", err)
+			return err
+		}
+		vocabDirty, savedVocab = false, v
+		return nil
+	}
+	vocabUnsaved := func() bool {
+		saveMu.Lock()
+		defer saveMu.Unlock()
+		return vocabDisabled == "" && (vocabDirty || vocabVersion() != savedVocab)
+	}
+
 	var listeners []*endpoint
 	var stopping atomic.Bool // 已決定結束：端點由自己關閉，不再當成被移除
 	stopAPI, apiInfo := func() {}, func() map[string]string { return map[string]string{"api_state": "off"} }
@@ -329,18 +357,27 @@ func serve() string {
 		}
 		listeners = append(listeners, l)
 	}
+	// 存檔：學習改變後標記，使用者停下來或最長間隔到了才整份重寫（save_schedule.go）；
+	// 交接與結束時一定寫。存檔前每日清理一次衰減到不影響排序的項目。
+	schedule := newSaveSchedule()
+	// vocabEdited 在自訂詞彙指令改了詞彙後呼叫（IPC 與本機 API 都是）：立即寫 vocab.json，並標記 user.json 要存。
+	// 加詞、刪詞、改讀音與復原也會改學習資料（刪詞清掉指向它的手選、更正與證據，加詞解除 tombstone、
+	// 取代衝突的舊更正，#122）；只存 vocab.json 的話，之後沒打字就結束或交接，user.json 不會重寫，
+	// 重啟後留著指向已刪除自訂詞的更正（#196）。只標記、不加急：組字中加詞與候選窗反悔鍵也走這裡，
+	// 加急會在下一秒整份重寫 user.json，打字中途就存；交接（BeforeDrain）與結束（含 SIGTERM／SIGHUP、
+	// 閒置結束）一定會 save()，所以照一般學習等使用者停下來或最長間隔即可。
+	vocabEdited := func() error {
+		schedule.changed(time.Now(), false)
+		return saveVocab()
+	}
 	if eng.Preview02 && vocabDisabled == "" { // 本機 API 只能動自訂詞彙：詞彙不能改時不開（#126）
-		stopAPI, apiInfo = startVocabAPI(filepath.Dir(*user), eng, buildVersion, lg)
+		stopAPI, apiInfo = startVocabAPI(filepath.Dir(*user), eng, buildVersion, vocabEdited, lg)
 	}
 	if err := e2esync.Pause(filepath.Dir(*user), "writer_ready"); err != nil {
 		closeAll()
 		lg.Fatal(err)
 	}
 
-	// 存檔：學習改變後標記，使用者停下來或最長間隔到了才整份重寫（save_schedule.go）；
-	// 交接與結束時一定寫。存檔前每日清理一次衰減到不影響排序的項目。
-	var saveMu sync.Mutex
-	schedule := newSaveSchedule()
 	save := func() error {
 		saveMu.Lock()
 		defer saveMu.Unlock()
@@ -358,33 +395,14 @@ func serve() string {
 		}
 		return nil
 	}
-	// 自訂詞彙只在指令改了它時寫，立即寫；失敗時記下，交接前再試。
-	var vocabDirty bool
-	saveVocab := func() error {
-		saveMu.Lock()
-		defer saveMu.Unlock()
-		if vocabDisabled != "" {
-			return nil
-		}
-		if err := datadir.SaveVocab(eng, vocabPath); err != nil {
-			vocabDirty = true
-			lg.Printf("自訂詞彙存檔失敗：%v", err)
-			return err
-		}
-		vocabDirty = false
-		return nil
-	}
-	srv := &ipc.Server{Engine: eng, Log: lg, VocabDisabled: vocabDisabled, OnVocab: func() { saveVocab() },
+	srv := &ipc.Server{Engine: eng, Log: lg, VocabDisabled: vocabDisabled, OnVocab: func() { vocabEdited() },
 		OnCommit: func() { schedule.changed(time.Now(), false); remind.markCommitted() },
 		OnForget: func() { schedule.changed(time.Now(), true) }}
 	srv.BeforeDrain = func() error {
 		if err := save(); err != nil {
 			return err
 		}
-		saveMu.Lock()
-		retry := vocabDirty
-		saveMu.Unlock()
-		if retry {
+		if vocabUnsaved() {
 			if err := saveVocab(); err != nil {
 				return err
 			}
@@ -415,6 +433,9 @@ func serve() string {
 		// #173：引擎認得 caps_lock 請求而且設定「Caps Lock 開著時直接打英文」開著；外殼只在這一項是 true 時回報
 		// Caps Lock 狀態，舊引擎沒有這一項、或設定關閉時，注音模式照舊不理 Caps Lock（#168）。
 		"caps_lock_english": fmt.Sprint(eng.CapsLockEnglish),
+		// #192：設定「用快捷鍵切換簡體字」開著；外殼只在這一項是 true 時攔切換鍵，按下時送 output_simplified（同選單）。
+		// 設定改了會重啟引擎，舊引擎沒有這一項，外殼照舊把這個鍵交給應用程式。
+		"simplified_hotkey": fmt.Sprint(config.SimplifiedHotkey),
 		// #169：引擎認得 output_simplified 請求，「輸出簡體字」可以即時切換；目前的值在 RuntimeInfo 的 output_simplified。
 		// 舊引擎沒有這一項，外殼退回 0c-update set output-simplified … -apply（重啟引擎套用）。
 		"output_simplified_live": "true"}
@@ -516,6 +537,8 @@ func serve() string {
 			if schedule.due(now, srv.LastKey()) {
 				save()
 			}
+			// 「靈犀學到的」頁的復原複本含使用者要求刪除的學習：操作完不再回來時，也在 10 分鐘後放掉（#182）。
+			eng.ExpireLearnedUndo()
 			if remind != nil && !stopping.Load() {
 				_, composing := eng.Sessions()
 				remind.tick(now, composing)
@@ -585,6 +608,9 @@ func serve() string {
 	}
 	wg.Wait()
 	save()
+	if vocabUnsaved() { // 例如存檔失敗過、又不是交接（訊號或閒置結束）：放鎖前最後再試一次
+		saveVocab()
+	}
 	// 最後一次存檔之後才放鎖（端點此時已關閉）：交接中等鎖的新引擎在這之後才讀個人檔。
 	// 神經 worker 等收尾在 main 返回後才執行，不佔著鎖。
 	writerLock.Release()

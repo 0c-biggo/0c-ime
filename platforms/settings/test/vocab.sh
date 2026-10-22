@@ -145,13 +145,14 @@ if window_up; then
 else bad "vfull 改讀音視窗沒有出現"; fi
 stop_app
 
-# 靈犀學到的（保留、忘記）與我的片語（新增、排序）。
+# 靈犀學到的（保留、移除、不再學）與我的片語（新增、排序）。
 vlaunch vfull vocab
 if window_up; then
   sleep 3.5
   tabs 9; xdotool key Right; sleep 1.5      # 分頁列 → 靈犀學到的
   wshot vocab-learned
-  xdotool key Tab space                     # 第一列（大同區）保留
+  check "沒有不再學的詞時不查也不顯示入口" bash -c "! grep -q '\"op\": \"forgotten\"' '$(home_of vfull)/fake.log'"
+  xdotool key Tab Tab Tab space             # 全選 → 第一列勾選 → 第一列（大同區）保留
   check "保留學到的詞：轉成自訂詞，來源是學到的" fake_state vfull "any(w['word']=='大同區' and w['source']=='learned' for w in state['words'])"
   sleep 1
   # 保留鈕換成「已在我加的詞」，焦點交回分頁標籤。
@@ -164,6 +165,66 @@ if window_up; then
   check "下移片語（phrase-move）" fake_state vfull "[p['id'] for p in state['phrases']][:2]==[2,1]"
   sleep 1; wshot vocab-phrases-moved
 else bad "vfull 分頁視窗沒有出現"; fi
+stop_app
+
+# 學到的詞（#182）：全選後一起「不再學」，底部提示復原；再做一次，出現「不再學的詞」入口。
+# 大同區（上面保留了）、長庚已是自訂詞，不能勾；全選勾的是研發部、銀行。
+vlaunch vfull vocab
+if window_up; then
+  sleep 3.5
+  tabs 9; xdotool key Right; sleep 1.5
+  xdotool key Tab space; sleep .5           # 全選
+  wshot vocab-learned-selected
+  xdotool key Tab Tab Tab space             # 批次：保留 → 移除 → 不再學
+  check "勾選的兩個詞一起不再學" fake_state vfull "sorted(state['tombstones'])==['研發部','銀行'] and [l['word'] for l in state['learned']]==['大同區','長庚']"
+  check "批次只送一次 forget" python3 - "$(home_of vfull)/fake.log" <<'PY'
+import json,sys
+lines=[json.loads(l) for l in open(sys.argv[1])]
+lines=[l for l in lines if l['op']=='forget']
+sys.exit(0 if len(lines)==1 and sorted(lines[0]['req']['texts'])==['研發部','銀行'] else 1)
+PY
+  sleep .8; wshot vocab-learned-forget-undo
+  xdotool key Return                        # 焦點已交給底部提示的「復原」
+  check "復原不再學：詞回到清單、沒有 tombstone" fake_state vfull "state['tombstones']==[] and [l['word'] for l in state['learned']]==['大同區','研發部','銀行','長庚']"
+  sleep 1.5
+  xdotool key Tab space Tab Tab Tab space   # 分頁標籤 → 全選 → 不再學
+  check "再一次不再學" fake_state vfull "sorted(state['tombstones'])==['研發部','銀行']"
+else bad "vfull 學到的詞批次視窗沒有出現"; fi
+stop_app
+
+# 不再學的詞：有 tombstone 時才有入口；恢復學習可以復原。
+vlaunch vfull vocab
+if window_up; then
+  sleep 3.5
+  tabs 9; xdotool key Right; sleep 1.5
+  wshot vocab-learned-with-forgotten
+  xdotool key Tab space; sleep 1.5          # 「不再學的詞（2）」
+  check "打開不再學的詞（forgotten）" logged_after vfull forgotten 0
+  wshot vocab-forgotten
+  xdotool key Tab Tab Tab space             # （焦點在返回）全選 → 第一列勾選 → 第一列（研發部）恢復學習
+  check "恢復學習一個詞" fake_state vfull "state['tombstones']==['銀行']"
+  sleep .8; wshot vocab-forgotten-relearned
+  xdotool key Return
+  check "復原恢復學習" fake_state vfull "sorted(state['tombstones'])==['研發部','銀行']"
+  sleep 1.5
+  xdotool key Tab Tab space Tab space       # 分頁標籤 → 返回 → 全選 → 恢復學習 2 個
+  check "全選恢復學習" fake_state vfull "state['tombstones']==[]"
+  sleep 1.5; wshot vocab-forgotten-empty-back
+else bad "vfull 不再學的詞視窗沒有出現"; fi
+stop_app
+
+# 移除（不留 tombstone）：全選三個一起移除，入口仍不出現；復原。
+vocab_home vlearn full
+vlaunch vlearn vocab
+if window_up; then
+  sleep 3.5
+  tabs 9; xdotool key Right; sleep 1.5
+  xdotool key Tab space Tab Tab space       # 全選 → 保留 → 移除
+  check "全選移除：三個學到的詞都清掉、不留 tombstone" fake_state vlearn "state['tombstones']==[] and [l['word'] for l in state['learned']]==['長庚']"
+  sleep .8; wshot vocab-learned-unlearn-undo
+  xdotool key Return
+  check "復原移除" fake_state vlearn "len(state['learned'])==4"
+else bad "vlearn 視窗沒有出現"; fi
 stop_app
 
 # 一次貼上多行：變成預覽清單，勾選後一起加入。剪貼簿內容由片語框複製（容器裡沒有剪貼簿工具）。
@@ -260,4 +321,20 @@ else bad "vlive/vocab 視窗沒有出現"; cat /tmp/app-vlive-vocab.log; fi
 kill -9 "$APP_PID" 2>/dev/null; wait "$APP_PID" 2>/dev/null
 sleep 2.5
 check "（真引擎）設定程式被強制結束後真的 watch 也結束" test "$(watchers)" -eq 0
+# 學到的詞（#182）：真的引擎回應不再學、不再學的詞、恢復學習與復原；有不再學的詞時頁面出現入口。
+check "（真引擎）不再學" bash -c "HOME='$vlive_home' '$UPDATE_BIN' vocab forget 測試詞 -json | grep -q '\"forgotten_count\":1'"
+check "（真引擎）列出不再學的詞" bash -c "HOME='$vlive_home' '$UPDATE_BIN' vocab forgotten -json | grep -q '\"forgotten\":\[\"測試詞\"\]'"
+launch vlive vocab
+if window_up; then
+  sleep 3.5
+  tabs 9; xdotool key Right; sleep 1.5
+  wshot vocab-live-learned-forgotten
+  xdotool key Tab space; sleep 1.5
+  wshot vocab-live-forgotten
+else bad "vlive 學到的詞視窗沒有出現"; fi
+stop_app
+undo=$(HOME=$vlive_home "$UPDATE_BIN" vocab relearn 測試詞 -json | python3 -c 'import json,sys; print(json.load(sys.stdin).get("undo",0))')
+check "（真引擎）恢復學習回傳復原編號" test "$undo" -gt 0
+check "（真引擎）復原恢復學習" bash -c "echo '{\"op\":\"learned-undo\",\"undo\":$undo}' | HOME='$vlive_home' '$UPDATE_BIN' vocab request | grep -q '\"forgotten_count\":1'"
+check "（真引擎）同一個復原只能用一次" bash -c "! echo '{\"op\":\"learned-undo\",\"undo\":$undo}' | HOME='$vlive_home' '$UPDATE_BIN' vocab request | grep -q '\"ok\":true'"
 kill "$VSERVER" 2>/dev/null; wait "$VSERVER" 2>/dev/null

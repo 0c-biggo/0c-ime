@@ -4,11 +4,12 @@ param(
     [Parameter(Mandatory=$true)][string]$BundleDir,
     # explorer、winui（#105）不在預設組：explorer 在共用的 explorer.exe 開自己的視窗，winui 需要 Windows App SDK 版的「相片」。
     # onenote（#163）不在預設組：需要已安裝並開過一次的 OneNote 桌面版，測試在結果目錄建立自己的本機筆記本。
+    # excel（#189）不在預設組：需要已安裝的 Excel 桌面版，測試以 COM 開自己的空白活頁簿、不存檔。
     # leftshift（#65）不在預設組：它自己以 0c-update set left-shift on／off -apply 重啟隔離引擎，需要 Edge 與 Chrome。
     # native32、wpf32（#112）：同一份原生 EDIT 與 WPF 測試改在 32 位元 PowerShell（SysWOW64）裡跑，宿主載入 x86\0c_tsf.dll。
     # webview2（#144）：WinForms 裡的 WebView2（新版 Teams 的視窗結構）；第一次執行從 NuGet 下載固定版本的 WebView2 SDK，
     # 離線或沒有 WebView2 執行階段時標為 skipped（列在結果裡，不算失敗）。
-    [ValidateSet('wpf','native','wpf32','native32','browser','webview2','notepad','terminal','candidate','search','word','onenote','private','leftshift','explorer','winui')][string[]]$Suite=@('wpf','native','wpf32','native32','browser','webview2','notepad','terminal','candidate','search','private'),
+    [ValidateSet('wpf','native','wpf32','native32','browser','webview2','notepad','terminal','candidate','search','word','excel','onenote','private','leftshift','explorer','winui')][string[]]$Suite=@('wpf','native','wpf32','native32','browser','webview2','notepad','terminal','candidate','search','private'),
     [string]$ResultDir
 )
 $ErrorActionPreference='Stop'
@@ -102,8 +103,8 @@ try {
     if(Test-Path -LiteralPath $expectedDLL32){
         if((RegisteredDLL32) -ne $expectedDLL32){throw "32-bit registration does not match test bundle: $(RegisteredDLL32)"}
     } elseif($Suite -match '32$'){throw 'Bundle has no 32-bit DLL (x86\0c_tsf.dll)'}
-    $scripts=@{wpf='smoke';native='native';wpf32='smoke';native32='native';browser='browser';webview2='webview2';notepad='notepad';terminal='terminal';candidate='candidate';search='search';word='word';onenote='onenote';private='private';leftshift='leftshift';explorer='explorer';winui='winui'}
-    $outputs=@{wpf='desktop';native='native';wpf32='desktop';native32='native';browser='browser';webview2='webview2';notepad='notepad';terminal='terminal';candidate='candidate';search='search';word='word';onenote='onenote';private='private';leftshift='leftshift';explorer='explorer';winui='winui'}
+    $scripts=@{wpf='smoke';native='native';wpf32='smoke';native32='native';browser='browser';webview2='webview2';notepad='notepad';terminal='terminal';candidate='candidate';search='search';word='word';excel='excel';onenote='onenote';private='private';leftshift='leftshift';explorer='explorer';winui='winui'}
+    $outputs=@{wpf='desktop';native='native';wpf32='desktop';native32='native';browser='browser';webview2='webview2';notepad='notepad';terminal='terminal';candidate='candidate';search='search';word='word';excel='excel';onenote='onenote';private='private';leftshift='leftshift';explorer='explorer';winui='winui'}
     foreach($name in ($Suite|Select-Object -Unique)){
         $directory=Join-Path $ResultDir $name
         New-Item -ItemType Directory $directory|Out-Null

@@ -117,7 +117,7 @@ type Session struct {
 	mixedKeys             map[int]string      // completed phonetic position → original keys, retained until edited/committed
 	mixedOrigins          map[int]mixedOrigin // literal positions: independently typed vs system-assisted
 	pendingToneKey        *toneKeyPending     // 上一鍵是單獨的聲調鍵：緊接著的空白換成聲調符號（#135）
-	toneMarkKeys          map[int]string      // 聲調鍵打出的聲調符號位置 → 原按鍵，↓ 可選回數字（#135）
+	literalKeys           map[int]string      // 照字面留下的符號位置 → 原按鍵，↓ 第二項可選回（#135 聲調符號、#190 混打的「，」「。」）
 	retypeLiteral         bool                // 上一鍵剛把沒有字的音節原樣留下：緊接著的同類介音／韻母是在改它（#85）
 	// DocumentContextOff 由宿主依使用者設定：外殼送來的前文確認一律忽略，不以前文選字。
 	DocumentContextOff bool
@@ -550,6 +550,10 @@ func (s *Session) key(k string) (handled bool, commit string) {
 		default:
 			if n := s.selectionIndex(k); n >= 0 {
 				s.selectCandidate(s.candidateID(s.cand.page()*perPage + n))
+			} else if k == "j" { // 選字鍵優先：asdfghjkl; 時上面已選字（#193）
+				s.stepCandidate(-1)
+			} else if k == "k" {
+				s.stepCandidate(1)
 			}
 		}
 		return true, "" // 候選開啟時吃掉所有按鍵（含 Shift+Tab 等沒有作用的鍵），不與注音鍵同時解讀、不交給應用程式
@@ -714,7 +718,7 @@ func (s *Session) key(k string) (handled bool, commit string) {
 	// 標點保留在組字區，可移動、替換候選；Enter 才提交。
 	if p, ok := s.layout.Punct(runes[0]); ok {
 		s.insertPendingLiteral()
-		s.insertLiteral(p)
+		s.insertPunctKey(k, p)
 		return true, ""
 	}
 	// 其他可見字元（Shift＋字母、@、#、落單聲調鍵等）在游標處逐字保留。
@@ -844,7 +848,7 @@ func (s *Session) eraseBeforeCursor() {
 // 完全在編輯點之前的鎖定不動；完全在之後的平移；被這次編輯切到的解除。
 func (s *Session) shiftLocks(at, delta int) {
 	s.shiftMixedKeys(at, delta)
-	s.toneMarkKeys = shiftKeys(s.toneMarkKeys, at, delta)
+	s.literalKeys = shiftKeys(s.literalKeys, at, delta)
 	s.shiftMixedOrigins(at, delta)
 	s.shiftLiterals(at, delta)
 	s.shiftPendingLiterals(at, delta)
@@ -988,7 +992,7 @@ func (s *Session) openCandidates(length int) {
 		for _, r := range s.syls[start:end] {
 			text.WriteString(string(r))
 		}
-		s.openSymbols(s.toneMarkAlternatives(symbolAlternatives(text.String()), start, end-start), start, end-start, false)
+		s.openSymbols(s.literalKeyAlternatives(symbolAlternatives(text.String()), start, end-start), start, end-start, false)
 		return
 	}
 	anchor := pos
@@ -1025,6 +1029,42 @@ func (s *Session) openCandidates(length int) {
 			return
 		}
 	}
+}
+
+// stepCandidate 把要修改的字往前（d=-1，j）或往後（d=1，k）換一格並重開候選（#193，照新酷音）：
+// 不必 Esc、←／→、再 ↓。「要修改的字」是緊貼游標的那個字：後方模式是候選的第一個字，前方模式是最後一個字；
+// 標點等原樣文字整段算一格。換到的位置照 ↓ 的規則開窗（前方／後方模式、優先用現有分詞），
+// 後方模式從句尾開的前方候選也以最後一個字為準往前換，不會開回同一個字。已在頭尾時不動。
+// 只用於改字的候選：Emoji／顏文字、中英混打的按鍵候選、注音打到一半與 ` 的符號選單都不套用。
+func (s *Session) stepCandidate(d int) {
+	if !s.canStepCandidate() {
+		return
+	}
+	c := s.cand
+	at := c.start
+	if c.before {
+		at = s.literalFloor(c.start + c.length - 1)
+	}
+	if d < 0 && at == 0 {
+		return
+	}
+	next := s.literalStep(at, d)
+	if next >= len(s.syls) {
+		return
+	}
+	s.cursor = next
+	if s.CandidateBeforeCursor {
+		s.cursor = s.literalStep(next, 1)
+	}
+	s.openCandidates(0)
+}
+
+// canStepCandidate：目前的候選是改字的候選，j／k 會換前後一個字（stepCandidate）。快照的 StepKeys 也依它判斷，
+// 外殼的「J K 換字」提示跟實際行為一致（#193）。
+func (s *Session) canStepCandidate() bool {
+	c := s.cand
+	return c != nil && c.kind == "" && !c.direct && !c.mixed && !c.english && !c.pending && c.length > 0 &&
+		s.comp.Empty() && s.mixed.raw == "" && !s.englishWord
 }
 
 // candidateBefore 決定這次開窗選游標前方還是後方的詞。後方模式的游標在組字尾端時後面沒有字，
@@ -1435,7 +1475,7 @@ func (s *Session) reset() {
 	s.clearMixed()
 	s.mixedKeys = nil
 	s.mixedOrigins = nil
-	s.pendingToneKey, s.toneMarkKeys = nil, nil
+	s.pendingToneKey, s.literalKeys = nil, nil
 	s.clearDocumentContext()
 	s.rerankCache = nil
 	s.hint = nil
@@ -1559,6 +1599,8 @@ func (s *Session) snapshot() proto.Snapshot {
 		if !s.cand.literal && !s.cand.mixed && cl.Length > 0 {
 			cl.Title = "修改「" + s.candidateText() + "」 · Tab 切換詞長"
 		}
+		// 選字鍵含 j、k（asdfghjkl;）時它們是選字，不是換字。
+		cl.StepKeys = s.canStepCandidate() && s.selectionIndex("j") < 0 && s.selectionIndex("k") < 0
 		lo := s.cand.page() * perPage
 		for id := lo; id < min(lo+perPage, len(s.cand.items)); id++ {
 			item := proto.CandidateItem{ID: s.candidateID(id), Text: s.cand.items[id].Entry.Surface}

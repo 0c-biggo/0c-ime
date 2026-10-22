@@ -44,6 +44,7 @@ const (
 	keyShiftR      = 0xffe2
 	keyCapsLock    = 0xffe5
 	keyDelete      = 0xffff
+	keyF11         = 0xffc8
 	keyISOLeftTab  = 0xfe20
 	keySpace       = 0x20
 	modifiedMask   = maskControl | maskMod1 | maskMod4 | maskSuper | maskHyper | maskMeta
@@ -136,6 +137,12 @@ func ctrlPunctKey(keyval, state uint32) string {
 		return proto.CtrlPrefix + string(rune(keyval))
 	}
 	return ""
+}
+
+// simplifiedHotkey：切換「輸出簡體字」的 Ctrl＋Shift＋F11（#192，settings.SimplifiedHotkeyLabel）。只按著 Ctrl 與 Shift，
+// 有 Alt／Super 等其他修飾鍵就不是；Caps Lock、Num Lock 不影響。要不要攔由呼叫端看引擎回報的 simplified_hotkey。
+func simplifiedHotkey(keyval, state uint32) bool {
+	return keyval == keyF11 && state&(modifiedMask|maskShift) == maskControl|maskShift
 }
 
 // isModifierKey：Shift／Ctrl／Alt／Super 等修飾鍵本身（X keysym Shift_L…Hyper_R、ISO_Level3／5_Shift、Mode_switch）。
@@ -278,6 +285,13 @@ func (e *engine) processKey(keyval, keycode, state uint32) bool {
 	}
 	if release {
 		return false
+	}
+	// 用快捷鍵切換簡體字（#192）：設定開著（引擎回報 simplified_hotkey）時吃掉這個鍵，跟選單的「輸出簡體字」一樣即時切換：
+	// 組字不動、提示列顯示「已切換為…」、注／英指示跟著變，之後送出的字照新設定。設定關閉或舊引擎時照一般快捷鍵交給應用程式。
+	if simplifiedHotkey(keyval, state) && e.session.simplifiedHotkey() {
+		e.session.toggled = false
+		e.toggleSimplified()
+		return true
 	}
 	// Caps Lock 開著時直接打英文（#173）：按鍵事件帶的是按下之前的鎖定狀態（同 RIME 的 ascii_composer），
 	// Caps Lock 鍵本身要反過來算；其他按鍵照它帶的狀態，猜錯時下一個按鍵就改正。不讀 LED（Wayland 讀不到）。

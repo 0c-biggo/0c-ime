@@ -41,7 +41,22 @@ impl CandidateWindow {
     pub fn handle(&self) -> u64 {
         self.0 .0 as usize as u64
     }
+    /// 稍後（訊息佇列空下來時）再確認一次組字所在的文件還有沒有焦點（#189）。
+    pub fn settle_focus_later(&self) {
+        unsafe {
+            SetTimer(Some(self.0), SETTLE_FOCUS_TIMER, SETTLE_FOCUS_MS, None);
+        }
+    }
+    pub fn cancel_settle_focus(&self) {
+        unsafe {
+            let _ = KillTimer(Some(self.0), SETTLE_FOCUS_TIMER);
+        }
+    }
 }
+
+const SETTLE_FOCUS_TIMER: usize = 0x0c18;
+/// WM_TIMER 只在佇列沒有其他訊息時才產生：宿主接連的焦點變化（Excel 先移開焦點、再交給儲存格編輯器）都處理完才輪到它。
+const SETTLE_FOCUS_MS: u32 = 50;
 impl Drop for CandidateWindow {
     fn drop(&mut self) {
         unsafe {
@@ -58,6 +73,16 @@ unsafe extern "system" fn callback(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
             let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const TextService_Impl;
             if let Some(service) = ptr.as_ref() {
                 service.select_candidate(wp.0 as u32, lp.0 as i64);
+            }
+            Ok(())
+        });
+        LRESULT(0)
+    } else if msg == WM_TIMER && wp.0 == SETTLE_FOCUS_TIMER {
+        let _ = KillTimer(Some(hwnd), SETTLE_FOCUS_TIMER);
+        let _ = crate::guarded("SettleFocus", || {
+            let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const TextService_Impl;
+            if let Some(service) = ptr.as_ref() {
+                service.settle_focus();
             }
             Ok(())
         });

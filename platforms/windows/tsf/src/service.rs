@@ -107,6 +107,11 @@ struct State {
     openclose: Option<(ITfCompartment, u32)>,
     /// 最近一次看到的鍵盤開關值（沒有值當成 0）；只有值真的改變才處理。
     openclose_value: i32,
+    /// 組字中焦點移到 NULL 時組字所在的 context（沒有就是那次的原文件，#189）：送出時組字範圍與這次焦點變化的原文件都拿不到
+    /// context（範圍或 context 已失效，A→NULL→B 第二次的原文件是 NULL）才送到這裡，免得打到一半的字沒地方送。
+    left_from: Option<ITfContext>,
+    /// OnTestKeyDown 對 Ctrl＋Shift＋F11 的決定（#192），OnKeyDown 沿用。
+    hotkey_tested: keys::Tested,
 }
 
 /// 候選窗最近一次的呈現：OnLayoutChange 時重查游標位置並補送。
@@ -122,6 +127,66 @@ struct Shown {
     requeries: u32,
     /// 送出的時間：提示（notice）在 0c-ui 顯示 NOTICE_MS 後自己收起，重送時不能讓它再跳出來。
     since: Instant,
+}
+
+/// 執行緒的焦點文件改變時，進行中的組字怎麼辦（#189）。
+#[derive(Debug, PartialEq, Eq)]
+enum FocusChange {
+    /// 焦點落在組字所在的文件：宿主把組字搬了過去（Excel 的儲存格從「就緒」進入編輯），繼續組字。
+    CompositionMoved,
+    /// 組字中焦點移到 NULL：可能是宿主正在交接（Excel 先移開焦點、再交給儲存格編輯器），稍後再確認。
+    Undecided,
+    /// 換到別的文件，或沒在組字：送出組字。
+    Left,
+}
+
+/// `owner`：組字所在的文件（沒在組字時為 None）。泛型只為了能在測試裡用一般型別代替 ITfDocumentMgr。
+fn focus_change<T: PartialEq>(focus: Option<&T>, owner: Option<&T>) -> FocusChange {
+    match (focus, owner) {
+        (_, None) => FocusChange::Left,
+        (Some(focus), Some(owner)) if focus == owner => FocusChange::CompositionMoved,
+        (None, Some(_)) => FocusChange::Undecided,
+        (Some(_), Some(_)) => FocusChange::Left,
+    }
+}
+
+/// 焦點變化之後要做什麼（#189）。
+#[derive(Debug, PartialEq, Eq)]
+enum FocusStep<C> {
+    /// 繼續組字。
+    Keep,
+    /// 等訊息佇列空下來再確認（settle_focus）。帶著這次的原文件的 context，記下來當送出時的最後退路。
+    Wait(Option<C>),
+    /// 送出組字並清掉欄位狀態。組字送到組字範圍本身的 context（宿主可能已經把組字搬到別的文件）；拿不到時才用這個
+    /// （這次焦點變化的原文件的 context），再拿不到就用焦點移到 NULL 時記下的（follow_focus）。
+    Leave(Option<C>),
+}
+
+/// 執行緒的焦點文件改變（ITfThreadMgrEventSink::OnSetFocus）時進行中的組字怎麼辦。`previous` 是原文件的 context（原文件是
+/// NULL 時為 None），`can_wait`：有回呼視窗可以稍後確認；沒有就照舊立即送出。泛型只為了能在測試裡用一般型別代替
+/// ITfDocumentMgr（T）與 ITfContext（C）。
+///
+/// 送出的目標以組字範圍為準，A→NULL→B 在確認前換到 B 也一樣；焦點移到 NULL 前的原文件只是最後的退路：記下的原文件可能不是
+/// 組字現在所在的文件（確認前宿主把組字搬走，發版前 code review），但組字範圍失效、拿不到 context 時沒有它字就沒地方送（第三輪）。
+fn focus_step<T: PartialEq, C>(
+    focus: Option<&T>,
+    owner: Option<&T>,
+    previous: Option<C>,
+    can_wait: bool,
+) -> FocusStep<C> {
+    match focus_change(focus, owner) {
+        FocusChange::CompositionMoved => FocusStep::Keep,
+        FocusChange::Undecided if can_wait => FocusStep::Wait(previous),
+        _ => FocusStep::Leave(previous),
+    }
+}
+
+/// 焦點移到 NULL 之後佇列空下來（settle_focus）：焦點回到組字所在的文件就繼續組字，否則送出（到組字範圍的 context）。
+fn settle_step<T: PartialEq, C>(current: Option<&T>, owner: Option<&T>) -> FocusStep<C> {
+    match focus_change(current, owner) {
+        FocusChange::CompositionMoved => FocusStep::Keep,
+        _ => FocusStep::Leave(None),
+    }
 }
 
 /// 同一個畫面版本最多因 OnLayoutChange 重查幾次。
@@ -156,6 +221,24 @@ impl State {
         }
         let key = keys::ctrl_punct(vk, lparam)?;
         (self.session.available() && self.session.ctrl_punctuation()).then_some(key)
+    }
+
+    /// 這一鍵是不是要攔下來切換「輸出簡體字」的 Ctrl＋Shift＋F11（#192）：引擎可用而且回報 simplified_hotkey
+    /// （設定開著、能即時切換）。先看按鍵本身，不是這個鍵就不問引擎。是的話不先送出組字（同選單，組字不動）。
+    /// TestKeyDown 問（test_simplified_hotkey），OnKeyDown 沿用同一個答案（key_simplified_hotkey）。
+    fn simplified_hotkey(&mut self, vk: u32) -> bool {
+        keys::simplified_hotkey(vk) && self.session.available() && self.session.simplified_hotkey()
+    }
+
+    fn test_simplified_hotkey(&mut self, vk: u32) -> bool {
+        let decision = self.simplified_hotkey(vk);
+        self.hotkey_tested.record(vk, decision);
+        decision
+    }
+
+    /// `tested`：OnKeyDown 一進來就從 hotkey_tested 取走的 TestKeyDown 決定；沒有時才問。
+    fn key_simplified_hotkey(&mut self, vk: u32, tested: Option<bool>) -> bool {
+        tested.unwrap_or_else(|| self.simplified_hotkey(vk))
     }
 
     fn tap(&mut self, side: keys::Side) -> &mut keys::ShiftTap {
@@ -221,6 +304,8 @@ impl TextService {
                 notes: caret::Notes::default(),
                 openclose: None,
                 openclose_value: 0,
+                left_from: None,
+                hotkey_tested: keys::Tested::default(),
             }),
             applying: Cell::new(0),
             layout_missed: Cell::new(false),
@@ -493,6 +578,7 @@ impl TextService_Impl {
             st.ui.present(&message, owner, document.clone());
             if !st.composing {
                 st.anchor = None;
+                st.left_from = None;
             }
             st.shown = match ctx.filter(|_| show) {
                 Some(ctx) => Some(Shown {
@@ -774,6 +860,89 @@ impl TextService_Impl {
         self.present(ctx, &snapshot);
     }
 
+    /// 進行中的組字所在的文件。宿主可能把組字搬到別的文件（Excel 的儲存格編輯器，#189），以組字範圍的 context 為準。
+    fn composition_document(&self) -> Option<ITfDocumentMgr> {
+        unsafe { self.composition_context()?.GetDocumentMgr().ok() }
+    }
+
+    /// 進行中的組字所在的 context；焦點變化時組字送到這裡（#189）。
+    fn composition_context(&self) -> Option<ITfContext> {
+        let st = self.state.borrow();
+        if !st.composing {
+            return None;
+        }
+        let composition = st.composition.as_ref()?;
+        unsafe { composition.GetRange().and_then(|r| r.GetContext()).ok() }
+    }
+
+    /// 焦點移到 NULL 之後佇列空下來了：焦點回到組字所在的文件（宿主把組字交給新文件）就繼續組字，
+    /// 否則照焦點移開時的做法送出到原文件。
+    pub(crate) fn settle_focus(&self) {
+        let current = self
+            .state
+            .borrow()
+            .thread_mgr
+            .as_ref()
+            .and_then(|t| unsafe { t.GetFocus() }.ok());
+        let owner = self.composition_document();
+        let step = settle_step(current.as_ref(), owner.as_ref());
+        self.follow_focus(step, current.is_some());
+    }
+
+    /// 照 focus_step／settle_step 的決定繼續組字、稍後確認或送出組字；`focused`：焦點落在某個文件（不是 NULL）。
+    fn follow_focus(&self, step: FocusStep<ITfContext>, focused: bool) {
+        if let Some(window) = self.state.borrow().callback.as_ref() {
+            if matches!(step, FocusStep::Wait(_)) {
+                window.settle_focus_later();
+            } else {
+                window.cancel_settle_focus();
+            }
+        }
+        match step {
+            FocusStep::Keep => {
+                self.state.borrow_mut().left_from = None;
+                zdebug!("焦點落在組字所在的文件，繼續組字");
+            }
+            FocusStep::Wait(previous) => {
+                // 記下組字現在所在的 context（拿不到就用這次的原文件）；連續兩次移到 NULL 時保留第一次的。
+                let from = self.composition_context().or(previous);
+                let mut st = self.state.borrow_mut();
+                if st.left_from.is_none() {
+                    st.left_from = from;
+                }
+                zdebug!("組字中焦點移到 NULL，稍後確認");
+            }
+            FocusStep::Leave(previous) => {
+                let left_from = self.state.borrow_mut().left_from.take();
+                let target = self.composition_context().or(previous).or(left_from);
+                self.leave_document(target.as_ref(), focused);
+            }
+        }
+    }
+
+    /// 換欄位：把進行中的組字提交到原欄位（與 Fcitx 5 外殼的 deactivate 相同），清掉候選與這個欄位的狀態。
+    fn leave_document(&self, previous: Option<&ITfContext>, focused: bool) {
+        self.finish(previous, "commit");
+        self.forget_candidates();
+        let changed = {
+            let mut st = self.state.borrow_mut();
+            st.reset_shift();
+            st.session.reset();
+            st.selection = None;
+            st.ui.hide();
+            // 全部共用（#115）時別的程式可能已經切換：引擎在執行就重新問，中／英指示跟著換（不為此啟動引擎）。
+            // 「輸出簡體字」也可能剛在設定程式或別的程式切換過（#169）：指示器的「简」跟著換。焦點離開文件（focus 為
+            // NULL）時不問；SIMPLIFIED_FRESH 之內剛從引擎得知（剛打字、同一次點擊的前一次焦點變化）也不問，
+            // 不在宿主的 UI 執行緒上每次多一次同步 IPC。開選單時另外照常確認（recheck_simplified）。
+            let mode = st.session.learn_mode(false);
+            let simplified = focused && st.session.refresh_simplified_after(SIMPLIFIED_FRESH);
+            mode || simplified
+        };
+        if changed {
+            self.sync_langbar();
+        }
+    }
+
     /// 每次按鍵重新確認欄位；阻擋路徑不記錄鍵碼、不連線／重播引擎。
     fn allowed(&self, ctx: Option<&ITfContext>) -> bool {
         let (secure, client, ui_less) = {
@@ -812,6 +981,7 @@ impl TextService_Impl {
         st.session.reset();
         st.composing = false;
         st.composition = None;
+        st.left_from = None;
         false
     }
 
@@ -1049,6 +1219,7 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
                 st.callback = None;
                 st.composition = None;
                 st.composing = false;
+                st.left_from = None;
                 st.eaten.clear();
                 st.reset_shift();
                 st.selection = None;
@@ -1132,11 +1303,17 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
         lparam: LPARAM,
     ) -> windows_core::Result<BOOL> {
         crate::guarded("OnTestKeyDown", || {
+            self.state.borrow_mut().hotkey_tested.forget(); // 上一次按鍵的決定不留給這一次（keys::Tested）
             if !self.allowed(pic.as_ref()) {
                 return Ok(false.into());
             }
             let vk = wparam.0 as u32;
             self.observe_shift(vk, lparam.0);
+            // 用快捷鍵切換簡體字（#192）：設定開著時吃掉，OnKeyDown 才切換；不先送出組字。
+            if self.state.borrow_mut().test_simplified_hotkey(vk) {
+                zdebug!("OnTestKeyDown vk={} -> 切換簡體字", vk);
+                return Ok(true.into());
+            }
             self.commit_before_host_key(pic.as_ref(), vk, lparam.0);
             self.learn_mode(vk);
             self.sync_caps(pic.as_ref(), vk);
@@ -1155,6 +1332,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
         lparam: LPARAM,
     ) -> windows_core::Result<BOOL> {
         crate::guarded("OnTestKeyUp", || {
+            self.state.borrow_mut().hotkey_tested.forget();
             if !self.allowed(pic.as_ref()) {
                 return Ok(false.into());
             }
@@ -1184,11 +1362,23 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
         lparam: LPARAM,
     ) -> windows_core::Result<BOOL> {
         crate::guarded("OnKeyDown", || {
+            let vk = wparam.0 as u32;
+            // TestKeyDown 的決定一進來就取走，在 allowed() 提早回傳時也不留給之後的按鍵（keys::Tested）。
+            let tested = self.state.borrow_mut().hotkey_tested.take(vk);
             if !self.allowed(pic.as_ref()) {
                 return Ok(false.into());
             }
-            let vk = wparam.0 as u32;
             self.observe_shift(vk, lparam.0);
+            // 用快捷鍵切換簡體字（#192）：跟輸入指示器選單的「輸出簡體字」同一條路，組字不動、提示「已切換為…」、
+            // 工作列「中」↔「简」。沿用 TestKeyDown 的決定（不再問引擎）：說要吃就一定吃，切換失敗（引擎剛好斷線）也照樣吃掉，
+            // 按鍵不會半途交給應用程式（F11 在瀏覽器、Excel 是全螢幕），放開時 OnTestKeyUp 看 eaten 也一致。
+            if self.state.borrow_mut().key_simplified_hotkey(vk, tested) {
+                let on = !self.state.borrow().session.simplified().unwrap_or(false);
+                let switched = self.set_output_simplified(on);
+                zdebug!("OnKeyDown vk={} 切換簡體字 on={} ok={}", vk, on, switched);
+                self.state.borrow_mut().eaten.insert(vk);
+                return Ok(true.into());
+            }
             self.commit_before_host_key(pic.as_ref(), vk, lparam.0);
             self.learn_mode(vk);
             self.sync_caps(pic.as_ref(), vk);
@@ -1232,6 +1422,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
         lparam: LPARAM,
     ) -> windows_core::Result<BOOL> {
         crate::guarded("OnKeyUp", || {
+            self.state.borrow_mut().hotkey_tested.forget();
             if !self.allowed(pic.as_ref()) {
                 return Ok(false.into());
             }
@@ -1293,6 +1484,7 @@ impl ITfCompositionSink_Impl for TextService_Impl {
                 let mut st = self.state.borrow_mut();
                 st.composition = None;
                 st.composing = false;
+                st.left_from = None;
                 st.ui.hide();
             }
             self.forget_candidates();
@@ -1319,27 +1511,17 @@ impl ITfThreadMgrEventSink_Impl for TextService_Impl {
         previous: Ref<'_, ITfDocumentMgr>,
     ) -> windows_core::Result<()> {
         crate::guarded("OnSetFocus", || {
-            // 換欄位：把進行中的組字提交到原欄位（與 Fcitx 5 外殼的 deactivate 相同）。
-            let ctx = previous.as_ref().and_then(|d| unsafe { d.GetTop().ok() });
-            self.finish(ctx.as_ref(), "commit");
-            self.forget_candidates();
-            let changed = {
-                let mut st = self.state.borrow_mut();
-                st.reset_shift();
-                st.session.reset();
-                st.selection = None;
-                st.ui.hide();
-                // 全部共用（#115）時別的程式可能已經切換：引擎在執行就重新問，中／英指示跟著換（不為此啟動引擎）。
-                // 「輸出簡體字」也可能剛在設定程式或別的程式切換過（#169）：指示器的「简」跟著換。焦點離開文件（focus 為
-                // NULL）時不問；SIMPLIFIED_FRESH 之內剛從引擎得知（剛打字、同一次點擊的前一次焦點變化）也不問，
-                // 不在宿主的 UI 執行緒上每次多一次同步 IPC。開選單時另外照常確認（recheck_simplified）。
-                let mode = st.session.learn_mode(false);
-                let simplified = focus.as_ref().is_some() && st.session.refresh_simplified_after(SIMPLIFIED_FRESH);
-                mode || simplified
-            };
-            if changed {
-                self.sync_langbar();
-            }
+            let previous = previous.as_ref().and_then(|d| unsafe { d.GetTop().ok() });
+            let owner = self.composition_document();
+            zdebug!(
+                "OnSetFocus focus={} previous={} composing={}",
+                if focus.is_some() { "document" } else { "NULL" },
+                if previous.is_some() { "context" } else { "none" },
+                owner.is_some()
+            );
+            let can_wait = self.state.borrow().callback.is_some();
+            let step = focus_step(focus.as_ref(), owner.as_ref(), previous, can_wait);
+            self.follow_focus(step, focus.as_ref().is_some());
             Ok(())
         })
     }
@@ -1472,6 +1654,59 @@ mod layout_tests {
 }
 
 #[cfg(test)]
+mod focus_tests {
+    use super::*;
+
+    #[test]
+    fn composition_moved_by_the_host_keeps_composing() {
+        // #189：Excel 的儲存格在「就緒」時打 2（ㄉ）。組字在試算表的文件 grid 開始，Excel 先把焦點移到 NULL、
+        // 再交給儲存格編輯器 editor，組字一起搬過去。修正前第一次焦點變化就把 ㄉ 送出，得到「ㄉ億一次」（0.2.1 是「2億一次」）。
+        let (grid, editor) = ("grid", "editor");
+        assert_eq!(focus_change(None, Some(&grid)), FocusChange::Undecided);
+        assert_eq!(focus_change(Some(&editor), Some(&editor)), FocusChange::CompositionMoved);
+        // 焦點移開又回到同一個文件（宿主短暫移開焦點），組字仍在那裡：繼續組字。
+        assert_eq!(focus_change(Some(&grid), Some(&grid)), FocusChange::CompositionMoved);
+    }
+
+    #[test]
+    fn leaving_the_composition_document_still_commits() {
+        // 換到別的欄位，組字沒有跟過去：照舊送出到原欄位。
+        assert_eq!(focus_change(Some(&"other"), Some(&"field")), FocusChange::Left);
+        // 沒在組字：照舊清掉這個欄位的狀態。
+        assert_eq!(focus_change(Some(&"other"), None), FocusChange::Left);
+        assert_eq!(focus_change::<&str>(None, None), FocusChange::Left);
+    }
+
+    #[test]
+    fn excel_handover_waits_then_keeps_composing() {
+        // #189：grid → NULL → editor，組字搬到 editor。等確認時焦點已在組字所在的文件：繼續組字。
+        assert_eq!(focus_step(None, Some(&"grid"), Some("grid ctx"), true), FocusStep::Wait(Some("grid ctx")));
+        assert_eq!(focus_step(Some(&"editor"), Some(&"editor"), None::<&str>, true), FocusStep::Keep);
+        assert_eq!(settle_step(Some(&"editor"), Some(&"editor")), FocusStep::<&str>::Keep);
+    }
+
+    #[test]
+    fn focus_to_null_then_another_document_commits() {
+        // code review（#189 回歸）：組字中焦點 A → NULL → B，第二次焦點變化在確認之前（50ms 內）就來了。
+        // 第二次的原文件是 NULL：照樣送出，目標是組字範圍本身的 context（follow_focus），不是這次的原文件。
+        assert_eq!(focus_step(None, Some(&"A"), Some("A ctx"), true), FocusStep::Wait(Some("A ctx")));
+        assert_eq!(focus_step(Some(&"B"), Some(&"A"), None::<&str>, true), FocusStep::Leave(None));
+        // 確認時焦點仍不在組字所在的文件（A → NULL → NULL 也一樣）：送出。
+        assert_eq!(settle_step(Some(&"B"), Some(&"A")), FocusStep::<&str>::Leave(None));
+        assert_eq!(settle_step(None, Some(&"A")), FocusStep::<&str>::Leave(None));
+        // 沒有回呼視窗時不等，照舊立即送出。
+        assert_eq!(focus_step(None, Some(&"A"), Some("A ctx"), false), FocusStep::Leave(Some("A ctx")));
+    }
+
+    #[test]
+    fn switching_documents_directly_commits() {
+        assert_eq!(focus_step(Some(&"B"), Some(&"A"), Some("A ctx"), true), FocusStep::Leave(Some("A ctx")));
+        // 沒在組字（沒有組字範圍）：照舊清掉原文件的欄位狀態。
+        assert_eq!(focus_step(Some(&"C"), None, Some("B ctx"), true), FocusStep::Leave(Some("B ctx")));
+    }
+}
+
+#[cfg(test)]
 mod composition_tests {
     use super::*;
     use windows::Win32::UI::TextServices::{ITfComposition_Impl, ITfRange};
@@ -1527,3 +1762,7 @@ mod composition_tests {
         assert_eq!(service.state.borrow_mut().session.key("u").text(), "ㄧ");
     }
 }
+
+#[cfg(test)]
+#[path = "focus_host_tests.rs"]
+mod focus_host_tests;
