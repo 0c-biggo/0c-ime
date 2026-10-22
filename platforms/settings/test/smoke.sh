@@ -500,6 +500,10 @@ launch hsu input
 if window_up; then
   sleep 2.5
   import -window root "$OUT/hsu-input.png"
+  # 捲到最下面的「鍵盤」卡片：三個選項，選中「許氏」。
+  xdotool mousemove 650 500 click --repeat 20 --delay 50 5
+  sleep 1
+  import -window root "$OUT/hsu-input-keyboard.png"
 else bad "hsu/input 視窗沒有出現"; cat /tmp/app-hsu-input.log; fi
 stop_app
 
