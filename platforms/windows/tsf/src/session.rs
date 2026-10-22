@@ -129,6 +129,10 @@ pub struct Session {
     simplified: bool,
     // 上一次從引擎得知「輸出簡體字」的時間（health／open／快照）；換欄位時剛問過就不再問（refresh_simplified_after）。
     simplified_at: Option<Instant>,
+    // 沒在組字時哪些鍵交給引擎（health 的 info，見 idle_key_from，#183）與它是在哪一代連線上問到的。設定一改引擎就重啟、
+    // 舊連線跟著斷，所以同一代、連線還在時沿用，不每按一個鍵就問一次 health（同 caps_generation）。
+    idle_info: Option<Value>,
+    idle_generation: u32,
 }
 
 /// 重開 session（引擎重啟、斷線）時要不要送「設定模式」還原外殼記得的模式（#160）。新 session 從開始時的模式起：
@@ -193,6 +197,8 @@ impl Session {
             simplified_live: false,
             simplified: false,
             simplified_at: None,
+            idle_info: None,
+            idle_generation: 0,
         }
     }
 
@@ -350,18 +356,22 @@ impl Session {
         self.handle(json!({"type": "caps_lock", "on": on}))
     }
 
-    /// TestKeyDown 只查設定，不送按鍵：關閉捷徑或接舊引擎時，= 必須交還宿主。
-    pub fn emoji_shortcut(&mut self) -> bool {
-        self.client
-            .call(&json!({"op": "health"}))
-            .is_some_and(|reply| reply["ok"] == true && reply["info"]["emoji_shortcut"] == "equals")
-    }
-
-    /// 沒在組字時的聲調鍵是否交給引擎（見 idle_tone_keys）。
-    pub fn tone_mark_keys(&mut self) -> bool {
-        self.client
-            .call(&json!({"op": "health"}))
-            .is_some_and(|reply| reply["ok"] == true && idle_tone_keys(&reply["info"]))
+    /// 沒在組字時這個鍵要不要交給引擎（見 idle_key_from）。TestKeyDown 只查設定，不送按鍵：答錯時 WPF 會掉鍵，
+    /// 或吃掉應用程式的鍵（關閉 Emoji 捷徑時的 =、許氏的數字與 q）。只在答案依排列或設定而不同的鍵（keys::layout_dependent）查詢；
+    /// health 的答案跟著連線快取（設定一改引擎就重啟、連線跟著斷），連線還在時不再往返。引擎不可用時為 false，交還宿主。
+    pub fn idle_key(&mut self, key: &str) -> bool {
+        let fresh = self.idle_info.is_some()
+            && self.client.connected()
+            && self.idle_generation == self.client.generation()
+            && self.client.alive();
+        if !fresh {
+            let Some(reply) = self.client.call(&json!({"op": "health"})).filter(|r| r["ok"] == true) else {
+                return false;
+            };
+            self.idle_info = Some(reply["info"].clone());
+            self.idle_generation = self.client.generation();
+        }
+        self.idle_info.as_ref().is_some_and(|info| idle_key_from(info, key))
     }
 
     /// 「用快捷鍵切換簡體字」開著、引擎也能即時切換（health 的 simplified_hotkey 與 output_simplified_live，#192）。
@@ -381,14 +391,6 @@ impl Session {
         self.client
             .call(&json!({"op": "health"}))
             .is_some_and(|reply| reply["ok"] == true && reply["info"]["ctrl_punctuation"] == "true")
-    }
-
-    /// 引擎目前載入的鍵盤排列是否為倚天 41 鍵（#83）。只在答案依排列而不同的鍵（keys::layout_dependent）查詢；
-    /// 引擎不可用或舊版引擎沒有這一項時為標準排列。
-    pub fn eten_layout(&mut self) -> bool {
-        self.client
-            .call(&json!({"op": "health"}))
-            .is_some_and(|reply| reply["ok"] == true && reply["info"]["keyboard_layout"] == "eten")
     }
 
     /// 引擎目前載入的中英切換鍵設定（左右 Shift 與單按時限，#117）。在 Shift 單按放開時查詢，
@@ -857,6 +859,25 @@ fn idle_tone_keys(info: &Value) -> bool {
     info["tone_mark_keys"] == "true" || info["mixed_input"] == "true"
 }
 
+/// 沒在組字時這個鍵要不要交給引擎，依 health 的 info：
+/// - 引擎回報 idle_keys（#183 起）：照它。答案依鍵盤排列與設定而不同（許氏的數字、- / 不是注音鍵、交還宿主），
+///   由引擎算（core/session.IdleKeys，測試逐鍵比對實際處理結果），外殼不必為每種排列各寫一份按鍵表。
+/// - 舊引擎：依 keyboard_layout（標準或倚天，#83）、emoji_shortcut 與聲調鍵設定（idle_tone_keys）推算。
+fn idle_key_from(info: &Value, key: &str) -> bool {
+    if let Some(keys) = info["idle_keys"].as_str() {
+        return key.chars().count() == 1 && keys.contains(key);
+    }
+    use crate::keys::{starts_composition, tone_key, Layout};
+    let layout = if info["keyboard_layout"] == "eten" { Layout::ETen } else { Layout::Standard };
+    if key == "=" && layout == Layout::Standard {
+        info["emoji_shortcut"] == "equals"
+    } else if tone_key(layout, key) {
+        idle_tone_keys(info)
+    } else {
+        starts_composition(layout, key)
+    }
+}
+
 #[cfg(test)]
 mod idle_tone_key_tests {
     use super::*;
@@ -867,6 +888,32 @@ mod idle_tone_key_tests {
         assert!(idle_tone_keys(&json!({"tone_mark_keys": "false", "mixed_input": "true"})), "#175：354");
         assert!(!idle_tone_keys(&json!({"tone_mark_keys": "false", "mixed_input": "false"})));
         assert!(!idle_tone_keys(&json!({})), "舊引擎");
+    }
+
+    #[test]
+    fn idle_keys_follow_the_engine_report() {
+        // #183 許氏：數字與 - / 交還宿主，字母、, . ; = 交給引擎。
+        let hsu = json!({"idle_keys": "!\"&'(),.:;<=>?[\\]^_`abcdefghijklmnoprstuvwxyz{}~", "keyboard_layout": "hsu", "mixed_input": "true", "tone_mark_keys": "true"});
+        for key in ["1", "3", "4", "6", "7", "0", "-", "/", "q"] {
+            assert!(!idle_key_from(&hsu, key), "{key}");
+        }
+        for key in ["=", "a", ","] {
+            assert!(idle_key_from(&hsu, key), "{key}");
+        }
+        // 舊引擎沒有 idle_keys：照原本的推算。
+        let standard = json!({"keyboard_layout": "standard", "emoji_shortcut": "equals", "tone_mark_keys": "true"});
+        for key in ["1", "2", "5", "3", "7", "=", "-", "/"] {
+            assert!(idle_key_from(&standard, key), "{key}");
+        }
+        let eten = json!({"keyboard_layout": "eten", "emoji_shortcut": "equals", "tone_mark_keys": "true"});
+        for key in ["1", "2", "7", "="] {
+            assert!(idle_key_from(&eten, key), "{key}");
+        }
+        for key in ["5", "6"] {
+            assert!(!idle_key_from(&eten, key), "{key}");
+        }
+        assert!(!idle_key_from(&json!({"emoji_shortcut": "off"}), "="));
+        assert!(!idle_key_from(&json!({}), "3"), "舊引擎沒有聲調設定：交還宿主");
     }
 }
 
@@ -936,7 +983,7 @@ mod tests {
     #[test]
     fn emoji_opens_without_preedit_and_double_equals_commits_once() {
         let Some(mut s) = session() else { return };
-        assert!(s.emoji_shortcut());
+        assert!(s.idle_key("="));
         assert_eq!(s.id, 0, "查設定不能建立或改動組字");
         let palette = s.key("=");
         assert!(palette.ok && palette.handled && palette.composing());

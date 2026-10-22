@@ -1094,20 +1094,12 @@ impl TextService_Impl {
         }
         keys::printable(vk, lparam, false) // 中文模式不理 Caps Lock（#168）
             .map(|key| {
-                // 鍵盤排列只影響少數幾個鍵（#83）；其他鍵不多查一次引擎。
-                let layout = if keys::layout_dependent(&key) && st.session.eten_layout() {
-                    keys::Layout::ETen
+                // 答案依鍵盤排列與設定而不同的鍵（數字、= - /）問引擎：引擎回報它沒在組字時處理哪些鍵（#183），
+                // 涵蓋倚天的 1–4、許氏的數字交還宿主、= 的 Emoji 設定、聲調鍵的設定（#83、#135、#175）。其他鍵不多查一次引擎。
+                if keys::layout_dependent(&key) {
+                    st.session.idle_key(&key)
                 } else {
-                    keys::Layout::Standard
-                };
-                if key == "=" && layout == keys::Layout::Standard {
-                    st.session.emoji_shortcut()
-                } else if keys::tone_key(layout, &key) {
-                    // 聲調鍵：沒開中英混打時引擎先把數字留在組字區，緊接空白換成聲調符號（#135）；中英混打時
-                    // 照字面留在組字區，354 才整串留數字（#175）。
-                    st.session.tone_mark_keys()
-                } else {
-                    keys::starts_composition(layout, &key)
+                    keys::starts_composition(keys::Layout::Standard, &key)
                 }
             })
             .unwrap_or(false)

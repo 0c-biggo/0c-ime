@@ -632,7 +632,8 @@ mod tests {
                 || tone_key(Layout::Standard, &c) != tone_key(Layout::ETen, &c);
             assert!(!differs || layout_dependent(&c), "{c} 的答案依排列而不同，必須查排列");
         }
-        assert!(layout_dependent("=") && !layout_dependent("a"));
+        assert!(layout_dependent("=") && layout_dependent("q") && layout_dependent("a"));
+        assert!(!layout_dependent("A") && !layout_dependent(",") && !layout_dependent("@"));
     }
 
     #[test]
@@ -758,7 +759,7 @@ mod tests {
     }
 }
 
-/// 引擎載入的鍵盤排列（health 的 keyboard_layout，#83）。
+/// 引擎載入的鍵盤排列（health 的 keyboard_layout，#83）：只給沒有回報 idle_keys 的舊引擎推算閒置按鍵（#183 起由引擎回報）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Layout {
     Standard,
@@ -788,8 +789,10 @@ pub fn tone_key(layout: Layout, key: &str) -> bool {
     key.len() == 1 && keys.contains(key)
 }
 
-/// 兩種排列答案不同的鍵：只有這些鍵需要向引擎查排列，其他鍵不多一次往返。
-/// 6 是標準排列的 ˊ、倚天不是注音鍵（#135）。
+/// 沒在組字時答案依排列或設定而不同的鍵，照引擎回報的 idle_keys 決定（session::idle_key，依連線快取，不每鍵往返）：
+/// 6 是標準排列的 ˊ、倚天不是注音鍵（#135）；許氏的數字、- / 與 q 都不是注音鍵，交還宿主（#183）；= 看 Emoji 設定。
+/// 小寫字母也在內：之後的排列不一定每個字母都用到。其他鍵（Shift＋字母、, . ; ' 與 Shift 標點）三種排列答案相同，
+/// 照 starts_composition 的固定集合；中英混打時引擎雖然也收 Shift＋字母與 @，外殼照舊交給應用程式。
 pub fn layout_dependent(key: &str) -> bool {
-    key.len() == 1 && "12567=".contains(key)
+    key.len() == 1 && (key.as_bytes()[0].is_ascii_lowercase() || "1234567890=-/".contains(key))
 }
