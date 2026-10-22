@@ -43,7 +43,9 @@ func paths() update.MacPaths {
 		}
 	})
 	// 清理舊備份時跳過仍在使用的（#179，見 backup_inuse_mac.go）。
-	return update.MacPaths{InputMethods: filepath.Join(home, "Library/Input Methods"), Support: supportDir, InUse: macBackupInUse()}
+	// 回復時先把備份裡為了背景項目改名的排程 plist 改回（#205，見 agent_backup_mac.go）。
+	return update.MacPaths{InputMethods: filepath.Join(home, "Library/Input Methods"), Support: supportDir, InUse: macBackupInUse(),
+		PrepareRollback: func(app string) { restoreBundledAgent(app) }}
 }
 func basePath() string    { return paths().Support }
 func receiptPath() string { return filepath.Join(basePath(), "install-receipt.json") }
@@ -104,6 +106,8 @@ func install(bundle string, release *update.Release) error {
 	if err != nil {
 		return err
 	}
+	// 舊 App 剛移入備份、舊輸入法程式還在執行：先讓它拉不走背景項目的登記，afterInstall 以新版註冊時登記就留在新版（#205）。
+	quietBackupAgents(filepath.Join(destination.Support, "backups"))
 	if changed != nil {
 		// 例如使用者改過 App 內的程式並重新簽章，或防毒軟體動過檔案（#83）：整個 App 已換成核對過的新版。
 		fmt.Printf("原本安裝的 App 有檔案被改動或缺少（%v），已照常換成新版；原本的 App 保留在備份。\n", changed)
@@ -225,7 +229,7 @@ func rollback(_ string, restoreUser bool) error {
 		target, e := update.MacRollbackTarget(paths())
 		// 啟用中的排程一律先取消，回復後依回復的 App 重新建立，背景項目不會指向移入備份的 App。
 		// 使用者在系統設定關閉的保留原狀，除非回復到沒有內附排程的舊 App（之後不會再用到這筆紀錄）。
-		if state == "enabled" || e == nil && !fileExists(appAgent(target)) {
+		if state == "enabled" || e == nil && !bundlesAgent(target) {
 			_, _ = agentState(app, "unregister")
 		}
 	}
@@ -241,6 +245,8 @@ func rollback(_ string, restoreUser bool) error {
 		// 搬移前的取消在 macOS 26 實測不一定生效；以移入備份的 App 再取消，背景項目不留下啟用中的舊紀錄。
 		unregisterMovedAgent(filepath.Join(r.Backup, update.MacApp))
 	}
+	// 剛移入備份的 App 可能還在執行：讓它拉不走接下來以回復的 App 註冊的登記（#205）。
+	quietBackupAgents(filepath.Join(basePath(), "backups"))
 	keep := state != "requires-approval"
 	if s, e := autoupdate.Load(basePath()); e == nil && s.ScheduleRemoved {
 		keep = false
@@ -316,6 +322,8 @@ func uninstall() error {
 	if target, err := update.MacRollbackTarget(paths()); err == nil {
 		unregisterMovedAgent(target) // 搬移前的取消不一定生效，見 unregisterMovedAgent
 	}
+	// 移入備份、仍在執行的 App 沒有註冊時會自己補註冊（舊版的選單監看），那樣排程會指著備份：讓它找不到 plist（#205）。
+	quietBackupAgents(filepath.Join(basePath(), "backups"))
 	forgetBackupApps()
 	removeSettingsEntry()
 	// 移入備份的 App 仍在執行：停手後結束，不留在背景跑到登出（#170）。

@@ -25,7 +25,8 @@ import (
 //   - 系統的背景項目（SMAppService，com.biggo.0c.update）登記指向裡面的 App：macOS 15 背景更新後，
 //     登記會跟著被移入備份的 App 走，排程執行的是備份裡的 0c-update（#178）。launchctl print 不顯示
 //     登記的路徑，但有登記 App 的版本（parent bundle version）；這個版本的備份裡最早的一份當作使用中
-//     （同版本重裝留下的其他幾份不算，見 agentBackup）。
+//     （同版本重裝留下的其他幾份不算，見 agentBackup）。原因是仍在執行的舊輸入法程式查詢排程時把登記拉到它所在的
+//     備份（#205）；0.2.5 起備份裡的排程 plist 會改名（agent_backup_mac.go），登記不再被拉走，這條留著給更早留下的情況。
 //   - 查不到（lsof、launchctl 失敗）時一律當作使用中，這次不刪，下次更新再試。
 
 // backupUsage 是清理當下觀察到的使用情形。

@@ -192,6 +192,11 @@ func run(args []string) error {
 		return err
 	}
 	switch action {
+	case "status", "check", "auto", "finish":
+		// macOS：背景項目的登記留在已安裝的 App（#205）；舊輸入法程式的選單、設定程式與排程都經過這幾個命令。
+		adoptSchedule(action != "status")
+	}
+	switch action {
 	case "settings":
 		return settingsCommand(args[1:])
 	case "set":

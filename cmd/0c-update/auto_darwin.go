@@ -90,16 +90,16 @@ func agentPath() string {
 }
 
 // appAgent 是 App 內附的排程 plist；有它的 App 以 SMAppService 註冊排程。
-func appAgent(app string) string {
-	return filepath.Join(app, "Contents/Library/LaunchAgents", agentLabel+".plist")
-}
+func appAgent(app string) string { return bundledAgentPlist(app) }
 
 func installedApp() string { return filepath.Join(paths().InputMethods, update.MacApp) }
 
 // agentState 以 App 本身的執行檔查詢或變更 SMAppService 排程（SMAppService 依呼叫者的 main bundle 找 plist）。
 // 回傳 enabled、requires-approval（使用者在系統設定關閉了背景執行）、not-registered、not-found。
 func agentState(app, action string) (string, error) {
-	out, err := exec.Command(filepath.Join(app, "Contents/MacOS/0c"), "--update-agent", action).Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, filepath.Join(app, "Contents/MacOS/0c"), "--update-agent", action).Output()
 	state := strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
 	if state == "" {
 		if err == nil {

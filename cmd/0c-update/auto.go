@@ -432,6 +432,10 @@ func autoCommand(action string, args []string) (resultErr error) {
 		case "status":
 			fmt.Println(scheduleStatus())
 			return nil
+		case "adopt":
+			// 內部使用（macOS，#205）：status 發現 launchd 啟動不了排程時，在脫離的行程裡重新註冊。
+			adoptSchedule(true)
+			return nil
 		case "open-settings":
 			// macOS：使用者在系統設定關閉背景執行後，開啟登入項目頁讓他重新允許。
 			return openScheduleSettings()
