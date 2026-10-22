@@ -438,6 +438,87 @@ func TestRepairKWinFcitxResumesAfterInterruption(t *testing.T) {
 	}
 }
 
+// stopping 紀錄只屬於寫下它的那次開機：重新開機後 KWin 照常啟動 Fcitx5，舊紀錄要清掉；否則使用者之後自己結束
+// Fcitx5（或換到不跑 Fcitx5 的工作階段）時，排程會拿上次開機的環境、群組與輸入法重新啟動它、改寫 kwinrc。
+// 同一次開機已有別人啟動的 Fcitx5 也一樣；我們單元裡還沒結束的舊行程則留著紀錄等它結束。
+func TestRepairKWinFcitxDropsStaleStoppingMark(t *testing.T) {
+	saved := &shellRestart{KWinIM: fcitxDesktop, IM: "zuin", Args: []string{}}
+	stopped := func(t *testing.T, boot string) (*fakeKWin, string, *handbackCalls) {
+		k := newFakeKWin(t)
+		k.set(fcitxDesktop, true)
+		base := kwinStateDir()
+		c := stubHandback(t, "ready")
+		saveKWinHandback(base, kwinHandback{Boot: boot, Phase: "stopping", Restart: saved})
+		return k, base, c
+	}
+	gone := func(t *testing.T, base string) {
+		t.Helper()
+		if _, err := os.Stat(kwinHandbackPath(base)); !os.IsNotExist(err) {
+			t.Fatal("舊紀錄應清掉")
+		}
+	}
+
+	t.Run("rebooted, KWin started Fcitx5, user quits it later", func(t *testing.T) {
+		k, base, c := stopped(t, "boot-0")
+		addProc(t, 123, "fcitx5", 50, kwinCgroup, "WAYLAND_SOCKET=27")
+		repairKWinFcitx(base)
+		gone(t, base)
+		os.RemoveAll(filepath.Join(procRoot, "123")) // 使用者自己結束 Fcitx5
+		repairKWinFcitx(base)
+		if len(c.exits) != 0 || len(c.restored) != 0 || len(k.writes()) != 0 {
+			t.Fatalf("不該重新啟動或改 kwinrc：%+v %v", c, k.writes())
+		}
+	})
+	t.Run("rebooted into a session without Fcitx5", func(t *testing.T) {
+		k, base, c := stopped(t, "boot-0")
+		repairKWinFcitx(base)
+		gone(t, base)
+		if len(c.restored) != 0 || len(k.writes()) != 0 {
+			t.Fatalf("上次開機的紀錄不該拿來啟動：%+v %v", c, k.writes())
+		}
+	})
+	t.Run("record without a boot ID", func(t *testing.T) {
+		_, base, c := stopped(t, "")
+		repairKWinFcitx(base)
+		gone(t, base)
+		if len(c.restored) != 0 {
+			t.Fatalf("%+v", c)
+		}
+	})
+	t.Run("same boot, someone else already started Fcitx5", func(t *testing.T) {
+		k, base, c := stopped(t, "boot-1")
+		addProc(t, 123, "fcitx5", 1, "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-fcitx5.scope\n", "")
+		repairKWinFcitx(base)
+		gone(t, base)
+		os.RemoveAll(filepath.Join(procRoot, "123"))
+		repairKWinFcitx(base)
+		if len(c.exits) != 0 || len(c.restored) != 0 || len(k.writes()) != 0 {
+			t.Fatalf("%+v %v", c, k.writes())
+		}
+	})
+	t.Run("same boot, switched to a session without KWin", func(t *testing.T) {
+		k, base, c := stopped(t, "boot-1")
+		os.RemoveAll(filepath.Join(procRoot, "50")) // 登出 Plasma、改登入 GNOME 或 X11
+		repairKWinFcitx(base)
+		gone(t, base)
+		if len(c.restored) != 0 || len(k.writes()) != 0 {
+			t.Fatalf("%+v %v", c, k.writes())
+		}
+	})
+	t.Run("same boot, our old Fcitx5 is still exiting", func(t *testing.T) {
+		_, base, c := stopped(t, "boot-1")
+		addProc(t, 123, "fcitx5", 1, restartCgroup, "")
+		if staleKWinHandback(loadKWinHandback(base), []int{123}) {
+			t.Fatal("我們單元裡的舊行程還在：紀錄仍有效")
+		}
+		repairKWinFcitx(base) // 照原本的一次性修復再問一次，退出後交還 KWin
+		if len(c.exits) != 1 || len(c.restored) != 1 || c.restored[0].KWinIM != fcitxDesktop {
+			t.Fatalf("應交還 KWin：%+v", c)
+		}
+		gone(t, base)
+	})
+}
+
 func TestUserSetsInputMethod(t *testing.T) {
 	dir := t.TempDir()
 	for body, want := range map[string]bool{

@@ -535,10 +535,17 @@ func repairKWinFcitx(base string) {
 	if err != nil {
 		return
 	}
-	if mark.Phase == "stopping" && mark.Restart != nil && len(pids) == 0 {
-		// 上次請 Fcitx5 退出後被中止：接著交給 KWin。
-		finishKWinHandback(base, mark.Restart)
-		return
+	if mark.Phase == "stopping" {
+		if staleKWinHandback(mark, pids) {
+			// 重新開機過（KWin 已照常啟動輸入法），或這次開機已有別人啟動的 Fcitx5：紀錄裡的環境、群組與輸入法
+			// 已不適用，留著的話使用者之後自己結束 Fcitx5 時會被拿來重新啟動、改寫 kwinrc。
+			os.Remove(kwinHandbackPath(base))
+			mark = kwinHandback{}
+		} else if len(pids) == 0 {
+			// 上次請 Fcitx5 退出後被中止：接著交給 KWin。
+			finishKWinHandback(base, mark.Restart)
+			return
+		}
 	}
 	if mark.Phase == "failed" && mark.Boot == currentBootID() {
 		return
@@ -575,6 +582,28 @@ func repairKWinFcitx(base string) {
 	}
 	fmt.Fprintln(os.Stderr, "0c-update: Fcitx5 由更新器啟動、拿不到 KWin 的輸入法連線；交還 KWin 重新啟動")
 	finishKWinHandback(base, restart)
+}
+
+// staleKWinHandback：stopping 紀錄只在同一次開機、同一個 Plasma Wayland 工作階段、Fcitx5 還沒被別人重新啟動時有效。
+// 開機 ID 不同（或任一邊讀不到）就是重新開機過；沒有 kwin_wayland 就是換到別的工作階段（重新登入 Plasma 時 KWin
+// 自己會啟動輸入法）；有不在我們單元裡的 Fcitx5，就是 KWin 或使用者已經啟動了它。這些都不必再交還。
+// 我們單元裡的那個是請它退出後還沒結束的舊行程，紀錄留著等它結束。
+func staleKWinHandback(mark kwinHandback, pids []int) bool {
+	if mark.Restart == nil {
+		return true
+	}
+	if boot := currentBootID(); mark.Boot == "" || boot == "" || mark.Boot != boot {
+		return true
+	}
+	if !kwinWaylandRunning() {
+		return true
+	}
+	for _, pid := range pids {
+		if !inFcitxRestartUnit(filepath.Join(procRoot, strconv.Itoa(pid))) {
+			return true
+		}
+	}
+	return false
 }
 
 func finishKWinHandback(base string, restart *shellRestart) {
