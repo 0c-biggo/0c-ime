@@ -127,7 +127,10 @@ func (s *Session) markHint() string {
 	if len([]rune(word)) != end-start || strings.ContainsFunc(word, func(r rune) bool { return zhuyin.ClassOf(r) != zhuyin.None }) {
 		return "這段還沒選好字，先選字再加入"
 	}
-	syls := s.syls[start:end]
+	syls, ok := s.typedReading(start, end)
+	if !ok {
+		return "這段有沒打聲調、還認不出讀音的字，補上聲調再加入"
+	}
 	reading := zhuyin.Key(syls)
 	switch {
 	case s.model.VocabReading(word, syls):
@@ -173,7 +176,11 @@ func (s *Session) addMarked() {
 		s.notices = append(s.notices, "這段還沒有選好字，先選字再加入")
 		return
 	}
-	syls := s.syls[start:end]
+	syls, ok := s.typedReading(start, end) // 沒打聲調的字用解碼走的詞庫讀音（#150）
+	if !ok {
+		s.notices = append(s.notices, "這段有沒打聲調、還認不出讀音的字，補上聲調再加入")
+		return
+	}
 	system := s.systemHas(word, syls)
 	b, err := s.model.VocabAdd([]vocab.Entry{{Text: word, Readings: []string{zhuyin.Key(syls)}}}, vocab.SourceCompose)
 	if err != nil {

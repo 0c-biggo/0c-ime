@@ -98,6 +98,9 @@ type Session struct {
 	// Simplified 由宿主依「輸出簡體字」設定（#118）：送出給應用程式的文字轉成簡體，nil 照原樣送出繁體。
 	// 組字區、候選、學習、補標點與前文都維持繁體，只有 Snapshot.Commit 改變。
 	Simplified *zhconv.Converter
+	// Toneless 由宿主依「不打聲調也能選字」設定（#150，預設關）：聲調選填，沒打聲調的音節由解碼決定（untoned.go）。
+	// 開啟時停用中英混打的自動判斷。零值時行為與沒有此功能時相同。
+	Toneless bool
 	// MixedInput is opt-in; English is a shared, immutable vocabulary.
 	EnglishAutocomplete   bool
 	MixedInput            bool
@@ -218,7 +221,7 @@ func (s *Session) SetLayout(l layout.Layout) {
 // mixedInput：中英混打對「哪些數字、標點是注音鍵」的判斷依標準排列寫成，其他排列先停用（#83）；
 // 使用者的設定保留，切回標準排列就照舊。
 func (s *Session) mixedInput() bool {
-	return mixedInputActive(s.MixedInput, s.layout == layout.Standard)
+	return mixedInputActive(s.MixedInput && !s.Toneless, s.layout == layout.Standard) // 聲調選填與混打二選一（#150）
 }
 
 func mixedInputActive(on, standardLayout bool) bool { return on && standardLayout }
@@ -411,6 +414,7 @@ func (s *Session) status(snap *proto.Snapshot) {
 // 切換本身也關閉候選。restore 是外殼確認中間沒有任何操作就立即切回注音：把剛清掉的注音放回原處（防誤觸）。
 func (s *Session) setMode(english, restore bool, stash *pendingStash) {
 	if english && !s.english {
+		s.finishUntoned() // 聲調選填：已是完整音節的注音留在組字區，不當成打到一半清掉（#150）
 		s.toggleStash = s.clearPendingZhuyin()
 	}
 	s.flushMixed()
@@ -565,6 +569,7 @@ func (s *Session) key(k string) (handled bool, commit string) {
 	if s.mixedKey(k) {
 		return true, ""
 	}
+	s.untonedKey(k)
 	switch k {
 	case proto.KeyBackspace:
 		return s.backspace(), ""
@@ -754,6 +759,10 @@ func (s *Session) pressKey(key rune) bool {
 	if !ok {
 		return false
 	}
+	if zhuyin.ClassOf(sym) != zhuyin.Tone && s.untonedBreak(sym) {
+		s.finishUntoned() // 聲調選填：這個注音接不上目前的音節，目前的音節不打聲調就完成，這一鍵開始新的音節（#150）
+		next, sym, _ = s.layout.Press(s.comp, key)
+	}
 	if zhuyin.ClassOf(sym) == zhuyin.Tone {
 		if s.comp.Empty() {
 			return false
@@ -767,43 +776,52 @@ func (s *Session) pressKey(key rune) bool {
 
 func (s *Session) symbol(sym rune) bool {
 	s.restorePendingLiteral()
+	if s.untonedBreak(sym) {
+		s.finishUntoned() // 聲調選填：這個注音接不上目前的音節，目前的音節不打聲調就完成（#150）
+	}
 	before := s.comp
 	done, ok := s.comp.Add(sym)
 	if ok {
-		done = s.neutralFallback(done)
-		if s.joinPrefixLiteral(done) {
-			return true
-		}
-		// 收進這個音節之後若整段解不出任何路徑（例如 ㄏㄟˊ、單打的 ㄅ＋空白，或候選關閉後多按了
-		// 一個數字鍵組出的 ㄅㄨㄛˇ），收進去會讓組字區空白，之後打什麼都顯示不出來（使用者回報）。
-		// 改成把整個音節連同聲調原樣留在組字區（#109、#107）：看得到、可退格，Enter 照樣送出；
-		// 使用者明確打的聲調不丟，接著打的注音從新的音節開始，不會蓋掉它。
-		// 原本就解不出路徑（保底顯示中）時不擋，照舊收進去，否則會變成什麼都打不進去。
-		s.refresh()
-		decodable := len(s.syls) == 0 || len(s.path) > 0 || s.nearReading
-		saved := s.saveSyllables()
-		s.insert(done)
-		// 精確讀音沒有字、但展開近音後整段可成詞的音節照樣收進來（例如 ㄕㄨㄥˋ 打的是 ㄙㄨㄥˋ）：
-		// 顯示維持原樣注音，只有開候選時才出現近音。
-		if s.refresh(); decodable && len(s.path) == 0 {
-			if s.fuzzyDecodable() {
-				s.nearReading = true
-			} else {
-				s.restoreSyllables(saved)
-				s.insertSyllableLiteral(before, done)
-				s.retypeLiteral = true // 多半是打錯：緊接著的同類介音／韻母改這個讀音（#85）
-			}
-		} else if decodable && len(s.path) > 0 && !s.completeDecodable() {
-			// 只能當某個更長的詞的開頭、自己沒有字的音節（ㄟ 只有「工口」的 ㄟ ㄌㄨㄛˊ，#107）：
-			// 解碼器會先顯示那個詞的第一個字，接著打的音節接不上時就卡成「工ㄋㄧˇ」。
-			// 同樣原樣留下注音；下一個音節能和它成詞（ㄋㄧ＋ㄗ˙＝妮子）時再收回去解碼。
-			s.restoreSyllables(saved)
-			s.insertSyllableLiteral(before, done)
-			s.pendingLiterals[len(s.pendingLiterals)-1].prefix = true
-		}
+		s.completeSyllable(before, done)
 		return true
 	}
 	return zhuyin.ClassOf(sym) != zhuyin.None && !(zhuyin.ClassOf(sym) == zhuyin.Tone && s.comp.Empty())
+}
+
+// completeSyllable 收進一個剛完成的音節：before 是完成前的組音狀態，done 是完成的音節（打了聲調，
+// 或聲調選填時沒打聲調的音節）。
+func (s *Session) completeSyllable(before zhuyin.Composer, done zhuyin.Syllable) {
+	done = s.neutralFallback(done)
+	if s.joinPrefixLiteral(done) {
+		return
+	}
+	// 收進這個音節之後若整段解不出任何路徑（例如 ㄏㄟˊ、單打的 ㄅ＋空白，或候選關閉後多按了
+	// 一個數字鍵組出的 ㄅㄨㄛˇ），收進去會讓組字區空白，之後打什麼都顯示不出來（使用者回報）。
+	// 改成把整個音節連同聲調原樣留在組字區（#109、#107）：看得到、可退格，Enter 照樣送出；
+	// 使用者明確打的聲調不丟，接著打的注音從新的音節開始，不會蓋掉它。
+	// 原本就解不出路徑（保底顯示中）時不擋，照舊收進去，否則會變成什麼都打不進去。
+	s.refresh()
+	decodable := len(s.syls) == 0 || len(s.path) > 0 || s.nearReading
+	saved := s.saveSyllables()
+	s.insert(done)
+	// 精確讀音沒有字、但展開近音後整段可成詞的音節照樣收進來（例如 ㄕㄨㄥˋ 打的是 ㄙㄨㄥˋ）：
+	// 顯示維持原樣注音，只有開候選時才出現近音。
+	if s.refresh(); decodable && len(s.path) == 0 {
+		if s.fuzzyDecodable() {
+			s.nearReading = true
+		} else {
+			s.restoreSyllables(saved)
+			s.insertSyllableLiteral(before, done)
+			s.retypeLiteral = true // 多半是打錯：緊接著的同類介音／韻母改這個讀音（#85）
+		}
+	} else if decodable && len(s.path) > 0 && !s.completeDecodable() {
+		// 只能當某個更長的詞的開頭、自己沒有字的音節（ㄟ 只有「工口」的 ㄟ ㄌㄨㄛˊ，#107）：
+		// 解碼器會先顯示那個詞的第一個字，接著打的音節接不上時就卡成「工ㄋㄧˇ」。
+		// 同樣原樣留下注音；下一個音節能和它成詞（ㄋㄧ＋ㄗ˙＝妮子）時再收回去解碼。
+		s.restoreSyllables(saved)
+		s.insertSyllableLiteral(before, done)
+		s.pendingLiterals[len(s.pendingLiterals)-1].prefix = true
+	}
 }
 
 // insert 在游標處插入一個音節；其後的鎖定右移，跨越游標的鎖定解除。
@@ -897,6 +915,7 @@ func (s *Session) shiftLocks(at, delta int) {
 }
 
 func (s *Session) moveTo(to int) {
+	s.finishUntoned()
 	if !s.comp.Empty() {
 		return // 音節打到一半不移動游標
 	}
@@ -992,7 +1011,7 @@ func (s *Session) openCandidates(length int) {
 		s.openMixedCandidates()
 		return
 	}
-	if !s.comp.Empty() {
+	if !s.comp.Empty() && !s.finishUntoned() {
 		s.openSymbols([]string{s.comp.String()}, s.cursor, 0, true)
 		return
 	}
@@ -1215,7 +1234,7 @@ func (s *Session) openAt(pos, length int) bool {
 		}
 	}
 	if length == 1 {
-		items = append(items, rawCandidate(string(s.syls[pos])))
+		items = append(items, rawCandidate(s.syls[pos].Text()))
 		if matched != nil {
 			matched = append(matched, "")
 		}
@@ -1367,12 +1386,15 @@ func (s *Session) accept() bool {
 func (s *Session) commit() string {
 	// Resolve pending English exactly as displayed; never accept a suggestion on Enter.
 	s.flushMixed()
+	s.finishUntoned() // 聲調選填：最後一個沒打聲調的音節也照解碼結果送出（#150）
 	if s.Rerank.Scorer == nil {
 		s.refresh()
 	} // 神經模式提交已顯示路徑；Enter 不啟動推論或接受其他欄位的模型更新。
 	text := s.snapshot().Text() // 未完成注音可能在句中，依畫面位置提交。
 	pins := s.readingPins(text)
-	ev := personal.Commit{Syls: s.syls, Rejected: s.rejected}
+	// 沒打聲調的音節換回詞庫讀音再學（#150）；換不回來的詞不學（同近音）。
+	syls, _ := s.resolvedSyllables()
+	ev := personal.Commit{Syls: syls, Rejected: s.rejected}
 	for _, g := range s.path {
 		if s.literals[g.Start] {
 			continue // 留下位置間隙，學習模型會在符號後重設上下文
@@ -1386,7 +1408,7 @@ func (s *Session) commit() string {
 			Manual:     locked && l.Word == g.Word && l.Len == g.End-g.Start,
 			Completion: locked && l.Word == g.Word && l.Len == g.End-g.Start && l.Completion,
 			Suggested:  locked && l.Suggested,
-			Fuzzy:      s.fuzzyTouches(g.Start, g.End),
+			Fuzzy:      s.fuzzyTouches(g.Start, g.End) || untonedTouches(syls, g.Start, g.End),
 		})
 	}
 	ev.Selected = s.enclosedSelections()
@@ -1421,10 +1443,11 @@ func (s *Session) readingPins(text string) map[int]string {
 	var pins map[int]string
 	var joined strings.Builder
 	at := 0
+	resolved, _ := s.resolvedSyllables() // 沒打聲調的音節用詞庫讀音（#150）；關閉時就是 s.syls
 	for _, g := range s.path {
 		runes := []rune(g.Word)
 		joined.WriteString(g.Word)
-		reading := s.syls[g.Start:min(g.End, len(s.syls))]
+		reading := resolved[g.Start:min(g.End, len(resolved))]
 		if g.Matched != "" {
 			reading = zhuyin.ParseReading(g.Matched) // 近音到達的詞，用詞庫的讀音
 		}

@@ -410,7 +410,7 @@ func TestCorruptFileIsReportedAndCanBeQuarantined(t *testing.T) {
 func TestItemsListEveryKeyWithCurrentValue(t *testing.T) {
 	s := Default()
 	items := s.Items()
-	want := 20 + len(fuzzy.Pairs()) // 含 simplified-hotkey（#192）
+	want := 21 + len(fuzzy.Pairs()) // 含 simplified-hotkey（#192）、toneless（#150）
 	if CapsLockEnglishSetting(runtime.GOOS) {
 		want++ // caps-lock-english（#173）只有 Windows、Linux
 	}

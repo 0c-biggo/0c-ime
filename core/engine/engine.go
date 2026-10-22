@@ -38,6 +38,7 @@ type Engine struct {
 	CtrlPunct             bool              // 「Ctrl＋標點打全形」開著時由宿主設定（#168）；零值時 Ctrl＋標點交給應用程式。
 	CapsLockEnglish       bool              // 「Caps Lock 開著時直接打英文」開著時由宿主設定（#173）；零值時 caps_lock 請求不起作用。
 	Fuzzy                 fuzzy.Config      // 使用者逐對啟用的模糊音；零值全部關閉。
+	Toneless              bool              // 「不打聲調也能選字」開著時由宿主設定（#150）；開啟時停用中英混打的自動判斷。
 	EnglishAutocomplete   bool
 	MixedInput            bool                // opt-in bilingual keys; disabled preserves legacy behavior.
 	English               *english.Dictionary // nil uses the authored prototype vocabulary.
@@ -81,7 +82,7 @@ func New(lex lexicon.Source, sys lm.System) *Engine {
 // ToneMarkKeys 回報沒在組字時的聲調鍵是否由輸入法處理（單按＋空白是聲調符號，#135）；
 // 中英混打（只在標準排列）時照混打規則。給自己過濾閒置按鍵的外殼（Windows）查詢。
 func (e *Engine) ToneMarkKeys() bool {
-	return session.ToneMarkKeys(e.MixedInput, e.Layout == nil || e.Layout == layout.Standard)
+	return session.ToneMarkKeys(e.MixedInput && !e.Toneless, e.Layout == nil || e.Layout == layout.Standard)
 }
 
 // IdleKeys 回報沒在組字、注音模式時輸入法會處理的可見 ASCII 按鍵（session.IdleKeys），依鍵盤排列與設定而不同（#183）。
@@ -106,6 +107,7 @@ func (e *Engine) OpenSession() uint64 {
 	e.sessions[e.next].CtrlPunct = e.CtrlPunct
 	e.sessions[e.next].CapsLockEnglish = e.CapsLockEnglish
 	e.sessions[e.next].Fuzzy = e.Fuzzy
+	e.sessions[e.next].Toneless = e.Toneless
 	e.sessions[e.next].EnglishAutocomplete = e.EnglishAutocomplete
 	e.sessions[e.next].MixedInput = e.MixedInput
 	e.sessions[e.next].EmojiShortcut = e.EmojiShortcut

@@ -210,7 +210,27 @@ func (m *Model) CorrectionPenalty(syls []zhuyin.Syllable, overrides []Seg) func(
 	}
 	chosen := make([]choice, len(syls))
 	have := false
-	for i := range syls {
+	pick := func(i int, k string, c Correction) {
+		if m.Store.Tombstones[c.Word] {
+			return
+		}
+		chars := []rune(c.Word)
+		cost := correctionCost * decay(1, m.Store.Time-c.Updated, 30*daySeconds) / float64(len(chars))
+		for at, ch := range chars {
+			p := &chosen[i+at]
+			if p.cost == 0 || c.Serial > p.serial || c.Serial == p.serial && k > p.key {
+				*p = choice{ch, cost, c.Serial, k}
+				have = true
+			}
+		}
+	}
+	untoned := zhuyin.HasUntoned(syls)
+	if untoned {
+		// 聲調選填（#150）：紀錄存的是詞庫讀音，沒打聲調的音節與同基底的任何聲調相容。只有這種輸入才走這裡，
+		// 全部打了聲調時照下面原本的精確比對。
+		m.untonedCorrections(syls, pick)
+	}
+	for i := 0; i < len(syls) && !untoned; i++ {
 		if !syls[i].Legal() {
 			continue
 		}
@@ -277,6 +297,19 @@ func (m *Model) CorrectionUsage(syls []zhuyin.Syllable) func(int, string) float6
 	}
 	byStart := map[int]map[string]float64{}
 	m.indexCorrections()
+	if zhuyin.HasUntoned(syls) { // 聲調選填（#150）：見 CorrectionPenalty
+		m.untonedCorrections(syls, func(i int, _ string, c Correction) {
+			if m.Store.Tombstones[c.Word] {
+				return
+			}
+			u := c.Usage.at(m.Store.Time)
+			if byStart[i] == nil {
+				byStart[i] = map[string]float64{}
+			}
+			byStart[i][c.Word] = max(byStart[i][c.Word], u.Short+u.Long)
+		})
+		return func(start int, word string) float64 { return byStart[start][word] }
+	}
 	for i := range syls {
 		var left zhuyin.Syllable
 		if i > 0 && syls[i-1].Legal() {
@@ -339,6 +372,7 @@ type correctionIndex struct {
 	serial   uint64
 	count    int
 	byPrefix map[string][]usageRecord
+	byBase   map[string][]usageRecord // 首音節去掉聲調：聲調選填（#150）的相容比對用
 }
 
 func (m *Model) indexCorrections() {
@@ -346,7 +380,7 @@ func (m *Model) indexCorrections() {
 	if idx.store == m.Store && idx.gen == m.Gen && idx.serial == m.Store.CorrectionSerial && idx.count == len(m.Store.Corrections) {
 		return
 	}
-	*idx = correctionIndex{store: m.Store, gen: m.Gen, serial: m.Store.CorrectionSerial, count: len(m.Store.Corrections), byPrefix: map[string][]usageRecord{}}
+	*idx = correctionIndex{store: m.Store, gen: m.Gen, serial: m.Store.CorrectionSerial, count: len(m.Store.Corrections), byPrefix: map[string][]usageRecord{}, byBase: map[string][]usageRecord{}}
 	keys := make([]string, 0, len(m.Store.Corrections))
 	for k := range m.Store.Corrections {
 		keys = append(keys, k)
@@ -360,5 +394,48 @@ func (m *Model) indexCorrections() {
 		}
 		prefix := string(c.Left) + "\t" + string(reading[0])
 		idx.byPrefix[prefix] = append(idx.byPrefix[prefix], usageRecord{c, reading})
+		base := string(reading[0].Base())
+		idx.byBase[base] = append(idx.byBase[base], usageRecord{c, reading})
+	}
+}
+
+// untonedCorrections 對含沒打聲調音節（#150）的 syls 列出相容的更正紀錄：紀錄的讀音與左右鄰，
+// 打了聲調的位置要完全相同，沒打聲調的位置只比基底。fn 收到紀錄起點、鍵與紀錄；同一筆紀錄可能在不同起點各出現一次。
+func (m *Model) untonedCorrections(syls []zhuyin.Syllable, fn func(i int, key string, c Correction)) {
+	m.indexCorrections()
+	usable := func(y zhuyin.Syllable) bool { return y.Legal() || y.Untoned() }
+	compatible := func(typed, y zhuyin.Syllable) bool {
+		if typed.Untoned() {
+			return typed.Base() == y.Base()
+		}
+		return typed == y
+	}
+	neighbor := func(at int, stored zhuyin.Syllable) bool {
+		if at < 0 || at >= len(syls) || !usable(syls[at]) {
+			return stored == ""
+		}
+		return stored != "" && compatible(syls[at], stored)
+	}
+	for i := range syls {
+		if !usable(syls[i]) {
+			continue
+		}
+		for _, record := range m.correctionIndex.byBase[string(syls[i].Base())] {
+			c, reading := record.c, record.reading
+			j := i + len(reading)
+			if j > len(syls) || len(reading) > maxCorrectionLength || len([]rune(c.Word)) != len(reading) {
+				continue
+			}
+			match := true
+			for k, y := range reading {
+				if !usable(syls[i+k]) || !compatible(syls[i+k], y) {
+					match = false
+					break
+				}
+			}
+			if match && neighbor(i-1, c.Left) && neighbor(j, c.Right) {
+				fn(i, correctionKey(c.Reading, c.Left, c.Right), c)
+			}
+		}
 	}
 }

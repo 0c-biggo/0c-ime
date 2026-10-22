@@ -142,7 +142,7 @@ func (s *Session) insertPunctKey(k, p string) {
 }
 
 func (s *Session) insertPendingLiteral() {
-	if s.comp.Empty() {
+	if s.comp.Empty() || s.finishUntoned() { // 聲調選填：已是完整音節的注音不打聲調就完成，不留成符號（#150）
 		return
 	}
 	pending := pendingLiteral{start: s.cursor, composer: s.comp}

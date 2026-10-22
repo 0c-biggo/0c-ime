@@ -22,6 +22,8 @@ type pendingLiteral struct {
 	// prefix：音節本身沒有字、只是某個更長的詞的開頭，因此原樣留下（#107 的 ㄟ）。
 	// 下一個音節能和它成詞時收回去一起解碼；使用者從 ↓ 明確選的原樣音節不會帶這個標記。
 	prefix bool
+	// untoned：聲調選填時沒打聲調就完成的音節（#150）；畫面同一聲（不標聲調），收回解碼時仍不限聲調。
+	untoned bool
 }
 
 func (p pendingLiteral) end() int { return p.start + len([]rune(p.composer.String())) }
@@ -35,6 +37,9 @@ func (p pendingLiteral) mark() int {
 }
 
 func (p pendingLiteral) syllable() zhuyin.Syllable {
+	if p.untoned {
+		return zhuyin.Untone(zhuyin.Syllable(p.composer.String()))
+	}
 	return zhuyin.Syllable(p.composer.String()).WithTone(p.tone)
 }
 
@@ -83,7 +88,10 @@ func (s *Session) restorePendingLiteral() {
 // comp 是按聲調之前的組音狀態，接著打的注音從新的音節開始，不會蓋掉它。
 func (s *Session) insertSyllableLiteral(comp zhuyin.Composer, syl zhuyin.Syllable) {
 	p := pendingLiteral{start: s.cursor, composer: comp, tone: syl.ToneOf()}
-	s.insertLiteral(string(syl))
+	if syl.Untoned() {
+		p.tone, p.untoned = 1, true // 沒打聲調（#150）：照一聲的樣子原樣留下，不標聲調
+	}
+	s.insertLiteral(syl.Text())
 	s.pendingLiterals = append(s.pendingLiterals, p)
 }
 
@@ -230,7 +238,7 @@ func (s *Session) syllableLiteralAt(pos int) (pendingLiteral, bool) {
 // 其後是同一讀音的其他聲調，同符號選單「同組可重選」的規則；選了照樣是原樣文字。
 func (s *Session) openSyllableLiteral(p pendingLiteral) {
 	syl := p.syllable()
-	items := []string{string(syl)}
+	items := []string{syl.Text()}
 	for tone := 1; tone <= 5; tone++ {
 		if tone != p.tone {
 			items = append(items, string(syl.WithTone(tone)))

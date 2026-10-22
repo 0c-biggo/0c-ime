@@ -20,12 +20,19 @@ type Frontend interface {
 	Expand(syls []zhuyin.Syllable) Lattice
 }
 
-// Exact 是精確通道：使用者打什麼就是什麼。
+// Exact 是精確通道：使用者打什麼就是什麼。沒打聲調的音節（#150，只在使用者開啟「聲調選填」時出現）
+// 展開成五個聲調，成本都是 0，由語言模型依前後文決定；其他音節只有自己。
 type Exact struct{}
 
 func (Exact) Expand(syls []zhuyin.Syllable) Lattice {
 	lat := make(Lattice, len(syls))
 	for i, s := range syls {
+		if s.Untoned() {
+			for _, y := range s.Tones() {
+				lat[i] = append(lat[i], Hyp{Syl: y})
+			}
+			continue
+		}
 		lat[i] = []Hyp{{Syl: s}}
 	}
 	return lat
