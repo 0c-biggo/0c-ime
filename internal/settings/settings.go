@@ -33,6 +33,7 @@ const (
 
 	LayoutStandard = "standard" // 標準（大千）注音鍵盤排列
 	LayoutETen     = "eten"     // 倚天 41 鍵（#83）
+	LayoutHsu      = "hsu"      // 許氏（#183）
 )
 
 // 讀取結果的檔案狀態。
@@ -80,7 +81,7 @@ type Settings struct {
 	CandidateLayout    string `json:"candidate_layout"`
 	EmojiShortcut      string `json:"emoji_shortcut"`
 	EmojiEqualsFirst   bool   `json:"emoji_equals_first"`
-	KeyboardLayout     string `json:"keyboard_layout"` // standard（預設）或 eten（倚天 41 鍵，#83）
+	KeyboardLayout     string `json:"keyboard_layout"` // standard（預設）、eten（倚天 41 鍵，#83）或 hsu（許氏，#183）
 	// OutputSimplified：送出時把繁體轉成簡體（#118）；組字、候選與學習仍是繁體。預設 false。
 	OutputSimplified bool `json:"output_simplified"`
 	// SimplifiedHotkey：按 SimplifiedHotkeyLabel 的快捷鍵切換「輸出簡體字」（#192）。預設 false：外殼不攔這個鍵，
@@ -373,7 +374,7 @@ func (s *Settings) UnmarshalJSON(b []byte) error {
 		{"candidate_cursor", &s.CandidateCursor, []string{"before", "after"}},
 		{"candidate_layout", &s.CandidateLayout, []string{"vertical", "grid"}},
 		{"emoji_shortcut", &s.EmojiShortcut, []string{"off", "equals"}},
-		{"keyboard_layout", &s.KeyboardLayout, []string{LayoutStandard, LayoutETen}},
+		{"keyboard_layout", &s.KeyboardLayout, []string{LayoutStandard, LayoutETen, LayoutHsu}},
 		{"selection_keys", &s.SelectionKeys, []string{SelectDigits, SelectQwer, SelectHome}},
 		{"toggle_key", &s.ToggleKey, []string{ToggleRight, ToggleBoth, ToggleLeft, ToggleNone}},
 		{"mode_memory", &s.ModeMemory, []string{ModeNative, ModeShared}},
@@ -707,12 +708,15 @@ func (s Settings) valueLabels(key string) map[string]string {
 		return map[string]string{SelectDigits: "1 2 3 4 5 6 7 8 9 0", SelectQwer: "1 2 3 4 q w e r a s", SelectHome: "a s d f g h j k l ;"}
 	case "mode-memory":
 		return map[string]string{ModeNative: modeNativeLabel(runtime.GOOS, s.StartsEnglish()), ModeShared: "全部共用同一個模式"}
+	case "keyboard-layout":
+		return map[string]string{LayoutStandard: "標準", LayoutETen: "倚天 41 鍵", LayoutHsu: "許氏"}
 	}
 	return nil
 }
 
 // disabledReason 回報某一項目前是否因其他設定而不起作用，以及給人讀的原因；空字串表示可用。
-// 中英混打與 = 開 Emoji 選單依標準排列設計，倚天 41 鍵時停用（#83）；已儲存的值不動，切回標準排列就照舊。
+// 中英混打與 = 開 Emoji 選單依標準排列設計，倚天 41 鍵時停用（#83）；許氏的聲調在字母鍵上，也停用混打，
+// = 不是注音鍵，Emoji 選單照舊（#183）。已儲存的值不動，切回標準排列就照舊。
 func (s Settings) disabledReason(key string) string {
 	return s.disabledReasonOn(runtime.GOOS, key)
 }
@@ -722,6 +726,9 @@ func (s Settings) disabledReasonOn(goos, key string) string {
 	case "mixed-input", "emoji-shortcut", "emoji-equals-first":
 		if s.KeyboardLayout == LayoutETen {
 			return "倚天 41 鍵時關閉"
+		}
+		if s.KeyboardLayout == LayoutHsu && key == "mixed-input" {
+			return "許氏排列時關閉"
 		}
 	case "start-mode":
 		if s.startModeLocked(goos) {
@@ -773,7 +780,7 @@ func specs() []spec {
 			func(s Settings) string { return onOff(s.SimplifiedHotkey) }},
 		{"emoji-shortcut", "Emoji 選單", "在注音模式按 = 開啟選單；Tab 切換顏文字，選過的排前面", "equals", []string{"off", "equals"}, func(s Settings) string { return s.EmojiShortcut }},
 		{"emoji-equals-first", "將 = 放在第一項", "關閉後，按兩次 == 可輸入一個 =", "on", []string{"on", "off"}, func(s Settings) string { return onOff(s.EmojiEqualsFirst) }},
-		{"keyboard-layout", "鍵盤排列", "注音鍵盤排列。倚天 41 鍵的 = 是 ㄦ、' 是 ㄘ，頓號改按 \\；這時不提供 Emoji 選單與中英混打", LayoutStandard, []string{LayoutStandard, LayoutETen},
+		{"keyboard-layout", "鍵盤排列", "注音鍵盤排列。倚天 41 鍵的 = 是 ㄦ、' 是 ㄘ，頓號改按 \\，這時不提供 Emoji 選單與中英混打。許氏只用字母鍵：同一鍵依位置代表聲母或韻母，聲調是 d f j s、一聲按空白，, . ; 直接打「，。；」，這時不提供中英混打", LayoutStandard, []string{LayoutStandard, LayoutETen, LayoutHsu},
 			func(s Settings) string { return s.KeyboardLayout }},
 		{"selection-keys", "選字鍵", "候選窗用哪一排鍵選第 1 到第 10 個字；換成字母鍵時，數字鍵仍可照位置選字", SelectDigits, []string{SelectDigits, SelectQwer, SelectHome},
 			func(s Settings) string { return s.SelectionKeys }},

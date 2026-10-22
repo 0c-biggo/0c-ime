@@ -91,7 +91,7 @@ func listSettings(w io.Writer, r settings.Report, path string) {
 	if settings.CapsLockEnglishSetting(runtime.GOOS) {
 		fmt.Fprintf(w, "caps-lock-english=%s（Caps Lock 開著時直接打英文：字母大寫、數字與符號半形，關掉回到注音；關閉時注音模式不理 Caps Lock）\n", onOff(s.CapsLockEnglish))
 	}
-	fmt.Fprintf(w, "keyboard-layout=%s（鍵盤排列：standard 標準；eten 倚天 41 鍵，這時不提供 Emoji 選單與中英混打）\n", s.KeyboardLayout)
+	fmt.Fprintf(w, "keyboard-layout=%s（鍵盤排列：standard 標準；eten 倚天 41 鍵，這時不提供 Emoji 選單與中英混打；hsu 許氏，這時不提供中英混打）\n", s.KeyboardLayout)
 	fuzzyConfig := s.FuzzyConfig()
 	for _, p := range fuzzy.Pairs() {
 		fmt.Fprintf(w, "fuzzy-%s=%s（%s 模糊音：off 關閉；select 開候選時合併近音；auto 另在語境明顯支持近音時自動改字，實驗）\n", p.ID(), fuzzyConfig.Mode(p), p.Symbols())

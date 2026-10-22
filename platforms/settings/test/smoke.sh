@@ -483,6 +483,26 @@ if window_up; then
 else bad "eten/input 視窗沒有出現"; cat /tmp/app-eten-input.log; fi
 stop_app
 
+# ---- 許氏（#183）：只有中英混打反灰並提示原因，Emoji 選單照舊；鍵盤排列有「許氏」選項 ----
+new_home hsu
+printf '{"schema":1,"keyboard_layout":"hsu","mixed_input":true}\n' > "$(base_of hsu)/settings.json"
+run_update hsu settings -json > "$OUT/hsu-settings.json"
+check "許氏時契約只標示混打停用並附原因，值保留" python3 - "$OUT/hsu-settings.json" <<'PY_HSU'
+import json,sys
+items={x['key']:x for x in json.load(open(sys.argv[1]))['items']}
+disabled=[k for k,x in items.items() if x.get('disabled') and k!='start-mode']
+ok=disabled==['mixed-input'] and items['mixed-input'].get('disabled_reason')=='許氏排列時關閉' and items['mixed-input']['value']=='on'
+ok=ok and items['keyboard-layout']['value']=='hsu' and items['keyboard-layout']['values']==['standard','eten','hsu']
+ok=ok and items['keyboard-layout'].get('value_labels',{}).get('hsu')=='許氏'
+sys.exit(0 if ok else 1)
+PY_HSU
+launch hsu input
+if window_up; then
+  sleep 2.5
+  import -window root "$OUT/hsu-input.png"
+else bad "hsu/input 視窗沒有出現"; cat /tmp/app-hsu-input.log; fi
+stop_app
+
 # ---- 不用 Shift 切換（#184）：開始時的中英模式固定為注音、反灰並附原因，設定檔的 english 保留；改回用 Shift 照原本的英文 ----
 new_home noshift
 printf '{"schema":1,"toggle_key":"none","start_mode":"english"}\n' > "$(base_of noshift)/settings.json"

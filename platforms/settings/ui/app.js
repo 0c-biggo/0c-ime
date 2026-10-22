@@ -116,7 +116,7 @@
   const SHELL_RETIRING_HELP = '新版已安裝，鎖定螢幕或離開電腦時換上，不必登出；在那之前照常可以打字。';
   const SHELL_RETIRING_NOTE = '不必登出，在那之前照常可以打字。';
   const OLD_SHELL_HELP = '新版已安裝，但系統仍開著更新前留下的舊版輸入法。請先儲存工作，登出再登入一次就會改用新版；如果之後仍看到這則訊息，請到「問題排解」匯出狀態摘要回報。';
-  const VALUE = { neural: '神經選字', statistical: '統計引擎', off: '關閉', select: '僅供選字', auto: '自動修正（實驗）', vertical: '直排', grid: '多排', before: '游標前方', after: '游標後方', standard: '標準', eten: '倚天 41 鍵' };
+  const VALUE = { neural: '神經選字', statistical: '統計引擎', off: '關閉', select: '僅供選字', auto: '自動修正（實驗）', vertical: '直排', grid: '多排', before: '游標前方', after: '游標後方', standard: '標準', eten: '倚天 41 鍵', hsu: '許氏' };
   const ERROR = {
     read_only: '設定檔來自較新版本的靈犀注音，這個版本只能查看，不能修改。',
     corrupt: '設定檔無法解析。可到「總覽」修復。',
@@ -371,7 +371,7 @@
 
   function control(item, locked) {
     const values = item.values || [];
-    // item.disabled：另一個設定讓這一項不起作用（倚天 41 鍵時的混打與 Emoji，#83；不用 Shift 時的開始模式，#184）。開關顯示實際狀態（關閉），
+    // item.disabled：另一個設定讓這一項不起作用（倚天 41 鍵時的混打與 Emoji，#83；許氏時的混打，#183；不用 Shift 時的開始模式，#184）。開關顯示實際狀態（關閉），
     // 設定檔中的值不動，條件解除後照舊。
     const disabled = locked || state.busy.has(item.key) || !!item.disabled;
     const labelId = 'label-' + item.key;

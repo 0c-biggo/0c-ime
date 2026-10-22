@@ -31,3 +31,21 @@ func TestKeyboardLayoutContract(t *testing.T) {
 		t.Fatalf("%+v %v", o, err)
 	}
 }
+
+// #183：許氏只停用中英混打，Emoji 選單照舊。
+func TestKeyboardLayoutContractHsu(t *testing.T) {
+	base := t.TempDir()
+	writeSettings(t, base, `{"keyboard_layout":"hsu","mixed_input":true}`)
+	doc := buildSettingsDoc(base, modelStatusDial(map[string]string{"keyboard_layout": "hsu", "mixed_input": "true", "emoji_shortcut": "equals"}, true))
+	if it := item(t, doc, "keyboard-layout"); it.Value != "hsu" || it.Pending {
+		t.Fatalf("許氏已套用：%+v", it)
+	}
+	if it := item(t, doc, "mixed-input"); !it.Disabled || it.DisabledReason != "許氏排列時關閉" || it.Value != "on" {
+		t.Fatalf("混打停用、值保留：%+v", it)
+	}
+	for _, key := range []string{"emoji-shortcut", "emoji-equals-first"} {
+		if it := item(t, doc, key); it.Disabled {
+			t.Fatalf("%s 在許氏照舊可用：%+v", key, it)
+		}
+	}
+}
