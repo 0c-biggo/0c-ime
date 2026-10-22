@@ -113,7 +113,11 @@ func TestInstallBundleArg(t *testing.T) {
 		{nil, "", false},
 	} {
 		got, ok := installBundleArg(c.args)
-		if got != c.want || ok != c.ok {
+		want := c.want
+		if c.ok { // 回傳的是絕對路徑：Windows 上 /a 會變成目前磁碟的 \a
+			want, _ = filepath.Abs(c.want)
+		}
+		if got != want || ok != c.ok {
 			t.Errorf("%v：%q %v", c.args, got, ok)
 		}
 	}
