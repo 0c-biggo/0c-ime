@@ -15,15 +15,25 @@
 | `tauri.linux.conf.json` | Linux 的 identifier 改為 `com.biggo.zc.settings`：外掛用它組 D-Bus 服務名，而服務名的每一段不能以數字開頭，`com.biggo.0c.settings` 會讓程式一啟動就 panic。macOS 與 Windows 維持 `com.biggo.0c.settings` |
 | `tauri.conf.json` | CSP：`default-src 'none'; script-src 'self'; style-src 'self'`；不載入任何遠端內容 |
 
-## 輸入設定
+## 中英切換、選字、鍵盤與符號（輸入設定，#207）
 
-鍵盤排列（`keyboard-layout`：standard／eten／hsu）放在最後一張「鍵盤」卡片，前面各項的 Tab 順序不變。契約的項目帶 `disabled` 時（倚天 41 鍵時的中英混打、Emoji 選單與等號首項，許氏時的中英混打，#183）開關反灰、畫成關閉，名稱旁顯示 `disabled_reason`，不在 Tab 順序裡；設定檔的值不動，切回標準排列照原值顯示（#83）。
+0.2.5 起原本一頁 19 項的「輸入設定」拆成側欄的三頁，不摺疊（摺起來的設定會找不到）。各頁依 `app.js` 的 `INPUT_PAGES` 排列，順序也是 Tab 順序：
+
+| 頁面（`--page`） | 項目 |
+|---|---|
+| 中英切換（`mode`） | 中英切換鍵、開始時的中英模式、切換視窗後的中英模式、中英混打、英文模式自動補字、Caps Lock 開著時直接打英文（Windows、Linux） |
+| 選字（`candidates`） | 選字方式（神經選字）、依前文選字、空白鍵選字、修改字詞的位置、選字後游標移到下一個字、選字排列、選字鍵、按 Esc 清除整段組字，另一張卡是模糊音總開關 |
+| 鍵盤與符號（`keyboard`） | 鍵盤排列、Ctrl＋標點打全形、提交時補標點（Beta）、Emoji 選單（子選項「將 = 放在第一項」） |
+
+側欄順序：總覽、中英切換、選字、鍵盤與符號、輸出設定、我的詞彙、模型、更新、問題排解、關於。「輸出設定」（`output`）照舊獨立。契約裡不在任何一頁的新項目（較新的 0c-update 才有）畫在「選字」最後，所以新增設定不必先改畫面；要放別頁再加進 `INPUT_PAGES`。舊的頁名 `input`（0.2.5 以前的 `0c-update open-settings input`、說明文件）照樣接受，畫面導到側欄第一頁「中英切換」（`PAGE_ALIAS`；Go 與 Rust 的白名單也保留它，舊版設定程式照舊開輸入設定）。三份頁名清單由 `internal/settingsapp` 的 `TestPageNamesMatchTheSettingsApp` 核對。總覽的「有設定已儲存、尚未套用」帶到第一個尚未套用的項目所在的那一頁。
+
+契約的項目帶 `disabled` 時（倚天 41 鍵時的中英混打、Emoji 選單與等號首項，許氏時的中英混打，#183；不用 Shift 時的開始模式，#184）開關反灰、畫成關閉，名稱旁顯示 `disabled_reason`，不在 Tab 順序裡；設定檔的值不動，切回標準排列照原值顯示（#83）。造成停用的那一項（`disabled_by`）在別頁時，說明下面多一個「到「鍵盤與符號」修改「鍵盤排列」」，按了切到那一頁並把焦點放在那一項（例如中英混打在「中英切換」、鍵盤排列在「鍵盤與符號」）；在同一頁（開始模式就在中英切換鍵下面）不另外放。
 
 Emoji 選單以一個開關控制（`emoji-shortcut`：off／equals），預設開啟，保留使用者明確關閉的設定。另有 `emoji-equals-first` 開關（預設 on），可取消第一項的等號；設定說明提醒關閉後仍可按兩次 == 輸入一個 =。模糊音顯示一列總開關，預設開啟（四組 select），開啟時以同一次設定交易將四組近音都設為 select，關閉時全部設 off；沒有逐組控制或自動修正單選。舊設定只啟用部分配對或使用 auto 時，畫面視為開啟，載入不改寫；關閉再開啟才統一成四組 select。CLI 的逐組設定與原有檔案格式仍保留，未知欄位與唯讀保護沿用既有契約。
 
 ## 我的詞彙（0.2.0，#125）
 
-`features.vocab` 為真時（0.2.0 起的 `0c-update` 一律為真；舊版沒有這個欄位時不顯示），側欄「輸入設定」下面出現「我的詞彙」，總覽多一張小卡（詞數與 AI 助手最近加的數量；沒有詞時是「把常打錯的人名、術語加進來」）。後端命令、Tauri 指令與事件見 [詞彙命令實作](../../cmd/0c-update/vocab.go)。
+`features.vocab` 為真時（0.2.0 起的 `0c-update` 一律為真；舊版沒有這個欄位時不顯示），側欄「輸出設定」下面出現「我的詞彙」，總覽多一張小卡（詞數與 AI 助手最近加的數量；沒有詞時是「把常打錯的人名、術語加進來」）。後端命令、Tauri 指令與事件見 [詞彙命令實作](../../cmd/0c-update/vocab.go)。
 
 - **我加的詞**：頂端是搜尋與新增列。打字時（組字結束後 250 毫秒）查 `annotate`，每個字一格讀音：破音字是黃色下拉選單，查不到的字自己填注音；Enter 加入。英文詞（`ls`、`kubectl`，#146）不查讀音，直接 Enter 加入，清單上讀音的位置標示「英文」、沒有排名。一次貼上多行變成預覽清單（不是漢字也不是英文詞的行不能勾），勾選後同一批加入。每列：詞、讀音（點了改，可加到 4 個讀音，送出時附 `expect`）、排名徽章（`rank`：首選／第 N 個／第 N 頁，滑過顯示前面是哪個詞）、來源與時間、刪除。超過 1,000 筆分頁，搜尋交給引擎（`list` 的 `query`）。
 - **靈犀學到的**（#182）：`learned` 清單，`kind` 顯示成「常一起用」（`phrase`）或「你選過的寫法」（`reading`），不顯示次數；頂端說明三個動作，每列有勾選框與「保留」（`keep`）、「移除」（`unlearn`）、「不再學」（`forget`），已是自訂詞的顯示「已在我加的詞」、不能勾。勾選列有全選（部分勾選時半勾）與三個批次按鈕，一次送一個指令。移除、不再學、恢復學習之後先拿掉那幾列，底部提示附「復原」（`learned-undo`），焦點交給它；保留是自訂詞的批次，照舊從「最近變更」也能復原。`forgotten_count` 大於 0 時右上角出現「不再學的詞（N）」，打開是另一個清單（`forgotten`），每列與批次都能「恢復學習」（`relearn`），「‹ 靈犀學到的」返回；全部恢復後自動返回、入口消失。
@@ -107,13 +117,13 @@ Windows 完整更新視窗驗收另有 `test/settings-update-test.ps1`：在沒�
 
 輸入設定的「空白鍵選字」（`space-selects`，`settings.json` 的 `space_selects`）預設開啟：注音打完按空白開候選。關閉後注音打完按空白在游標處輸入空格，改用 ↓ 選字；注音打到一半時空白仍是一聲，候選開著時空白仍換頁（#107、#110）。中英混打開啟時本來就是如此，不受這個設定影響。引擎讀設定，套用（引擎重啟）後生效，外殼不必改。
 
-輸入設定的「選字鍵」（`selection-keys`，`settings.json` 的 `selection_keys`）三選一：`1234567890`（預設，舊設定檔沒有欄位時也是）、`1234qweras`、`asdfghjkl;`，不開放自訂（#112）。候選窗依序用那一排鍵選第 1–10 個字，鍵標由引擎隨候選送給外殼；換成字母鍵時數字 1–0 仍照位置選字（舊外殼、自己畫候選窗的程式只顯示數字也能選）。沒有候選窗時這些鍵照舊是注音鍵。畫在「鍵盤」卡片、鍵盤排列之後，前面各項的 Tab 順序不變。引擎讀設定，套用（引擎重啟）後生效。
+輸入設定的「選字鍵」（`selection-keys`，`settings.json` 的 `selection_keys`）三選一：`1234567890`（預設，舊設定檔沒有欄位時也是）、`1234qweras`、`asdfghjkl;`，不開放自訂（#112）。候選窗依序用那一排鍵選第 1–10 個字，鍵標由引擎隨候選送給外殼；換成字母鍵時數字 1–0 仍照位置選字（舊外殼、自己畫候選窗的程式只顯示數字也能選）。沒有候選窗時這些鍵照舊是注音鍵。畫在「選字」頁、選字排列之後（#207）。引擎讀設定，套用（引擎重啟）後生效。
 
 輸入設定的「修改字詞的位置」（`candidate-cursor`）可選「游標前方」／「游標後方」。macOS 未指定時採前方，Linux／Windows 採後方；舊設定缺少欄位時同樣使用平台預設，明確保存的 before／after 會保留。後方模式的游標在組字尾端時後面沒有字，改選結束在游標的詞（同前方模式），說明文字也註明這個例外。設定儲存在 `settings.json` 的 `candidate_cursor`，透過既有組字保護套用；不變更個人詞庫格式。
 
-輸入設定的「Ctrl＋標點打全形」（`ctrl-punctuation`，`settings.json` 的 `ctrl_punctuation`）預設開啟，放在「鍵盤」卡片最後（鍵盤排列、選字鍵之後）（前面各項的 Tab 順序不變）。開啟時注音模式按 Ctrl＋, . ' ; 與 Ctrl＋Shift＋/ 1 打全形的 ，。、；？！；說明寫出會占用 VS Code 的 Ctrl＋, 、Ctrl＋. 等快速鍵，要保留時可以關掉。關閉後這些鍵同其他快捷鍵交給應用程式（#168）。引擎讀設定，套用（引擎重啟）後生效；外殼依 health 的 `ctrl_punctuation` 決定要不要送這些鍵。
+輸入設定的「Ctrl＋標點打全形」（`ctrl-punctuation`，`settings.json` 的 `ctrl_punctuation`）預設開啟，放在「鍵盤與符號」頁、鍵盤排列之後（#207）。開啟時注音模式按 Ctrl＋, . ' ; 與 Ctrl＋Shift＋/ 1 打全形的 ，。、；？！；說明寫出會占用 VS Code 的 Ctrl＋, 、Ctrl＋. 等快速鍵，要保留時可以關掉。關閉後這些鍵同其他快捷鍵交給應用程式（#168）。引擎讀設定，套用（引擎重啟）後生效；外殼依 health 的 `ctrl_punctuation` 決定要不要送這些鍵。
 
-輸入設定的「Caps Lock 開著時直接打英文」（`caps-lock-english`，`settings.json` 的 `caps_lock_english`）預設關閉，放在「鍵盤」卡片最後（Ctrl＋標點之後，前面各項的 Tab 順序不變），只有 Windows、Linux 有：macOS 開 Caps Lock 一律切到英文大寫（#84），`0c-update settings` 不列這一項，設定程式就不顯示。開啟時 Caps Lock 是暫時的英文模式（字母大寫、數字與符號半形，正在打的字先送出，關掉回到注音；先用 Shift 切到英文時只改大小寫）；關閉時注音模式不理 Caps Lock（#173、#168）。引擎讀設定，套用（引擎重啟）後生效；外殼依 health／open 的 `caps_lock_english` 決定要不要回報 Caps Lock 狀態。
+輸入設定的「Caps Lock 開著時直接打英文」（`caps-lock-english`，`settings.json` 的 `caps_lock_english`）預設關閉，放在「中英切換」頁最後（#207），只有 Windows、Linux 有：macOS 開 Caps Lock 一律切到英文大寫（#84），`0c-update settings` 不列這一項，設定程式就不顯示。開啟時 Caps Lock 是暫時的英文模式（字母大寫、數字與符號半形，正在打的字先送出，關掉回到注音；先用 Shift 切到英文時只改大小寫）；關閉時注音模式不理 Caps Lock（#173、#168）。引擎讀設定，套用（引擎重啟）後生效；外殼依 health／open 的 `caps_lock_english` 決定要不要回報 Caps Lock 狀態。
 
 輸入設定的「輸出簡體字」（`output-simplified`，`settings.json` 的 `output_simplified`）預設關閉，在設定程式左側獨立的「輸出設定」頁（`--page output`）。開啟後組字和候選仍顯示繁體，送出時才轉成簡體字（OpenCC ver.1.4.2 的 tw2s 字典，編在 `0c-server` 裡，見 `internal/simplified/opencc`）；我的詞彙與我的片語也一起轉，英文、數字、標點與 Emoji 不變，學習照常記繁體（#118）。這一項可以即時切換（#169）：開關照樣執行 `0c-update set output-simplified on|off -apply -json`，0c-update 寫好設定後，引擎回報 `output_simplified_live=true` 就請它即時切換（`apply.state` 是 `applied`），不重啟引擎，組字中也立即生效；舊引擎照舊交接重啟。四個外殼的輸入法選單也有可以打勾的「輸出簡體字」，從選單切換時由引擎寫 `settings.json`，設定程式的開關下一次讀取（切回視窗或重新整理）就跟著變。
 

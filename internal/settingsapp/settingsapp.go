@@ -16,11 +16,12 @@ import (
 	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
-// hiddenPages 是開發中、還沒列進用法的頁面（0.2.0 的「我的詞彙」，#125）。舊版設定程式不認得時開總覽。
-var hiddenPages = []string{"vocab"}
+// hiddenPages 是可以開、但沒列進用法的頁面：0.2.0 的「我的詞彙」（#125），以及 0.2.5 拆成三頁前的「輸入設定」
+// （input，#207；照樣傳給設定程式，由它導到「中英切換」，舊版設定程式照舊開輸入設定）。舊版設定程式不認得時開總覽。
+var hiddenPages = []string{"vocab", "input"}
 
-// Pages 是可以指定開啟的頁面；不認得的名稱開總覽。
-var Pages = []string{"overview", "input", "update", "troubleshoot", "about", "output", "models"}
+// Pages 是可以指定開啟的頁面；不認得的名稱開總覽。mode、candidates、keyboard 是「中英切換」「選字」「鍵盤與符號」（#207）。
+var Pages = []string{"overview", "mode", "candidates", "keyboard", "output", "update", "troubleshoot", "about", "models"}
 
 // Page 回傳白名單內的頁面名稱。
 func Page(name string) string {

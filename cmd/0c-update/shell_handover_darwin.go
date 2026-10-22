@@ -272,7 +272,7 @@ func keepRightShift(base string) bool {
 		fmt.Fprintln(os.Stderr, "0c-update: 無法保留右 Shift 切換中英：", err)
 	}
 	if wrote {
-		fmt.Println("保留原本的中英切換鍵：單按右 Shift（可在設定程式「輸入設定」改成「不用 Shift」）。")
+		fmt.Println("保留原本的中英切換鍵：單按右 Shift（可在設定程式「中英切換」頁改成「不用 Shift」）。")
 	}
 	return wrote
 }

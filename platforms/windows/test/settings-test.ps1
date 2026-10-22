@@ -155,17 +155,17 @@ try {
     Interactive "& '$stable' open-settings"
     Start-Sleep -Seconds 3
     Check (@(SettingsProcesses).Count -eq 1) 'a second launch does not start another process'
-    # 1b) 在視窗裡改一個設定（UI Automation 按「輸入設定」頁的開關）：設定檔更新，再改回來。
+    # 1b) 在視窗裡改一個設定（UI Automation 按「選字」頁的開關）：設定檔更新，再改回來。
     $settingsFile = "$base\settings.json"
     $toggleOut = Join-Path $ResultDir 'toggle-1.txt'
-    Interactive ("& '$PSScriptRoot\settings-ui-toggle.ps1' -Page '輸入設定' -Switch '依前文選字' -Out '$toggleOut'") 120
+    Interactive ("& '$PSScriptRoot\settings-ui-toggle.ps1' -Page '選字' -Switch '依前文選字' -Out '$toggleOut'") 120
     $toggleResult = Get-Content $toggleOut -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
     Check ($toggleResult -match 'toggled=true') 'the switch in the settings window can be pressed' $toggleResult
     $changed = Get-Content $settingsFile -Raw -Encoding UTF8 | ConvertFrom-Json
     Check ($changed.document_context -eq $false -and $changed.schema -eq 1) 'pressing the switch wrote settings.json through the contract' ($changed | ConvertTo-Json -Compress)
     Shot 'windows-after-toggle.png' | Out-Null
     $toggleOut = Join-Path $ResultDir 'toggle-2.txt'
-    Interactive ("& '$PSScriptRoot\settings-ui-toggle.ps1' -Page '輸入設定' -Switch '依前文選字' -Out '$toggleOut'") 120
+    Interactive ("& '$PSScriptRoot\settings-ui-toggle.ps1' -Page '選字' -Switch '依前文選字' -Out '$toggleOut'") 120
     $restored = Get-Content $settingsFile -Raw -Encoding UTF8 | ConvertFrom-Json
     Check ($restored.document_context -ne $false) 'pressing it again restores the setting' ($restored | ConvertTo-Json -Compress)
     StopSettings
@@ -203,7 +203,7 @@ try {
     Check ($page -match 'found=true') 'the vocab entry opens the vocab page' $page
     Shot 'windows-ime-menu-vocab.png' | Out-Null
     $pageOut = Join-Path $ResultDir 'page-2.txt'
-    Interactive ("& '$PSScriptRoot\settings-page-probe.ps1' -Nav '輸入設定' -Expect '依前文選字' -Out '$pageOut'") 90
+    Interactive ("& '$PSScriptRoot\settings-page-probe.ps1' -Nav '選字' -Expect '依前文選字' -Out '$pageOut'") 90
     $page = Get-Content $pageOut -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
     Check ($page -match 'found=true') 'the settings window moved to another page' $page
     $m = MenuProbe -Select '我的詞彙…'

@@ -741,6 +741,18 @@ func (s Settings) disabledReasonOn(goos, key string) string {
 // startModeLockedReason：不用 Shift 切換時沒有鍵能從英文切回注音，所以固定從注音開始（#184）。
 const startModeLockedReason = "不用 Shift 切換時固定從注音開始"
 
+// disabledBy 回報停用原因來自哪一項設定（Item.DisabledBy）：設定程式把各項分在不同頁面（#207），
+// 原因那一項在別頁時，用它帶人過去改。新增停用原因時要一起加在這裡（TestDisabledItemsNameTheirCause）。
+func disabledBy(reason string) string {
+	switch reason {
+	case "倚天 41 鍵時關閉", "許氏排列時關閉":
+		return "keyboard-layout"
+	case startModeLockedReason:
+		return "toggle-key"
+	}
+	return ""
+}
+
 func onOff(v bool) string {
 	if v {
 		return "on"
@@ -923,6 +935,8 @@ type Item struct {
 	// 旁邊顯示 DisabledReason。Value 仍是設定檔中的值，條件解除後照舊生效。舊版介面忽略這兩個欄位。
 	Disabled       bool   `json:"disabled,omitempty"`
 	DisabledReason string `json:"disabled_reason,omitempty"`
+	// DisabledBy：造成停用的那一項的 key（例如許氏時的中英混打是 keyboard-layout）；舊版介面忽略。
+	DisabledBy string `json:"disabled_by,omitempty"`
 	// Effective：停用期間實際使用、與 Value 不同的值（不用 Shift 時的開始模式固定為注音，#184）；
 	// 介面照它顯示選項，0c-update 拿它跟引擎載入的值比較。沒有時就是 Value。舊版介面忽略。
 	Effective string `json:"effective,omitempty"`
@@ -941,7 +955,7 @@ func (s Settings) Items() []Item {
 			effective = StartZhuyin
 		}
 		out = append(out, Item{Key: sp.key, Type: "choice", Values: sp.values, Default: sp.def, Value: value, Label: sp.label, Description: sp.description,
-			Disabled: reason != "", DisabledReason: reason, Effective: effective, ValueLabels: s.valueLabels(sp.key)})
+			Disabled: reason != "", DisabledReason: reason, DisabledBy: disabledBy(reason), Effective: effective, ValueLabels: s.valueLabels(sp.key)})
 	}
 	return out
 }

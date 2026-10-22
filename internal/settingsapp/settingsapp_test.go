@@ -64,7 +64,7 @@ func sessionOf(t *testing.T, pid int) int {
 }
 
 func TestPageWhitelist(t *testing.T) {
-	for in, want := range map[string]string{"update": "update", "input": "input", "models": "models", "": "overview", "account": "overview", "../x": "overview", "UPDATE": "overview"} {
+	for in, want := range map[string]string{"update": "update", "input": "input", "mode": "mode", "candidates": "candidates", "keyboard": "keyboard", "vocab": "vocab", "models": "models", "": "overview", "account": "overview", "../x": "overview", "UPDATE": "overview"} {
 		if got := Page(in); got != want {
 			t.Errorf("Page(%q) = %q，應為 %q", in, got, want)
 		}
