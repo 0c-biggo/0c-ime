@@ -9,7 +9,7 @@ import (
 )
 
 func TestGridCrossesPagesInSameColumn(t *testing.T) {
-	for _, cols := range []int{2, 3, 5} {
+	for _, cols := range []int{2, 3, 4, 5} {
 		for _, tc := range []struct {
 			count, at int
 			key       string

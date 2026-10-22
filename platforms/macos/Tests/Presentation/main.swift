@@ -53,6 +53,20 @@ let completion = try JSONDecoder().decode(Snapshot.self, from: Data(#"{"handled"
 panel.show(completion, at: NSRect(x: bounds.minX + 40, y: bounds.minY + 40, width: 1, height: 20))
 panel.contentView!.layoutSubtreeIfNeeded()
 precondition(descendants(panel.contentView!, of: NSButton.self).map(\.title) == ["hello", "help"], "English completions have no key labels")
+// #193：核心說 j/k 會換字（step_keys）時頁尾才寫 J K 換字；混打按鍵、注音打到一半、英文補字、Emoji、
+// 選字鍵 asdfghjkl; 等核心不送，外殼不自己從 length、kind、選字鍵猜（以前猜錯時頁尾寫了、按 j/k 沒反應）。
+func footerHasJK(_ candidates: String) -> Bool {
+    let json = #"{"handled":true,"cursor":{"utf16":1},"mode":"zhuyin","candidates":"# + candidates + "}"
+    let snap = try! JSONDecoder().decode(Snapshot.self, from: Data(json.utf8))
+    panel.show(snap, at: NSRect(x: bounds.minX + 40, y: bounds.minY + 40, width: 1, height: 20))
+    panel.contentView!.layoutSubtreeIfNeeded()
+    return descendants(panel.contentView!, of: NSTextField.self).contains { $0.stringValue.hasSuffix("J\u{00A0}K\u{00A0}換\u{2060}字") }
+}
+precondition(footerHasJK(#"{"items":[{"id":1,"text":"是","key":"1"}],"page":0,"pages":1,"highlight":0,"start":0,"length":1,"step_keys":true}"#), "ordinary candidates show the J/K hint")
+precondition(footerHasJK(#"{"items":[{"id":1,"text":"是","key":"1"}],"page":0,"pages":1,"highlight":0,"start":0,"length":2,"columns":5,"step_keys":true}"#), "ordinary grid shows the J/K hint")
+precondition(!footerHasJK(#"{"items":[{"id":1,"text":"是","key":"1"}],"page":0,"pages":1,"highlight":0,"start":0,"length":1}"#), "no step_keys (mixed keys, pending zhuyin, asdfghjkl;) has no J/K hint even with length > 0")
+precondition(!footerHasJK(#"{"items":[{"id":1,"text":"是","key":"1"}],"page":0,"pages":1,"highlight":0,"start":0,"length":1,"step_keys":false}"#), "step_keys false has no J/K hint")
+precondition(!footerHasJK(#"{"items":[{"id":1,"text":"是"}],"page":0,"pages":1,"highlight":0}"#), "legacy payload without step_keys has no J/K hint")
 
 // Grids retain stable engine IDs and actual row/column geometry. Cache the
 // rendered NSView only when an explicit output directory is supplied.
@@ -238,4 +252,10 @@ precondition(legacy.visibleReading == nil, "old engines without reading_hint sho
 let empty = try JSONDecoder().decode(Snapshot.self, from: Data(#"{"handled":false,"cursor":{"utf16":0},"mode":"zhuyin"}"#.utf8))
 panel.show(empty, at: .zero)
 precondition(!panel.isVisible, "empty snapshot must hide the panel")
-print("Passed native candidate panel checks: legacy payload, near notes, labels, light/dark layout, hit testing, focus, accessibility fallback, hints and notices")
+// #194：App 是隱藏狀態時解除隱藏、不搶前景。以 open -j 隱藏啟動的情況這裡模擬不出來（行程內 hide 之後
+// orderFrontRegardless 自己會解除），真的隱藏啟動要在真機驗收（platforms/macos/README.md）。
+app.hide(nil)
+precondition(app.isHidden, "test setup: app must be hidden")
+CandidatePanel.revealApp(app)
+precondition(!app.isHidden && !app.isActive, "revealApp unhides without activating")
+print("Passed native candidate panel checks: legacy payload, near notes, labels, light/dark layout, hit testing, focus, accessibility fallback, hints and notices, hidden app")

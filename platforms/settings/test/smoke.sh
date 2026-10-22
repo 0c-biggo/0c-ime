@@ -208,6 +208,14 @@ if window_up; then
   xdotool key space
   sleep 3
   check "輸出簡體字開關可改回 off" grep -q '"output_simplified": false' "$(settings_of live)"
+  # 下一個是「用快捷鍵切換簡體字」（#192），預設關閉，說明寫出快捷鍵。
+  xdotool key --delay 150 Tab space
+  sleep 3
+  check "快捷鍵開關可保存 on" grep -q '"simplified_hotkey": true' "$(settings_of live)"
+  import -window root "$OUT/simplified-hotkey-on.png"
+  xdotool key space
+  sleep 3
+  check "快捷鍵開關可改回 off" grep -q '"simplified_hotkey": false' "$(settings_of live)"
 else bad "live/output 視窗沒有出現"; cat /tmp/app-live-output.log; fi
 stop_app
 
@@ -279,6 +287,17 @@ if window_up; then
   check "輸出簡體字：即時關閉，寫入設定" grep -q '"output_simplified": false' "$(settings_of outputlive)"
   check "輸出簡體字：關閉後引擎仍是同一個行程" kill -0 "$ENGINE_PID"
   check "輸出簡體字：引擎立即回報關閉" live_runtime off
+  # #192：「用快捷鍵切換簡體字」要交接重啟引擎（外殼看新引擎回報的 simplified_hotkey），下一個按鍵起生效。
+  # 引擎在執行時交接；之後引擎沒在執行（容器裡沒有常駐引擎），外殼下一個按鍵啟動引擎時讀新設定，提示一樣。
+  xdotool key --delay 150 Tab space
+  sleep 3
+  check "快捷鍵：引擎在執行時開啟，寫入設定" grep -q '"simplified_hotkey": true' "$(settings_of outputlive)"
+  check "快捷鍵：開啟時交接，舊引擎已結束" bash -c "! kill -0 $ENGINE_PID 2>/dev/null"
+  import -window root "$OUT/simplified-hotkey-live-on.png"
+  xdotool key space
+  sleep 3
+  check "快捷鍵：引擎沒在執行時關閉，寫入設定" grep -q '"simplified_hotkey": false' "$(settings_of outputlive)"
+  import -window root "$OUT/simplified-hotkey-stopped-off.png"
 else bad "outputlive/output 視窗沒有出現"; cat /tmp/app-outputlive-output.log; fi
 stop_app
 stop_engine

@@ -529,6 +529,12 @@ func fcitxInstallHint() string {
 	return "sudo apt install fcitx5 fcitx5-frontend-gtk3 fcitx5-frontend-gtk4 fcitx5-frontend-qt5 fcitx5-config-qt && im-config -n fcitx5"
 }
 
+// inputSourcePending：Linux 只在 ProfileAtLogin 時於登入時補加輸入法（macOS 見 auto_darwin.go）。
+func inputSourcePending(string) bool { return false }
+
+// retryInputMethod：此平台登入時補做就是 addInputMethod，不分是不是背景排程（macOS 見 auto_darwin.go）。
+func retryInputMethod(bool) error { return addInputMethod() }
+
 // addInputMethod 把輸入法 ID zuin 加入 Fcitx5 profile 的第一個群組；沒有 profile 時以系統鍵盤配置建立。
 // 修改前備份原檔；已有 zuin 時不動。只能在 Fcitx5 沒有執行時呼叫（首次安裝或登入時、桌面啟動前）。
 func addInputMethod() error {

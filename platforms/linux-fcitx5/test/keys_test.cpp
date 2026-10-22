@@ -50,6 +50,15 @@ int main() {
     EXPECT(zuin::ctrlPunctKey(',', true, true).empty());
     for (uint32_t c : {'/', '1', '<', '[', ']', 'A', 'v'}) { EXPECT(zuin::ctrlPunctKey(c, true, false).empty()); }
 
+    // #192：切換簡體字的 Ctrl＋Shift＋F11；少一個或多一個修飾鍵、別的 F 鍵都不是。
+    EXPECT(zuin::simplifiedHotkey(zuin::keyF11, true, true, false));
+    EXPECT(!zuin::simplifiedHotkey(zuin::keyF11, true, false, false));  // Ctrl＋F11
+    EXPECT(!zuin::simplifiedHotkey(zuin::keyF11, false, true, false));  // Shift＋F11
+    EXPECT(!zuin::simplifiedHotkey(zuin::keyF11, false, false, false)); // F11（全螢幕）
+    EXPECT(!zuin::simplifiedHotkey(zuin::keyF11, true, true, true));    // 多按 Alt／Super
+    EXPECT(!zuin::simplifiedHotkey(0xffc9, true, true, false));         // Ctrl＋Shift＋F12
+    EXPECT(!zuin::simplifiedHotkey('F', true, true, false));            // Ctrl＋Shift＋F
+
     if (failures) { std::fprintf(stderr, "%d failure(s)\n", failures); return 1; }
     std::puts("keys_test ok");
     return 0;

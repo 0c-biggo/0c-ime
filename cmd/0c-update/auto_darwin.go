@@ -272,9 +272,9 @@ func notifyWithAction(_ context.Context, n autoupdate.Notice) (string, error) {
 // setupInputMethod：此平台由安裝程式註冊輸入法，不需額外設定。
 func setupInputMethod(string) error { return nil }
 
-func inputSourceMarker(base string) string { return filepath.Join(base, "update", "input-source") }
-
-// deferInputSource 記下要啟用的輸入來源：新裝的 App 要重新登入後系統才登記得到，由登入時的 auto 補做。
+// deferInputSource 記下要啟用的輸入來源：新裝的 App 要重新登入後系統才登記得到，由之後的排程喚起補做（addInputMethod）。
+// 只寫記號，不動狀態檔：安裝多半在協調器手上拿著狀態時進行，這裡存的欄位會被協調器存檔蓋掉（#195）。
+// 安裝、回復當下已在這個登入工作階段試過一次，記下來，排程跨過登入邊界才再試（見 inputSourceRetry）。
 func deferInputSource(tool, app string) error {
 	base := basePath()
 	if err := os.MkdirAll(filepath.Dir(inputSourceMarker(base)), 0o700); err != nil {
@@ -283,32 +283,33 @@ func deferInputSource(tool, app string) error {
 	if err := os.WriteFile(inputSourceMarker(base), []byte(tool+"\n"+app+"\n"), 0o600); err != nil {
 		return err
 	}
-	s, err := autoupdate.Load(base)
-	if err != nil {
-		return err
-	}
-	s.ProfileAtLogin = true
-	return autoupdate.Save(base, s)
+	cur := macLoginStamp(time.Now())
+	saveInputSourceRetry(base, inputSourceRetry{ASID: cur.ASID, At: cur.At, Headless: cur.Headless})
+	return nil
 }
 
-// addInputMethod 啟用安裝或回復時記下的輸入來源；成功後清除記錄，失敗則留待下次喚起。
-func addInputMethod() error {
-	b, err := os.ReadFile(inputSourceMarker(basePath()))
-	if os.IsNotExist(err) {
-		return nil
+// inputSourcePending：安裝或回復時有輸入來源還沒啟用成功（不靠狀態檔的 ProfileAtLogin，#195）；要不要在這次喚起補做由
+// addInputMethod 依 inputSourceRetry 決定。
+func inputSourcePending(base string) bool { return fileExists(inputSourceMarker(base)) }
+
+// addInputMethod 補做安裝或回復時沒啟用成功的輸入來源（見 retryInputSource）；不補做時不查詢。
+func addInputMethod() error { return retryInputMethod(false) }
+
+// retryInputMethod：scheduled 是背景排程的 auto，只有它在不補做時查詢使用者是不是已經自己加入（見 retryInputSource）。
+func retryInputMethod(scheduled bool) error {
+	return retryInputSource(basePath(), macLoginStamp(time.Now()), macBootTime(), scheduled, activateInputSource, inputSourceEnabled)
+}
+
+// inputSourceEnabled 查詢 app 的輸入來源是否已啟用：以 tool 在新的行程回讀 TIS（本行程的 TIS 有快取），只查詢、
+// 不登記、不啟用也不改選，不會跳系統詢問、不會切換使用者正在用的輸入來源。tool 的版本太舊、讀不到或逾時都當成還沒啟用。
+func inputSourceEnabled(tool, app string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if !queryInputSourceSupported(bundleBuildVersion(ctx, filepath.Dir(filepath.Dir(filepath.Dir(tool))))) {
+		return false
 	}
-	if err != nil {
-		return err
-	}
-	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
-	if len(lines) != 2 {
-		os.Remove(inputSourceMarker(basePath()))
-		return nil
-	}
-	if err = activateInputSource(lines[0], lines[1]); err != nil {
-		return err
-	}
-	return os.Remove(inputSourceMarker(basePath()))
+	out, err := exec.CommandContext(ctx, tool, "--query-input-source", app).Output()
+	return err == nil && confirmedInputSource(string(out))
 }
 
 // scheduleExists：修復只針對 Windows 防毒軟體移除排程的情況；這裡不檢查。

@@ -246,6 +246,19 @@ public:
             return;
         }
         if (event.isRelease()) { return; }
+        // 用快捷鍵切換簡體字（#192）：設定開著（引擎回報 simplified_hotkey）時吃掉這個鍵，跟選單的「輸出簡體字」一樣即時切換：
+        // 組字不動、跳出「已切換為…」提示、標籤跟著變，之後送出的字照新設定。設定關閉或舊引擎時照一般快捷鍵交給應用程式。
+        {
+            const auto states = event.key().states();
+            if (zuin::simplifiedHotkey(static_cast<uint32_t>(event.key().sym()), states.test(fcitx::KeyState::Ctrl), states.test(fcitx::KeyState::Shift),
+                    states.testAny(fcitx::KeyStates{fcitx::KeyState::Alt, fcitx::KeyState::Super, fcitx::KeyState::Hyper})) &&
+                session.simplifiedHotkey()) {
+                session.bypassed();
+                toggleSimplified(ic);
+                event.filterAndAccept();
+                return;
+            }
+        }
         // Caps Lock 開著時直接打英文（#173）：按鍵事件帶的是按下之前的鎖定狀態（同 RIME 的 ascii_composer），Caps Lock 鍵本身
         // 要反過來算；其他按鍵照它帶的狀態（rawKey，正規化會拿掉 CapsLock），猜錯時下一個按鍵就改正。不讀 LED（Wayland 讀不到）。
         // 開啟時引擎先送出組字、切到英文；關閉時回到原本的模式。設定關閉或舊引擎時不送，照 #168 不理 Caps Lock。

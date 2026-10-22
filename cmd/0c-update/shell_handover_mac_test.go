@@ -364,3 +364,40 @@ func TestMacShellHelper(t *testing.T) {
 		}
 	}
 }
+
+// #195：安裝時沒啟用成功留下的輸入來源記錄。App 不在就放棄；記下的工具（回復時是備份裡的新版工具）不在時改用 App 本身的。
+func TestDeferredInputSource(t *testing.T) {
+	app := testIM + "/0c.app"
+	own := app + "/Contents/MacOS/0c"
+	backupTool := "/Users/lily/Library/Application Support/0c/backups/macos-1/0c.app/Contents/MacOS/0c"
+	have := func(paths ...string) func(string) bool {
+		return func(p string) bool {
+			for _, x := range paths {
+				if x == p {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	for _, tc := range []struct {
+		name      string
+		marker    string
+		exists    func(string) bool
+		tool, app string
+		ok        bool
+	}{
+		{"installed", own + "\n" + app + "\n", have(own, app), own, app, true},
+		{"rollback tool still there", backupTool + "\n" + app + "\n", have(backupTool, own, app), backupTool, app, true},
+		{"rollback tool pruned", backupTool + "\n" + app + "\n", have(own, app), own, app, true},
+		{"app gone", own + "\n" + app + "\n", have(own), "", "", false},
+		{"no tool at all", backupTool + "\n" + app + "\n", have(app), "", "", false},
+		{"garbled", own + "\n", have(own, app), "", "", false},
+		{"empty", "", have(own, app), "", "", false},
+	} {
+		tool, got, ok := deferredInputSource([]byte(tc.marker), tc.exists)
+		if tool != tc.tool || got != tc.app || ok != tc.ok {
+			t.Errorf("%s: got (%q, %q, %v), want (%q, %q, %v)", tc.name, tool, got, ok, tc.tool, tc.app, tc.ok)
+		}
+	}
+}

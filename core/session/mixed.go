@@ -455,6 +455,9 @@ const (
 // 英文前段（ok、gmail、iPhone）在明確的聲調鍵、後段至少兩個照順序打的注音鍵且組成常用字時也切開；
 // 接空白、前段夾數字或標點（網址、識別字）、聲調前一鍵是數字（帳號、編號）都照字面。整串本身是英文字（step3、zoom3）在呼叫前就排除。
 func (s *Session) mixedBoundary(raw, key string, tone rune) (int, zhuyin.Syllable, bool) {
+	if key == " " && s.englishThenPunct(raw) {
+		return 0, "", false
+	}
 	best, bestScore, bestSyl := 0, 0.0, zhuyin.Syllable("")
 	for at := len(raw) - 1; at >= 1; at-- {
 		if !s.mixedLiteralPrefix(raw[:at], raw[at:], key) {
@@ -491,6 +494,14 @@ func (s *Session) mixedBoundary(raw, key string, tone rune) (int, zhuyin.Syllabl
 		}
 	}
 	return best, bestSyl, best > 0
+}
+
+// englishThenPunct（#188）：英文字後面緊接著只有標點鍵（hello. 、vs. 、hello, 、hello; ），比照 #187「緊接在半形英數後面的
+// . , 是標點」，接空白時整串照字面，不把標點鍵切給中文（hello歐、vs歐），也不改把英文字尾借去組字（max. 不是 ma摟）。
+// 有數字（app2. 都、hello5. 周）或字母（helloej/ 公）的後段照舊由 mixedBoundary 判斷；明確的聲調鍵（hello.3）不在此限。
+func (s *Session) englishThenPunct(raw string) bool {
+	word := strings.TrimRightFunc(raw, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+	return word != raw && word != "" && s.mixedEnglishWord(word)
 }
 
 // mixedSyllableScore：單一音節在句首的解碼機率（含個人用字）。只在多字詞裡常見的音節以詞首計（應 → 應該）。
@@ -615,15 +626,17 @@ func (s *Session) punctKeyWord(raw string) bool {
 // digitToneNumber（#175，方案 b）：只用數字鍵、最後一鍵是聲調鍵（3 4 6 7）的待定按鍵，在下面三種情況照字面
 // 留成數字，不組成中文：
 //   - 帶調讀音在詞庫沒有字，要靠 #69 的輕聲退回一聲才組得成（57 ㄓ˙→之、107 ㄅㄢ˙→班、07 ㄢ˙→安）；
-//   - 按鍵順序顛倒（813 的 ㄚㄅ、017 的 ㄢㄅ），真的在打注音時不會這樣打；
+//   - 在句首或接在空白、英文、標點後面，按鍵順序顛倒（813 的 ㄚㄅ、017 的 ㄢㄅ），真的在打注音時不會這樣打；
 //   - 前面緊接著字面數字或數字標點（354 的 3 已照字面送出），是更長的數字的一部分。
 //
-// 其餘（53 只、54 至、84 阿、104 辦）照舊，跟常見注音輸入法的混打一樣按下聲調就出字。
+// 其餘（53 只、54 至、84 阿、104 辦）照舊，跟常見注音輸入法的混打一樣按下聲調就出字。緊接在中文後面的
+// 反序按鍵也出字（#190：大概這麼 824 → 大、中英混 823 → 打）：一般注音模式與接空白的一聲本來就不看順序，
+// 中文後面緊接著打、又會這樣組成反序音節的數字很少（PTT 語料 24,383 次中 23 次）；要數字按 ↓ 選第二項的原按鍵。
 func (s *Session) digitToneNumber(raw string, tone rune) bool {
 	if raw == "" || strings.Trim(raw, "0123456789") != "" {
 		return false
 	}
-	if s.literalNumberBefore() != "" || !s.keysInSyllableOrder(raw) {
+	if s.literalNumberBefore() != "" || !s.keysInSyllableOrder(raw) && !s.mixedAfterChinese() {
 		return true
 	}
 	c, ok := s.mixedComposer(raw)
@@ -786,7 +799,7 @@ func (s *Session) mixedKey(k string) bool {
 			s.insertMixedLiteral(k, false, false)
 		} else {
 			p, _ := s.layout.Punct(rs[0])
-			s.insertLiteral(p)
+			s.insertPunctKey(k, p)
 		}
 		return true
 	}

@@ -123,6 +123,22 @@ func TestForgetSchedulesPersistenceWithoutCommit(t *testing.T) {
 	}
 }
 
+// 設定程式的移除、不再學、恢復學習與復原改的是學習資料（#182）：照忘記盡快存 user.json，不存 vocab.json。
+func TestLearnedOpsSaveLearningData(t *testing.T) {
+	commits, forgets, vocabs := 0, 0, 0
+	srv := &Server{Engine: toyEngine(t), OnCommit: func() { commits++ }, OnForget: func() { forgets++ }, OnVocab: func() { vocabs++ }}
+	srv.Engine.Model.Store.Readings["麻婆豆腐\tㄇㄚˊ ㄆㄛˊ ㄉㄡˋ ㄈㄨˇ"] = true
+	sessions := map[uint64]bool{}
+	r := srv.do(Envelope{Op: OpVocab, Vocab: &engine.VocabRequest{Op: engine.VocabUnlearn, Texts: []string{"麻婆豆腐"}}}, sessions, new(bool))
+	if !r.OK || r.Vocab.Undo == 0 || commits != 1 || forgets != 1 || vocabs != 0 {
+		t.Fatalf("%+v commits=%d forgets=%d vocabs=%d", r.Vocab, commits, forgets, vocabs)
+	}
+	r = srv.do(Envelope{Op: OpVocab, Vocab: &engine.VocabRequest{Op: engine.VocabLearnedUndo, Undo: r.Vocab.Undo}}, sessions, new(bool))
+	if !r.OK || !r.Vocab.OK || commits != 2 || forgets != 2 || vocabs != 0 {
+		t.Fatalf("%+v commits=%d forgets=%d vocabs=%d", r.Vocab, commits, forgets, vocabs)
+	}
+}
+
 // 透過真的 unix socket 打完一段字：開 session、按鍵、提交；連線關閉後 session 一併關閉。
 func TestServerOverUnixSocket(t *testing.T) {
 	sock := filepath.Join(t.TempDir(), "zuin.sock")

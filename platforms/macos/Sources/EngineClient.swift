@@ -185,6 +185,10 @@ final class EngineSession {
     var ctrlPunct: Bool { Self.ctrlPunctSetting }
     // 「輸出簡體字」（#169）：引擎能即時切換（info 的 output_simplified_live）與目前的值（info 的 output_simplified，
     // 之後每個快照的 output_simplified）。選單打勾看它；舊引擎沒有 output_simplified_live，選單改看 0c-update 的狀態。
+    // 「用快捷鍵切換簡體字」開著（#192，info 的 simplified_hotkey）；更新方式同 vocabKeys，加上切回 App 時的背景 health，
+    // 在設定程式打開後回到 App 就是新值。舊引擎沒有這一項，視為 false，⌃⇧F11 照舊交給 App。
+    private static var simplifiedHotkeySetting = false
+    var simplifiedHotkey: Bool { Self.simplifiedHotkeySetting && Self.simplifiedLive }
     private(set) static var simplifiedLive = false
     private(set) static var outputSimplified = false
     /// 快照帶回的「輸出簡體字」：設定程式或別的 App 切換後，下一個快照就跟上。只信回報即時切換的引擎。
@@ -203,6 +207,7 @@ final class EngineSession {
         vocabKeysSetting = info["vocab_keys"] == "true"
         ctrlPunctSetting = info["ctrl_punctuation"] == "true"
         simplifiedLive = info["output_simplified_live"] == "true"
+        simplifiedHotkeySetting = info["simplified_hotkey"] == "true"
         outputSimplified = simplifiedLive && info["output_simplified"] == "true"
         settingsKnown = true
     }

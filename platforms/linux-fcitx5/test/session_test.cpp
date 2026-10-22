@@ -678,6 +678,25 @@ int main(int argc, char **argv) {
         std::ofstream(home + "/settings.json") << R"({})";
     }
     {
+        // #192：「用快捷鍵切換簡體字」預設關，外殼不攔 Ctrl＋Shift＋F11。在設定程式打開（引擎以新設定重啟）後，
+        // 已經開著的 session 第一次按就重新確認到新值；關掉後也一樣。
+        zuin::Session s(client, nullptr);
+        CHECK(!s.simplifiedHotkey(), "預設不應回報 simplified_hotkey");
+        (void)!system((std::string("pkill -f '0c-server -socket ") + argv[1] + "'").c_str());
+        usleep(300 * 1000);
+        std::ofstream(home + "/settings.json") << R"({"simplified_hotkey":true})";
+        CHECK(s.simplifiedHotkey(), "引擎重啟後按下快捷鍵應重新確認到 simplified_hotkey");
+        auto toggled = s.outputSimplified(true);
+        CHECK(toggled.ok && toggled.handled && toggled.outputSimplified, "快捷鍵送的是選單同一個請求");
+        (void)!system((std::string("pkill -f '0c-server -socket ") + argv[1] + "'").c_str());
+        usleep(300 * 1000);
+        std::ofstream(home + "/settings.json") << R"({"simplified_hotkey":false})";
+        CHECK(!s.simplifiedHotkey(), "設定關掉、引擎重啟後第一次按就不攔");
+        (void)!system((std::string("pkill -f '0c-server -socket ") + argv[1] + "'").c_str());
+        usleep(300 * 1000);
+        std::ofstream(home + "/settings.json") << R"({})";
+    }
+    {
         // #117：預設（右 Shift）時 health 回報右 Shift 切換、左 Shift 不切換。
         zuin::Session s(client, nullptr);
         auto keys = s.shiftKeys();

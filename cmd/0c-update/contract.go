@@ -36,7 +36,7 @@ const (
 const (
 	applyNotRequested  = "not_requested"      // 沒有要求套用：下次引擎啟動時生效
 	applyApplied       = "applied"            // 引擎已交接退出，下一個按鍵以新設定重新啟動
-	applyEngineStopped = "engine_not_running" // 引擎沒有在執行：下次啟動時就是新設定
+	applyEngineStopped = "engine_not_running" // 引擎沒有在執行：外殼下一個按鍵啟動引擎時就是新設定
 	applyDeferred      = "deferred_composing" // 仍在組字：已儲存，等引擎自然重啟
 	applyTimeout       = "timeout"
 	applyFailed        = "failed"
@@ -182,6 +182,12 @@ func runningValues(info map[string]string) map[string]string {
 	case "false":
 		out["output-simplified"] = "off"
 	}
+	switch info["simplified_hotkey"] { // #192
+	case "true":
+		out["simplified-hotkey"] = "on"
+	case "false":
+		out["simplified-hotkey"] = "off"
+	}
 	switch info["ctrl_punctuation"] {
 	case "true":
 		out["ctrl-punctuation"] = "on"
@@ -288,7 +294,7 @@ type setOptions struct {
 	repair bool // 設定檔壞掉時改名保留，從預設值重新開始
 }
 
-const setUsage = "用法：0c-update set selection neural|statistical、set punctuation on|off、set document-context on|off、set mixed-input on|off、set english-autocomplete on|off、set left-shift on|off、set esc-clear on|off、set space-selects on|off、set candidate-cursor before|after、set advance-after-select on|off、set output-simplified on|off、set ctrl-punctuation on|off、set caps-lock-english on|off（Windows、Linux）、set keyboard-layout standard|eten、set fuzzy-z-zh|fuzzy-c-ch|fuzzy-s-sh|fuzzy-en-eng off|select|auto [鍵 值 ...] [-apply] [-notify] [-json] [-repair]"
+const setUsage = "用法：0c-update set selection neural|statistical、set punctuation on|off、set document-context on|off、set mixed-input on|off、set english-autocomplete on|off、set left-shift on|off、set esc-clear on|off、set space-selects on|off、set candidate-cursor before|after、set advance-after-select on|off、set output-simplified on|off、set simplified-hotkey on|off、set ctrl-punctuation on|off、set caps-lock-english on|off（Windows、Linux）、set keyboard-layout standard|eten、set fuzzy-z-zh|fuzzy-c-ch|fuzzy-s-sh|fuzzy-en-eng off|select|auto [鍵 值 ...] [-apply] [-notify] [-json] [-repair]"
 
 func parseSetArgs(args []string) (setOptions, error) {
 	var o setOptions

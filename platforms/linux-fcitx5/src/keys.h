@@ -42,4 +42,12 @@ inline std::string ctrlPunctKey(uint32_t unicode, bool ctrl, bool otherModifier)
     }
 }
 
+// simplifiedHotkey：切換「輸出簡體字」的 Ctrl＋Shift＋F11（#192，settings.SimplifiedHotkeyLabel）。只按著 Ctrl 與 Shift，
+// 有 Alt／Super／Hyper 就不是；Caps Lock、Num Lock 不影響。sym 是 X keysym（F11 是 0xffc8）。
+// 要不要攔由呼叫端看引擎回報的 simplified_hotkey。
+constexpr uint32_t keyF11 = 0xffc8;
+inline bool simplifiedHotkey(uint32_t sym, bool ctrl, bool shift, bool otherModifier) {
+    return sym == keyF11 && ctrl && shift && !otherModifier;
+}
+
 } // namespace zuin

@@ -507,6 +507,43 @@ func TestScheduleChoiceChangedDuringDownloadSurvives(t *testing.T) {
 	}
 }
 
+// #195：平台安裝器在 InstallShell 裡記下「登入時補做輸入法設定」（ProfileAtLogin），協調器結束時寫回整份狀態不能蓋掉它。
+type profileDuringInstall struct {
+	*fakePlatform
+	base string
+}
+
+func (p *profileDuringInstall) InstallShell(ctx context.Context, archive string) (bool, error) {
+	if _, err := EditState(p.base, func(s *State) error { s.ProfileAtLogin = true; return nil }); err != nil {
+		return false, err
+	}
+	return p.fakePlatform.InstallShell(ctx, archive)
+}
+
+func TestProfileAtLoginSetDuringInstallSurvives(t *testing.T) {
+	p := &fakePlatform{installed: "0.1.0-dev.17", running: "0.1.0-dev.17", feed: feedFor("0.1.0-dev.18", "shell", 100), shellPend: true}
+	co, _ := newCoordinator(t, p)
+	co.Consent = true
+	initial, _ := Load(co.Base)
+	if err := Save(co.Base, initial); err != nil {
+		t.Fatal(err)
+	}
+	co.Platform = &profileDuringInstall{p, co.Base}
+	s := run(t, co)
+	saved, err := Load(co.Base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(p.calls, ","), "shell") {
+		t.Fatalf("shell was not installed: %v", p.calls)
+	}
+	for _, got := range []*State{s, saved} {
+		if !got.ProfileAtLogin {
+			t.Fatalf("coordinator save dropped ProfileAtLogin written by the installer: %+v", got)
+		}
+	}
+}
+
 // 選單在協調器執行中改了暫停：Download 期間模擬另一個行程寫入暫停。
 func (p *pauseDuringRun) Download(ctx context.Context, t Target, dir string) (string, error) {
 	s, _ := Load(p.base)

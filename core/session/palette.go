@@ -36,7 +36,7 @@ func (s *Session) candidateColumns() int {
 			columns = 1
 		}
 	}
-	columns = max(1, min(columns, 5))
+	columns = max(1, min(columns, s.selectionKeyColumns()))
 	if s.displayColumns > 0 {
 		columns = min(columns, s.displayColumns)
 	}

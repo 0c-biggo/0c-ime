@@ -97,10 +97,12 @@ func macUserAway() bool {
 	return macConsoleAway(string(out), os.Getuid())
 }
 
-// openMacShell 以不搶前景、不顯示的方式啟動新的輸入法程式（open -g -j）。系統本來也會在下一次需要時啟動它，
+// openMacShell 以不搶前景的方式啟動新的輸入法程式（open -g）。系統本來也會在下一次需要時啟動它，
 // 先啟動可以讓焦點一改變就連上新版，不必等到按鍵（那個按鍵會以英文字母交給 App）。
+// 不加 -j（隱藏啟動）：隱藏啟動的 App 整個是隱藏狀態，候選窗排好版也不會上螢幕，空白鍵、↓ 叫不出選字窗（#194）。
+// 0c.app 是背景程式、啟動時沒有視窗，不隱藏也不會顯示任何東西。
 func openMacShell(app string) {
-	if out, err := exec.Command("/usr/bin/open", "-g", "-j", app).CombinedOutput(); err != nil {
+	if out, err := exec.Command("/usr/bin/open", "-g", app).CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "0c-update: 無法啟動新的輸入法程式（%s）：%v\n", strings.TrimSpace(string(out)), err)
 	}
 }
@@ -229,37 +231,31 @@ func processExe(pid uint32) string {
 	return strings.TrimSpace(string(out))
 }
 
-// 安裝後要重新登入的情況：輸入來源還沒登記好（deferInputSource 記下、登入後補做），或簽章身分改變、要等使用者
-// 按「允許」。這時舊的輸入法程式照常能打字，不結束它；新版在重新登入後載入。
-func reloginMarker(base string) string { return filepath.Join(base, "update", "relogin-required") }
-
-func markRelogin(base string) {
+// macLoginStamp 記下現在所在的登入工作階段（loginStamp）：取不到 ASID 時，再以 IOConsoleUsers 確認是不是根本沒有
+// 圖形登入；ioreg 失敗或看不懂時不當成沒有。
+func macLoginStamp(now time.Time) loginStamp {
 	asid, _ := macAquaSession(context.Background())
-	_ = os.MkdirAll(filepath.Dir(reloginMarker(base)), 0o700)
-	_ = os.WriteFile(reloginMarker(base), []byte(strconv.FormatUint(asid, 10)+"\n"), 0o600)
+	s := loginStamp{ASID: asid, At: now}
+	if asid == 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), ioregTimeout)
+		defer cancel()
+		if out, err := exec.CommandContext(ctx, "/usr/sbin/ioreg", "-n", "Root", "-d1").Output(); err == nil {
+			has, known := macGUILogin(string(out), os.Getuid())
+			s.Headless = known && !has
+		}
+	}
+	return s
 }
 
-// macReloginRequired：還在安裝時的同一個登入工作階段、且安裝時記下要重新登入。跨過登入邊界（ASID 不同或
-// 重新開機）後清掉記號。
+func markRelogin(base string) {
+	_ = os.MkdirAll(filepath.Dir(reloginMarker(base)), 0o700)
+	_ = os.WriteFile(reloginMarker(base), formatReloginMarker(macLoginStamp(time.Now())), 0o600)
+}
+
+// macReloginRequired 見 reloginRequired。
 func macReloginRequired(base string) bool {
-	if fileExists(inputSourceMarker(base)) {
-		return true
-	}
-	b, err := os.ReadFile(reloginMarker(base))
-	if err != nil {
-		return false
-	}
-	info, err := os.Stat(reloginMarker(base))
-	if err != nil {
-		return false
-	}
-	stored, _ := strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64)
 	current, _ := macAquaSession(context.Background())
-	if boot := macBootTime(); (!boot.IsZero() && boot.After(info.ModTime())) || (stored != 0 && current != 0 && stored != current) {
-		os.Remove(reloginMarker(base))
-		return false
-	}
-	return true
+	return reloginRequired(base, current, macBootTime())
 }
 
 func settingsFile(base string) string { return settings.Path(filepath.Join(base, "user.json")) }
