@@ -1404,9 +1404,9 @@ func (s *Session) commit() string {
 	} // 神經模式提交已顯示路徑；Enter 不啟動推論或接受其他欄位的模型更新。
 	text := s.snapshot().Text() // 未完成注音可能在句中，依畫面位置提交。
 	pins := s.readingPins(text)
-	// 沒打聲調的音節換回詞庫讀音再學（#150）；換不回來的詞不學（同近音）。
+	// 沒打聲調的音節換回詞庫讀音再學（#150）；換不回來的詞不學（同近音），但包在裡面的手選用自己的讀音學。
 	syls, _ := s.resolvedSyllables()
-	ev := personal.Commit{Syls: syls, Rejected: s.rejected}
+	ev := personal.Commit{Syls: s.lockReadings(syls), Rejected: s.rejectedReadings()}
 	for _, g := range s.path {
 		if s.literals[g.Start] {
 			continue // 留下位置間隙，學習模型會在符號後重設上下文
@@ -1423,7 +1423,7 @@ func (s *Session) commit() string {
 			Fuzzy:      s.fuzzyTouches(g.Start, g.End) || untonedTouches(syls, g.Start, g.End),
 		})
 	}
-	ev.Selected = s.enclosedSelections(syls)
+	ev.Selected = s.enclosedSelections(ev.Syls)
 	if !s.paused && !s.private && len(ev.Path) > 0 {
 		s.model.Learn(ev)
 	}

@@ -79,6 +79,16 @@ func (d *Decoder) topUntonedArcs(pooled map[int][]arc) []arc {
 // 找不到時回傳 false。給「聲調選填」（#150）在提交、加詞時把沒打聲調的音節換回詞庫讀音用：
 // 學習與自訂詞只收真的讀音，不收內部記號。
 func Reading(lex lexicon.Source, lat input.Lattice, start, end int, word string) ([]zhuyin.Syllable, bool) {
+	return reading(lex, lat, start, end, word, false)
+}
+
+// CorrectionReading 同 Reading，但找的是自動修正詞條（Correction）的讀音：聲調選填時推翻自動修正，
+// 拒絕次數要記在那個修正詞條自己的讀音上（個人化視圖依它停用修正），不是最後路徑上換上去的詞的讀音（#150）。
+func CorrectionReading(lex lexicon.Source, lat input.Lattice, start, end int, word string) ([]zhuyin.Syllable, bool) {
+	return reading(lex, lat, start, end, word, true)
+}
+
+func reading(lex lexicon.Source, lat input.Lattice, start, end int, word string, correction bool) ([]zhuyin.Syllable, bool) {
 	if start < 0 || end > len(lat) || start >= end {
 		return nil, false
 	}
@@ -88,7 +98,7 @@ func Reading(lex lexicon.Source, lat input.Lattice, start, end int, word string)
 	walk = func(pos int, reading []zhuyin.Syllable) {
 		if pos == end {
 			for _, e := range lex.Exact(reading) {
-				if e.Surface == word && !e.Correction && e.PRW > bestPRW {
+				if e.Surface == word && e.Correction == correction && e.PRW > bestPRW {
 					best, bestPRW = append([]zhuyin.Syllable(nil), reading...), e.PRW
 				}
 			}

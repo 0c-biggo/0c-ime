@@ -4,7 +4,9 @@ import (
 	"slices"
 
 	"github.com/0c-biggo/0c-ime/core/decode"
+	"github.com/0c-biggo/0c-ime/core/input"
 	"github.com/0c-biggo/0c-ime/core/layout"
+	"github.com/0c-biggo/0c-ime/core/personal"
 	"github.com/0c-biggo/0c-ime/core/proto"
 	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
@@ -210,6 +212,52 @@ func (s *Session) resolvedSyllables() (out []zhuyin.Syllable, ok bool) {
 		copy(out[g.Start:g.End], reading)
 	}
 	return out, ok && !zhuyin.HasUntoned(out)
+}
+
+// lockReadings 回傳 resolved 的複本：仍帶記號、但被手選鎖定蓋住的位置換成那個手選詞自己的詞庫讀音。
+// 包住手選的詞換不回讀音時（例如只有修正讀音的自動修正詞），手選本身照樣用它的讀音學習，跟打聲調時一樣；
+// 換不回來的位置保留記號，照舊不學。只給提交時的學習用：路徑的段是否不學仍依 resolved 判斷。
+func (s *Session) lockReadings(resolved []zhuyin.Syllable) []zhuyin.Syllable {
+	if !zhuyin.HasUntoned(resolved) {
+		return resolved
+	}
+	out := slices.Clone(resolved)
+	var lat input.Lattice
+	for at, lock := range s.locks {
+		end := at + lock.Len
+		if lock.LiteralBoundary != 0 || lock.Matched != "" || s.literals[at] || end > len(out) || !zhuyin.HasUntoned(out[at:end]) {
+			continue
+		}
+		if lat == nil {
+			lat = s.lattice()
+		}
+		if reading, ok := decode.Reading(s.dec.Lex, lat, at, end, lock.Word); ok && len(reading) == lock.Len {
+			copy(out[at:end], reading)
+		}
+	}
+	return out
+}
+
+// rejectedReadings 回傳要交給學習的被推翻區段：聲調選填時，被推翻的自動修正帶上那個修正詞條自己的讀音，
+// 拒絕次數才記得到個人化視圖停用修正時查的鍵（打聲調時那段音節就是修正讀音，照舊不帶）。
+func (s *Session) rejectedReadings() []personal.RejectedSeg {
+	if !zhuyin.HasUntoned(s.syls) {
+		return s.rejected
+	}
+	out := slices.Clone(s.rejected)
+	var lat input.Lattice
+	for i, r := range out {
+		if !r.Correction || r.End > len(s.syls) || !zhuyin.HasUntoned(s.syls[r.Start:r.End]) {
+			continue
+		}
+		if lat == nil {
+			lat = s.lattice()
+		}
+		if reading, ok := decode.CorrectionReading(s.dec.Lex, lat, r.Start, r.End, r.Word); ok && len(reading) == r.End-r.Start {
+			out[i].Reading = reading
+		}
+	}
+	return out
 }
 
 // untonedTouches 回報 [start, end) 是否有讀音沒能換回詞庫讀音的沒打聲調音節；這種段落不學習。

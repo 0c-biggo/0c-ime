@@ -418,6 +418,9 @@ type RejectedSeg struct {
 	Word       string
 	Start, End int
 	Correction bool
+	// Reading 是被推翻的修正詞條自己的讀音；空的時候用 Commit.Syls 的那段（打聲調時兩者相同）。
+	// 聲調選填（#150）時 Syls 是最後路徑上換上去的詞的讀音，拒絕次數要記在修正詞條的讀音上才停用得了。
+	Reading []zhuyin.Syllable
 }
 
 func (m *Model) observe(left, w string, weight float64) {
@@ -466,7 +469,11 @@ func (m *Model) Learn(c Commit) {
 	var noLearn [][2]int
 	for _, r := range c.Rejected {
 		if r.Correction {
-			if reading := c.Syls[r.Start:r.End]; !zhuyin.HasUntoned(reading) {
+			reading := c.Syls[r.Start:r.End]
+			if len(r.Reading) == r.End-r.Start {
+				reading = r.Reading
+			}
+			if !zhuyin.HasUntoned(reading) {
 				s.Rejects[pair(r.Word, zhuyin.Key(reading))]++
 			}
 			noLearn = append(noLearn, [2]int{r.Start, r.End})

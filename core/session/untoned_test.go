@@ -2,9 +2,11 @@ package session
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/0c-biggo/0c-ime/core/decode"
 	"github.com/0c-biggo/0c-ime/core/layout"
 	"github.com/0c-biggo/0c-ime/core/lexicon"
 	"github.com/0c-biggo/0c-ime/core/lm"
@@ -262,6 +264,103 @@ func TestTonelessUnresolvedReadingIsNotLearned(t *testing.T) {
 			}
 			if strings.ContainsRune(string(b), zhuyin.UntonedMark) {
 				t.Fatalf("個人資料不能有沒打聲調的記號：%s", b)
+			}
+		})
+	}
+}
+
+// withNiHaoCorrection 在聲調選填的測試詞庫加一個只有修正讀音的詞「你號」（ㄋㄧˇ ㄏㄠˋ），uni 決定它是否勝過「你好」。
+func withNiHaoCorrection(s *Session, uni float64) *Session {
+	s.model.Lex.(*lexicon.Mem).Add(lexicon.Entry{Surface: "你號", Reading: zhuyin.ParseReading("ㄋㄧˇ ㄏㄠˋ"), PRW: 1, Correction: true})
+	s.model.LM.(*lm.Mem).SetUni("你號", uni)
+	return s
+}
+
+// pickHere 在游標處開候選、選 word。
+func pickHere(t *testing.T, s *Session, word string) {
+	t.Helper()
+	snap := key(s, proto.KeyDown)
+	if snap.Candidates != nil {
+		for _, it := range snap.Candidates.Items {
+			if it.Text == word {
+				s.Handle(proto.Request{Type: proto.Select, Index: it.ID})
+				return
+			}
+		}
+	}
+	t.Fatalf("候選沒有 %q：%+v", word, snap.Candidates)
+}
+
+// 包住手選的詞換不回詞庫讀音時，手選本身用它自己的詞庫讀音照樣學到（跟打聲調時一樣記個人讀音、單字手選與更正）；
+// 包住它的修正詞讀音不明，仍不學。修正前（cf5371a）手選完全不學。
+func TestTonelessEnclosedPickUsesItsOwnReading(t *testing.T) {
+	s := withNiHaoCorrection(newTonelessSession(true), 1e-3)
+	typeBare(s, "ㄋㄧㄏㄠ")
+	key(s, proto.KeyLeft)
+	pickHere(t, s, "號")
+	if len(s.path) != 1 || s.path[0].Word != "你號" || !s.path[0].Correction {
+		t.Fatalf("前提：修正詞包住手選：%+v", s.path)
+	}
+	if c := key(s, proto.KeyEnter).Commit; c != "你號" {
+		t.Fatalf("送出 %q", c)
+	}
+	st := s.model.Store
+	if !st.Readings["號\tㄏㄠˋ"] {
+		t.Errorf("手選的個人讀音：%v", st.Readings)
+	}
+	if !slices.Contains(st.Picked["ㄏㄠˋ"], "號") {
+		t.Errorf("單字手選：%v", st.Picked)
+	}
+	found := false
+	for _, c := range st.Corrections {
+		found = found || c.Word == "號" && c.Reading == "ㄏㄠˋ"
+	}
+	if !found {
+		t.Errorf("手選的更正：%v", st.Corrections)
+	}
+	if st.Uni["你號"] != 0 {
+		t.Errorf("讀音不明的修正詞不學：%v", st.Uni)
+	}
+	b, _ := json.Marshal(st)
+	if strings.ContainsRune(string(b), zhuyin.UntonedMark) {
+		t.Fatalf("個人資料不能有沒打聲調的記號：%s", b)
+	}
+}
+
+// 推翻同一個自動修正兩次就停用它（RejectsToDisable）。聲調選填時拒絕次數要記在修正詞條自己的讀音上：
+// 修正前（cf5371a）選「你好」記在「你號\tㄋㄧˇ ㄏㄠˇ」、選「你」不計，第三次照樣顯示自動修正。打聲調時行為不變。
+func TestTonelessRejectingAutoCorrectionTwiceDisablesIt(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		toneless bool
+		typed    string
+		pick     string
+	}{
+		{"打聲調選你", false, "ㄋㄧˇㄏㄠˋ", "你"},
+		{"不打聲調選你", true, "ㄋㄧㄏㄠ", "你"},
+		{"不打聲調選你好", true, "ㄋㄧㄏㄠ", "你好"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := withNiHaoCorrection(newTonelessSession(tc.toneless), 5e-2)
+			corrected := func() bool {
+				return slices.ContainsFunc(s.path, func(g decode.Seg) bool { return g.Word == "你號" && g.Correction })
+			}
+			for round := range 2 {
+				typeBare(s, tc.typed)
+				key(s, proto.KeyHome)
+				if !corrected() {
+					t.Fatalf("第 %d 次：前提是顯示自動修正：%+v", round+1, s.path)
+				}
+				pickHere(t, s, tc.pick)
+				key(s, proto.KeyEnter)
+			}
+			if got := s.model.Store.Rejects["你號\tㄋㄧˇ ㄏㄠˋ"]; got != 2 {
+				t.Errorf("拒絕次數記在修正讀音上：%v", s.model.Store.Rejects)
+			}
+			typeBare(s, tc.typed)
+			key(s, proto.KeyHome)
+			if corrected() {
+				t.Fatalf("推翻兩次後應停用：%+v", s.path)
 			}
 		})
 	}
