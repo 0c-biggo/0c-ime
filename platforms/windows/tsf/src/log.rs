@@ -11,6 +11,10 @@ use windows_core::PCWSTR;
 const MAX_BYTES: u64 = 4 << 20;
 
 fn path() -> Option<PathBuf> {
+    // 單元測試不寫進測試機真正的 tsf.log。
+    if cfg!(test) {
+        return None;
+    }
     let base = std::env::var_os("LOCALAPPDATA")?;
     let dir = PathBuf::from(base).join("Zuin");
     if dir.is_dir() {
@@ -51,6 +55,27 @@ pub fn log(msg: &str) {
     unsafe { OutputDebugStringW(PCWSTR::from_raw(w.as_ptr())) };
 }
 
+/// 同一則訊息每個行程只記一次（不必開 tsf-debug）：給每鍵都會遇到、但使用者回報時需要看到原因的情況，
+/// 例如欄位政策讀不到 InputScope 而降級或放行（#209）。訊息不可含文字或鍵碼；最多記 32 則不同的訊息。
+pub fn once(msg: &str) {
+    use std::sync::Mutex;
+    static SEEN: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let first = first_time(&mut SEEN.lock().unwrap_or_else(|e| e.into_inner()), msg);
+    if first {
+        log(msg);
+    }
+}
+
+const ONCE_LIMIT: usize = 32;
+
+fn first_time(seen: &mut Vec<String>, msg: &str) -> bool {
+    if seen.len() >= ONCE_LIMIT || seen.iter().any(|m| m == msg) {
+        return false;
+    }
+    seen.push(msg.to_owned());
+    true
+}
+
 /// panic 時記下發生位置（檔案:行號），再由 guarded／guard 記錄攔截到的入口（#89）。
 /// 只記位置、不記訊息：切字串之類的 panic 訊息會帶出使用者打的字。DLL 第一次被使用時設定一次；
 /// 每個 Rust DLL 有自己的 std，這個 hook 只影響本 DLL。
@@ -87,3 +112,21 @@ macro_rules! zdebug {
 }
 pub(crate) use zdebug;
 pub(crate) use zlog;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn once_logs_each_message_once_and_stops_at_the_limit() {
+        let mut seen = Vec::new();
+        assert!(first_time(&mut seen, "a"));
+        assert!(!first_time(&mut seen, "a"));
+        assert!(first_time(&mut seen, "b"));
+        for i in 0..ONCE_LIMIT {
+            first_time(&mut seen, &i.to_string());
+        }
+        assert_eq!(seen.len(), ONCE_LIMIT);
+        assert!(!first_time(&mut seen, "new"));
+    }
+}
