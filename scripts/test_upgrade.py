@@ -328,6 +328,22 @@ class UpgradeTests(unittest.TestCase):
                              [(*key, '--notify', ''), (*key, '--type', 'path', '--notify', desktop)])
             self.assertNotIn('WAYLAND_SOCKET', kwin[0].kwargs['env'])
 
+    def test_kwin_wayland_launcher_is_restarted_through_kwin(self):
+        # 「Fcitx 5 Wayland Launcher」：fcitx5 由 D-Bus 叫起，沒有 WAYLAND_SOCKET；KWin 的子行程是 launcher。
+        proc = self.root / 'proc/123'
+        proc.mkdir(parents=True)
+        (proc / 'environ').write_bytes(b'XDG_RUNTIME_DIR=/run/user/1000\0')
+        (proc / 'stat').write_text('123 (fcitx5) S 1 123 123 0')
+        (self.root / 'proc/100').mkdir()
+        (self.root / 'proc/100/comm').write_text('kwin_wayland\n')
+        launcher = self.root / 'proc/200'
+        launcher.mkdir()
+        (launcher / 'comm').write_text('fcitx5-wayland-\n')
+        (launcher / 'stat').write_text('200 (fcitx5-wayland-) S 100 200 200 0')
+        self.assertTrue(upgrade.kwin_launched(proc, {}))
+        (self.root / 'proc/100/comm').write_text('weston\n')
+        self.assertFalse(upgrade.kwin_launched(proc, {}))
+
     def test_other_wayland_socket_launcher_keeps_fcitx_replace(self):
         # 其他合成器（例如 Weston）也可能以 WAYLAND_SOCKET 啟動 Fcitx5；父行程不是 kwin_wayland 就不碰 kwinrc。
         proc = self.root / 'proc/123'

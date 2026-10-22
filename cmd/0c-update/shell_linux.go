@@ -228,15 +228,38 @@ func captureFcitx(pid int) (*shellRestart, error) {
 		// KWin 以 socketpair 啟動輸入法，只有它給的 WAYLAND_SOCKET 能提供 Wayland 輸入法協定；這個 fd 無法沿用。
 		kwin = kwin || key == "WAYLAND_SOCKET"
 	}
-	// 只有 KDE Plasma Wayland 走 KWin 路徑：除了 WAYLAND_SOCKET，父行程也必須是 kwin_wayland。
+	// 只有 KDE Plasma Wayland 走 KWin 路徑，「虛擬鍵盤」有兩種選法：
+	//   - Fcitx 5：KWin 直接啟動 fcitx5，帶 WAYLAND_SOCKET、父行程是 kwin_wayland；
+	//   - Fcitx 5 Wayland Launcher：KWin 啟動 fcitx5-wayland-launcher，由它經 D-Bus 叫起 fcitx5 再交出連線，
+	//     fcitx5 本身不帶 WAYLAND_SOCKET，父行程也不是 KWin；Fcitx5 結束時 launcher 跟著正常結束，KWin 不會重開。
 	// 其他會用 WAYLAND_SOCKET 啟動輸入法的合成器（例如 Weston）和 GNOME、X11 等桌面照原本的方式重新啟動。
-	if kwin && parentComm(dir) == "kwin_wayland" {
+	if kwin && parentComm(dir) == "kwin_wayland" || kwinLauncherRunning() {
 		if s.KWinIM, err = kwinInputMethod(append(os.Environ(), s.Env...)); err != nil || s.KWinIM == "" {
 			fmt.Fprintln(os.Stderr, "0c-update: Fcitx5 由 KWin 啟動，但讀不到 kwinrc 的 InputMethod：", err)
 			s.KWinIM = ""
 		}
 	}
 	return s, nil
+}
+
+// kwinLauncherRunning：目前使用者有 KWin 啟動的 fcitx5-wayland-launcher（comm 截成 15 字元：fcitx5-wayland-）。
+func kwinLauncherRunning() bool {
+	entries, err := os.ReadDir(procRoot)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		dir := filepath.Join(procRoot, e.Name())
+		var st syscall.Stat_t
+		if _, err := strconv.Atoi(e.Name()); err != nil || syscall.Stat(dir, &st) != nil || int(st.Uid) != os.Getuid() {
+			continue
+		}
+		comm, _ := os.ReadFile(filepath.Join(dir, "comm"))
+		if strings.HasPrefix(strings.TrimSpace(string(comm)), "fcitx5-wayland") && parentComm(dir) == "kwin_wayland" {
+			return true
+		}
+	}
+	return false
 }
 
 // parentComm 回傳 /proc/PID（dir）父行程的名稱；讀不到時為空字串。

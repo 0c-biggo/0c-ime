@@ -303,9 +303,35 @@ func TestKWinLaunchedFcitxIsRestartedThroughKWin(t *testing.T) {
 			t.Fatalf("父行程 %s 不該走 KWin 路徑：%+v %q", other, state, ran)
 		}
 	}
+	// 「Fcitx 5 Wayland Launcher」：fcitx5 由 D-Bus 叫起（沒有 WAYLAND_SOCKET、父行程不是 KWin），
+	// KWin 的子行程是 fcitx5-wayland-launcher。這時也要交還 KWin。
+	if err := os.WriteFile(filepath.Join(dir, "environ"), []byte("XDG_RUNTIME_DIR=/run/user/1000\x00"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	launcher := filepath.Join(procRoot, "200")
+	if err := os.Mkdir(launcher, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(launcher, "stat"), []byte("200 (fcitx5-wayland-) S 100 200 200 0"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(launcher, "comm"), []byte("fcitx5-wayland-\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if state, err := captureFcitx(123); err != nil || state.KWinIM != "" {
+		t.Fatalf("launcher 的父行程不是 kwin_wayland 時不走 KWin 路徑：%+v %v", state, err)
+	}
 	if err := os.WriteFile(filepath.Join(parent, "comm"), []byte("kwin_wayland\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	if state, err := captureFcitx(123); err != nil || state.KWinIM != desktop {
+		t.Fatalf("Wayland Launcher：%+v %v", state, err)
+	}
+	os.RemoveAll(launcher)
+	if err := os.WriteFile(filepath.Join(dir, "environ"), []byte("WAYLAND_SOCKET=27\x00XDG_RUNTIME_DIR=/run/user/1000\x00"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ran = nil
 	state, err := captureFcitx(123)
 	if err != nil {
 		t.Fatal(err)

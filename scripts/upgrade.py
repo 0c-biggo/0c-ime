@@ -406,17 +406,31 @@ def kconfig_tool(*names):
     raise RuntimeError(f"找不到 {'／'.join(names)}，無法交由 KWin 重新啟動 Fcitx5；請在系統設定的虛擬鍵盤先選「無」再選回 Fcitx 5。")
 
 
-def kwin_launched(proc, env):
-    """只有 KDE Plasma Wayland 交還 KWin：要有 KWin 給的 WAYLAND_SOCKET，父行程也必須是 kwin_wayland。
-    其他會用 WAYLAND_SOCKET 啟動輸入法的合成器（例如 Weston）和 GNOME、X11 照原本的 fcitx5 -r。"""
-    if "WAYLAND_SOCKET" not in env:
-        return False
+def parent_comm(proc):
     try:
         stat = (proc / "stat").read_text()
         parent = stat[stat.rindex(") ") + 2:].split()[1]
-        return (proc.parent / parent / "comm").read_text().strip() == "kwin_wayland"
+        return (proc.parent / parent / "comm").read_text().strip()
     except (OSError, ValueError, IndexError):
-        return False
+        return ""
+
+
+def kwin_launched(proc, env):
+    """只有 KDE Plasma Wayland 交還 KWin。「虛擬鍵盤」選 Fcitx 5 時 KWin 直接啟動 fcitx5（帶 WAYLAND_SOCKET、
+    父行程是 kwin_wayland）；選 Fcitx 5 Wayland Launcher 時 KWin 的子行程是 fcitx5-wayland-launcher（comm 截成
+    fcitx5-wayland-），fcitx5 由 D-Bus 叫起。其他合成器（例如 Weston）和 GNOME、X11 照原本的 fcitx5 -r。"""
+    if "WAYLAND_SOCKET" in env and parent_comm(proc) == "kwin_wayland":
+        return True
+    uid = os.getuid()
+    for other in proc.parent.iterdir():
+        try:
+            if (other.name.isdigit() and other.stat().st_uid == uid
+                    and (other / "comm").read_text().strip().startswith("fcitx5-wayland")
+                    and parent_comm(other) == "kwin_wayland"):
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def restart_kwin_input_method(env, log):
