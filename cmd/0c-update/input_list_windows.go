@@ -87,9 +87,22 @@ func accountSID(name string) string {
 // 不靠名稱。沒有 shell 時（剛登入 explorer 還沒起來、explorer 當掉）才以名稱查（LookupAccountName）：Azure AD 與
 // Microsoft 帳號的工作階段名稱可能查不到或查到別的寫法。
 func sessionAccount() (account, error) {
+	session, name, err := sessionUser()
+	if err != nil || name == "" {
+		return account{}, err
+	}
+	sid := shellUserSID(session)
+	if sid == "" {
+		sid = accountSID(name)
+	}
+	return account{sid: sid, name: name}, nil
+}
+
+// sessionUser 是這個程序所在的工作階段與它登入的使用者名稱（網域\帳號）；沒有登入使用者時名稱為空字串。
+func sessionUser() (uint32, string, error) {
 	var session uint32
 	if err := windows.ProcessIdToSessionId(uint32(os.Getpid()), &session); err != nil {
-		return account{}, err
+		return 0, "", err
 	}
 	query := func(class uintptr) (string, error) {
 		var buffer *uint16
@@ -105,18 +118,13 @@ func sessionAccount() (account, error) {
 	const wtsUserName, wtsDomainName = 5, 7
 	user, err := query(wtsUserName)
 	if err != nil || user == "" {
-		return account{}, err
+		return session, "", err
 	}
 	domain, err := query(wtsDomainName)
 	if err != nil {
-		return account{}, err
+		return session, "", err
 	}
-	name := domain + `\` + user
-	sid := shellUserSID(session)
-	if sid == "" {
-		sid = accountSID(name)
-	}
-	return account{sid: sid, name: name}, nil
+	return session, domain + `\` + user, nil
 }
 
 // shellUserSID 是這個工作階段的桌面 shell（GetShellWindow 的擁有者，通常是 explorer.exe）以哪個帳號執行：登入桌面的使用者。

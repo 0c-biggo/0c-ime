@@ -214,6 +214,13 @@ func run(args []string) error {
 			return fmt.Errorf("deploy-tsf 不接受參數")
 		}
 		return deployTSF()
+	case "check-account":
+		// 內部用：Windows 安裝程式開始安裝前呼叫（#199），系統管理員權限由另一個帳號確認時以 otherAccountExit 結束並說明，
+		// 不列在用法裡。
+		if len(args) != 1 {
+			return fmt.Errorf("check-account 不接受參數")
+		}
+		return refuseOtherAccount()
 	case "prune":
 		// 內部用：安裝、回復、解除安裝成功後在背景清理舊版（#179，Windows），不列在用法裡。
 		if len(args) != 1 {
@@ -248,6 +255,12 @@ func run(args []string) error {
 	}
 	if action == "check" && *feedURL == "" && *archive == "" {
 		return checkCommand(*asJSON)
+	}
+	if action == "apply" || action == "install" {
+		// 以另一個帳號提權時不裝（#199）；安裝程式在 check-account 已擋過，這裡涵蓋 install.ps1 與直接執行。
+		if err := refuseOtherAccount(); err != nil {
+			return err
+		}
 	}
 	switch action {
 	case "status":
@@ -438,6 +451,9 @@ func main() {
 	}
 	launchPrune() // 安裝、回復、解除安裝成功過才有；其餘步驟都做完了，最後才啟動（#179）
 	flush()
+	if errors.Is(err, errOtherAccount) {
+		os.Exit(otherAccountExit) // 安裝程式靠這個結束碼擋下安裝（#199）
+	}
 	if err != nil {
 		os.Exit(1)
 	}

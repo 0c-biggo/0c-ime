@@ -85,6 +85,24 @@ Function .onInit
   SetShellVarContext current
   StrCpy $INSTDIR "$LOCALAPPDATA\Zuin\setup\${SETUP_ID}"
   !insertmacro RequestUnicodeOutput
+  ; 系統管理員權限由另一個帳號確認時（over-the-shoulder），整套安裝會落在那個帳號，桌面使用者用不到、之後也補不上：
+  ; 開始安裝前就擋下並說明（#199）。只有 0c-update 確定是另一個帳號時（結束碼 3）才擋；它沒跑成時照常進入精靈，
+  ; 安裝步驟會再回報原因。靜默安裝（/S）同樣擋下，以結束碼 1 結束。
+  InitPluginsDir
+  File "/oname=$PLUGINSDIR\0c-update.exe" "0c-update.exe"
+  nsExec::ExecToStack '"$PLUGINSDIR\0c-update.exe" check-account'
+  Pop $0
+  Pop $1
+  ${If} $0 == "3"
+    Call TidyOutput
+    StrCpy $2 $1 11
+    ${If} $2 == "0c-update: "
+      StrCpy $1 $1 "" 11
+    ${EndIf}
+    MessageBox MB_ICONSTOP "$1" /SD IDOK
+    SetErrorLevel 1
+    Abort
+  ${EndIf}
 FunctionEnd
 
 ; $1 是 0c-update 的輸出、$0 是結束碼；輸出裡沒有 0c-update 的錯誤行時，補上結束碼與可能原因（#138：
