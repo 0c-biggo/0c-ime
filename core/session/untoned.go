@@ -60,7 +60,12 @@ func (s *Session) finishUntoned() bool {
 	}
 	before := s.comp
 	s.comp.Reset()
+	// Enter、↓、方向鍵這些按鍵平常不重新評分（音節沒變）；這裡多了一個音節，跟打聲調完成音節一樣讓神經評分，
+	// 否則 Enter 送出的會是整段的統計結果，前面神經改過的字也被換回去。
+	allow := s.allowRerank
+	s.allowRerank = true
 	s.completeSyllable(before, zhuyin.Untone(base))
+	s.allowRerank = allow
 	return true
 }
 

@@ -10,6 +10,7 @@ import (
 	"github.com/0c-biggo/0c-ime/core/lm"
 	"github.com/0c-biggo/0c-ime/core/personal"
 	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/rerank"
 	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
@@ -26,7 +27,7 @@ func newTonelessSession(toneless bool) *Session {
 		{"先", "ㄒㄧㄢ", 2e-3}, {"現", "ㄒㄧㄢˋ", 3e-3}, {"西", "ㄒㄧ", 1e-3}, {"安", "ㄢ", 1e-3}, {"西安", "ㄒㄧ ㄢ", 1e-4},
 		{"在", "ㄗㄞˋ", 8e-3}, {"現在", "ㄒㄧㄢˋ ㄗㄞˋ", 2e-3},
 		{"會", "ㄏㄨㄟˋ", 6e-3}, {"回", "ㄏㄨㄟˊ", 3e-3}, {"議", "ㄧˋ", 5e-4}, {"憶", "ㄧˋ", 2e-4},
-		{"會議", "ㄏㄨㄟˋ ㄧˋ", 6e-4}, {"回憶", "ㄏㄨㄟˊ ㄧˋ", 3e-4},
+		{"會議", "ㄏㄨㄟˋ ㄧˋ", 6e-4}, {"回憶", "ㄏㄨㄟˊ ㄧˋ", 3e-4}, {"會意", "ㄏㄨㄟˋ ㄧˋ", 1e-5},
 		{"我", "ㄨㄛˇ", 1e-2}, {"們", "ㄇㄣ˙", 5e-3}, {"門", "ㄇㄣˊ", 1e-3}, {"我們", "ㄨㄛˇ ㄇㄣ˙", 3e-3},
 	} {
 		lex.Add(lexicon.Entry{Surface: e.w, Reading: zhuyin.ParseReading(e.r), PRW: 1})
@@ -207,6 +208,39 @@ func TestTonelessPickIsLearnedWithLexiconReading(t *testing.T) {
 	typeBare(s, "ㄏㄨㄟㄧ")
 	if snap := key(s, proto.KeyEnter); snap.Commit != "回憶" {
 		t.Fatalf("選過之後不打聲調也出回憶：%q", snap.Commit)
+	}
+}
+
+// 不打聲調的段落沒有一組共用的帶調讀音，不送神經評分器，照統計引擎（以「聲調未知」送進現有模型反而變差，
+// 見 data/research/toneless-input-20261022）。同一段組字裡打了聲調、被標點隔開的段落照樣評分；
+// Enter 完成最後一個沒打聲調的音節時整段重新解碼，那一段神經選的字也要留著，不換回統計結果。
+func TestTonelessNeuralSkipsUntonedSegmentsAndKeepsTonedOnes(t *testing.T) {
+	s := newTonelessSession(true)
+	s.Opt.PrefixAware = false
+	var readings []string
+	s.Rerank = rerank.Options{Weight: .1, Scorer: rankFunc(func(r rerank.Request) ([]float64, error) {
+		readings = append(readings, zhuyin.Key(r.Reading))
+		scores := make([]float64, len(r.Candidates))
+		for i, c := range r.Candidates {
+			if strings.Contains(c.Text, "會意") {
+				scores[i] = 1000
+			}
+		}
+		return scores, nil
+	})}
+	typeBare(s, "ㄏㄨㄟˋㄧˋ")
+	if snap := s.View(); snap.Text() != "會意" {
+		t.Fatalf("打了聲調的段落照樣評分：%q %v", snap.Text(), readings)
+	}
+	key(s, "<") // ，
+	typeBare(s, "ㄋㄧㄏㄠ")
+	if snap := key(s, proto.KeyEnter); snap.Commit != "會意，你好" {
+		t.Fatalf("Enter 完成最後一個音節後，前面神經選的字留著：%q %v", snap.Commit, readings)
+	}
+	for _, r := range readings {
+		if strings.ContainsRune(r, zhuyin.UntonedMark) {
+			t.Fatalf("沒打聲調的讀音不送評分器：%v", readings)
+		}
 	}
 }
 

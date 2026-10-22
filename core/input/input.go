@@ -10,6 +10,9 @@ import "github.com/0c-biggo/0c-ime/core/zhuyin"
 type Hyp struct {
 	Syl  zhuyin.Syllable
 	Cost float64
+	// Untoned：這個假設是沒打聲調的音節（#150）展開出來的其中一個聲調。解碼器據此裁切這些位置的弧數；
+	// 全部打了聲調時沒有這種假設。
+	Untoned bool
 }
 
 // Lattice 的每個元素是一個位置的所有假設。
@@ -29,7 +32,7 @@ func (Exact) Expand(syls []zhuyin.Syllable) Lattice {
 	for i, s := range syls {
 		if s.Untoned() {
 			for _, y := range s.Tones() {
-				lat[i] = append(lat[i], Hyp{Syl: y})
+				lat[i] = append(lat[i], Hyp{Syl: y, Untoned: true})
 			}
 			continue
 		}
