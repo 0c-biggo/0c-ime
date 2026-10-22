@@ -517,11 +517,16 @@ func (s *Session) mixedAfterTypo(raw string, tone rune) (int, zhuyin.Syllable, b
 		return 0, "", false // 大寫、底線等不是注音鍵的字元：識別字或英文，不是打錯的注音
 	}
 	done, ok := s.mixedReading(raw[at:], tone)
-	if !ok || tone == '˙' && done.ToneOf() != 5 || s.mixedSyllableScore(done) < mixedUnknownWordFloor {
+	if !ok || tone == '˙' && done.ToneOf() != 5 || s.mixedSyllableScore(done) < mixedTypoFloor {
 		return 0, "", false
 	}
 	return at, done, true
 }
+
+// mixedTypoFloor：打錯的注音後面只排除罕用字（ㄙㄚ˙ 挱 約 3e-8）。前段已有被拒絕的聲調鍵，是在打注音的證據，
+// 不用 mixedUnknownWordFloor 的常用字門檻：句首機率會隨個人用字大幅變動，之前整串照字面送出的句子讓
+// 個人模型學到「句首接天」，們、門的句首機率掉到 5e-5，常用字也會被擋下。
+const mixedTypoFloor = 1e-6
 
 // englishThenPunct（#188）：英文字後面緊接著只有標點鍵（hello. 、vs. 、hello, 、hello; ），比照 #187「緊接在半形英數後面的
 // . , 是標點」，接空白時整串照字面，不把標點鍵切給中文（hello歐、vs歐），也不改把英文字尾借去組字（max. 不是 ma摟）。
