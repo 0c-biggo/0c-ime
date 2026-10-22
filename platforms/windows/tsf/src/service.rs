@@ -255,13 +255,14 @@ impl State {
         }
     }
 
-    /// 這次 Shift 放開是否切換：單按、設定開啟這一側、而且沒超過時限。只有單按時才向引擎查設定。
+    /// 這次 Shift 放開是否切換：單按（中間沒有別的鍵、沒點滑鼠）、設定開啟這一側、而且沒超過時限。只有單按時才向引擎查設定。
     fn shift_toggles(&mut self, side: keys::Side, modified: bool, now: u64) -> bool {
-        if !self.tap(side).solo(modified) {
+        let mouse = keys::mouse_state();
+        if !self.tap(side).solo(modified, mouse) {
             return false;
         }
         let config = self.session.shift_config();
-        config.toggles(side) && self.tap(side).tap(modified, now, config.tap_ms)
+        config.toggles(side) && self.tap(side).tap(modified, mouse, now, config.tap_ms)
     }
 
     fn reset_shift(&mut self) {
@@ -1054,8 +1055,9 @@ impl TextService_Impl {
         let mut st = self.state.borrow_mut();
         let now = keys::now_ms();
         let (right, left) = (keys::right_shift(vk, lparam), keys::left_shift(vk, lparam));
-        st.right_shift.observe(right, repeat, modified, now);
-        st.left_shift.observe(left, repeat, modified, now);
+        let mouse = keys::mouse_state();
+        st.right_shift.observe(right, repeat, modified, now, mouse);
+        st.left_shift.observe(left, repeat, modified, now, mouse);
         // Shift 以外的任何按鍵（包含不問核心就交還宿主的快捷鍵與英文字母）都讓下一次切換不再還原注音（#90）。
         if !right && !left {
             st.session.bypassed();

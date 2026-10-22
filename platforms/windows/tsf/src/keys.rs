@@ -328,23 +328,49 @@ impl ShiftConfig {
     }
 }
 
+/// 滑鼠按鍵的狀態（#206）：這個執行緒的 GetKeyState，每個按鍵的低位元在每次按下時翻轉（低 8 位元），
+/// 高位元是正按著（高 8 位元）。按下 Shift 時記下，放開時翻轉過（中間點過滑鼠：Shift＋點選延伸選取）或還按著
+/// （Shift＋拖曳）就不算單按。宿主處理完滑鼠訊息才輪到 Shift 放開的按鍵訊息，執行緒的狀態已經更新。
+pub fn mouse_state() -> u16 {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        VK_LBUTTON, VK_MBUTTON, VK_RBUTTON, VK_XBUTTON1, VK_XBUTTON2,
+    };
+    let mut state = 0u16;
+    for (i, vk) in [VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2]
+        .iter()
+        .enumerate()
+    {
+        let k = unsafe { GetKeyState(vk.0 as i32) };
+        if k & 1 != 0 {
+            state |= 1 << i;
+        }
+        if k < 0 {
+            state |= 1 << (i + 8);
+        }
+    }
+    state
+}
+
 /// 單按 Shift 才切換（左右各用一個）；連續 TestKeyDown、長按重複及 Shift 組合鍵不切換，
 /// 按下到放開超過時限（shift_tap_ms）也不切換：按著 Shift 猶豫、或 Shift 配合滑鼠選取時不誤切（#117）。
-/// 時間由呼叫端傳入（毫秒，單調遞增），方便測試。
+/// 按著 Shift 時點過滑鼠（Shift＋點選延伸選取）也不切換（#206，見 [`mouse_state`]）。
+/// 時間與滑鼠狀態由呼叫端傳入（毫秒，單調遞增），方便測試。
 #[derive(Default)]
 pub struct ShiftTap {
     down: bool,
     solo: bool,
     since: u64,
+    mouse: u16,
 }
 impl ShiftTap {
-    /// target：這個按鍵是否為追蹤的那一個 Shift；now：這次按鍵的時間。
-    pub fn observe(&mut self, target: bool, repeat: bool, modified: bool, now: u64) {
+    /// target：這個按鍵是否為追蹤的那一個 Shift；now：這次按鍵的時間；mouse：當下的 [`mouse_state`]。
+    pub fn observe(&mut self, target: bool, repeat: bool, modified: bool, now: u64, mouse: u16) {
         if target {
             if !self.down && !repeat {
                 self.down = true;
                 self.solo = !modified;
                 self.since = now;
+                self.mouse = mouse;
             }
             if modified {
                 self.solo = false;
@@ -357,17 +383,17 @@ impl ShiftTap {
     pub fn pending(&self) -> bool {
         self.down
     }
-    /// 現在放開是否算單按（不看時間、不改變狀態）；用來決定要不要向引擎查設定。
-    pub fn solo(&self, modified: bool) -> bool {
-        self.down && self.solo && !modified
+    /// 現在放開是否算單按（不看時間、不改變狀態）；用來決定要不要向引擎查設定。mouse：當下的 [`mouse_state`]。
+    pub fn solo(&self, modified: bool, mouse: u16) -> bool {
+        self.down && self.solo && !modified && mouse == self.mouse && mouse >> 8 == 0
     }
     /// 現在放開是否算單按，而且按下到現在沒有超過 limit 毫秒（不改變狀態）。
-    pub fn tap(&self, modified: bool, now: u64, limit: u64) -> bool {
-        self.solo(modified) && now.saturating_sub(self.since) <= limit
+    pub fn tap(&self, modified: bool, mouse: u16, now: u64, limit: u64) -> bool {
+        self.solo(modified, mouse) && now.saturating_sub(self.since) <= limit
     }
     #[cfg(test)]
     pub fn release(&mut self, modified: bool, now: u64, limit: u64) -> bool {
-        let toggle = self.tap(modified, now, limit);
+        let toggle = self.tap(modified, self.mouse, now, limit);
         *self = Self::default();
         toggle
     }
@@ -405,17 +431,17 @@ mod tests {
     fn right_shift_tap_and_chords() {
         const L: u64 = DEFAULT_SHIFT_TAP_MS;
         let mut tap = ShiftTap::default();
-        tap.observe(true, false, false, 0);
-        tap.observe(true, false, false, 10); // TestKeyDown 可重複
-        tap.observe(true, true, false, 20); // 長按
+        tap.observe(true, false, false, 0, 0);
+        tap.observe(true, false, false, 10, 0); // TestKeyDown 可重複
+        tap.observe(true, true, false, 20, 0); // 長按
         assert!(tap.release(false, 100, L));
         assert!(!tap.release(false, 100, L));
-        tap.observe(true, false, false, 0);
-        tap.observe(false, false, false, 10); // Shift + 字母
+        tap.observe(true, false, false, 0, 0);
+        tap.observe(false, false, false, 10, 0); // Shift + 字母
         assert!(!tap.release(false, 50, L));
-        tap.observe(true, false, true, 0); // Ctrl + Shift
+        tap.observe(true, false, true, 0, 0); // Ctrl + Shift
         assert!(!tap.release(false, 50, L));
-        tap.observe(true, false, false, 0);
+        tap.observe(true, false, false, 0, 0);
         assert!(!tap.release(true, 50, L));
         assert!(right_shift(0x10, 0x36 << 16));
         assert!(!right_shift(0x10, 0x2a << 16));
@@ -424,9 +450,32 @@ mod tests {
         assert_eq!(shift_side(0xa1, 0), Some(Side::Right));
         assert_eq!(shift_side(0x10, 0x2a << 16), Some(Side::Left));
         assert_eq!(shift_side(0x41, 0), None);
-        tap.observe(true, false, false, 0);
-        assert!(tap.solo(false) && !tap.solo(true) && tap.solo(false));
+        tap.observe(true, false, false, 0, 0);
+        assert!(tap.solo(false, 0) && !tap.solo(true, 0) && tap.solo(false, 0));
         assert!(tap.release(false, 10, L));
+    }
+
+    #[test]
+    fn shift_with_mouse_click_does_not_toggle() {
+        // #206：按著 Shift 點滑鼠（延伸選取）不切換：左鍵、右鍵按下時低位元翻轉；拖曳中（還按著）也不切換。
+        // 兩次點選（雙擊）低位元翻回原狀，只看得到正按著的那一下。
+        const L: u64 = DEFAULT_SHIFT_TAP_MS;
+        let mut tap = ShiftTap::default();
+        tap.observe(true, false, false, 0, 0b0);
+        assert!(!tap.solo(false, 0b1), "Shift＋左鍵點選");
+        assert!(!tap.tap(false, 0b1, 100, L));
+        assert!(!tap.solo(false, 0b10), "Shift＋右鍵");
+        assert!(!tap.solo(false, 1 << 8 | 0b1), "Shift＋拖曳中");
+        assert!(tap.solo(false, 0b0), "沒點滑鼠照樣是單按");
+        tap = ShiftTap::default();
+        tap.observe(true, false, false, 0, 0b1); // 先前點過，低位元本來就是 1
+        assert!(tap.tap(false, 0b1, 100, L), "按下 Shift 之前的點選不算");
+        assert!(!tap.tap(false, 0b0, 100, L));
+        // 長按重複不更新按下時的滑鼠狀態。
+        tap = ShiftTap::default();
+        tap.observe(true, false, false, 0, 0b0);
+        tap.observe(true, true, false, 30, 0b1);
+        assert!(!tap.solo(false, 0b1));
     }
 
     #[test]
@@ -434,21 +483,21 @@ mod tests {
         // #117：按下到放開超過時限不切換；剛好在時限內仍切換。時間從第一次按下算，長按的重複不重設。
         const L: u64 = DEFAULT_SHIFT_TAP_MS;
         let mut tap = ShiftTap::default();
-        tap.observe(true, false, false, 1_000);
-        assert!(tap.tap(false, 1_300, L));
+        tap.observe(true, false, false, 1_000, 0);
+        assert!(tap.tap(false, 0, 1_300, L));
         assert!(tap.release(false, 1_300, L));
-        tap.observe(true, false, false, 1_000);
-        tap.observe(true, true, false, 1_250); // 自動重複
-        tap.observe(true, false, false, 1_290); // TestKeyDown 與 KeyDown 各一次
-        assert!(tap.solo(false), "沒有其他按鍵仍是單按，只是太久");
-        assert!(!tap.tap(false, 1_301, L));
+        tap.observe(true, false, false, 1_000, 0);
+        tap.observe(true, true, false, 1_250, 0); // 自動重複
+        tap.observe(true, false, false, 1_290, 0); // TestKeyDown 與 KeyDown 各一次
+        assert!(tap.solo(false, 0), "沒有其他按鍵仍是單按，只是太久");
+        assert!(!tap.tap(false, 0, 1_301, L));
         assert!(!tap.release(false, 1_301, L));
         assert!(!tap.pending(), "放開後重新判斷");
         // 時限來自引擎：設成 500 時 0.4 秒仍切換。
-        tap.observe(true, false, false, 0);
+        tap.observe(true, false, false, 0, 0);
         assert!(tap.release(false, 400, 500));
         // 時鐘倒退（不會發生，但不能溢位）。
-        tap.observe(true, false, false, 100);
+        tap.observe(true, false, false, 100, 0);
         assert!(tap.release(false, 50, L));
     }
 
