@@ -340,9 +340,12 @@ func (s *Session) mixedReading(raw string, tone rune) (zhuyin.Syllable, bool) {
 // readingReachable reports whether a syllable typed at the cursor can start or
 // continue a dictionary word, alone or after the preceding Chinese syllables.
 func (s *Session) readingReachable(done zhuyin.Syllable) bool {
-	if len(s.model.Source().Exact([]zhuyin.Syllable{done})) > 0 || s.model.Source().HasPrefix([]zhuyin.Syllable{done}) {
-		return true
-	}
+	return len(s.model.Source().Exact([]zhuyin.Syllable{done})) > 0 || s.model.Source().HasPrefix([]zhuyin.Syllable{done}) ||
+		s.readingContinues(done)
+}
+
+// readingContinues：音節接在游標前面的中文音節後面，成為詞庫裡的詞或詞的開頭（手＋ㄓㄡˇ 是手肘）。
+func (s *Session) readingContinues(done zhuyin.Syllable) bool {
 	if p, ok := s.prefixLiteralBefore(); ok { // 和原樣留下的詞頭注音成詞（#107）
 		seq := []zhuyin.Syllable{p.syllable(), done}
 		if len(s.model.Source().Exact(seq)) > 0 || s.model.Source().HasPrefix(seq) {
@@ -406,7 +409,8 @@ func (s *Session) finishMixedTone(key string) bool {
 			return true
 		}
 	}
-	if key != " " && s.mixed.choice == 0 && (s.digitToneNumber(raw, sym) || s.numberAfterLiteral(raw, key)) {
+	if key != " " && s.mixed.choice == 0 && (s.digitToneNumber(raw, sym) || s.numberAfterLiteral(raw, key) ||
+		s.englishThenNumber(raw, key) || s.rareDigitReading(raw, sym)) {
 		return false
 	}
 	if done, ok := s.mixedReading(raw, sym); ok {
@@ -462,7 +466,7 @@ func (s *Session) mixedBoundary(raw, key string, tone rune) (int, zhuyin.Syllabl
 	for at := len(raw) - 1; at >= 1; at-- {
 		// 後段的按鍵要照聲母、介音、韻母的順序（#176：hello13 的 o1 是 ㄟㄅ，不是 hell北）。真的在打注音時照順序打，
 		// 把英文字尾借去組字時常顛倒；跟 #175 英文後面的反序數字留數字一樣。
-		if !s.mixedLiteralPrefix(raw[:at], raw[at:], key) || !s.keysInSyllableOrder(raw[at:]) {
+		if !s.mixedLiteralPrefix(raw[:at], raw[at:], key) || !s.keysInSyllableOrder(raw[at:]) || s.rareDigitReading(raw[at:], tone) {
 			continue
 		}
 		done, ok := s.mixedReading(raw[at:], tone)
@@ -504,6 +508,35 @@ func (s *Session) mixedBoundary(raw, key string, tone rune) (int, zhuyin.Syllabl
 func (s *Session) englishThenPunct(raw string) bool {
 	word := strings.TrimRightFunc(raw, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
 	return word != raw && word != "" && s.mixedEnglishWord(word)
+}
+
+// englishThenNumber（#200）：英文字後面緊接著「數字＋. : ,＋數字」的數字寫法（hello2.4、hello5.6、gpt2.5），整串照字面，
+// 跟 englishThenPunct 一樣不把英文後面的按鍵切給中文（hello豆、hello軸）；常見的是版本、型號與財報數字（eps2.5、CPI1.2）。
+// 英文字不必在字典裡。/ 不比照：英文後面緊接著打的「等」「整」「正」（Google等、AI整、IP正）都是 數字鍵＋/＋聲調鍵，
+// PTT 語料 226 次，比照的話有 73 次變成數字，英文緊接的分數卻一次也沒有。英文後面先打空白（hello 2.4 → hello 豆，
+// 跟單獨打的 2.4 一樣）、只有數字加標點再接空白（hello5. → hello周，#188）照舊。
+func (s *Session) englishThenNumber(raw, key string) bool {
+	word := strings.TrimRightFunc(raw, func(r rune) bool { return !unicode.IsLetter(r) })
+	tail := raw[len(word):] + key
+	return word != "" && tail != key && strings.ContainsAny(tail, ".,:") && !strings.ContainsAny(tail, "/") && numberLike(tail) &&
+		!strings.ContainsFunc(word, func(r rune) bool { return r > unicode.MaxASCII })
+}
+
+// mixedRareDigitFloor（#200）：只用數字鍵與標點鍵拼出的讀音，單音節機率（mixedSyllableScore）低於這個值就照字面。
+// 0.2.4 資料包裡，低於的是 1/3 繃、1/6 甭、5.3 肘、2.6 艔、86 嗄、06 玵、197 唄、287 瘩、.4 嘔、,4 誒、.6 吽、;3 軮
+// （PTT 語料合計 4 次）；最接近的常用一邊是 583 眨（2.2e-6）、03 俺（2.6e-6）、5.4 咒／宙（5.7e-6），2.4 豆、5.6 軸、
+// 1/4 蹦都在 1e-5 左右或更高（門檻的 6 倍以上）。
+const mixedRareDigitFloor = 1.5e-6
+
+// rareDigitReading（#200）：沒有字母的待定按鍵加上明確的聲調鍵（3 4 6 7）組成的讀音，首選字是罕用字時照字面
+// （1/3 不是「繃」、86 不是「嗄」），比照常見注音輸入法混打「組不出常用字就照字面」，跟 #175 的 57、#176 的 2.7 一樣
+// ↓ 仍有帶聲調的注音。跟前面的中文成詞（手＋5.3 是手肘）時照舊出字；個人用過的字機率會變高，也照舊出字。
+func (s *Session) rareDigitReading(raw string, tone rune) bool {
+	if tone == zhuyin.Tone1 || raw == "" || strings.ContainsFunc(raw, unicode.IsLetter) {
+		return false
+	}
+	done, ok := s.mixedReading(raw, tone)
+	return ok && s.mixedSyllableScore(done) < mixedRareDigitFloor && !s.readingContinues(done)
 }
 
 // mixedSyllableScore：單一音節在句首的解碼機率（含個人用字）。只在多字詞裡常見的音節以詞首計（應 → 應該）。
@@ -683,7 +716,7 @@ func (s *Session) reviseDigitWord(k string) {
 	default:
 		if sym, ok := s.layout.Symbol(rune(k[0])); ok && zhuyin.ClassOf(sym) == zhuyin.Tone {
 			if c, ok := s.mixedComposer(raw); ok {
-				if done, ok := c.Add(sym); ok && s.readingReachable(done) {
+				if done, ok := c.Add(sym); ok && s.readingReachable(done) && !s.rareDigitReading(raw, sym) {
 					return
 				}
 			}

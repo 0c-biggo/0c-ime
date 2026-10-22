@@ -26,6 +26,9 @@ func numberWritingSession() *Session {
 		{"等", "ㄉㄥˇ", 2e-3}, {"正", "ㄓㄥˋ", 2e-3}, {"蹦", "ㄅㄥˋ", 1e-4},
 		{"俺", "ㄢˇ", 1e-4}, {"案", "ㄢˋ", 3e-4}, {"只", "ㄓˇ", 2e-3}, {"至", "ㄓˋ", 1e-3},
 		{"阿", "ㄚˋ", 2e-4}, {"戴", "ㄉㄞˋ", 3e-4}, {"爾", "ㄦˇ", 3e-4}, {"戴爾", "ㄉㄞˋ ㄦˇ", 2e-4}, {"大而", "ㄉㄚˋ ㄦˊ", 1e-5}, {"版", "ㄅㄢˇ", 3e-4}, {"答", "ㄉㄚˊ", 5e-4}, {"答案", "ㄉㄚˊ ㄢˋ", 3e-4},
+		// #200：只用數字與標點鍵拼得出的罕用字（1/3 繃、1/6 甭、5.3 肘、86 嗄），和同樣這樣拼、但常用的字（5.6 軸、5. 周）。
+		{"繃", "ㄅㄥˇ", 3e-7}, {"甭", "ㄅㄥˊ", 6e-7}, {"肘", "ㄓㄡˇ", 8e-7}, {"嗄", "ㄚˊ", 1e-7}, {"噢", "ㄡ˙", 1e-7},
+		{"軸", "ㄓㄡˊ", 1e-5}, {"周", "ㄓㄡ", 1e-3}, {"手", "ㄕㄡˇ", 1e-3}, {"手肘", "ㄕㄡˇ ㄓㄡˇ", 2e-5},
 	} {
 		lex.Add(lexicon.Entry{Surface: e.w, Reading: zhuyin.ParseReading(e.r), PRW: 1})
 		sys.SetUni(e.w, e.p)
@@ -179,5 +182,77 @@ func TestMixedEnglishBoundaryKeysInOrder(t *testing.T) {
 		if got := key(s, proto.KeyEnter).Commit; got != tc.want {
 			t.Errorf("%q 提交 %q，要 %q", tc.keys, got, tc.want)
 		}
+	}
+}
+
+// #200：英文字後面緊接著「數字＋. : ,＋數字」的數字寫法（hello2.4、hello5.6）整串照字面，跟 #188 的 englishThenPunct
+// 一樣不把英文後面的按鍵切給中文（hello豆、hello軸）。/ 不比照：英文後面緊接著打的「等」「正」很常見（Google等、AI整）。
+// 英文後面隔了空白（hello 2.4 → hello 豆，跟單獨打的 2.4 一樣）、後面只有數字加標點再接空白（hello5. → hello周，#188）、
+// 切開的是字母（hellosu3 → hello你）也照舊。
+func TestMixedNumberWritingRightAfterEnglish(t *testing.T) {
+	for _, tc := range []struct{ keys, want string }{
+		{"hello2.4", "hello2.4"},
+		{"hello2.4 ", "hello2.4 "},
+		{"hello5.6", "hello5.6"},
+		{"hello2.3", "hello2.3"},
+		{"hello2.40", "hello2.40"},
+		{"hello2/3", "hello等"},
+		{"hello5/4", "hello正"},
+		{"xyz2/3", "xyz等"},
+		{"hello 2.4", "hello 豆"},
+		{"hello5. ", "hello周"},
+		{"hello2. ", "hello都"},
+		{"hellosu3", "hello你"},
+		{"hello824", "hello824"},
+	} {
+		s := numberWritingSession()
+		if snap := mixedType(s, tc.keys); snap.Text() != tc.want {
+			t.Errorf("%q 顯示 %q，要 %q", tc.keys, snap.Text(), tc.want)
+		}
+		if got := key(s, proto.KeyEnter).Commit; got != tc.want {
+			t.Errorf("%q 提交 %q，要 %q", tc.keys, got, tc.want)
+		}
+	}
+}
+
+// #200：只用數字鍵與標點鍵、加聲調鍵拼出的讀音，自己的首選字是罕用字（1/3 繃、1/6 甭、5.3 肘、86 嗄）時照字面，
+// 比照「組不出常用字就照字面」；接在中文後面、英文後面也一樣。常用字（2.4 豆、5.6 軸、2/3 等、5/4 正、1/4 蹦）照舊出字，
+// 跟前面的中文成詞時（手肘）也照舊。照字面的按鍵按 ↓ 仍有帶聲調的注音。
+func TestMixedRareDigitKeyReading(t *testing.T) {
+	for _, tc := range []struct{ keys, want string }{
+		{"1/3", "1/3"},
+		{"1/6", "1/6"},
+		{"5.3", "5.3"},
+		{"86", "86"},
+		{"1/3 ", "1/3 "},
+		{"ji31/3", "我1/3"},
+		{"ji3 1/3", "我 1/3"},
+		{"hello1/3", "hello1/3"},
+		{"2.4", "豆"},
+		{"5.6", "軸"},
+		{"2/3", "等"},
+		{"5/4", "正"},
+		{"1/4", "蹦"},
+		{"ji35.6", "我軸"},
+		{"g.35.3", "手肘"},
+		{"84.73", "84.73"}, // 84 阿 後面的 .7 是罕用的「噢」，跟 #176 的 03:00 一樣改回原按鍵
+	} {
+		s := numberWritingSession()
+		if snap := mixedType(s, tc.keys); snap.Text() != tc.want {
+			t.Errorf("%q 顯示 %q，要 %q", tc.keys, snap.Text(), tc.want)
+		}
+		if got := key(s, proto.KeyEnter).Commit; got != tc.want {
+			t.Errorf("%q 提交 %q，要 %q", tc.keys, got, tc.want)
+		}
+	}
+	s := numberWritingSession()
+	mixedType(s, "1/3")
+	snap := key(s, proto.KeyDown)
+	found := false
+	for _, c := range snap.Candidates.Items {
+		found = found || c.Text == "ㄅㄥˇ"
+	}
+	if !found {
+		t.Errorf("1/3 按 ↓ 沒有 ㄅㄥˇ：%v", snap.Candidates.Items)
 	}
 }
