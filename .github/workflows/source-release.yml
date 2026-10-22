@@ -33,9 +33,19 @@ jobs:
             echo "proxy.golang.org served a different go.mod for $MODULE@$RELEASE_TAG" >&2
             exit 1
           fi
-          curl --fail --silent --show-error --retry 3 --retry-all-errors -X POST --output /dev/null \
-            "https://pkg.go.dev/fetch/$MODULE@$RELEASE_TAG" \
-            || echo "::warning::pkg.go.dev did not accept the fetch request; it indexes from the proxy within hours anyway."
+          # pkg.go.dev waits about 30 s for the fetch and then answers 408 while it keeps processing,
+          # so 408 counts as accepted; retrying it would only start the fetch again.
+          for attempt in 1 2 3; do
+            status=$(curl --silent --show-error --max-time 60 -X POST --output /dev/null \
+              --write-out '%{http_code}' "https://pkg.go.dev/fetch/$MODULE@$RELEASE_TAG") || status=000
+            case "$status" in 2??|408) break ;; esac
+            sleep 10
+          done
+          case "$status" in
+            2??) echo "pkg.go.dev indexed $MODULE@$RELEASE_TAG" ;;
+            408) echo "pkg.go.dev accepted the fetch request and is still processing $MODULE@$RELEASE_TAG" ;;
+            *) echo "::warning::pkg.go.dev answered $status to the fetch request; it indexes from the proxy within hours anyway." ;;
+          esac
 
   source-release:
     # Bootstrap the first release locally, then configure its dictionary URL.
