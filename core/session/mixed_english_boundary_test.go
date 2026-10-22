@@ -25,7 +25,7 @@ func englishBoundarySession() *Session {
 		{"的", "ㄉㄜ˙", 1.6e-2}, {"挱", "ㄙㄚ˙", 3e-8}, {"狗", "ㄍㄡˇ", 3.5e-5}, {"斥", "ㄔˋ", 2e-5}, {"是", "ㄕˋ", 5e-3},
 		{"欸", "ㄟˋ", 1e-4}, {"與", "ㄩˇ", 5e-4}, {"艮", "ㄍㄣˇ", 1e-6}, {"社", "ㄕㄜˋ", 2e-4},
 		{"會", "ㄏㄨㄟˋ", 1.1e-3}, {"為", "ㄨㄟˋ", 1.2e-3}, {"柳", "ㄌㄧㄡˇ", 2e-5},
-		{"嗎", "ㄇㄚ˙", 3e-4}, {"滿", "ㄇㄢˇ", 2e-4},
+		{"嗎", "ㄇㄚ˙", 3e-4}, {"滿", "ㄇㄢˇ", 2e-4}, {"們", "ㄇㄣ˙", 5e-5},
 		{"應", "ㄧㄥˋ", 1.7e-4}, {"競", "ㄐㄧㄥˋ", 1.2e-4}, {"呃", "ㄜ˙", 2e-6},
 	} {
 		lex.Add(lexicon.Entry{Surface: e.w, Reading: zhuyin.ParseReading(e.r), PRW: 1})
@@ -89,6 +89,26 @@ func TestMixedUnknownEnglishStaysLiteral(t *testing.T) {
 		mixedType(s, keys)
 		if got := key(s, proto.KeyEnter).Commit; got != keys {
 			t.Errorf("%q 不能切成中文：%q", keys, got)
+		}
+	}
+}
+
+// 打錯一鍵的注音（qji3 是 ㄆㄨㄛˇ、ju3 是 ㄨㄧˇ，組不成音節）照字面留下，後面的注音照常組成中文；
+// 不再一路併成同一串，直到空白才整串變成英文字母（qji3su3cl3 不是整串照字面）。
+func TestMixedTypoDoesNotSwallowFollowingZhuyin(t *testing.T) {
+	for _, tc := range []struct{ keys, want string }{
+		{"qji3su3cl3", "qji3你好"},
+		{"ju3su3cl3", "ju3你好"},
+		{"qji3su3", "qji3你"},
+		// 句首機率低、但不是罕用字的音節也切開（個人用字可能讓們、門的句首機率掉到 5e-5）
+		{"qji3ap7su3", "qji3們你"},
+		// 照舊：英文字或帳號後的數字不是打錯的注音
+		{"hello4", "hello4"}, {"lisa0304", "lisa0304"}, {"kevin87", "kevin87"},
+	} {
+		s := englishBoundarySession()
+		mixedType(s, tc.keys)
+		if got := key(s, proto.KeyEnter).Commit; got != tc.want {
+			t.Errorf("%q：%q，要 %q", tc.keys, got, tc.want)
 		}
 	}
 }
