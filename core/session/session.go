@@ -222,7 +222,7 @@ func (s *Session) SetLayout(l layout.Layout) {
 // mixedInput：中英混打對「哪些數字、標點是注音鍵」的判斷依標準排列寫成，其他排列先停用（#83）；
 // 使用者的設定保留，切回標準排列就照舊。
 func (s *Session) mixedInput() bool {
-	return mixedInputActive(s.MixedInput && !s.Toneless, s.layout == layout.Standard) // 聲調選填與混打二選一（#150）
+	return mixedInputActive(s.MixedInput && !s.toneless(), s.layout == layout.Standard) // 聲調選填與混打二選一（#150）
 }
 
 func mixedInputActive(on, standardLayout bool) bool { return on && standardLayout }
@@ -575,6 +575,9 @@ func (s *Session) key(k string) (handled bool, commit string) {
 	}
 	if s.untonedEnglish(run, k) {
 		return true, "" // 「我的詞彙」裡的英文詞接空白照字面送出（#150，同混打的 #146）
+	}
+	if s.untonedSeparator(k) {
+		return true, ""
 	}
 	s.untonedKey(k)
 	switch k {

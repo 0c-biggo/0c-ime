@@ -88,7 +88,7 @@ func (e *Engine) ToneMarkKeys() bool {
 // IdleKeys 回報沒在組字、注音模式時輸入法會處理的可見 ASCII 按鍵（session.IdleKeys），依鍵盤排列與設定而不同（#183）。
 // 給自己過濾閒置按鍵的外殼（Windows）查詢，外殼不必各自維護每種排列的按鍵表。
 func (e *Engine) IdleKeys() string {
-	return session.IdleKeys(e.Layout, e.MixedInput, e.EmojiShortcut)
+	return session.IdleKeys(e.Layout, e.MixedInput && !e.Toneless, e.EmojiShortcut) // 聲調選填時混打停用（#150）
 }
 
 func (e *Engine) OpenSession() uint64 {

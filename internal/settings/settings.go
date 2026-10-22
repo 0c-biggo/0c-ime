@@ -744,6 +744,14 @@ func (s Settings) disabledReasonOn(goos, key string) string {
 		if key == "mixed-input" && s.Toneless {
 			return "不打聲調時關閉" // 聲調選填與混打二選一（#150）
 		}
+	case "toneless":
+		// 只在標準排列生效（#150）：倚天 41 鍵的 ' 是 ㄘ、沒有分隔鍵，許氏一個鍵兼聲母、韻母與聲調。
+		switch s.KeyboardLayout {
+		case LayoutETen:
+			return "倚天 41 鍵時關閉"
+		case LayoutHsu:
+			return "許氏排列時關閉"
+		}
 	case "start-mode":
 		if s.startModeLocked(goos) {
 			return startModeLockedReason
@@ -831,9 +839,9 @@ func specs() []spec {
 }
 
 // tonelessDescription 是「不打聲調也能選字」（#150）的說明：怎麼切音節、空白還是一聲、混打停用。
-const tonelessDescription = "聲調可打可不打：ㄋㄧㄏㄠ 就是「你好」，沒打聲調的字依前後文決定，有打聲調的字照聲調。" +
-	"接不上前一個音節的注音會開始新的字；ㄒㄧㄢ 是一個字，要「西安」請在 ㄒㄧ 後面補聲調。" +
-	"沒打完的注音按空白仍是一聲，送出請按 Enter。開啟時中英混打停用，英文請用 Shift 切換"
+const tonelessDescription = "聲調可打可不打：ㄋㄧㄏㄠ 就是「你好」，沒打聲調的字依前後文決定，有打聲調的字照聲調；少打聲調時選字比較容易錯，拿不定的字可以補聲調。" +
+	"接不上前一個音節的注音會開始新的字；ㄒㄧㄢ 是一個字，要「西安」請打 ㄒㄧ'ㄢ（組字中的 ' 用來切字，頓號改按 \\）或在 ㄒㄧ 後面補聲調。" +
+	"沒打完的注音按空白仍是一聲，送出請按 Enter。開啟時中英混打停用，英文請用 Shift 切換，「我的詞彙」裡的英文詞照樣認得。只在標準排列有效"
 
 // CapsLockEnglishSetting 回報這個平台有沒有「Caps Lock 開著時直接打英文」（#173）：Windows、Linux 有；
 // macOS 開 Caps Lock 一律切到英文大寫（#84、#67），沒有這一項，設定檔裡的值也不用。

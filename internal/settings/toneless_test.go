@@ -75,3 +75,39 @@ func TestTonelessDefaultsOffAndPersists(t *testing.T) {
 	}
 	t.Fatal("設定程式看不到不打聲調的開關")
 }
+
+// #207：不打聲調時反灰的中英混打指向「不打聲調也能選字」，設定程式據此連到「選字」頁；排列造成的停用照舊指向鍵盤排列。
+func TestTonelessDisabledMixedInputNamesItsCause(t *testing.T) {
+	s := Default()
+	s.Toneless, s.MixedInput = true, true
+	for _, it := range s.Items() {
+		if it.Key == "mixed-input" && (it.DisabledBy != "toneless" || it.DisabledReason != "不打聲調時關閉") {
+			t.Fatalf("混打指向不打聲調：%+v", it)
+		}
+	}
+	s.KeyboardLayout = LayoutHsu
+	for _, it := range s.Items() {
+		if (it.Key == "mixed-input" || it.Key == "toneless") && it.DisabledBy != "keyboard-layout" {
+			t.Fatalf("許氏時指向鍵盤排列：%+v", it)
+		}
+	}
+}
+
+// 不打聲調只在標準排列有效：倚天、許氏時反灰並說明原因，值保留；混打的原因以排列為準。
+func TestTonelessDisabledOutsideStandardLayout(t *testing.T) {
+	for layout, reason := range map[string]string{LayoutETen: "倚天 41 鍵時關閉", LayoutHsu: "許氏排列時關閉", LayoutStandard: ""} {
+		s := Default()
+		s.Toneless, s.MixedInput = true, true
+		if err := s.Set("keyboard-layout", layout); err != nil {
+			t.Fatal(err)
+		}
+		for _, it := range s.Items() {
+			if it.Key == "toneless" && (it.DisabledReason != reason || it.Disabled != (reason != "") || it.Value != "on") {
+				t.Fatalf("%s：%+v", layout, it)
+			}
+			if it.Key == "mixed-input" && reason != "" && it.DisabledReason != reason {
+				t.Fatalf("%s 混打的原因以排列為準：%+v", layout, it)
+			}
+		}
+	}
+}

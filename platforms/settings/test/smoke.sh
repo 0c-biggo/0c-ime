@@ -463,10 +463,10 @@ stop_app
 new_home eten
 printf '{"schema":1,"keyboard_layout":"eten","mixed_input":true,"future":{"x":1}}\n' > "$(base_of eten)/settings.json"
 run_update eten settings -json > "$OUT/eten-settings.json"
-check "倚天時契約標示混打與 Emoji 停用並附原因，值保留" python3 - "$OUT/eten-settings.json" <<'PY_ETEN'
+check "倚天時契約標示混打、Emoji 與不打聲調停用並附原因，值保留" python3 - "$OUT/eten-settings.json" <<'PY_ETEN'
 import json,sys
 items={x['key']:x for x in json.load(open(sys.argv[1]))['items']}
-ok=all(items[k].get('disabled') and items[k].get('disabled_reason')=='倚天 41 鍵時關閉' for k in ('mixed-input','emoji-shortcut','emoji-equals-first'))
+ok=all(items[k].get('disabled') and items[k].get('disabled_reason')=='倚天 41 鍵時關閉' for k in ('mixed-input','emoji-shortcut','emoji-equals-first','toneless'))
 ok=ok and items['mixed-input']['value']=='on' and items['keyboard-layout']['value']=='eten' and not items['space-selects'].get('disabled')
 sys.exit(0 if ok else 1)
 PY_ETEN
@@ -532,15 +532,16 @@ if window_up; then
 else bad "eten/mode 重新開啟失敗"; cat /tmp/app-eten-mode.log; fi
 stop_app
 
-# ---- 許氏（#183）：只有中英混打反灰並提示原因，Emoji 選單照舊；鍵盤排列有「許氏」選項 ----
+# ---- 許氏（#183）：中英混打與不打聲調（#150）反灰並提示原因，Emoji 選單照舊；鍵盤排列有「許氏」選項 ----
 new_home hsu
 printf '{"schema":1,"keyboard_layout":"hsu","mixed_input":true}\n' > "$(base_of hsu)/settings.json"
 run_update hsu settings -json > "$OUT/hsu-settings.json"
-check "許氏時契約只標示混打停用並附原因，值保留" python3 - "$OUT/hsu-settings.json" <<'PY_HSU'
+check "許氏時契約只標示混打與不打聲調停用並附原因，值保留" python3 - "$OUT/hsu-settings.json" <<'PY_HSU'
 import json,sys
 items={x['key']:x for x in json.load(open(sys.argv[1]))['items']}
 disabled=[k for k,x in items.items() if x.get('disabled') and k!='start-mode']
-ok=disabled==['mixed-input'] and items['mixed-input'].get('disabled_reason')=='許氏排列時關閉' and items['mixed-input']['value']=='on'
+ok=disabled==['mixed-input','toneless'] and items['mixed-input'].get('disabled_reason')=='許氏排列時關閉' and items['mixed-input']['value']=='on'
+ok=ok and items['toneless'].get('disabled_reason')=='許氏排列時關閉'  # 不打聲調只在標準排列有效（#150）
 ok=ok and items['keyboard-layout']['value']=='hsu' and items['keyboard-layout']['values']==['standard','eten','hsu']
 ok=ok and items['keyboard-layout'].get('value_labels',{}).get('hsu')=='許氏'
 sys.exit(0 if ok else 1)

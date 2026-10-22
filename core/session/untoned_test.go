@@ -285,6 +285,66 @@ func TestTonelessKeepsVocabEnglish(t *testing.T) {
 	}
 }
 
+// 負責人 2026-10-22：聲調選填時組字中的 ' 只切音節、不出頓號；沒有組字時照舊是頓號；關閉時照舊。
+func TestTonelessQuoteSeparatesSyllables(t *testing.T) {
+	s := newTonelessSession(true)
+	typeBare(s, "ㄒㄧ")
+	if snap := key(s, "'"); !snap.Handled || snap.Text() != "西" {
+		t.Fatalf("' 把 ㄒㄧ 不打聲調完成：%q", snap.Text())
+	}
+	typeBare(s, "ㄢ")
+	if snap := key(s, proto.KeyEnter); snap.Commit != "西安" {
+		t.Fatalf("ㄒㄧ'ㄢ：%q", snap.Commit)
+	}
+	// 剛打完聲調、沒有未打完的注音：已經是音節邊界，' 什麼都不做，不多出頓號。
+	typeBare(s, "ㄋㄧˇ")
+	if snap := key(s, "'"); !snap.Handled || snap.Text() != "你" {
+		t.Fatalf("聲調之後的 '：%q", snap.Text())
+	}
+	// 注音還不是完整音節（ㄅ）：不完成、不出頓號，接著打的注音照常。
+	typeBare(s, "ㄏ")
+	if snap := key(s, "'"); snap.Text() != "你ㄏ" {
+		t.Fatalf("不完整音節的 '：%q", snap.Text())
+	}
+	typeBare(s, "ㄠ")
+	if snap := key(s, proto.KeyEnter); snap.Commit != "你好" {
+		t.Fatalf("送出：%q", snap.Commit)
+	}
+	// 沒有組字時照舊是頓號。
+	if snap := key(s, "'"); !snap.Handled || snap.Text() != "、" {
+		t.Fatalf("沒有組字時 ' 是頓號：%q", snap.Text())
+	}
+	key(s, proto.KeyEnter)
+	// 候選開著時 ' 照舊被候選窗吃掉，不切音節。
+	typeBare(s, "ㄏㄨㄟㄧ")
+	key(s, proto.KeyDown)
+	if snap := key(s, "'"); snap.Candidates == nil {
+		t.Fatal("候選開著時 ' 不關候選")
+	}
+	// 關閉聲調選填：組字中的 ' 照舊是頓號。
+	off := newTonelessSession(false)
+	typeBare(off, "ㄋㄧˇ")
+	key(off, "'")
+	if snap := key(off, proto.KeyEnter); snap.Commit != "你、" {
+		t.Fatalf("關閉時 ' 是頓號：%q", snap.Commit)
+	}
+}
+
+// 聲調選填只在標準排列生效：倚天 41 鍵的 ' 是 ㄘ，許氏一鍵多用；設定開著也照原本的打法。
+func TestTonelessOnlyOnStandardLayout(t *testing.T) {
+	for _, l := range []layout.Layout{layout.ETen, layout.Hsu} {
+		s := newTonelessSession(true)
+		s.SetLayout(l)
+		var snap proto.Snapshot
+		for _, r := range "ㄋㄧㄏ" {
+			snap = key(s, string([]rune(l.Keys(zhuyin.Syllable(string(r))))[0]))
+		}
+		if strings.Contains(snap.Text(), "你") {
+			t.Errorf("%s：不打聲調不生效：%q", l.Name(), snap.Text())
+		}
+	}
+}
+
 func TestTonelessDisplaysWithoutMark(t *testing.T) {
 	s := newTonelessSession(true)
 	// ㄈㄧㄠ 是音節表內的音節，但這份詞庫沒有字：原樣留下，不顯示內部記號。

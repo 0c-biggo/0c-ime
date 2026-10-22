@@ -4,6 +4,7 @@ import (
 	"slices"
 
 	"github.com/0c-biggo/0c-ime/core/decode"
+	"github.com/0c-biggo/0c-ime/core/layout"
 	"github.com/0c-biggo/0c-ime/core/proto"
 	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
@@ -16,12 +17,29 @@ import (
 // 有打聲調的音節照舊硬限制，而且固定那個音節的開頭和結尾。
 //
 // 目前的注音還不是完整音節時照原本的規則（同類的後者取代前者：ㄋ＋ㄏ 是 ㄏ），所以打錯聲母仍可直接改。
+// 組字中按 ' 只切音節（untonedSeparator）。只在標準排列生效（toneless）。
 // Enter、↓、方向鍵、Tab、標點與切換英文之前，未打完但已是完整音節的注音也先不打聲調就完成；
 // 空白照舊是一聲。關閉時沒有任何音節會帶 zhuyin.UntonedMark，行為與沒有此功能時相同。
 
+// toneless 回報聲調選填是否生效：只在標準排列。倚天 41 鍵的 ' 是 ㄘ（沒有分隔鍵），許氏一個鍵兼聲母、韻母與聲調，
+// 「接不上就開新音節」的規則在那裡不成立；設定保留，切回標準排列就照舊（同混打，#83、#183）。
+func (s *Session) toneless() bool { return s.Toneless && s.layout == layout.Standard }
+
+// untonedSeparator 處理聲調選填時的 '（負責人 2026-10-22 決定，同 RIME 的分隔鍵）：組字中按 ' 只切音節、不出頓號——
+// 未打完而已是完整音節的注音不打聲調就完成，下一個注音開始新的音節（ㄒㄧ'ㄢ → 西安）；沒有未打完的注音（剛打完聲調）
+// 或注音還不是完整音節時什麼都不做，免得組字中多出意外的頓號。沒有組字時照舊是頓號：句首不會有要切的音節，
+// 頓號照常打得出來；組字中要頓號按 \ 或 Ctrl＋'。關閉聲調選填時 ' 照舊。
+func (s *Session) untonedSeparator(k string) bool {
+	if k != "'" || !s.toneless() || !s.composing() || s.english {
+		return false
+	}
+	s.finishUntoned()
+	return true
+}
+
 // untonedBreak 回報 sym 是否要先把目前的注音不打聲調就完成，再開始新的音節。
 func (s *Session) untonedBreak(sym rune) bool {
-	if !s.Toneless || s.comp.Empty() {
+	if !s.toneless() || s.comp.Empty() {
 		return false
 	}
 	cl := zhuyin.ClassOf(sym)
@@ -51,7 +69,7 @@ func lastClass(c zhuyin.Composer) zhuyin.Class {
 // finishUntoned 把未打完、但已是完整音節的注音當成沒打聲調的音節收進組字。
 // 沒開聲調選填、沒有未打完的注音，或注音還不是完整音節時不動作，回傳 false。
 func (s *Session) finishUntoned() bool {
-	if !s.Toneless || s.comp.Empty() {
+	if !s.toneless() || s.comp.Empty() {
 		return false
 	}
 	base := zhuyin.Syllable(s.comp.String())
@@ -71,7 +89,7 @@ func (s *Session) finishUntoned() bool {
 
 // untonedKey 在聲調選填時，於會用到整段組字的按鍵之前完成未打完的音節（Enter、↓、方向鍵、Tab）。
 func (s *Session) untonedKey(k string) {
-	if !s.Toneless || s.comp.Empty() {
+	if !s.toneless() || s.comp.Empty() {
 		return
 	}
 	switch k {
@@ -97,7 +115,7 @@ type runMark struct{ key, pos int } // keys[key:] 從音節位置 pos 開始
 // untonedRunFrom 回傳這一鍵要接續的那串按鍵：上一鍵留下的、狀態沒變的接著用；否則從游標處開始新的一串
 // （游標前還有不知道按鍵的未打完注音時，要等它完成才有起點）。沒開聲調選填或沒有自訂英文詞時回傳 nil。
 func (s *Session) untonedRunFrom(run *untonedRun) *untonedRun {
-	if !s.Toneless || !s.Preview02 || !s.model.HasVocab() {
+	if !s.toneless() || !s.Preview02 || !s.model.HasVocab() {
 		return nil
 	}
 	if run == nil || run.cursor != s.cursor || run.syls != len(s.syls) || run.comp != s.comp.String() {
