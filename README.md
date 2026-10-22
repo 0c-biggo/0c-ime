@@ -24,6 +24,7 @@
   <a href="https://0c.biggo.com/guide/basics/">操作指南</a> ·
   <a href="https://0c.biggo.com/docs/cli/">CLI 文件</a> ·
   <a href="https://0c.biggo.com/help/">支援</a> ·
+  <a href="https://0c.biggo.com/privacy/">隱私</a> ·
   <a href="https://github.com/0c-biggo/0c-ime/issues">回報問題</a>
 </p>
 

@@ -4,7 +4,7 @@ Copyright (C) 2026 Funmula Co., Limited
 
 本專案的自有程式碼、建置腳本、測試程式與文件，著作權屬 Funmula Co., Limited，除另有聲明外，依 **GNU Affero General Public License version 3 only（AGPL-3.0-only）** 授權。完整條款見 [LICENSE](../LICENSE)。
 
-使用與授權說明見 [TERMS.md](TERMS.md)，不影響 LICENSE 已授予的權利。依 Debian 自由軟體指導方針（DFSG）的逐項檢查見 [DFSG-free.md](DFSG-free.md)；逐檔的著作權人與授權以 Debian 的 DEP-5 格式列在 [copyright](copyright)。
+使用與授權說明見 [TERMS.md](TERMS.md)，不影響 LICENSE 已授予的權利；隱私與資料的說明見官網 [隱私與資料](https://0c.biggo.com/privacy/)。依 Debian 自由軟體指導方針（DFSG）的逐項檢查見 [DFSG-free.md](DFSG-free.md)；逐檔的著作權人與授權以 Debian 的 DEP-5 格式列在 [copyright](copyright)。
 
 ## 圖示與圖片
 
