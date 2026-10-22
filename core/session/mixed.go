@@ -476,9 +476,15 @@ func (s *Session) mixedBoundary(raw, key string, tone rune) (int, zhuyin.Syllabl
 			best, bestScore, bestSyl = at, score, done
 		}
 	}
-	// 字典不認得的前段：聲調前一鍵是數字（lisa03、nina87）像帳號或編號，不切。
-	if best > 0 || key == " " || unicode.IsDigit(rune(raw[len(raw)-1])) {
+	if best > 0 || unicode.IsDigit(rune(raw[len(raw)-1])) {
 		return best, bestSyl, best > 0
+	}
+	if at, done, ok := s.mixedAfterTypo(raw, tone); ok {
+		return at, done, true
+	}
+	// 字典不認得的前段：聲調前一鍵是數字（lisa03、nina87）像帳號或編號，不切。
+	if key == " " {
+		return 0, "", false
 	}
 	for at := len(raw) - 2; at >= 2; at-- {
 		if strings.ContainsFunc(raw[:at], func(r rune) bool { return r > unicode.MaxASCII || !unicode.IsLetter(r) }) ||
@@ -494,6 +500,27 @@ func (s *Session) mixedBoundary(raw, key string, tone rune) (int, zhuyin.Syllabl
 		}
 	}
 	return best, bestSyl, best > 0
+}
+
+// mixedAfterTypo：打錯一鍵的注音（qji3：ㄆㄨㄛˇ 組不成音節）在聲調鍵後仍是待定的按鍵，之後的注音會一路接在後面，
+// 直到下一個空白才整串照字面送出，好幾個字都變成英文字母（qji3ap6rup 而不是 qji3們今）。前段最後一個聲調鍵
+// （前一鍵不是數字：帳號、編號照舊）之後的按鍵照順序打、組成常用字時，從那裡切開：打錯的那段照字面，後面照常是中文。
+func (s *Session) mixedAfterTypo(raw string, tone rune) (int, zhuyin.Syllable, bool) {
+	at := strings.LastIndexFunc(raw, func(r rune) bool {
+		sym, ok := s.layout.Symbol(r)
+		return ok && r != ' ' && zhuyin.ClassOf(sym) == zhuyin.Tone
+	}) + 1
+	if at < 2 || at >= len(raw) || unicode.IsDigit(rune(raw[at-2])) || !s.keysInSyllableOrder(raw[at:]) {
+		return 0, "", false
+	}
+	if strings.ContainsFunc(raw[:at], func(r rune) bool { _, ok := s.layout.Symbol(r); return !ok }) {
+		return 0, "", false // 大寫、底線等不是注音鍵的字元：識別字或英文，不是打錯的注音
+	}
+	done, ok := s.mixedReading(raw[at:], tone)
+	if !ok || tone == '˙' && done.ToneOf() != 5 || s.mixedSyllableScore(done) < mixedUnknownWordFloor {
+		return 0, "", false
+	}
+	return at, done, true
 }
 
 // englishThenPunct（#188）：英文字後面緊接著只有標點鍵（hello. 、vs. 、hello, 、hello; ），比照 #187「緊接在半形英數後面的

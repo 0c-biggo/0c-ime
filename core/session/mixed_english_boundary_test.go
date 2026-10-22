@@ -92,3 +92,21 @@ func TestMixedUnknownEnglishStaysLiteral(t *testing.T) {
 		}
 	}
 }
+
+// 打錯一鍵的注音（qji3 是 ㄆㄨㄛˇ、ju3 是 ㄨㄧˇ，組不成音節）照字面留下，後面的注音照常組成中文；
+// 不再一路併成同一串，直到空白才整串變成英文字母（qji3su3cl3 不是整串照字面）。
+func TestMixedTypoDoesNotSwallowFollowingZhuyin(t *testing.T) {
+	for _, tc := range []struct{ keys, want string }{
+		{"qji3su3cl3", "qji3你好"},
+		{"ju3su3cl3", "ju3你好"},
+		{"qji3su3", "qji3你"},
+		// 照舊：英文字或帳號後的數字不是打錯的注音
+		{"hello4", "hello4"}, {"lisa0304", "lisa0304"}, {"kevin87", "kevin87"},
+	} {
+		s := englishBoundarySession()
+		mixedType(s, tc.keys)
+		if got := key(s, proto.KeyEnter).Commit; got != tc.want {
+			t.Errorf("%q：%q，要 %q", tc.keys, got, tc.want)
+		}
+	}
+}
