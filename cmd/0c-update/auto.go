@@ -524,6 +524,12 @@ func autoCommand(action string, args []string) (resultErr error) {
 	}
 	// #93 卡住時換上的外殼：重新登入後把 Fcitx5 存掉的靈犀注音補回輸入法清單（一次）。
 	restoreStuckInputMethod(base, *login)
+	// #204 KDE Plasma Wayland：補寫上次沒寫回的 kwinrc 虛擬鍵盤（登入時也做，KWin 啟動時就讀得到）；背景排程另外把
+	// 舊版更新器自己啟動的 Fcitx5 在閒置時交還 KWin（一次性修復，條件不成立時不動）。
+	finishKWinIM(base)
+	if action == "auto" && !*login && !*asJSON && !*report {
+		repairKWinFcitx(base)
+	}
 	// 登入單元排在 graphical-session-pre.target 之前，桌面要等它結束才會啟動；
 	// 這裡只做上面的本機工作。查詢索引、下載（可達數百 MB、背景限速）與外殼重載／
 	// 中斷回復都交給 0c-update.timer，否則使用者登入後會停在黑畫面直到完成或逾時。

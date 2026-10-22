@@ -368,10 +368,15 @@ def apply():
         # Use the original desktop's environment; do not print its potentially private values.
         with tempfile.TemporaryFile() as log:
             try:
+                direct = without_wayland_socket(env)  # 那是 KWin 傳給舊行程的 fd，新行程裡已失效
                 if kwin_launched(fcitx[0], env):
-                    restart_kwin_input_method(env, log)
+                    try:
+                        restart_kwin_input_method(env, log)
+                    except KWinFallback as error:
+                        print(f"無法交由 KWin 重新啟動 Fcitx5（{error}），改為直接啟動。", flush=True)
+                        run("fcitx5", "-r", "-d", env=direct, stdout=log, stderr=log, timeout=20)
                 else:
-                    run("fcitx5", "-r", "-d", env=env, stdout=log, stderr=log, timeout=20)
+                    run("fcitx5", "-r", "-d", env=direct, stdout=log, stderr=log, timeout=20)
                 deadline = time.monotonic() + 10
                 while time.monotonic() < deadline:
                     current = processes("fcitx5")
@@ -397,13 +402,36 @@ def apply():
 
 
 KWINRC_INPUT_METHOD = ("--file", "kwinrc", "--group", "Wayland", "--key", "InputMethod")
+# kwinrc 變更後 KConfigWatcher 收的通知：org.kde.kconfig.notify.ConfigChanged，路徑 /kwinrc，參數 a{saay}
+# {"Wayland": ["InputMethod"]}。Plasma 5（KF 5.115）的 kwriteconfig5 沒有 --notify，所以自己送（Plasma 6 也一樣）。
+KCONFIG_NOTIFY = ("--user", "emit", "/kwinrc", "org.kde.kconfig.notify", "ConfigChanged", "a{saay}",
+                  "1", "Wayland", "1", str(len("InputMethod")), *(str(b) for b in b"InputMethod"))
+VIRTUAL_KEYBOARD = ("--user", "get-property", "org.kde.KWin", "/VirtualKeyboard", "org.kde.kwin.VirtualKeyboard", "available")
+
+
+class KWinFallback(Exception):
+    """交由 KWin 重新啟動沒有成功；kwinrc 已寫回原值，改為直接啟動 Fcitx5。"""
+
+
+def without_wayland_socket(env):
+    return {key: value for key, value in env.items() if key != "WAYLAND_SOCKET"}
 
 
 def kconfig_tool(*names):
     for name in names:
         if path := shutil.which(name):
             return path
-    raise RuntimeError(f"找不到 {'／'.join(names)}，無法交由 KWin 重新啟動 Fcitx5；請在系統設定的虛擬鍵盤先選「無」再選回 Fcitx 5。")
+    raise KWinFallback(f"找不到 {'／'.join(names)}")
+
+
+def kconfig(*args, env):
+    """執行 kreadconfig／kwriteconfig／busctl，回傳標準輸出；失敗時錯誤帶出它的 stderr。"""
+    try:
+        return run(*args, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10).stdout or ""
+    except subprocess.CalledProcessError as error:
+        raise KWinFallback(f"{Path(args[0]).name}：{(error.stderr or '').strip()}") from error
+    except subprocess.TimeoutExpired as error:
+        raise KWinFallback(f"{Path(args[0]).name} 逾時") from error
 
 
 def parent_comm(proc):
@@ -415,39 +443,162 @@ def parent_comm(proc):
         return ""
 
 
+def user_processes(root):
+    uid = os.getuid()
+    for other in root.iterdir():
+        try:
+            if other.name.isdigit() and other.stat().st_uid == uid:
+                yield other, (other / "comm").read_text().strip()
+        except OSError:
+            continue
+
+
+def in_restart_unit(proc):
+    """更新器以 systemd-run 啟動的 Fcitx5（0c-fcitx5-*.service；0.2.4 以前在 Plasma Wayland 也這樣啟動）。"""
+    try:
+        lines = (proc / "cgroup").read_text().splitlines()
+    except OSError:
+        return False
+    return any(Path(line.rpartition(":")[2]).name.startswith("0c-fcitx5-")
+               and line.endswith(".service") for line in lines)
+
+
+def kwin_input_method(env):
+    return kconfig(kconfig_tool("kreadconfig6", "kreadconfig5"), *KWINRC_INPUT_METHOD, env=env).strip()
+
+
 def kwin_launched(proc, env):
     """只有 KDE Plasma Wayland 交還 KWin。「虛擬鍵盤」選 Fcitx 5 時 KWin 直接啟動 fcitx5（帶 WAYLAND_SOCKET、
     父行程是 kwin_wayland）；選 Fcitx 5 Wayland Launcher 時 KWin 的子行程是 fcitx5-wayland-launcher（comm 截成
-    fcitx5-wayland-），fcitx5 由 D-Bus 叫起。其他合成器（例如 Weston）和 GNOME、X11 照原本的 fcitx5 -r。"""
+    fcitx5-wayland-），fcitx5 由 D-Bus 叫起。更新器自己啟動的（0c-fcitx5-*.service）在 KWin 執行中、虛擬鍵盤是
+    Fcitx 時也交還。其他合成器（例如 Weston）和 GNOME、X11 照原本的 fcitx5 -r。"""
     if "WAYLAND_SOCKET" in env and parent_comm(proc) == "kwin_wayland":
         return True
-    uid = os.getuid()
-    for other in proc.parent.iterdir():
+    running = list(user_processes(proc.parent))
+    if any(comm.startswith("fcitx5-wayland") and parent_comm(other) == "kwin_wayland" for other, comm in running):
+        return True
+    if in_restart_unit(proc) and any(comm == "kwin_wayland" for _, comm in running):
         try:
-            if (other.name.isdigit() and other.stat().st_uid == uid
-                    and (other / "comm").read_text().strip().startswith("fcitx5-wayland")
-                    and parent_comm(other) == "kwin_wayland"):
-                return True
-        except OSError:
-            continue
+            return "fcitx" in Path(kwin_input_method(without_wayland_socket(env))).name.lower()
+        except KWinFallback:
+            return False
     return False
+
+
+def user_kwinrc(env):
+    config = env.get("XDG_CONFIG_HOME", "")
+    if not os.path.isabs(config):
+        config = os.path.join(env.get("HOME") or os.path.expanduser("~"), ".config")
+    return Path(config) / "kwinrc"
+
+
+def input_method_lines(path):
+    """使用者 kwinrc 的各行，與 [Wayland] 裡 InputMethod（可帶 [$e]、[$d] 之類的標記）所在的行。"""
+    lines = path.read_text().split("\n")
+    group, found = "", []
+    for index, line in enumerate(lines):
+        line = line.strip()
+        if line.startswith("["):
+            group = line
+        elif group == "[Wayland]" and line.split("=", 1)[0].split("[", 1)[0].strip() == "InputMethod":
+            found.append(index)
+    return lines, found
+
+
+def user_sets_input_method(path):
+    """使用者的 kwinrc 的 [Wayland] 有 InputMethod；沒有時值來自系統預設（例如 /etc/xdg/kwinrc）。"""
+    try:
+        return bool(input_method_lines(path)[1])
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
+def revert_user_input_method(path):
+    """刪掉使用者 kwinrc 裡的 InputMethod，回到系統預設。不用 kwriteconfig --delete：有系統預設時它寫的是遮蔽
+    預設的 InputMethod[$d]，值會變成空的。kwinrc 是符號連結時改它指向的檔案。"""
+    real = path.resolve()
+    try:
+        lines, found = input_method_lines(real)
+    except FileNotFoundError:
+        return
+    except (OSError, UnicodeDecodeError) as error:
+        raise KWinFallback(f"還原 kwinrc 的系統預設：{error}") from error
+    if not found:
+        return
+    tmp = real.with_name(real.name + ".0c-new")
+    try:
+        tmp.write_text("\n".join(line for index, line in enumerate(lines) if index not in found))
+        tmp.chmod(real.stat().st_mode & 0o7777)
+        tmp.replace(real)
+    except OSError as error:
+        tmp.unlink(missing_ok=True)
+        raise KWinFallback(f"還原 kwinrc 的系統預設：{error}") from error
+
+
+def wait(seconds, ready):
+    deadline = time.monotonic() + seconds
+    while not ready():
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.1)
+    return True
 
 
 def restart_kwin_input_method(env, log):
     """KDE Plasma Wayland：Fcitx5 由 KWin 帶著 WAYLAND_SOCKET 啟動，自己執行 fcitx5 -r 拿不到 Wayland 輸入法協定。
-    依 KDE 的方式重新啟動：等同在「系統設定 → 鍵盤 → 虛擬鍵盤」先選「無」再選回原本的項目。"""
-    env = {key: value for key, value in env.items() if key != "WAYLAND_SOCKET"}  # 那是 KWin 傳給舊行程的 fd
-    method = run(kconfig_tool("kreadconfig6", "kreadconfig5"), *KWINRC_INPUT_METHOD, env=env,
-                 stdout=subprocess.PIPE, stderr=log, text=True, timeout=10).stdout.strip()
+    依 KDE 的方式重新啟動：等同在「系統設定 → 鍵盤 → 虛擬鍵盤」先選「無」再選回原本的項目。KWin 沒有停用
+    （3 秒內 available 沒變 false）或寫回後沒有啟動 fcitx5 時，kwinrc 寫回原值後以 KWinFallback 改為直接啟動。"""
+    env = without_wayland_socket(env)
+    method = kwin_input_method(env)
     if not method:
-        raise RuntimeError("Fcitx5 由 KWin 啟動，但 kwinrc 沒有設定 InputMethod；請在系統設定的虛擬鍵盤選回 Fcitx 5。")
+        raise KWinFallback("kwinrc 沒有設定 InputMethod")
+    inherited = not user_sets_input_method(user_kwinrc(env))
     write = kconfig_tool("kwriteconfig6", "kwriteconfig5")
-    run(write, *KWINRC_INPUT_METHOD, "--notify", "", env=env, stdout=log, stderr=log, timeout=10)
-    # KWin 收到通知後結束舊的 Fcitx5；等它結束再寫回，否則 KWin 重讀設定時看到相同的值而不重新啟動。
-    deadline = time.monotonic() + 5
-    while processes("fcitx5") and time.monotonic() < deadline:
-        time.sleep(0.1)
-    run(write, *KWINRC_INPUT_METHOD, "--type", "path", "--notify", method, env=env, stdout=log, stderr=log, timeout=10)
+    busctl = shutil.which("busctl")  # 沒有時退回 kwriteconfig --notify（Plasma 6 才有）
+
+    def set_input_method(*value):
+        if value:
+            kconfig(write, *KWINRC_INPUT_METHOD, *(() if busctl else ("--notify",)), *value, env=env)
+        else:
+            # 原值來自系統預設：刪掉清空時寫入的鍵，不把預設固定寫進使用者的 kwinrc。
+            revert_user_input_method(user_kwinrc(env))
+            if not busctl:  # 沒有 busctl 時借 kwriteconfig --notify 送通知（寫回目前的系統預設值不會留下鍵）
+                kconfig(write, *KWINRC_INPUT_METHOD, "--notify", "--type", "path", method, env=env)
+                revert_user_input_method(user_kwinrc(env))
+        if busctl:
+            kconfig(busctl, *KCONFIG_NOTIFY, env=env)
+
+    def restore():
+        value = () if inherited else ("--type", "path", method)
+        for attempt in range(3):
+            try:
+                set_input_method(*value)
+                return
+            except KWinFallback as error:
+                if attempt == 2:
+                    raise RuntimeError(f"無法寫回 kwinrc 的 InputMethod（{error}）；請在系統設定的虛擬鍵盤選回 Fcitx 5。") from error
+                time.sleep(0.3)
+
+    def disabled():
+        try:
+            return kconfig(busctl, *VIRTUAL_KEYBOARD, env=env).split() == ["b", "false"]
+        except KWinFallback:
+            return False
+
+    try:
+        set_input_method("")
+    except KWinFallback:
+        restore()
+        raise
+    # KWin 收到通知後停用並結束舊的 Fcitx5；等它結束再寫回，否則 KWin 重讀設定時看到相同的值而不重新啟動，
+    # 或新的 fcitx5 看到舊實例還在而退出。
+    cleared = wait(3, disabled) if busctl else True
+    cleared = wait(5, lambda: not processes("fcitx5")) and cleared
+    restore()
+    if not cleared:
+        raise KWinFallback("KWin 在 3 秒內沒有停用輸入法")
+    if not wait(8, lambda: processes("fcitx5")):
+        raise KWinFallback("寫回 kwinrc 後 KWin 沒有啟動 Fcitx5")
 
 
 def main():
