@@ -22,6 +22,9 @@
   <a href="https://0c.biggo.com/download/">下載</a> ·
   <a href="https://0c.biggo.com/technology/">選字技術</a> ·
   <a href="https://0c.biggo.com/guide/basics/">操作指南</a> ·
+  <a href="https://0c.biggo.com/docs/cli/">CLI 文件</a> ·
+  <a href="https://0c.biggo.com/help/">支援</a> ·
+  <a href="https://0c.biggo.com/privacy/">隱私</a> ·
   <a href="https://github.com/0c-biggo/0c-ime/issues">回報問題</a>
 </p>
 
@@ -118,6 +121,8 @@ go run ./cmd/0c-cli -data assets/data
 ```
 
 `make assets` 從同版本的 [Release](https://github.com/0c-biggo/0c-ime/releases) 取得原始碼與模型 tarball（合計約 275 MB），驗證後把現成字典放到 `assets/data/`、已配對模型放到 `models/select/` 與 `models/punct/`，和出貨內容相同；0.2.2 起 Release 附的 Source code 壓縮檔也適用。要指定版本用 `make assets RELEASE=v0.2.2`，只取字典用 `make assets MODELS=0`（約 36 MB，以統計選字運作）。
+
+`cmd/` 下工具的旗標、輸入輸出與範例見官網 [CLI 文件](https://0c.biggo.com/docs/cli/)，例如 [0c-cli](https://0c.biggo.com/docs/cli/0c-cli/)、[0c-update](https://0c.biggo.com/docs/cli/0c-update/)、[0c-mcp](https://0c.biggo.com/docs/cli/0c-mcp/)。
 
 發行版維護者以 `make install PREFIX=/usr` 做系統安裝、由套件管理員更新，見 [Linux 系統安裝](platforms/linux-system/README.md)。
 
