@@ -27,6 +27,7 @@ func englishBoundarySession() *Session {
 		{"會", "ㄏㄨㄟˋ", 1.1e-3}, {"為", "ㄨㄟˋ", 1.2e-3}, {"柳", "ㄌㄧㄡˇ", 2e-5},
 		{"嗎", "ㄇㄚ˙", 3e-4}, {"滿", "ㄇㄢˇ", 2e-4}, {"們", "ㄇㄣ˙", 5e-5},
 		{"應", "ㄧㄥˋ", 1.7e-4}, {"競", "ㄐㄧㄥˋ", 1.2e-4}, {"呃", "ㄜ˙", 2e-6},
+		{"爾", "ㄦˇ", 1e-4}, {"二", "ㄦˋ", 3e-4}, {"偶", "ㄡˇ", 5e-5}, {"天", "ㄊㄧㄢ", 1e-3}, {"換", "ㄏㄨㄢˋ", 2e-4},
 	} {
 		lex.Add(lexicon.Entry{Surface: e.w, Reading: zhuyin.ParseReading(e.r), PRW: 1})
 		sys.SetUni(e.w, e.p)
@@ -104,6 +105,10 @@ func TestMixedTypoDoesNotSwallowFollowingZhuyin(t *testing.T) {
 		{"qji3ap7su3", "qji3們你"},
 		// 照舊：英文字或帳號後的數字不是打錯的注音
 		{"hello4", "hello4"}, {"lisa0304", "lisa0304"}, {"kevin87", "kevin87"},
+		// 只有數字與標點的前段是數字寫法，不切（-3 爾、.3 偶）
+		{"1-4-3", "1-4-3"}, {"2025.3.31", "2025.3.31"}, {"2.7-3.1", "2.7-3.1"}, {"1-2-3-4-5-6", "1-2-3-4-5-6"},
+		// 打錯那段後面的音節以數字鍵結尾（ㄊㄧㄢ 的 0、ㄏㄨㄢ 的 0）也切開；後段要有字母
+		{"qji3wu0 ", "qji3天"}, {"qji3cj04", "qji3換"}, {"qji3cj04su3cl3", "qji3換你好"},
 	} {
 		s := englishBoundarySession()
 		mixedType(s, tc.keys)

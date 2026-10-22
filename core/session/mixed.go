@@ -513,13 +513,19 @@ func (s *Session) mixedBoundary(raw, key string, tone rune) (int, zhuyin.Syllabl
 			best, bestScore, bestSyl = at, score, done
 		}
 	}
-	if best > 0 || unicode.IsDigit(rune(raw[len(raw)-1])) {
-		return best, bestSyl, best > 0
+	if best > 0 {
+		return best, bestSyl, true
 	}
-	if at, done, ok := s.mixedAfterTypo(raw, tone); ok {
+	// 打錯一鍵的注音（#203）：後段以數字鍵結尾（qji3wu0 的 ㄉㄧㄢ 天）也要切開，但切出來的後段要有字母，
+	// 只用數字鍵的後段照舊交給下面「帳號、編號」的判斷。
+	if at, done, ok := s.mixedAfterTypo(raw, tone); ok && (!unicode.IsDigit(rune(raw[len(raw)-1])) || strings.ContainsFunc(raw[at:], unicode.IsLetter)) {
 		return at, done, true
 	}
-	// 字典不認得的前段：聲調前一鍵是數字（lisa03、nina87）像帳號或編號，不切。
+	// 聲調前一鍵是數字（lisa03、nina87）像帳號或編號，不切。
+	if unicode.IsDigit(rune(raw[len(raw)-1])) {
+		return 0, "", false
+	}
+	// 字典不認得的前段接空白，照字面。
 	if key == " " {
 		return 0, "", false
 	}
@@ -541,7 +547,9 @@ func (s *Session) mixedBoundary(raw, key string, tone rune) (int, zhuyin.Syllabl
 
 // mixedAfterTypo：打錯一鍵的注音（qji3：ㄆㄨㄛˇ 組不成音節）在聲調鍵後仍是待定的按鍵，之後的注音會一路接在後面，
 // 直到下一個空白才整串照字面送出，好幾個字都變成英文字母（qji3ap6rup 而不是 qji3們今）。前段最後一個聲調鍵
-// （前一鍵不是數字：帳號、編號照舊）之後的按鍵照順序打、組成常用字時，從那裡切開：打錯的那段照字面，後面照常是中文。
+// （前一鍵不是數字：帳號、編號照舊）之後的按鍵照順序打、組成的不是罕用字（mixedRareFloor）時，從那裡切開：打錯的那段照字面，
+// 後面照常是中文。前段要有字母：只有數字與標點的是數字寫法。罕用字門檻不用 mixedUnknownWordFloor 的常用字門檻：
+// 句首機率會隨個人用字大幅變動（整串照字面送出的句子讓個人模型學到「句首接天」，們的句首機率掉到 5e-5）。
 func (s *Session) mixedAfterTypo(raw string, tone rune) (int, zhuyin.Syllable, bool) {
 	at := strings.LastIndexFunc(raw, func(r rune) bool {
 		sym, ok := s.layout.Symbol(r)
@@ -553,17 +561,15 @@ func (s *Session) mixedAfterTypo(raw string, tone rune) (int, zhuyin.Syllable, b
 	if strings.ContainsFunc(raw[:at], func(r rune) bool { _, ok := s.layout.Symbol(r); return !ok }) {
 		return 0, "", false // 大寫、底線等不是注音鍵的字元：識別字或英文，不是打錯的注音
 	}
+	if !strings.ContainsFunc(raw[:at], unicode.IsLetter) {
+		return 0, "", false // 只有數字與標點的前段是數字寫法（1-4-3、2025.3.31、2.7-3.1），不是打錯的注音
+	}
 	done, ok := s.mixedReading(raw[at:], tone)
-	if !ok || tone == '˙' && done.ToneOf() != 5 || s.mixedSyllableScore(done) < mixedTypoFloor {
+	if !ok || tone == '˙' && done.ToneOf() != 5 || s.mixedSyllableScore(done) < mixedRareFloor {
 		return 0, "", false
 	}
 	return at, done, true
 }
-
-// mixedTypoFloor：打錯的注音後面只排除罕用字（ㄙㄚ˙ 挱 約 3e-8）。前段已有被拒絕的聲調鍵，是在打注音的證據，
-// 不用 mixedUnknownWordFloor 的常用字門檻：句首機率會隨個人用字大幅變動，之前整串照字面送出的句子讓
-// 個人模型學到「句首接天」，們、門的句首機率掉到 5e-5，常用字也會被擋下。
-const mixedTypoFloor = 1e-6
 
 // englishThenPunct（#188）：英文字後面緊接著只有標點鍵（hello. 、vs. 、hello, 、hello; ），比照 #187「緊接在半形英數後面的
 // . , 是標點」，接空白時整串照字面，不把標點鍵切給中文（hello歐、vs歐），也不改把英文字尾借去組字（max. 不是 ma摟）。
@@ -585,11 +591,11 @@ func (s *Session) englishThenNumber(raw, key string) bool {
 		!strings.ContainsFunc(word, func(r rune) bool { return r > unicode.MaxASCII })
 }
 
-// mixedRareDigitFloor（#200）：只用數字鍵與標點鍵拼出的讀音，單音節機率（mixedSyllableScore）低於這個值就照字面。
+// mixedRareFloor（#200）：只用數字鍵與標點鍵拼出的讀音，單音節機率（mixedSyllableScore）低於這個值就照字面。
 // 0.2.4 資料包裡，低於的是 1/3 繃、1/6 甭、5.3 肘、2.6 艔、86 嗄、06 玵、197 唄、287 瘩、.4 嘔、,4 誒、.6 吽、;3 軮
 // （PTT 語料合計 4 次）；最接近的常用一邊是 583 眨（2.2e-6）、03 俺（2.6e-6）、5.4 咒／宙（5.7e-6），2.4 豆、5.6 軸、
 // 1/4 蹦都在 1e-5 左右或更高（門檻的 6 倍以上）。
-const mixedRareDigitFloor = 1.5e-6
+const mixedRareFloor = 1.5e-6
 
 // rareDigitReading（#200）：沒有字母的待定按鍵加上明確的聲調鍵（3 4 6 7）組成的讀音，首選字是罕用字時照字面
 // （1/3 不是「繃」、86 不是「嗄」），比照常見注音輸入法混打「組不出常用字就照字面」，跟 #175 的 57、#176 的 2.7 一樣
@@ -599,7 +605,7 @@ func (s *Session) rareDigitReading(raw string, tone rune) bool {
 		return false
 	}
 	done, ok := s.mixedReading(raw, tone)
-	return ok && s.mixedSyllableScore(done) < mixedRareDigitFloor && !s.readingContinues(done)
+	return ok && s.mixedSyllableScore(done) < mixedRareFloor && !s.readingContinues(done)
 }
 
 // mixedSyllableScore：單一音節在句首的解碼機率（含個人用字）。只在多字詞裡常見的音節以詞首計（應 → 應該）。
