@@ -128,6 +128,15 @@ func serve() string {
 	eng.Model.Now = func() int64 { return time.Now().Unix() }
 
 	// 使用者設定：預設神經選字與前文開啟，補標點（Beta）關閉。明確的 -neural-*／-punct-* 參數優先（開發與隔離測試）。
+	// #206：Windows 的中英切換鍵預設改成左右 Shift；0.2.4 以前存檔時順手寫進去的 right 在第一次以新版啟動時換一次。
+	// 放在引擎：不論是新版安裝程式、還是舊版更新器在背景裝上這一版，第一個以新設定服務的一定是新版引擎。
+	if writable && runtime.GOOS == "windows" {
+		if adopted, err := settings.AdoptBothShift(*user); err != nil {
+			lg.Printf("中英切換鍵未換成左右 Shift，下次啟動再試：%v", err)
+		} else if adopted {
+			lg.Printf("中英切換鍵改成左右 Shift（Windows 的新預設，#206；可在設定程式改回右 Shift）")
+		}
+	}
 	settingsReport, configErr := settings.Read(settings.Path(*user))
 	config := settingsReport.Settings
 	if configErr != nil {

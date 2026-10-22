@@ -6,7 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -381,7 +384,16 @@ func runSet(base string, dial autoupdate.Dialer, o setOptions, notice func(strin
 				return err
 			}
 		}
-		return settings.Save(path, s)
+		if err := settings.Save(path, s); err != nil {
+			return err
+		}
+		if choosesToggleKey(runtime.GOOS, o.pairs) {
+			// 自己選了中英切換鍵：新版引擎啟動時不再把右 Shift 換成左右 Shift（#206）。
+			if err := settings.MarkBothShift(path); err != nil {
+				fmt.Fprintln(os.Stderr, "0c-update: 無法記下中英切換鍵的選擇：", err)
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return res, err
@@ -395,6 +407,11 @@ func runSet(base string, dial autoupdate.Dialer, o setOptions, notice func(strin
 		ensureEngineService(base) // 引擎交接退出後立刻叫起常駐引擎（#120）
 	}
 	return res, nil
+}
+
+// choosesToggleKey：Windows 上這次設定了中英切換鍵（新鍵 toggle-key 或舊鍵 left-shift，#206）。
+func choosesToggleKey(goos string, pairs [][2]string) bool {
+	return goos == "windows" && slices.ContainsFunc(pairs, func(p [2]string) bool { return p[0] == "toggle-key" || p[0] == "left-shift" })
 }
 
 // liveSimplified：這次只改了「輸出簡體字」，引擎可以即時切換、不必交接重啟（#169，設定程式的開關與舊外殼的選單都走這裡）。

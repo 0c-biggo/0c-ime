@@ -64,7 +64,7 @@ type Settings struct {
 	MixedInput          bool   `json:"mixed_input"`
 	EnglishAutocomplete bool   `json:"english_autocomplete"`
 	LeftShift           bool   `json:"left_shift"` // 舊欄位：ToggleKey 含左 Shift。讀新檔時由 ToggleKey 推出，存檔時一併寫回給舊版讀
-	// ToggleKey 是單按哪個 Shift 切換注音／英文（#117）：right、both、left、none。macOS 預設 none，其他平台 right。
+	// ToggleKey 是單按哪個 Shift 切換注音／英文（#117）：right、both、left、none。macOS 預設 none，Windows both（#206），Linux right。
 	// 檔案沒有這個欄位時沿用平台預設；舊欄位 left_shift=true 保留為 both。Shift 加字母一律打大寫，不算切換。
 	ToggleKey string `json:"toggle_key"`
 	// ModeMemory 是切換視窗或輸入框後的中英模式（#115）：native 照平台原本的做法（Windows 每個程式各自記住、
@@ -255,9 +255,14 @@ const (
 )
 
 // macOS 預設沿用系統的輸入來源切換，避免誤觸 Shift 後留在英文模式；想用 Shift 的使用者可在設定開啟。
+// Windows 比照系統內建注音的習慣，左右 Shift 單按都切換（#206；舊用戶的 right 由 AdoptBothShift 換一次）。
+// Linux 的 Fcitx5 預設把左 Shift 當暫時切換輸入法，維持右 Shift。
 func defaultToggleKey(goos string) string {
-	if goos == "darwin" {
+	switch goos {
+	case "darwin":
 		return ToggleNone
+	case "windows":
+		return ToggleBoth
 	}
 	return ToggleRight
 }
@@ -840,7 +845,7 @@ func simplifiedHotkeyDescription(goos string) string {
 func toggleKeyDescription(goos string) string {
 	d := "單按哪個 Shift 切換注音／英文；按住 Shift 超過 0.3 秒、或 Shift 加字母（打大寫）不算切換。沒用來切換的 Shift 照系統原本的用途"
 	if goos == "windows" {
-		d += "。也可以按 Ctrl＋空白鍵"
+		d += "。預設左右 Shift 都可以切換，不想讓左 Shift 切換可改成「右 Shift」。也可以按 Ctrl＋空白鍵"
 	} else if goos == "darwin" {
 		d += "。Mac 預設不用 Shift，使用系統的輸入來源切換；想用 Shift 可在這裡開啟"
 	}
