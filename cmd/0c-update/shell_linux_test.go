@@ -273,6 +273,13 @@ func TestKWinLaunchedFcitxIsRestartedThroughKWin(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "environ"), []byte("WAYLAND_SOCKET=27\x00XDG_RUNTIME_DIR=/run/user/1000\x00"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	parent := filepath.Join(procRoot, "100")
+	if err := os.Mkdir(parent, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "stat"), []byte("123 (fcitx5) S 100 123 123 0"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	var ran []string
 	kconfigTool = func(names ...string) (string, error) { return "/usr/bin/" + names[0], nil }
 	runKConfig = func(_ context.Context, _ []string, path string, args ...string) ([]byte, error) {
@@ -283,6 +290,22 @@ func TestKWinLaunchedFcitxIsRestartedThroughKWin(t *testing.T) {
 		return nil, nil
 	}
 	kwinIMAvailable = func(context.Context) (bool, error) { return false, nil }
+	// 其他合成器（例如 Weston）也可能以 WAYLAND_SOCKET 啟動 Fcitx5：父行程不是 kwin_wayland 時不碰 kwinrc。
+	for _, other := range []string{"weston", "gnome-shell", "systemd"} {
+		if err := os.WriteFile(filepath.Join(parent, "comm"), []byte(other+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		state, err := captureFcitx(123)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if state.KWinIM != "" || len(ran) != 0 {
+			t.Fatalf("父行程 %s 不該走 KWin 路徑：%+v %q", other, state, ran)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(parent, "comm"), []byte("kwin_wayland\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	state, err := captureFcitx(123)
 	if err != nil {
 		t.Fatal(err)

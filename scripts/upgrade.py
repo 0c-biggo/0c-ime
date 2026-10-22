@@ -368,7 +368,7 @@ def apply():
         # Use the original desktop's environment; do not print its potentially private values.
         with tempfile.TemporaryFile() as log:
             try:
-                if "WAYLAND_SOCKET" in env:
+                if kwin_launched(fcitx[0], env):
                     restart_kwin_input_method(env, log)
                 else:
                     run("fcitx5", "-r", "-d", env=env, stdout=log, stderr=log, timeout=20)
@@ -404,6 +404,19 @@ def kconfig_tool(*names):
         if path := shutil.which(name):
             return path
     raise RuntimeError(f"找不到 {'／'.join(names)}，無法交由 KWin 重新啟動 Fcitx5；請在系統設定的虛擬鍵盤先選「無」再選回 Fcitx 5。")
+
+
+def kwin_launched(proc, env):
+    """只有 KDE Plasma Wayland 交還 KWin：要有 KWin 給的 WAYLAND_SOCKET，父行程也必須是 kwin_wayland。
+    其他會用 WAYLAND_SOCKET 啟動輸入法的合成器（例如 Weston）和 GNOME、X11 照原本的 fcitx5 -r。"""
+    if "WAYLAND_SOCKET" not in env:
+        return False
+    try:
+        stat = (proc / "stat").read_text()
+        parent = stat[stat.rindex(") ") + 2:].split()[1]
+        return (proc.parent / parent / "comm").read_text().strip() == "kwin_wayland"
+    except (OSError, ValueError, IndexError):
+        return False
 
 
 def restart_kwin_input_method(env, log):

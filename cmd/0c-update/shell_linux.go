@@ -228,13 +228,37 @@ func captureFcitx(pid int) (*shellRestart, error) {
 		// KWin 以 socketpair 啟動輸入法，只有它給的 WAYLAND_SOCKET 能提供 Wayland 輸入法協定；這個 fd 無法沿用。
 		kwin = kwin || key == "WAYLAND_SOCKET"
 	}
-	if kwin {
+	// 只有 KDE Plasma Wayland 走 KWin 路徑：除了 WAYLAND_SOCKET，父行程也必須是 kwin_wayland。
+	// 其他會用 WAYLAND_SOCKET 啟動輸入法的合成器（例如 Weston）和 GNOME、X11 等桌面照原本的方式重新啟動。
+	if kwin && parentComm(dir) == "kwin_wayland" {
 		if s.KWinIM, err = kwinInputMethod(append(os.Environ(), s.Env...)); err != nil || s.KWinIM == "" {
 			fmt.Fprintln(os.Stderr, "0c-update: Fcitx5 由 KWin 啟動，但讀不到 kwinrc 的 InputMethod：", err)
 			s.KWinIM = ""
 		}
 	}
 	return s, nil
+}
+
+// parentComm 回傳 /proc/PID（dir）父行程的名稱；讀不到時為空字串。
+func parentComm(dir string) string {
+	stat, err := os.ReadFile(filepath.Join(dir, "stat"))
+	if err != nil {
+		return ""
+	}
+	raw := string(stat)
+	i := strings.LastIndex(raw, ") ")
+	if i < 0 {
+		return ""
+	}
+	f := strings.Fields(raw[i+2:])
+	if len(f) < 2 {
+		return ""
+	}
+	comm, err := os.ReadFile(filepath.Join(procRoot, f[1], "comm"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(comm))
 }
 
 // 測試替換用。

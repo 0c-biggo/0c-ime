@@ -299,9 +299,12 @@ class UpgradeTests(unittest.TestCase):
 
     def test_kwin_launched_fcitx_is_restarted_through_kwin(self):
         # KDE Plasma Wayland：KWin 帶著 WAYLAND_SOCKET 啟動 Fcitx5；改 kwinrc 讓 KWin 重新啟動，不執行 fcitx5 -r。
-        proc = self.root / 'proc'
-        proc.mkdir()
+        proc = self.root / 'proc/123'
+        proc.mkdir(parents=True)
         (proc / 'environ').write_bytes(b'WAYLAND_SOCKET=27\0XDG_RUNTIME_DIR=/run/user/1000\0')
+        (proc / 'stat').write_text('123 (fcitx5) S 100 123 123 0')
+        (self.root / 'proc/100').mkdir()
+        (self.root / 'proc/100/comm').write_text('kwin_wayland\n')
         desktop = '/usr/share/applications/org.fcitx.Fcitx5.desktop'
         running = [proc]
 
@@ -324,6 +327,24 @@ class UpgradeTests(unittest.TestCase):
             self.assertEqual([call.args[1:] for call in kwin],
                              [(*key, '--notify', ''), (*key, '--type', 'path', '--notify', desktop)])
             self.assertNotIn('WAYLAND_SOCKET', kwin[0].kwargs['env'])
+
+    def test_other_wayland_socket_launcher_keeps_fcitx_replace(self):
+        # 其他合成器（例如 Weston）也可能以 WAYLAND_SOCKET 啟動 Fcitx5；父行程不是 kwin_wayland 就不碰 kwinrc。
+        proc = self.root / 'proc/123'
+        proc.mkdir(parents=True)
+        (proc / 'environ').write_bytes(b'WAYLAND_SOCKET=27\0')
+        (proc / 'stat').write_text('123 (fcitx5) S 100 123 123 0')
+        (self.root / 'proc/100').mkdir()
+        (self.root / 'proc/100/comm').write_text('weston\n')
+        with patch.object(upgrade, 'run', return_value=subprocess.CompletedProcess([], 0, stdout='abc\n')) as run, \
+                patch.object(upgrade, 'check_data'), \
+                patch.object(upgrade, 'processes', return_value=[proc]), \
+                patch.object(upgrade, 'addon_loaded', return_value=True), \
+                patch.object(upgrade, 'stop_old_servers'), patch.object(upgrade.time, 'sleep'):
+            upgrade.apply()
+            self.assertEqual(len([call for call in run.call_args_list if call.args[0] == 'fcitx5']), 1)
+            self.assertFalse(any('kwriteconfig' in str(call.args[0]) or 'kreadconfig' in str(call.args[0])
+                                 for call in run.call_args_list))
 
     def test_restart_drops_the_old_addon_search_path(self):
         # #92：舊版的搜尋路徑只有建置機的系統目錄；外殼改用絕對路徑後重啟時不再沿用。
