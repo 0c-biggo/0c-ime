@@ -80,6 +80,77 @@ func (s *Session) untonedKey(k string) {
 	}
 }
 
+// untonedRun 是聲調選填時從沒有未打完注音的狀態起、連續打在游標處的注音鍵（實體按鍵）。
+// 聲調選填停用混打的自動英文判斷（負責人決定與混打二選一），只保留「我的詞彙」裡的英文詞（#146）：
+// 這串按鍵恰好是使用者加的英文詞（大小寫相同）時，接空白、Enter 或標點就把它換回英文照字面送出，
+// 跟混打的 ls␣ 一樣。打字當中畫面照注音解，換的時機在這個詞結束時。
+type untonedRun struct {
+	keys   string    // 實體按鍵
+	starts []runMark // 每個沒有未打完注音的時間點：從那裡起的按鍵都可能是一個英文詞（ji3ls 的 ls）
+	cursor int       // 打完這串按鍵後的游標、音節數與未打完的注音；下一鍵前有任何不同（退格、移游標）就不再接續
+	syls   int
+	comp   string
+}
+
+type runMark struct{ key, pos int } // keys[key:] 從音節位置 pos 開始
+
+// untonedRunFrom 回傳這一鍵要接續的那串按鍵：上一鍵留下的、狀態沒變的接著用；否則從游標處開始新的一串
+// （游標前還有不知道按鍵的未打完注音時，要等它完成才有起點）。沒開聲調選填或沒有自訂英文詞時回傳 nil。
+func (s *Session) untonedRunFrom(run *untonedRun) *untonedRun {
+	if !s.Toneless || !s.Preview02 || !s.model.HasVocab() {
+		return nil
+	}
+	if run == nil || run.cursor != s.cursor || run.syls != len(s.syls) || run.comp != s.comp.String() {
+		run = &untonedRun{}
+	}
+	next := *run
+	if s.comp.Empty() {
+		next.starts = append(slices.Clip(run.starts), runMark{len(run.keys), s.cursor})
+	}
+	return &next
+}
+
+// trackUntonedKey 記下這一鍵（空白是一聲，不算詞的一部分）。
+func (s *Session) trackUntonedKey(run *untonedRun, k string) {
+	if run == nil || k == " " || len(run.starts) == 0 {
+		return
+	}
+	run.keys += k
+	run.cursor, run.syls, run.comp = s.cursor, len(s.syls), s.comp.String()
+	s.untonedRun = run
+}
+
+// untonedEnglish：空白、Enter 或標點鍵之前，從某個起點到游標的按鍵恰好是「我的詞彙」的英文詞時（取最長的），
+// 把那一段換成英文字面文字。空白插入半形空白（不開候選、不是一聲）；Enter 與標點換完後照常處理，回傳 false。
+func (s *Session) untonedEnglish(run *untonedRun, k string) bool {
+	if run == nil || run.cursor != s.cursor || run.syls != len(s.syls) || run.comp != s.comp.String() {
+		return false
+	}
+	rs := []rune(k)
+	_, phonetic := s.layout.Symbol(rs[0])
+	_, punct := s.layout.Punct(rs[0])
+	if k != " " && k != proto.KeyEnter && !(len(rs) == 1 && punct && !phonetic) {
+		return false
+	}
+	for _, m := range run.starts {
+		word := run.keys[m.key:]
+		if word == "" || !s.vocabEnglish(word) {
+			continue
+		}
+		s.comp.Reset()
+		for s.cursor > m.pos {
+			s.eraseBeforeCursor()
+		}
+		s.insertLiteral(word)
+		if k == " " {
+			s.insertLiteral(" ")
+			return true
+		}
+		return false
+	}
+	return false
+}
+
 // typedReading 回傳 [start, end) 的讀音：沒打聲調的音節換成目前顯示路徑在詞庫裡走的讀音。
 // 有沒打聲調的音節而路徑對不上（例如那段還沒解出字）時回傳 false。
 func (s *Session) typedReading(start, end int) ([]zhuyin.Syllable, bool) {

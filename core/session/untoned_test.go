@@ -244,6 +244,47 @@ func TestTonelessNeuralSkipsUntonedSegmentsAndKeepsTonedOnes(t *testing.T) {
 	}
 }
 
+// 聲調選填停用混打，只保留「我的詞彙」裡的英文詞（負責人決定）：一串注音鍵恰好是使用者加的英文詞時，
+// 接空白、Enter 或標點照字面送出。沒加的英文、打到一半、退格改過的都照注音。
+func TestTonelessKeepsVocabEnglish(t *testing.T) {
+	for _, tc := range []struct{ keys, commit string }{
+		{"ls ", "ls "},
+		{"ls", "ls"},
+		{"kubectl ", "kubectl "},
+		{"git-lfs ", "git-lfs "},
+		{"ipv6 ", "ipv6 "}, // 英文詞裡的聲調鍵
+		{"ls<", "ls，"},
+		{"ji3ls ", "我ls "},
+	} {
+		s := englishVocabSession(t, true, "ls", "kubectl", "git-lfs", "ipv6")
+		s.Toneless = true
+		mixedType(s, tc.keys)
+		if got := key(s, proto.KeyEnter).Commit; got != tc.commit {
+			t.Errorf("%q 送出 %q，要 %q", tc.keys, got, tc.commit)
+		}
+	}
+	for _, tc := range []struct{ keys string }{{"hello "}, {"lsx\b "}, {"l s "}} {
+		s := englishVocabSession(t, true, "ls")
+		s.Toneless = true
+		for _, k := range tc.keys {
+			if k == '\b' {
+				key(s, proto.KeyBackspace)
+				continue
+			}
+			key(s, string(k))
+		}
+		if got := key(s, proto.KeyEnter).Commit; got == "ls " || got == "hello " {
+			t.Errorf("%q 不是加過的英文詞，照注音：%q", tc.keys, got)
+		}
+	}
+	s := englishVocabSession(t, true)
+	s.Toneless = true
+	mixedType(s, "ls ")
+	if got := key(s, proto.KeyEnter).Commit; got == "ls " {
+		t.Errorf("沒加英文詞時照注音：%q", got)
+	}
+}
+
 func TestTonelessDisplaysWithoutMark(t *testing.T) {
 	s := newTonelessSession(true)
 	// ㄈㄧㄠ 是音節表內的音節，但這份詞庫沒有字：原樣留下，不顯示內部記號。

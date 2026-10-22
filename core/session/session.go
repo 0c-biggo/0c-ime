@@ -120,6 +120,7 @@ type Session struct {
 	mixedKeys             map[int]string      // completed phonetic position → original keys, retained until edited/committed
 	mixedOrigins          map[int]mixedOrigin // literal positions: independently typed vs system-assisted
 	pendingToneKey        *toneKeyPending     // 上一鍵是單獨的聲調鍵：緊接著的空白換成聲調符號（#135）
+	untonedRun            *untonedRun         // 聲調選填時這一串連續打的注音鍵（#150），認「我的詞彙」的英文詞
 	literalKeys           map[int]string      // 照字面留下的符號位置 → 原按鍵，↓ 第二項可選回（#135 聲調符號、#190 混打的「，」「。」）
 	retypeLiteral         bool                // 上一鍵剛把沒有字的音節原樣留下：緊接著的同類介音／韻母是在改它（#85）
 	// DocumentContextOff 由宿主依使用者設定：外殼送來的前文確認一律忽略，不以前文選字。
@@ -259,6 +260,7 @@ func (s *Session) Handle(r proto.Request) proto.Snapshot {
 	if r.Type != proto.Key && r.Type != proto.Context && r.Type != proto.Display {
 		s.pendingToneKey = nil // 按鍵由 key 自己取出；其他操作之後的空白不再換成聲調符號（#135）
 		s.retypeLiteral = false
+		s.untonedRun = nil
 	}
 	_, keypad := proto.KeypadChar(r.Key)
 	s.allowRerank = r.Type == proto.Symbol || r.Type == proto.Backspace || r.Type == proto.Key && (len([]rune(r.Key)) == 1 || keypad || r.Key == proto.KeyBackspace)
@@ -469,6 +471,8 @@ func (s *Session) key(k string) (handled bool, commit string) {
 	s.pendingToneKey = nil
 	retype := s.retypeLiteral // 同上，只有緊接著的這一鍵能改剛留下的錯音節（#85）
 	s.retypeLiteral = false
+	run := s.untonedRun // 聲調選填時連續打的注音鍵（#150）：只有緊接著的這一鍵能接續
+	s.untonedRun = nil
 	// 數字鍵盤永遠不是注音鍵（#75）：英文模式與候選選號同主鍵盤數字；沒在組字交還應用程式；
 	// 組字中以半形插在游標處，未打完的注音保留成符號（同 Shift＋字母）。
 	if c, ok := proto.KeypadChar(k); ok {
@@ -568,6 +572,9 @@ func (s *Session) key(k string) (handled bool, commit string) {
 	}
 	if s.mixedKey(k) {
 		return true, ""
+	}
+	if s.untonedEnglish(run, k) {
+		return true, "" // 「我的詞彙」裡的英文詞接空白照字面送出（#150，同混打的 #146）
 	}
 	s.untonedKey(k)
 	switch k {
@@ -711,7 +718,9 @@ func (s *Session) key(k string) (handled bool, commit string) {
 		if retype && s.retypeSyllableLiteral(runes[0]) {
 			return true, ""
 		}
+		before := s.untonedRunFrom(run)
 		if s.pressKey(runes[0]) {
+			s.trackUntonedKey(before, k)
 			return true, ""
 		}
 		// 沒有待完成音節的聲調鍵不可漏到應用程式，否則數字會跑到組字之前。

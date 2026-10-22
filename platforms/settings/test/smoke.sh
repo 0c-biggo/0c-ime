@@ -400,11 +400,11 @@ if window_up; then
   check "Emoji 重新啟用後子選項可再次操作" toggle_value first_off
 else bad "toggles/keyboard 重新開啟失敗"; cat /tmp/app-toggles-keyboard.log; fi
 stop_app
-# 模糊音在「選字」最後：選字方式、前文、空白選字、修改位置、選字後游標、排列、選字鍵、Esc → 模糊音（導覽後第 9 個）。
+# 模糊音在「選字」最後：選字方式、前文、空白選字、修改位置、選字後游標、排列、選字鍵、Esc、不打聲調（#150）→ 模糊音（導覽後第 10 個）。
 launch toggles candidates
 if window_up; then
   sleep 2.5
-  tabs $((NAV + 9)); xdotool key space
+  tabs $((NAV + 10)); xdotool key space
   check "預設開啟的模糊音總開關一次關閉四組，保留未知設定" toggle_value fuzzy_off
   sleep 1
   import -window root "$OUT/toggles-fuzzy-off.png"
@@ -557,6 +557,30 @@ else bad "hsu/mode 視窗沒有出現"; cat /tmp/app-hsu-mode.log; fi
 stop_app
 check "許氏時從混打的說明跳過去，沒有改到任何設定" test ! -e "$(settings_of hsu)"
 shoot hsu keyboard
+
+# ---- 不打聲調（#150）：中英混打反灰並附原因，設定檔的 mixed_input 保留 ----
+new_home toneless
+printf '{"schema":1,"toneless":true,"mixed_input":true}\n' > "$(base_of toneless)/settings.json"
+run_update toneless settings -json > "$OUT/toneless-settings.json"
+check "不打聲調時契約標示混打停用，值保留 on" python3 - "$OUT/toneless-settings.json" <<'PY_TONELESS'
+import json,sys
+items={x['key']:x for x in json.load(open(sys.argv[1]))['items']}
+it=items['mixed-input']
+sys.exit(0 if it.get('disabled') and it.get('disabled_reason')=='不打聲調時關閉' and it['value']=='on' and items['toneless']['value']=='on' else 1)
+PY_TONELESS
+# 中英切換頁：混打反灰、寫「不打聲調時關閉」，附到「選字」改「不打聲調也能選字」的連結。
+shoot toneless mode
+# 「選字」頁：不打聲調排在其他選字項目之後、模糊音之前（導覽後第 9 個）；空白鍵關閉，混打的原值不動。
+launch toneless candidates
+if window_up; then
+  sleep 2.5
+  import -window root "$OUT/toneless-candidates.png"
+  tabs $((NAV + 9)); xdotool key space
+  sleep 3
+  check "不打聲調開關可關閉，保留混打原值" bash -c "grep -q '\"toneless\": false' '$(settings_of toneless)' && grep -q '\"mixed_input\": true' '$(settings_of toneless)'"
+  import -window root "$OUT/toneless-off.png"
+else bad "toneless/candidates 視窗沒有出現"; cat /tmp/app-toneless-candidates.log; fi
+stop_app
 
 # ---- 不用 Shift 切換（#184）：開始時的中英模式固定為注音、反灰並附原因，設定檔的 english 保留；改回用 Shift 照原本的英文 ----
 new_home noshift
