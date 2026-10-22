@@ -118,7 +118,10 @@ func TestByName(t *testing.T) {
 	if l, ok := ByName("eten"); !ok || l != ETen {
 		t.Error("eten 應為倚天 41 鍵")
 	}
-	if _, ok := ByName("hsu"); ok {
+	if l, ok := ByName("hsu"); !ok || l != Hsu {
+		t.Error("hsu 應為許氏排列")
+	}
+	if _, ok := ByName("eten26"); ok {
 		t.Error("不認得的排列應回傳 false")
 	}
 }

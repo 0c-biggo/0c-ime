@@ -13,6 +13,7 @@ import (
 // 同讀音、同相鄰音節的重複更正仍沿用 localEvidence；其餘保留已顯示文字。
 // 保留的是本次畫面，不新增手選鎖定；後續實際編輯照常重新解碼。
 func (s *Session) refreshSelection(shown []decode.Seg, auto []AutoChange, selected decode.Seg) {
+	shownSyls := s.syls // 與 shown 同時的讀音（許氏的歧義讀音已寫回，#183）
 	s.refresh()
 	if len(shown) == 0 {
 		return
@@ -55,6 +56,9 @@ func (s *Session) refreshSelection(shown []decode.Seg, auto []AutoChange, select
 		return
 	}
 	s.path = path
+	if s.keepShownReadings(shownSyls, blocks) {
+		s.pathSig = s.signature() // 讀音換回同一串按鍵的另一個讀音，音節格不變；路徑照舊
+	}
 	s.nearReading = false
 	// 自動近音診斷必須對應實際畫面，不能留下被捨棄的解碼改動。
 	kept := func(c AutoChange) bool {
@@ -130,4 +134,24 @@ func (s *Session) splitSelectionPath(path []decode.Seg, blocks []autoBlock) ([]d
 		}
 	}
 	return out, true
+}
+
+// keepShownReadings：選字後留下的舊詞（blocks 以外）照舊顯示，排列的歧義讀音（許氏的 ㄘ／ㄟ，#183）也要用
+// 顯示它時的讀音，不能沿用這次重新解碼寫回的另一個讀音。回報 syls 是否改變。
+func (s *Session) keepShownReadings(shown []zhuyin.Syllable, blocks []autoBlock) bool {
+	changed := false
+	for at := 0; at < min(len(shown), len(s.syls)); at++ {
+		if s.literals[at] || shown[at] == s.syls[at] || slices.ContainsFunc(blocks, func(b autoBlock) bool { return b.from <= at && at < b.to }) {
+			continue
+		}
+		if !slices.Contains(s.layout.Readings(s.syls[at]), shown[at]) {
+			continue
+		}
+		if !changed {
+			s.syls = slices.Clone(s.syls)
+		}
+		s.syls[at] = shown[at]
+		changed = true
+	}
+	return changed
 }

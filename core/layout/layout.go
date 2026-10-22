@@ -1,4 +1,7 @@
 // Package layout 把實體按鍵對應到注音符號。新增排列只需新增一個實作。
+//
+// 標準、倚天 41 鍵是一鍵一個符號的靜態表格；許氏（#183）同一鍵依目前的組音狀態代表不同符號，
+// 所以組字一律經 Press 解讀，session 不自己查表。
 package layout
 
 import "github.com/0c-biggo/0c-ime/core/zhuyin"
@@ -6,13 +9,28 @@ import "github.com/0c-biggo/0c-ime/core/zhuyin"
 // Layout 是一種鍵盤排列。
 type Layout interface {
 	Name() string
-	// Symbol 回傳按鍵對應的注音符號（聲調含一聲記號 zhuyin.Tone1）。
+	// Symbol 回傳按鍵在注音暫存是空的時候代表的符號（聲調含一聲記號 zhuyin.Tone1），也就是「這個鍵是不是注音鍵」。
+	// 靜態排列的答案與狀態無關；依狀態解讀的排列（許氏）在組字時要用 Press。
 	Symbol(key rune) (rune, bool)
-	// Keys 回傳打出某音節所需的按鍵序列；供測試與工具使用。
+	// Press 依組音狀態 c 解讀一個按鍵，回傳按下後的組音狀態與這一鍵打出的符號；不是注音鍵時 ok 為 false。
+	// 一般符號已經加進回傳的狀態；聲調（含空白的一聲）不加，回傳的是收尾修正過、還沒加聲調的狀態
+	// （許氏只打 ㄇ 就按聲調時是 ㄢ），由呼叫端加上聲調完成音節。c 不會被修改。
+	Press(c zhuyin.Composer, key rune) (next zhuyin.Composer, sym rune, ok bool)
+	// Backspace 退掉組音狀態的最後一鍵。c 不會被修改。
+	Backspace(c zhuyin.Composer) zhuyin.Composer
+	// Readings 回傳打出 s 的同一串按鍵可能代表的所有讀音，第一個是按鍵的預設讀音（許氏單打 a 是 ㄘ，也可能是 ㄟ）；
+	// 按鍵沒有歧義時回傳 nil。
+	Readings(s zhuyin.Syllable) []zhuyin.Syllable
+	// Keys 回傳打出某音節所需的按鍵序列；供測試與工具使用。歧義讀音（許氏的 ㄟ）回傳預設讀音的按鍵。
 	Keys(s zhuyin.Syllable) string
 	// Punct 回傳按鍵對應的全形標點（按鍵是實際產生的字元，例如 Shift＋, 為 '<'）。
 	Punct(key rune) (string, bool)
 }
+
+// AltCost 是同一串按鍵的非預設讀音（Readings 的第二個起）在音節格中的成本（自然對數尺度）。
+// 許氏的歧義是排列本身的，使用者按的鍵兩種讀音都對，不是打錯：成本只讓前後文沒有明顯偏好時取預設讀音，
+// 比近音的換音成本（fuzzy.SwapCost 1.2）小，學過的詞（例如選過的「欸」）可以勝過它。
+const AltCost = 0.7
 
 type table struct {
 	name  string
@@ -43,6 +61,27 @@ func (t *table) Symbol(key rune) (rune, bool) {
 	r, ok := t.sym[key]
 	return r, ok
 }
+
+func (t *table) Press(c zhuyin.Composer, key rune) (zhuyin.Composer, rune, bool) {
+	sym, ok := t.sym[key]
+	if !ok {
+		return c, 0, false
+	}
+	if zhuyin.ClassOf(sym) == zhuyin.Tone {
+		return c, sym, true
+	}
+	c = c.Clone()
+	c.Add(sym)
+	return c, sym, true
+}
+
+func (t *table) Backspace(c zhuyin.Composer) zhuyin.Composer {
+	c = c.Clone()
+	c.Backspace()
+	return c
+}
+
+func (t *table) Readings(zhuyin.Syllable) []zhuyin.Syllable { return nil }
 
 func (t *table) Punct(key rune) (string, bool) {
 	p, ok := t.punct[key]
@@ -103,6 +142,7 @@ var ETen Layout = withPunct(etenPunct, NameETen,
 const (
 	NameStandard = "standard"
 	NameETen     = "eten"
+	NameHsu      = "hsu"
 )
 
 // ByName 依名稱回傳排列；不認得的名稱回傳 false。
@@ -112,6 +152,8 @@ func ByName(name string) (Layout, bool) {
 		return Standard, true
 	case NameETen:
 		return ETen, true
+	case NameHsu:
+		return Hsu, true
 	}
 	return nil, false
 }

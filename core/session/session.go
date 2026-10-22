@@ -703,10 +703,10 @@ func (s *Session) key(k string) (handled bool, commit string) {
 		}
 	}
 	if sym, ok := s.layout.Symbol(runes[0]); ok {
-		if retype && s.retypeSyllableLiteral(sym) {
+		if retype && s.retypeSyllableLiteral(runes[0]) {
 			return true, ""
 		}
-		if s.symbol(sym) {
+		if s.pressKey(runes[0]) {
 			return true, ""
 		}
 		// 沒有待完成音節的聲調鍵不可漏到應用程式，否則數字會跑到組字之前。
@@ -743,6 +743,25 @@ func (s *Session) ctrlPunct(p string) bool {
 	s.flushMixed()
 	s.insertPendingLiteral()
 	s.insertLiteral(p)
+	return true
+}
+
+// pressKey 依鍵盤排列解讀注音鍵（#183）：許氏同一鍵依目前的注音暫存代表不同符號，所以先接回暫存的注音再解讀。
+// 一般符號由排列加進暫存；聲調鍵（含空白的一聲）照 symbol 完成音節，暫存是空的時候回傳 false（落單的聲調鍵，#135）。
+func (s *Session) pressKey(key rune) bool {
+	s.restorePendingLiteral()
+	next, sym, ok := s.layout.Press(s.comp, key)
+	if !ok {
+		return false
+	}
+	if zhuyin.ClassOf(sym) == zhuyin.Tone {
+		if s.comp.Empty() {
+			return false
+		}
+		s.comp = next // 許氏的收尾修正：只打 ㄇ 就按聲調是 ㄢ
+		return s.symbol(sym)
+	}
+	s.comp = next
 	return true
 }
 
@@ -822,7 +841,8 @@ func (s *Session) backspace() bool {
 		return true
 	}
 	s.restorePendingLiteral()
-	if s.comp.Backspace() {
+	if !s.comp.Empty() {
+		s.comp = s.layout.Backspace(s.comp) // 許氏退掉最後一鍵，那一鍵順便改掉的聲母一起還原（#183）
 		return true
 	}
 	if s.cursor == 0 {
@@ -884,7 +904,7 @@ func (s *Session) moveTo(to int) {
 	s.cand = nil
 }
 
-func (s *Session) lattice() input.Lattice { return s.lockLattice(s.front.Expand(s.syls), 0, 0) }
+func (s *Session) lattice() input.Lattice { return s.lockLattice(s.expand(s.syls), 0, 0) }
 
 // signature 描述決定解碼結果的所有輸入。只打了聲母、介音等未完成符號時音節序列不變，
 // 不需要重新解碼。
@@ -935,6 +955,9 @@ func (s *Session) refresh() {
 		s.rerankPath()
 		s.autoFuzzy()
 		s.applyPronounHabit()
+		if s.absorbReadings() {
+			sig = s.signature() // 寫回的是同一串按鍵的另一個讀音，音節格不變，不必再解一次
+		}
 		s.shownPath, s.shownSyls = slices.Clone(s.path), slices.Clone(s.syls)
 		if len(s.path) > 0 {
 			s.displayed = map[int]string{}
@@ -1149,7 +1172,7 @@ func (s *Session) openAt(pos, length int) bool {
 	s.dec.Evidence = s.localEvidence(begin)
 	s.configureCorrections(begin, end, true)
 	// 與視窗相交的跨音鎖定即將被這次選取取代：不補它們的讀音，原音候選只依打出的音查詢。
-	lat := s.lockLattice(s.front.Expand(s.syls), pos, pos+length)
+	lat := s.lockLattice(s.expand(s.syls), pos, pos+length)
 	windows := []decode.Window{{Lat: lat[begin:end], Pinned: pinned}}
 	if near, ok := s.nearWindow(lat, pos, length); ok {
 		near.Lat = near.Lat[begin:end]

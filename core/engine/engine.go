@@ -44,7 +44,7 @@ type Engine struct {
 	EnglishPack           string              // host-supplied pack version for diagnostics; empty means prototype.
 	EmojiShortcut         string
 	EmojiEqualsFirst      bool
-	Layout                layout.Layout // 使用者選的鍵盤排列；nil 為標準排列。倚天排列下 session 停用混打與 = 開 Emoji（#83）。
+	Layout                layout.Layout // 使用者選的鍵盤排列；nil 為標準排列。倚天、許氏排列下 session 停用混打，倚天另停用 = 開 Emoji（#83、#183）。
 	CandidateBeforeCursor bool
 	CandidateColumns      int
 	Preview02             bool // 0.2.0 的功能（#128）；0.2.0 起宿主一律打開，零值時行為與沒有這些功能時相同（測試用）
@@ -82,6 +82,12 @@ func New(lex lexicon.Source, sys lm.System) *Engine {
 // 中英混打（只在標準排列）時照混打規則。給自己過濾閒置按鍵的外殼（Windows）查詢。
 func (e *Engine) ToneMarkKeys() bool {
 	return session.ToneMarkKeys(e.MixedInput, e.Layout == nil || e.Layout == layout.Standard)
+}
+
+// IdleKeys 回報沒在組字、注音模式時輸入法會處理的可見 ASCII 按鍵（session.IdleKeys），依鍵盤排列與設定而不同（#183）。
+// 給自己過濾閒置按鍵的外殼（Windows）查詢，外殼不必各自維護每種排列的按鍵表。
+func (e *Engine) IdleKeys() string {
+	return session.IdleKeys(e.Layout, e.MixedInput, e.EmojiShortcut)
 }
 
 func (e *Engine) OpenSession() uint64 {
