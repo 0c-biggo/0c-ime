@@ -1423,7 +1423,7 @@ func (s *Session) commit() string {
 			Fuzzy:      s.fuzzyTouches(g.Start, g.End) || untonedTouches(syls, g.Start, g.End),
 		})
 	}
-	ev.Selected = s.enclosedSelections()
+	ev.Selected = s.enclosedSelections(syls)
 	if !s.paused && !s.private && len(ev.Path) > 0 {
 		s.model.Learn(ev)
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/0c-biggo/0c-ime/core/lm"
@@ -269,5 +270,33 @@ func TestSelectionEnclosedByLongerWordIsLearned(t *testing.T) {
 	fuzzy.Learn(Commit{Syls: syls, Path: []Seg{{Word: "為什麼", End: 3}}, Selected: []Seg{{Word: "什麼", Start: 1, End: 3, Manual: true, Fuzzy: true}}})
 	if len(fuzzy.Store.Corrections) != 0 || len(fuzzy.Store.Readings) != 0 {
 		t.Fatal("跨音手選不應學習")
+	}
+}
+
+// #150：讀音還帶「沒打聲調」記號（提交時沒能換回詞庫讀音）的手選與被推翻的自動修正，
+// 就算呼叫端沒標 Fuzzy 也不把記號寫進個人資料；被推翻的範圍照樣不學，讀音完整的拒絕照常計次。
+func TestUntonedMarkNeverReachesPersonalData(t *testing.T) {
+	m := evidenceModel()
+	syls := []zhuyin.Syllable{zhuyin.Untone("ㄨㄟ"), zhuyin.Untone("ㄕㄜ"), zhuyin.Untone("ㄇㄜ"), "ㄏㄠˇ"}
+	m.Learn(Commit{Syls: syls,
+		Path:     []Seg{{Word: "為什麼", End: 3, Fuzzy: true}, {Word: "好", Start: 3, End: 4}},
+		Selected: []Seg{{Word: "什", Start: 1, End: 2, Manual: true}},
+		Rejected: []RejectedSeg{{Word: "摸", Start: 2, End: 3, Correction: true}, {Word: "號", Start: 3, End: 4, Correction: true}}})
+	for k := range m.Store.Readings {
+		t.Errorf("個人讀音不能有記號：%q", k)
+	}
+	for k := range m.Store.Picked {
+		t.Errorf("單字手選不能有記號：%q", k)
+	}
+	for k := range m.Store.Rejects {
+		if strings.ContainsRune(k, zhuyin.UntonedMark) {
+			t.Errorf("拒絕次數不能有記號：%q", k)
+		}
+	}
+	if m.Store.Rejects["號\tㄏㄠˇ"] != 1 {
+		t.Errorf("讀音完整的拒絕照常計次：%v", m.Store.Rejects)
+	}
+	if m.Store.Uni["好"] != 0 {
+		t.Errorf("被推翻的範圍不學：%v", m.Store.Uni)
 	}
 }

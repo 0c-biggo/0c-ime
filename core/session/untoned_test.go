@@ -211,6 +211,62 @@ func TestTonelessPickIsLearnedWithLexiconReading(t *testing.T) {
 	}
 }
 
+// 路徑上的詞是自動修正詞條（「你號」只有修正讀音），提交時換不回詞庫讀音，那段音節仍帶記號。
+// 包在裡面的手選（「號」）與被推翻的自動修正（選「你」推翻「你號」）都不能把帶記號的讀音寫進個人資料。
+// 修正前：Readings 有「號\tㄏㄠ?」、Picked 有「ㄏㄠ?」；Rejects 有「你號\tㄋㄧ? ㄏㄠ?」。
+func TestTonelessUnresolvedReadingIsNotLearned(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		uni    float64
+		move   string
+		pick   string
+		shown  string
+		reject bool
+	}{
+		{"包住手選的修正詞", 1e-3, proto.KeyLeft, "號", "你好", false},
+		{"推翻自動修正", 5e-2, proto.KeyHome, "你", "你號", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTonelessSession(true)
+			s.model.Lex.(*lexicon.Mem).Add(lexicon.Entry{Surface: "你號", Reading: zhuyin.ParseReading("ㄋㄧˇ ㄏㄠˋ"), PRW: 1, Correction: true})
+			s.model.LM.(*lm.Mem).SetUni("你號", tc.uni)
+			typeBare(s, "ㄋㄧㄏㄠ")
+			key(s, tc.move) // 先完成未打完的 ㄏㄠ
+			if got := s.snapshot().Text(); got != tc.shown {
+				t.Fatalf("選字前顯示 %q", got)
+			}
+			snap := key(s, proto.KeyDown)
+			picked := false
+			for _, it := range snap.Candidates.Items {
+				if it.Text == tc.pick {
+					s.Handle(proto.Request{Type: proto.Select, Index: it.ID})
+					picked = true
+					break
+				}
+			}
+			if !picked {
+				t.Fatalf("候選沒有 %q：%+v", tc.pick, snap.Candidates.Items)
+			}
+			if len(s.path) != 1 || s.path[0].Word != "你號" || !s.path[0].Correction {
+				t.Fatalf("前提：修正詞包住手選：%+v", s.path)
+			}
+			if got := len(s.rejected) > 0 && s.rejected[0].Correction; got != tc.reject {
+				t.Fatalf("前提：推翻自動修正 %v：%+v", tc.reject, s.rejected)
+			}
+			if c := key(s, proto.KeyEnter).Commit; c != "你號" {
+				t.Fatalf("送出 %q", c)
+			}
+			b, err := json.Marshal(s.model.Store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.ContainsRune(string(b), zhuyin.UntonedMark) {
+				t.Fatalf("個人資料不能有沒打聲調的記號：%s", b)
+			}
+		})
+	}
+}
+
 // 不打聲調的段落沒有一組共用的帶調讀音，不送神經評分器，照統計引擎（以「聲調未知」送進現有模型反而變差，
 // 見 data/research/toneless-input-20261022）。同一段組字裡打了聲調、被標點隔開的段落照樣評分；
 // Enter 完成最後一個沒打聲調的音節時整段重新解碼，那一段神經選的字也要留著，不換回統計結果。
