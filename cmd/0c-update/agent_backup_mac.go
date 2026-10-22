@@ -96,6 +96,39 @@ type agentObservation struct {
 // 輸入法選單每 15 秒的 status 不必多花時間。
 func (o agentObservation) needsState() bool { return o.Quieted > 0 || o.Restored || o.Broken }
 
+// agentCheckInterval：選單每 15 秒的 status 在沒有任何跡象時，多久才以 launchctl print 看一次 launchd 啟動不啟動得了
+// 排程。排程本來就每 15 分鐘才喚起一次，晚這麼久發現等於只晚一次喚起。
+const agentCheckInterval = 15 * time.Minute
+
+// needsLaunchdCheck：這次要不要執行 launchctl print（spawn failed、runs、running）。check、auto、finish、schedule adopt
+// （foreground）每次都看；status 在剛改名或改回 plist（要拉回登記，kick 要 runs）、或有 kick 記號（pending >= 0）時看，
+// 其他時候距離上次看過 agentCheckInterval 才再看（last 為零值或在未來時當成沒看過）。
+func needsLaunchdCheck(foreground bool, o agentObservation, pending int, last, now time.Time) bool {
+	if foreground || o.Quieted > 0 || o.Restored || pending >= 0 {
+		return true
+	}
+	age := now.Sub(last)
+	return last.IsZero() || age < 0 || age >= agentCheckInterval
+}
+
+// launchdCheckStamp 記下上次執行 launchctl print 的時間（檔案的修改時間）；多個舊輸入法程式的選單共用，合起來也只多查一次。
+func launchdCheckStamp(base string) string { return filepath.Join(base, "update", "agent-checked") }
+
+// launchdCheckDue 依 launchdCheckStamp 判斷這次要不要執行 launchctl print（needsLaunchdCheck）。
+func launchdCheckDue(base string, foreground bool, o agentObservation, pending int, now time.Time) bool {
+	var last time.Time
+	if info, err := os.Stat(launchdCheckStamp(base)); err == nil {
+		last = info.ModTime()
+	}
+	return needsLaunchdCheck(foreground, o, pending, last, now)
+}
+
+// noteLaunchdCheck 在執行 launchctl print 之後記下時間；print 失敗（例如沒有註冊）也記，免得每 15 秒重試。
+// 寫不進去時 status 照舊每次都查。
+func noteLaunchdCheck(base string) {
+	_ = os.WriteFile(launchdCheckStamp(base), []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o600)
+}
+
 // adoption 決定要做的事。只對已啟用的登記動手：使用者在系統設定關閉（requires-approval）時不碰，免得重新啟用或再跳通知；
 // 沒有註冊的只在剛改回 plist、且不是使用者自己移除時補註冊。取消註冊會結束正在執行的排程，排程本身不做。
 func (o agentObservation) adoption() agentAdoption {

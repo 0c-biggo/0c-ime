@@ -20,7 +20,8 @@ import (
 //
 // status、check、auto、finish 都先做這一步：仍在執行的舊輸入法程式的選單每 15 秒以啟動時的路徑（就是 Input Methods
 // 裡新版的 0c-update）查詢 status，設定程式、選單「檢查更新」、排程也都經過這裡，所以舊版更新器在背景裝好新版後，
-// 新版在幾秒內就接手；平常只多讀一次 backups 目錄與一次 launchctl print。
+// 新版在幾秒內就接手。平常只多讀一次 backups 目錄；launchctl print 在 check、auto、finish 每次都做，status 只在剛改名、
+// 改回 plist 或有 kick 記號時做，其他時候每 15 分鐘一次（needsLaunchdCheck：看登記指著的備份被刪掉的 spawn failed）。
 var adoptSchedule = adoptInstalledSchedule // 測試換掉：go test 不動這台機器的登記與備份
 
 // foreground 為 false 時（status：選單每 15 秒查一次，5 秒就被結束）需要重新註冊的話交給另一個行程（schedule adopt），
@@ -31,14 +32,20 @@ func adoptInstalledSchedule(foreground bool) {
 	if !fileExists(appAgent(app)) {
 		return // 沒有內附排程的 App（或沒有安裝）：舊的 LaunchAgents plist 不受影響
 	}
-	o.Quieted = quietBackupAgents(filepath.Join(basePath(), "backups"))
+	base := basePath()
+	o.Quieted = quietBackupAgents(filepath.Join(base, "backups"))
+	marker := filepath.Join(base, "update", "agent-kick")
+	pending := readKickMarker(marker)
+	if !launchdCheckDue(base, foreground, o, pending, time.Now()) {
+		return // 選單的 status：沒有要拉回的登記、沒有 kick 記號，最近也看過 launchd（每個舊選單每 15 秒少一個 launchctl）
+	}
 	running, runs := false, 0
-	if out, err := launchctlPrintAgent(); err == nil {
+	out, err := launchctlPrintAgent()
+	noteLaunchdCheck(base)
+	if err == nil {
 		o.Broken, running, runs = agentSpawnFailed(out), agentRunning(out), agentRuns(out)
 	}
 	o.InJob = os.Getenv("XPC_SERVICE_NAME") == agentLabel
-	marker := filepath.Join(basePath(), "update", "agent-kick")
-	pending := readKickMarker(marker)
 	pulled := false
 	if o.needsState() {
 		if s, err := autoupdate.Load(basePath()); err == nil {

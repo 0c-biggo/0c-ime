@@ -187,3 +187,51 @@ func TestAgentAdoption(t *testing.T) {
 		t.Error("query the state when something may need fixing")
 	}
 }
+
+// 舊輸入法程式的選單每 15 秒查一次 status：沒有要轉移的跡象時不必每次都執行 launchctl print。剛改名、改回 plist
+// （要拉回登記）、有 kick 記號、check／auto／finish 時照舊每次看，#205 背景更新後跟到備份的登記仍會當場拉回。
+func TestNeedsLaunchdCheck(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	recent, old := now.Add(-time.Minute), now.Add(-agentCheckInterval)
+	cases := []struct {
+		name       string
+		foreground bool
+		o          agentObservation
+		pending    int
+		last       time.Time
+		want       bool
+	}{
+		{"menu status, nothing changed, checked a minute ago: skip", false, agentObservation{}, -1, recent, false},
+		{"menu status, never checked", false, agentObservation{}, -1, time.Time{}, true},
+		{"menu status, last check one interval ago: look for spawn failed", false, agentObservation{}, -1, old, true},
+		{"clock went backwards", false, agentObservation{}, -1, now.Add(time.Hour), true},
+		{"background update left a backup to quiet: pull it back now", false, agentObservation{Quieted: 1}, -1, recent, true},
+		{"rollback put back a quieted app", false, agentObservation{Restored: true}, -1, recent, true},
+		{"kick marker waiting for the new updater to run", false, agentObservation{}, 6, recent, true},
+		{"kick marker recorded at runs 0", false, agentObservation{}, 0, recent, true},
+		{"check/auto/finish/schedule adopt always look", true, agentObservation{}, -1, recent, true},
+	}
+	for _, c := range cases {
+		if got := needsLaunchdCheck(c.foreground, c.o, c.pending, c.last, now); got != c.want {
+			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+		}
+	}
+
+	base := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(base, "update"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if !launchdCheckDue(base, false, agentObservation{}, -1, time.Now()) {
+		t.Fatal("no stamp yet: check")
+	}
+	noteLaunchdCheck(base)
+	if launchdCheckDue(base, false, agentObservation{}, -1, time.Now()) {
+		t.Fatal("just checked: the next menu status skips launchctl print")
+	}
+	if !launchdCheckDue(base, false, agentObservation{}, -1, time.Now().Add(agentCheckInterval)) {
+		t.Fatal("an interval later: check again")
+	}
+	if !launchdCheckDue(base, false, agentObservation{Quieted: 1}, -1, time.Now()) {
+		t.Fatal("a fresh backup must not wait for the interval")
+	}
+}
