@@ -368,7 +368,10 @@ def apply():
         # Use the original desktop's environment; do not print its potentially private values.
         with tempfile.TemporaryFile() as log:
             try:
-                run("fcitx5", "-r", "-d", env=env, stdout=log, stderr=log, timeout=20)
+                if "WAYLAND_SOCKET" in env:
+                    restart_kwin_input_method(env, log)
+                else:
+                    run("fcitx5", "-r", "-d", env=env, stdout=log, stderr=log, timeout=20)
                 deadline = time.monotonic() + 10
                 while time.monotonic() < deadline:
                     current = processes("fcitx5")
@@ -391,6 +394,33 @@ def apply():
     print(f"更新完成：{revision}{'（含本機變更）' if dirty else ''}；現有字典與個人詞庫保留。", flush=True)
     if not fcitx:
         print("目前未執行 Fcitx5；下次登入桌面時載入新版。")
+
+
+KWINRC_INPUT_METHOD = ("--file", "kwinrc", "--group", "Wayland", "--key", "InputMethod")
+
+
+def kconfig_tool(*names):
+    for name in names:
+        if path := shutil.which(name):
+            return path
+    raise RuntimeError(f"找不到 {'／'.join(names)}，無法交由 KWin 重新啟動 Fcitx5；請在系統設定的虛擬鍵盤先選「無」再選回 Fcitx 5。")
+
+
+def restart_kwin_input_method(env, log):
+    """KDE Plasma Wayland：Fcitx5 由 KWin 帶著 WAYLAND_SOCKET 啟動，自己執行 fcitx5 -r 拿不到 Wayland 輸入法協定。
+    依 KDE 的方式重新啟動：等同在「系統設定 → 鍵盤 → 虛擬鍵盤」先選「無」再選回原本的項目。"""
+    env = {key: value for key, value in env.items() if key != "WAYLAND_SOCKET"}  # 那是 KWin 傳給舊行程的 fd
+    method = run(kconfig_tool("kreadconfig6", "kreadconfig5"), *KWINRC_INPUT_METHOD, env=env,
+                 stdout=subprocess.PIPE, stderr=log, text=True, timeout=10).stdout.strip()
+    if not method:
+        raise RuntimeError("Fcitx5 由 KWin 啟動，但 kwinrc 沒有設定 InputMethod；請在系統設定的虛擬鍵盤選回 Fcitx 5。")
+    write = kconfig_tool("kwriteconfig6", "kwriteconfig5")
+    run(write, *KWINRC_INPUT_METHOD, "--notify", "", env=env, stdout=log, stderr=log, timeout=10)
+    # KWin 收到通知後結束舊的 Fcitx5；等它結束再寫回，否則 KWin 重讀設定時看到相同的值而不重新啟動。
+    deadline = time.monotonic() + 5
+    while processes("fcitx5") and time.monotonic() < deadline:
+        time.sleep(0.1)
+    run(write, *KWINRC_INPUT_METHOD, "--type", "path", "--notify", method, env=env, stdout=log, stderr=log, timeout=10)
 
 
 def main():

@@ -297,6 +297,34 @@ class UpgradeTests(unittest.TestCase):
             self.assertIn('/old/addons', env['FCITX_ADDON_DIRS'])
         self.assert_preserved()
 
+    def test_kwin_launched_fcitx_is_restarted_through_kwin(self):
+        # KDE Plasma Wayland：KWin 帶著 WAYLAND_SOCKET 啟動 Fcitx5；改 kwinrc 讓 KWin 重新啟動，不執行 fcitx5 -r。
+        proc = self.root / 'proc'
+        proc.mkdir()
+        (proc / 'environ').write_bytes(b'WAYLAND_SOCKET=27\0XDG_RUNTIME_DIR=/run/user/1000\0')
+        desktop = '/usr/share/applications/org.fcitx.Fcitx5.desktop'
+        running = [proc]
+
+        def fake_run(*args, **kwargs):
+            if args[-1] == '':
+                running.clear()  # KWin 收到清空通知後結束舊的 Fcitx5
+            elif args[-1] == desktop:
+                running.append(proc)
+            return subprocess.CompletedProcess(args, 0, stdout=desktop + '\n' if 'kreadconfig6' in args[0] else 'abc\n')
+        with patch.object(upgrade, 'run', side_effect=fake_run) as run, \
+                patch.object(upgrade.shutil, 'which', side_effect=lambda name: '/usr/bin/' + name), \
+                patch.object(upgrade, 'check_data'), \
+                patch.object(upgrade, 'processes', side_effect=lambda name: list(running)), \
+                patch.object(upgrade, 'addon_loaded', return_value=True), \
+                patch.object(upgrade, 'stop_old_servers'), patch.object(upgrade.time, 'sleep'):
+            upgrade.apply()
+            self.assertFalse(any(call.args[0] == 'fcitx5' for call in run.call_args_list))
+            kwin = [call for call in run.call_args_list if 'kwriteconfig6' in call.args[0]]
+            key = ('--file', 'kwinrc', '--group', 'Wayland', '--key', 'InputMethod')
+            self.assertEqual([call.args[1:] for call in kwin],
+                             [(*key, '--notify', ''), (*key, '--type', 'path', '--notify', desktop)])
+            self.assertNotIn('WAYLAND_SOCKET', kwin[0].kwargs['env'])
+
     def test_restart_drops_the_old_addon_search_path(self):
         # #92：舊版的搜尋路徑只有建置機的系統目錄；外殼改用絕對路徑後重啟時不再沿用。
         proc = self.root / 'proc'

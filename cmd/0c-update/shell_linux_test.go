@@ -255,3 +255,49 @@ func TestUpdaterSurvivesLegacyShellClosingOutput(t *testing.T) {
 		t.Fatal("updater did not finish restoring the shell")
 	}
 }
+
+// KDE Plasma Wayland：Fcitx5 由 KWin 帶著 WAYLAND_SOCKET 啟動。交接時記下 kwinrc 的 InputMethod，
+// 重新啟動時交還 KWin（先清空再寫回並通知），不自己執行 fcitx5，也不保存那個 fd。
+func TestKWinLaunchedFcitxIsRestartedThroughKWin(t *testing.T) {
+	previous, savedTool, savedRun, savedAvail := procRoot, kconfigTool, runKConfig, kwinIMAvailable
+	procRoot = t.TempDir()
+	t.Cleanup(func() { procRoot, kconfigTool, runKConfig, kwinIMAvailable = previous, savedTool, savedRun, savedAvail })
+	dir := filepath.Join(procRoot, "123")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	const desktop = "/usr/share/applications/org.fcitx.Fcitx5.desktop"
+	if err := os.WriteFile(filepath.Join(dir, "cmdline"), []byte("/usr/bin/fcitx5\x00"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "environ"), []byte("WAYLAND_SOCKET=27\x00XDG_RUNTIME_DIR=/run/user/1000\x00"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var ran []string
+	kconfigTool = func(names ...string) (string, error) { return "/usr/bin/" + names[0], nil }
+	runKConfig = func(_ context.Context, _ []string, path string, args ...string) ([]byte, error) {
+		ran = append(ran, filepath.Base(path)+" "+strings.Join(args, " "))
+		if filepath.Base(path) == "kreadconfig6" {
+			return []byte(desktop + "\n"), nil
+		}
+		return nil, nil
+	}
+	kwinIMAvailable = func(context.Context) (bool, error) { return false, nil }
+	state, err := captureFcitx(123)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.KWinIM != desktop || slices.ContainsFunc(state.Env, func(e string) bool { return strings.HasPrefix(e, "WAYLAND_SOCKET=") }) {
+		t.Fatalf("KWin 啟動的 Fcitx5：%+v", state)
+	}
+	os.RemoveAll(dir) // Fcitx5 已交接退出
+	ran = nil
+	if err = startFcitx(state); err != nil {
+		t.Fatal(err)
+	}
+	key := "--file kwinrc --group Wayland --key InputMethod"
+	want := []string{"kwriteconfig6 " + key + " --notify ", "kwriteconfig6 " + key + " --type path --notify " + desktop}
+	if !slices.Equal(ran, want) {
+		t.Fatalf("應由 KWin 重新啟動：%q", ran)
+	}
+}
