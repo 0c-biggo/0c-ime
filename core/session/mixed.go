@@ -517,8 +517,10 @@ func (s *Session) mixedBoundary(raw, key string, tone rune) (int, zhuyin.Syllabl
 		return best, bestSyl, true
 	}
 	// 打錯一鍵的注音（#203）：後段以數字鍵結尾（qji3wu0 的 ㄉㄧㄢ 天）也要切開，但切出來的後段要有字母，
-	// 只用數字鍵的後段照舊交給下面「帳號、編號」的判斷。
-	if at, done, ok := s.mixedAfterTypo(raw, tone); ok && (!unicode.IsDigit(rune(raw[len(raw)-1])) || strings.ContainsFunc(raw[at:], unicode.IsLetter)) {
+	// 只用數字鍵的後段照舊交給下面「帳號、編號」的判斷。接空白的單一鍵只認聲母（ㄗ 資、ㄙ 思）：型號、版本後面的
+	// 單一字母（gpt4o、ps4u、win7u）不是 ㄟ、ㄧ 一聲。
+	if at, done, ok := s.mixedAfterTypo(raw, tone); ok && (!unicode.IsDigit(rune(raw[len(raw)-1])) || strings.ContainsFunc(raw[at:], unicode.IsLetter)) &&
+		(key != " " || len(raw)-at >= 2 || s.keyIsInitial(rune(raw[at]))) {
 		return at, done, true
 	}
 	// 聲調前一鍵是數字（lisa03、nina87）像帳號或編號，不切。
@@ -569,6 +571,12 @@ func (s *Session) mixedAfterTypo(raw string, tone rune) (int, zhuyin.Syllable, b
 		return 0, "", false
 	}
 	return at, done, true
+}
+
+// keyIsInitial：這個鍵在目前的鍵盤排列是聲母。
+func (s *Session) keyIsInitial(r rune) bool {
+	sym, ok := s.layout.Symbol(r)
+	return ok && zhuyin.ClassOf(sym) == zhuyin.Initial
 }
 
 // englishThenPunct（#188）：英文字後面緊接著只有標點鍵（hello. 、vs. 、hello, 、hello; ），比照 #187「緊接在半形英數後面的

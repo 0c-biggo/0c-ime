@@ -28,6 +28,7 @@ func englishBoundarySession() *Session {
 		{"嗎", "ㄇㄚ˙", 3e-4}, {"滿", "ㄇㄢˇ", 2e-4}, {"們", "ㄇㄣ˙", 5e-5},
 		{"應", "ㄧㄥˋ", 1.7e-4}, {"競", "ㄐㄧㄥˋ", 1.2e-4}, {"呃", "ㄜ˙", 2e-6},
 		{"爾", "ㄦˇ", 1e-4}, {"二", "ㄦˋ", 3e-4}, {"偶", "ㄡˇ", 5e-5}, {"天", "ㄊㄧㄢ", 1e-3}, {"換", "ㄏㄨㄢˋ", 2e-4},
+		{"一", "ㄧ", 2e-3}, {"誒", "ㄟ", 1e-5}, {"資", "ㄗ", 3e-4},
 	} {
 		lex.Add(lexicon.Entry{Surface: e.w, Reading: zhuyin.ParseReading(e.r), PRW: 1})
 		sys.SetUni(e.w, e.p)
@@ -109,6 +110,9 @@ func TestMixedTypoDoesNotSwallowFollowingZhuyin(t *testing.T) {
 		{"1-4-3", "1-4-3"}, {"2025.3.31", "2025.3.31"}, {"2.7-3.1", "2.7-3.1"}, {"1-2-3-4-5-6", "1-2-3-4-5-6"},
 		// 打錯那段後面的音節以數字鍵結尾（ㄊㄧㄢ 的 0、ㄏㄨㄢ 的 0）也切開；後段要有字母
 		{"qji3wu0 ", "qji3天"}, {"qji3cj04", "qji3換"}, {"qji3cj04su3cl3", "qji3換你好"},
+		// 型號、版本後面的單一字母接空白照字面（0.2.4 的行為）；單一聲母照樣切（ㄗ 資）
+		{"qji3y ", "qji3資"},
+		{"gpt4o ", "gpt4o "}, {"ps4u ", "ps4u "}, {"mp3u ", "mp3u "}, {"win7u ", "win7u "}, {"a4u ", "a4u "},
 	} {
 		s := englishBoundarySession()
 		mixedType(s, tc.keys)
