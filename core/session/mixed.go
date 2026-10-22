@@ -431,7 +431,38 @@ func (s *Session) finishMixedTone(key string) bool {
 		s.insertMixedTyped(done, raw[at:]+key)
 		return true
 	}
+	// 畫面顯示成注音、空白組不成字（單獨的聲母 c ㄏ、x ㄌ，#190），或 ↓ 選了注音解釋後的聲調組不成字（2 ↓ㄉ，#208）：
+	// 比照一般注音模式（#109）原樣留下注音，空白當一聲吃掉，不另外插入空白（c␣c␣ 是「ㄏㄏ」，不是「ㄏ ㄏ 」）。
+	// 結尾是聲調鍵、照字面顯示的按鍵（co6）照舊。
+	if key == " " || s.mixed.choice == 2 {
+		return s.keepMixedSyllable(sym, raw+key)
+	}
 	return false
+}
+
+// keepMixedSyllable 把畫面顯示成注音的待定按鍵加上 tone 原樣留成注音（insertSyllableLiteral），記下原按鍵 keys：
+// 在留下的注音上按 ↓，第二項是原按鍵（c␣，比照 #162 的 20␣），選了變回英數。周圍已顯示的字照 flushMixed 保留。
+// 待定按鍵沒有顯示成注音時不動，回傳 false。
+func (s *Session) keepMixedSyllable(tone rune, keys string) bool {
+	c, ok := s.mixedPending(s.mixedText())
+	if !ok {
+		return false
+	}
+	before := c.Clone()
+	done, ok := c.Add(tone)
+	if !ok {
+		return false
+	}
+	previous, at, n := slices.Clone(s.path), s.cursor, len(s.syls)
+	s.clearMixed()
+	s.insertSyllableLiteral(before, done)
+	if s.mixedKeys == nil {
+		s.mixedKeys = map[int]string{}
+	}
+	s.mixedKeys[at] = keys
+	s.refresh()
+	s.keepMixedDisplay(previous, at, len(s.syls)-n)
+	return true
 }
 
 // 英→中邊界有兩種以上切法時，從最長的已知英文前段開始，把英文字尾的按鍵讓給中文音節，要讓後的音節
@@ -879,6 +910,15 @@ func (s *Session) mixedKey(k string) bool {
 	}
 	if len(s.mixed.raw) >= maxMixedPending {
 		s.flushMixed()
+	}
+	// #208：↓ 選了注音解釋（2 → ㄉ、1 → ㄅ）之後接著打的鍵和它組不成同一個音節時（ㄉ 後面的 ㄊ），選好的注音先原樣留下，
+	// 這一鍵開始新的待定按鍵；以前併成同一串、整串照字面顯示（我2wu0）。組得成的（ㄉ＋ㄜ）照舊接著組字，空白與聲調鍵由 finishMixedTone 完成。
+	if s.mixed.choice == 2 && k != " " {
+		if sym, ok := s.layout.Symbol(rs[0]); !ok || zhuyin.ClassOf(sym) != zhuyin.Tone {
+			if _, ok := s.mixedComposer(s.mixed.raw + k); !ok {
+				s.keepMixedSyllable(zhuyin.Tone1, s.mixed.raw)
+			}
+		}
 	}
 	s.reviseDigitWord(k)
 	if s.mixed.raw != "" && s.finishMixedTone(k) {

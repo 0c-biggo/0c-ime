@@ -1,6 +1,8 @@
 package session
 
 import (
+	"slices"
+
 	"github.com/0c-biggo/0c-ime/core/decode"
 	"github.com/0c-biggo/0c-ime/core/fuzzy"
 	"github.com/0c-biggo/0c-ime/core/personal"
@@ -234,8 +236,16 @@ func (s *Session) openSyllableLiteral(p pendingLiteral) {
 			items = append(items, string(syl.WithTone(tone)))
 		}
 	}
+	// 中英混打原樣留下的注音（c␣ 的 ㄏ，#190）：原按鍵排第二個，選了變回英數（比照 #162 出字後的原按鍵）。
+	keys := s.mixedKeys[p.start]
+	if keys != "" {
+		items = slices.Insert(items, 1, keys)
+	}
 	s.openSymbols(items, p.start, p.end()+p.mark()-p.start, false)
 	s.cand.syllable = &p
+	if keys != "" {
+		s.cand.keyLiterals = map[int]string{1: keys}
+	}
 }
 
 // pendingStash 是切到英文時清掉的未打完注音（#90），包含中英混打尚未定案、畫面顯示成注音的按鍵。
