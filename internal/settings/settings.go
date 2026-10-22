@@ -235,8 +235,10 @@ func (s Settings) FuzzyConfig() fuzzy.Config {
 }
 
 func Default() Settings {
-	return Settings{Selection: Neural, Punctuation: false, DocumentContext: true, CandidateCursor: defaultCandidateCursor(runtime.GOOS), CandidateLayout: "vertical", EmojiShortcut: "equals", EmojiEqualsFirst: true, EscClear: true, SpaceSelects: true, KeyboardLayout: LayoutStandard, SelectionKeys: SelectDigits, CtrlPunctuation: true,
+	s := Settings{Selection: Neural, Punctuation: false, DocumentContext: true, CandidateCursor: defaultCandidateCursor(runtime.GOOS), CandidateLayout: "vertical", EmojiShortcut: "equals", EmojiEqualsFirst: true, EscClear: true, SpaceSelects: true, KeyboardLayout: LayoutStandard, SelectionKeys: SelectDigits, CtrlPunctuation: true,
 		ToggleKey: defaultToggleKey(runtime.GOOS), ModeMemory: defaultModeMemory(runtime.GOOS), StartMode: StartZhuyin}
+	s.LeftShift = s.TogglesLeft() // 舊欄位跟著切換鍵：Windows 預設左右 Shift 時是 true（#206）
+	return s
 }
 
 // 選字鍵（#112）。值就是依序對應第 1–10 項的鍵；不開放自訂。
@@ -623,7 +625,8 @@ func KeepToggleKey(path, value string) (bool, error) {
 		if err = json.Unmarshal(b, &s); err != nil {
 			return false, fmt.Errorf("%s：%w：%v", path, ErrCorrupt, err)
 		}
-		if _, ok := members["toggle_key"]; ok || s.readOnly || s.LeftShift {
+		// 舊版的 left_shift=true 已推出 both：看檔案裡的原值，不看由切換鍵推出的 s.LeftShift（平台預設是左右 Shift 時也是 true）。
+		if _, ok := members["toggle_key"]; ok || s.readOnly || string(bytes.TrimSpace(members["left_shift"])) == "true" {
 			return false, nil
 		}
 		body := bytes.TrimRight(b, " \t\r\n")
@@ -845,7 +848,7 @@ func simplifiedHotkeyDescription(goos string) string {
 func toggleKeyDescription(goos string) string {
 	d := "單按哪個 Shift 切換注音／英文；按住 Shift 超過 0.3 秒、或 Shift 加字母（打大寫）不算切換。沒用來切換的 Shift 照系統原本的用途"
 	if goos == "windows" {
-		d += "。預設左右 Shift 都可以切換，不想讓左 Shift 切換可改成「右 Shift」。也可以按 Ctrl＋空白鍵"
+		d += "。預設左右 Shift 都可以切換，不想讓左 Shift 切換可改成「右 Shift」；按著 Shift 點滑鼠選取也不算切換。也可以按 Ctrl＋空白鍵"
 	} else if goos == "darwin" {
 		d += "。Mac 預設不用 Shift，使用系統的輸入來源切換；想用 Shift 可在這裡開啟"
 	}
@@ -902,7 +905,7 @@ const PreviewRetiredNote = "preview-0-2 已不需要設定：0.2.0 的我的詞�
 func hiddenSpecs() []spec {
 	return []spec{
 		// 舊鍵：0.1.0-dev.63 以前的設定程式與腳本用它；改成 toggle-key。
-		{"left-shift", "左 Shift 切換中英", "舊設定，改用 toggle-key", "off", []string{"on", "off"},
+		{"left-shift", "左 Shift 切換中英", "舊設定，改用 toggle-key", onOff(Default().TogglesLeft()), []string{"on", "off"},
 			func(s Settings) string { return onOff(s.TogglesLeft()) }},
 		{PreviewRetiredKey, "0.2.0 預覽", "已正式開放，不再需要設定", "on", []string{"on"},
 			func(Settings) string { return "on" }},

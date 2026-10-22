@@ -15,7 +15,7 @@ func TestToggleKeyMigrationAndCompat(t *testing.T) {
 		t.Fatalf("舊檔：%+v", s)
 	}
 	json.Unmarshal([]byte(`{}`), &s)
-	if s.ToggleKey != Default().ToggleKey || s.LeftShift {
+	if s.ToggleKey != Default().ToggleKey || s.LeftShift != s.TogglesLeft() {
 		t.Fatalf("缺漏欄位沿用平台預設：%+v", s)
 	}
 	json.Unmarshal([]byte(`{"toggle_key":"left","left_shift":false}`), &s)
