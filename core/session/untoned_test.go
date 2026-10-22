@@ -366,8 +366,8 @@ func TestTonelessRejectingAutoCorrectionTwiceDisablesIt(t *testing.T) {
 	}
 }
 
-// 不打聲調的段落沒有一組共用的帶調讀音，不送神經評分器，照統計引擎（以「聲調未知」送進現有模型反而變差，
-// 見 data/research/toneless-input-20261022）。同一段組字裡打了聲調、被標點隔開的段落照樣評分；
+// 不打聲調的段落沒有一組共用的帶調讀音，不送神經評分器，照統計引擎（以「聲調未知」送進現有模型反而變差）。
+// 同一段組字裡打了聲調、被標點隔開的段落照樣評分；
 // Enter 完成最後一個沒打聲調的音節時整段重新解碼，那一段神經選的字也要留著，不換回統計結果。
 func TestTonelessNeuralSkipsUntonedSegmentsAndKeepsTonedOnes(t *testing.T) {
 	s := newTonelessSession(true)
