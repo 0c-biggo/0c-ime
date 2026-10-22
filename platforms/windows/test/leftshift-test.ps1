@@ -8,7 +8,12 @@ param([Parameter(Mandatory=$true)][string]$ResultDir, [Parameter(Mandatory=$true
 $ErrorActionPreference='Stop'
 $report=[ordered]@{passed=$false;checks=@();error='';layouts=[ordered]@{};cli=[ordered]@{};browsers=[ordered]@{}}
 $form=$null;$server=$null
+# 0.1.0-dev.62 起註冊的是固定路徑 Zuin\tsf\0c_tsf.dll（#121）：引擎與 0c-update 在收據記下的版本目錄。
 $installed=Split-Path -Parent $ExpectedDLL
+if(-not(Test-Path (Join-Path $installed '0c-server.exe'))){
+ $receipt=Get-Content (Join-Path $env:LOCALAPPDATA 'Zuin\install-receipt.json') -Raw|ConvertFrom-Json
+ $installed=Join-Path (Join-Path $env:LOCALAPPDATA 'Zuin') $receipt.directory
+}
 $la=Join-Path $ResultDir 'la'
 New-Item -ItemType Directory -Force "$la\Zuin" | Out-Null
 $env:LOCALAPPDATA=$la
