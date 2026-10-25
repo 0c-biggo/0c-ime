@@ -5,14 +5,14 @@
 
   const tauri = window.__TAURI__;
   const invoke = (command, args) => tauri.core.invoke(command, args);
-  const PAGES = ['overview', 'mode', 'candidates', 'keyboard', 'output', 'vocab', 'models', 'update', 'troubleshoot', 'about'];
+  const PAGES = ['overview', 'styles', 'mode', 'candidates', 'keyboard', 'output', 'vocab', 'models', 'update', 'troubleshoot', 'about'];
   // 0.2.5 以前的「輸入設定」（#207 拆成三頁）：舊的 0c-update、捷徑與說明寫的 --page input 導到側欄的第一頁「中英切換」。
   const PAGE_ALIAS = { input: 'mode' };
   const pageName = (name) => PAGE_ALIAS[name] || (PAGES.includes(name) ? name : 'overview');
 
   const state = {
     info: null, status: null, settings: null, error: null,
-    busy: new Set(), checking: false, updating: null, repairAsk: false, exporting: false, summary: null,
+    busy: new Set(), profileBusy: false, checking: false, updating: null, repairAsk: false, exporting: false, summary: null,
   };
   let page = 'overview';
   let toastTimer = null;
@@ -22,6 +22,7 @@
     ? !!((state.settings && state.settings.features && state.settings.features.vocab) || (state.status && state.status.features && state.status.features.vocab))
     : null);
   let vocab = null;
+  let styles = null;
   let models = null; // 「模型」頁（#180，models.js）
 
   // ---- DOM ----
@@ -379,18 +380,19 @@
     const values = item.values || [];
     // item.disabled：另一個設定讓這一項不起作用（倚天 41 鍵時的混打與 Emoji，#83；許氏時的混打，#183；不用 Shift 時的開始模式，#184）。開關顯示實際狀態（關閉），
     // 設定檔中的值不動，條件解除後照舊。
-    const disabled = locked || state.busy.has(item.key) || !!item.disabled;
+    const view = window.ZcInputStylesLogic.controlState(item, locked || state.profileBusy || state.busy.has(item.key));
+    const disabled = view.disabled;
     const labelId = 'label-' + item.key;
     if (values.length === 2 && values.includes('off')) {
       const on = values.find((v) => v !== 'off');
-      const checked = !item.disabled && item.value === on;
+      const checked = view.checked;
       return h('button', {
         type: 'button', class: 'switch', role: 'switch', 'aria-checked': String(checked), 'aria-labelledby': labelId,
         'data-focus': item.key, disabled, onclick: () => change(item.key, checked ? 'off' : on),
       });
     }
     // 選項也畫實際使用的值：不用 Shift 時開始模式固定為注音（#184，item.effective），設定檔裡的英文保留到改回 Shift。
-    const shown = item.disabled && item.effective ? item.effective : item.value;
+    const shown = view.value;
     return h('fieldset', { class: 'choices', 'aria-labelledby': labelId, disabled },
       ...values.map((value) => h('label', {},
         h('input', {
@@ -399,8 +401,15 @@
         }), (item.value_labels && item.value_labels[value]) || VALUE[value] || value)));
   }
 
+  function profileLockLabel() {
+    const profiles = state.settings?.profiles;
+    const active = profiles?.items?.find((profile) => profile.id === profiles.active);
+    return active ? '由「' + active.name + '」風格決定' : '由目前的輸入習慣決定';
+  }
+
   function itemRow(item, locked) {
     const name = h('span', {}, item.label || item.key);
+    if (item.locked) name.append(h('span', { class: 'badge muted-badge', title: item.locked_reason }, profileLockLabel()));
     if (item.disabled && item.disabled_reason) name.append(h('span', { class: 'badge muted-badge' }, item.disabled_reason));
     else if (item.pending) name.append(h('span', { class: 'badge' }, '已儲存，尚未套用'));
     return row(
@@ -416,16 +425,16 @@
   const INPUT_PAGES = {
     mode: {
       title: '中英切換', lead: '用哪個鍵切換注音和英文、換程式後回到哪個模式，以及在注音中直接打英文。',
-      keys: ['toggle-key', 'start-mode', 'mode-memory', 'mixed-input', 'english-autocomplete', 'caps-lock-english'],
+      keys: ['toggle-key', 'start-mode', 'mode-memory', 'mixed-input', 'english-autocomplete', 'caps-lock-english', 'style-shift-letter', 'style-caps-letter'],
     },
     candidates: {
       title: '選字', lead: '候選字怎麼排、怎麼選，以及要不要列出近音的字（模糊音）。',
-      keys: ['selection', 'document-context', 'space-selects', 'candidate-cursor', 'advance-after-select', 'candidate-layout', 'selection-keys', 'esc-clear'],
+      keys: ['selection', 'document-context', 'space-selects', 'candidate-cursor', 'advance-after-select', 'candidate-layout', 'selection-keys', 'esc-clear', 'toneless', 'style-tab', 'style-up', 'style-candidate-tab', 'style-candidate-space', 'style-candidate-enter', 'style-page-size', 'style-candidate-navigation'],
     },
     keyboard: {
       title: '鍵盤與符號', lead: '注音的鍵盤排列，以及標點符號和 Emoji 怎麼打。',
       // emoji-equals-first 是 Emoji 選單的子選項，畫在它下面。
-      keys: ['keyboard-layout', 'ctrl-punctuation', 'punctuation', 'emoji-shortcut', 'emoji-equals-first'],
+      keys: ['keyboard-layout', 'ctrl-punctuation', 'punctuation', 'emoji-shortcut', 'emoji-equals-first', 'style-punctuation', 'style-shift-space', 'style-shift-delete'],
     },
   };
   const OUTPUT_KEYS = ['output-simplified', 'simplified-hotkey'];
@@ -467,6 +476,10 @@
     root.append(...fileNotices(settings));
     const locked = settings.file.read_only;
     const items = settings.items || [];
+    if (items.some((item) => item.locked && pageOfKey(item.key) === name)) {
+      root.append(h('div', { class: 'notice info' }, h('p', {}, '部分設定' + profileLockLabel() + '。複製成自訂後可微調；不相容的功能仍會停用。'),
+        h('button', { type: 'button', class: 'secondary', 'data-focus': 'style-settings', onclick: () => show('styles') }, '選用風格／複製成自訂')));
+    }
     const emoji = items.find((item) => item.key === 'emoji-shortcut');
     const equalsFirst = items.find((item) => item.key === 'emoji-equals-first');
     const order = (item) => (spec.keys.includes(item.key) ? spec.keys.indexOf(item.key) : spec.keys.length);
@@ -620,12 +633,15 @@
   }
 
   const RENDER = {
-    overview, output, vocab: vocabPage, models: (root) => models.render(root), update, troubleshoot, about,
+    overview, output, styles: (root) => { if (!problem(root)) styles.render(root); }, vocab: vocabPage, models: (root) => models.render(root), update, troubleshoot, about,
     mode: (root) => settingsPage('mode', root), candidates: (root) => settingsPage('candidates', root), keyboard: (root) => settingsPage('keyboard', root),
   };
 
   function render() {
+    // 名稱輸入仍在組字時保留原欄位；背景 refresh 的結果等 compositionend 再畫。
+    if (page === 'styles' && styles?.composing()) return;
     const focused = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.focus : null;
+    const selection = focused === 'style-name' ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
     const vocabOn = vocabEnabled();
     if (page === 'vocab' && vocabOn === false) { page = 'overview'; vocab.setActive(false); }
     document.querySelectorAll('.nav').forEach((button) => {
@@ -642,7 +658,10 @@
     else if (page !== 'vocab' && vocabActive) { vocabActive = false; vocab.setActive(false); }
     if (focused) {
       const again = Array.from(document.querySelectorAll('[data-focus]')).find((node) => node.dataset.focus === focused);
-      if (again && !again.disabled) again.focus();
+      if (again && !again.disabled) {
+        again.focus();
+        if (selection && typeof again.setSelectionRange === 'function') again.setSelectionRange(...selection);
+      }
     }
   }
 
@@ -662,6 +681,20 @@
       mcpPresent: () => !!(state.info && state.info.mcp_present),
       // 引擎是否在執行（status 的 runtime）；還不知道時 null。
       engineRunning: () => (state.status && state.status.runtime ? state.status.runtime.state === 'running' : null),
+    });
+    styles = window.ZcInputStyles({
+      h, render, settings: () => state.settings, showKeyboard: () => show('keyboard'),
+      valueLabel: (item, value) => window.ZcInputStylesLogic.valueLabel(item, value, VALUE),
+      mutate: async (action, id, name) => {
+        state.profileBusy = true;
+        try {
+          const result = await invoke('profile_command', { action, id, name });
+          if (result.ok) toast(...(result.apply ? applyText(result.apply) : ['已儲存。', 'ok']));
+          else toast(errorText(result.error), 'error');
+          await refresh();
+          return result;
+        } finally { state.profileBusy = false; }
+      },
     });
     models = window.ZcModels({
       h, invoke, toast, copyText, modelLabel, render,

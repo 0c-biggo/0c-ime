@@ -128,10 +128,13 @@ func newText(s string, attrs ...attribute) dbus.Variant {
 }
 
 // newLookupTable 只放目前這一頁：翻頁與反白由核心決定，頁碼放在提示列。
-func newLookupTable(candidates, labels []string, cursor int) dbus.Variant {
+func newLookupTable(candidates, labels []string, cursor int, horizontal ...bool) dbus.Variant {
 	t := ibusLookupTable{Name: "IBusLookupTable", Attach: map[string]dbus.Variant{},
 		PageSize: uint32(max(len(candidates), 1)), Cursor: uint32(max(cursor, 0)), CursorVisible: true,
 		Orientation: orientationVertical, Candidates: []dbus.Variant{}, Labels: []dbus.Variant{}}
+	if len(horizontal) > 0 && horizontal[0] {
+		t.Orientation = 0
+	}
 	for _, c := range candidates {
 		t.Candidates = append(t.Candidates, newText(c))
 	}

@@ -29,6 +29,8 @@ func numberWritingSession() *Session {
 		// #200：只用數字與標點鍵拼得出的罕用字（1/3 繃、1/6 甭、5.3 肘、86 嗄），和同樣這樣拼、但常用的字（5.6 軸、5. 周）。
 		{"繃", "ㄅㄥˇ", 3e-7}, {"甭", "ㄅㄥˊ", 6e-7}, {"肘", "ㄓㄡˇ", 8e-7}, {"嗄", "ㄚˊ", 1e-7}, {"噢", "ㄡ˙", 1e-7},
 		{"軸", "ㄓㄡˊ", 1e-5}, {"周", "ㄓㄡ", 1e-3}, {"手", "ㄕㄡˇ", 1e-3}, {"手肘", "ㄕㄡˇ ㄓㄡˇ", 2e-5},
+		{"疊", "ㄉㄧㄝˊ", 1e-4}, {"折", "ㄓㄜˊ", 1e-4}, {"折疊", "ㄓㄜˊ ㄉㄧㄝˊ", 2e-4},
+		{"丟", "ㄉㄧㄡ", 1e-4},
 	} {
 		lex.Add(lexicon.Entry{Surface: e.w, Reading: zhuyin.ParseReading(e.r), PRW: 1})
 		sys.SetUni(e.w, e.p)
@@ -231,6 +233,7 @@ func TestMixedNumberWritingRightAfterEnglish(t *testing.T) {
 		{"hello2. ", "hello都"},
 		{"hellosu3", "hello你"},
 		{"hello824", "hello824"},
+		{"v1.2", "v1.2"},
 	} {
 		s := numberWritingSession()
 		if snap := mixedType(s, tc.keys); snap.Text() != tc.want {
@@ -239,6 +242,34 @@ func TestMixedNumberWritingRightAfterEnglish(t *testing.T) {
 		if got := key(s, proto.KeyEnter).Commit; got != tc.want {
 			t.Errorf("%q 提交 %q，要 %q", tc.keys, got, tc.want)
 		}
+	}
+}
+
+// #119：緊接中文時，英文＋數字的保護不得攔走完整的反序音節（u2,6 是 ㄧㄉㄝˊ）。
+// 句首、英文、空白後維持數字寫法。中文後真的要輸入這個識別字時，仍可選原按鍵或切到英文。
+func TestMixedCompleteReadingAfterChineseBeforeEnglishNumberGuard(t *testing.T) {
+	for _, tc := range []struct{ keys, want string }{
+		{"u2,6", "u2,6"}, {"2u,6", "疊"}, {"u2.7", "u2.7"},
+		{"5k6u2,6", "折疊"},
+		{"5k6 u2,6", "折 u2,6"}, {"ji3u2.7", "我丟"},
+		{"hello u2,6", "hello u2,6"},
+		{"hellou2,6", "hellou2,6"}, {"v1.2", "v1.2"},
+		{"ji3hellou2,6", "我hellou2,6"}, {"ji3v1.2", "我v1.2"},
+	} {
+		s := numberWritingSession()
+		if snap := mixedType(s, tc.keys); snap.Text() != tc.want {
+			t.Errorf("%q 顯示 %q，要 %q", tc.keys, snap.Text(), tc.want)
+		}
+		if got := key(s, proto.KeyEnter).Commit; got != tc.want {
+			t.Errorf("%q 提交 %q，要 %q", tc.keys, got, tc.want)
+		}
+	}
+	s := numberWritingSession()
+	mixedType(s, "ji3u2,")
+	key(s, proto.KeyDown)
+	s.Handle(proto.Request{Type: proto.Select, Index: 0}) // 明確選原按鍵
+	if snap := mixedType(s, "60"); snap.Text() != "我u2,60" {
+		t.Fatalf("明確選原按鍵後仍應維持識別字：%q", snap.Text())
 	}
 }
 

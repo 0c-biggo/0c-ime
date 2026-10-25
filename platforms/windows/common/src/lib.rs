@@ -231,7 +231,7 @@ pub fn candidate_cells(
     row: i32,
     small_row: i32,
 ) -> Vec<CandidateCell> {
-    let columns = m.columns.clamp(1, 5);
+    let columns = m.columns.clamp(1, 10);
     let gap = if columns > 1 { pad / 2 } else { 0 };
     let cell_width = ((width - 2 * pad - gap * (columns as i32 - 1)) / columns as i32).max(1);
     let top = pad + header_height(m, small_row);
@@ -266,6 +266,19 @@ impl CandidateCell {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn horizontal_ten_candidates_stay_on_one_row() {
+        let message = UiMessage {
+            columns: 10,
+            candidates: (0..10).map(|id| UiCandidate { id, text: "字".into(), ..Default::default() }).collect(),
+            ..Default::default()
+        };
+        let cells = candidate_cells(&message, 1000, 8, 40, 20);
+        assert_eq!(cells.len(), 10);
+        assert!(cells.iter().all(|c| c.top == cells[0].top));
+        assert!(cells.windows(2).all(|c| c[0].left < c[1].left));
+    }
+
     #[test]
     fn grid_cells_preserve_ids_gaps_and_partial_rows() {
         let message = UiMessage {

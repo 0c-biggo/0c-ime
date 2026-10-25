@@ -53,6 +53,8 @@ struct Snapshot: Decodable {
     let candidates: Candidates?
     let mode: String
     var englishPending: Bool? = nil
+    var fullWidth: Bool? = nil
+    var capsLock: Bool? = nil
     let contextID: UInt64?
     /// 這次按鍵的提示（例如「已加入詞庫：世傑」，#123）；舊引擎或沒有提示時缺欄位。
     var notices: [String]? = nil
@@ -64,6 +66,8 @@ struct Snapshot: Decodable {
         case readingHint = "reading_hint"
         case outputSimplified = "output_simplified"
         case englishPending = "english_pending"
+        case fullWidth = "full_width"
+        case capsLock = "caps_lock"
         case contextID = "context_id"
     }
     var text: String { (preedit ?? []).map(\.text).joined() }

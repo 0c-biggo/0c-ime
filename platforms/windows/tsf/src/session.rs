@@ -36,6 +36,7 @@ pub struct Snapshot {
     pub pages: i64,
     pub highlight: i64,
     pub english: bool,
+    pub full_width: bool,
     pub english_autocomplete: bool,
     pub english_pending: bool,
     pub english_can_start: bool,
@@ -63,8 +64,16 @@ impl Snapshot {
         self.preedit.iter().map(|s| s.text.as_str()).collect()
     }
 
+    /// 字寬是每個 session 的狀態；這些字元在半形可直接交給宿主，不能只看靜態 idle_keys。
+    pub fn full_width_extra_key(&self, key: &str) -> bool {
+        self.full_width && key.len() == 1 && (key.as_bytes()[0].is_ascii_uppercase() || " \\'\"<>?".contains(key))
+    }
+
     /// Predict only keys the English word buffer will actually consume.
     pub fn english_wants_key(&self, key: &str) -> bool {
+        if self.english && self.full_width && (key.len() == 1 && key.as_bytes()[0].is_ascii_graphic() || key == " ") {
+            return true;
+        }
         if !self.english_autocomplete || !self.english {
             return false;
         }
@@ -357,11 +366,21 @@ impl Session {
     }
 
     /// 沒在組字時這個鍵要不要交給引擎（見 idle_key_from）。TestKeyDown 只查設定，不送按鍵：答錯時 WPF 會掉鍵，
-    /// 或吃掉應用程式的鍵（關閉 Emoji 捷徑時的 =、許氏的數字與 q）。只在答案依排列或設定而不同的鍵（keys::layout_dependent）查詢；
+    /// 或吃掉應用程式的鍵（關閉 Emoji 捷徑時的 =、許氏的數字與 q）。所有可見字元依排列及風格查詢；
     /// health 的答案跟著連線快取（設定一改引擎就重啟、連線跟著斷），連線還在時不再往返。
     /// 問不到（引擎正在交接、剛重啟還沒起來、連線錯誤）時不交還宿主：OnKeyDown 的 handle() 會等交接結束再送，
     /// 這裡說不吃的字母卻直接以英文打進文件（改設定後的第一個字）。沿用上一次問到的答案；從沒問到過就照沒有設定資訊的
     /// 舊推算（字母交給引擎，同 0.2.4 的本地判斷）。不記代數，下一個鍵重新問。英文模式、Ctrl／Alt 組合不會走到這裡（wants_key）。
+    pub fn style_shift_space(&mut self) -> bool {
+        let _ = self.idle_key("");
+        matches!(self.idle_info.as_ref().and_then(|v| v["input_style_shift_space"].as_str()), Some("fullwidth" | "space" | "single"))
+    }
+
+    pub fn style_caps_lower(&mut self) -> bool {
+        let _ = self.idle_key("");
+        self.idle_info.as_ref().is_some_and(|v| v["input_style_caps_letter"] == "lower")
+    }
+
     pub fn idle_key(&mut self, key: &str) -> bool {
         let fresh = self.idle_info.is_some()
             && self.client.connected()
@@ -401,6 +420,9 @@ impl Session {
     /// 引擎目前載入的中英切換鍵設定（左右 Shift 與單按時限，#117）。在 Shift 單按放開時查詢，
     /// 設定套用（引擎重啟）後立即生效；引擎不可用或舊版引擎見 ShiftConfig::from_info。
     pub fn shift_config(&mut self) -> crate::keys::ShiftConfig {
+        // A retired pipe must reconnect before the first Shift tap asks for
+        // capabilities; otherwise call() fails once and uses legacy defaults.
+        if self.client.connected() { self.client.alive(); }
         let reply = self.client.call(&json!({"op": "health"}));
         let info = reply
             .as_ref()
@@ -516,13 +538,17 @@ impl Session {
             cleared = self.cleared.take();
         }
         let mut attempts = 0;
+        // 引擎正在重啟時等到第一次看到的期限（#216）：交接、改設定後退出、當掉都一樣。宿主的 UI 執行緒等著，
+        // 之後的按鍵在訊息佇列裡依序排隊，新引擎起來後照順序送到，不會亂序或重複。持續斷線不延長。
+        let mut wait_until: Option<Instant> = None;
         loop {
             attempts += 1;
             if attempts > 3 {
-                if !self.client.handoff_pending() {
+                wait_until = wait_until.or(self.client.restart_deadline());
+                if !wait_until.is_some_and(|until| Instant::now() < until) {
                     break;
                 }
-                std::thread::sleep(std::time::Duration::from_millis(10));
+                std::thread::sleep(Duration::from_millis(20));
             }
             if !self.client.connect() || !self.ensure_open() {
                 continue;
@@ -583,7 +609,7 @@ impl Session {
             return s;
         }
         zlog!("handle: server 不可用，放行按鍵");
-        self.client.abandon_handoff(); // 本次期限結束；下一次按鍵仍可正常恢復連線。
+        self.client.abandon_restart(); // 本次期限結束；下一次按鍵仍可正常恢復連線。
         self.down = true;
         Snapshot::default()
     }
@@ -657,6 +683,7 @@ fn parse(reply: &Value) -> Snapshot {
     s.context_id = j["context_id"].as_u64().unwrap_or(0);
     s.suggestion = j["suggestion"].as_str().unwrap_or("").to_string();
     s.english = j["mode"].as_str() == Some("english");
+    s.full_width = j["full_width"].as_bool().unwrap_or(false);
     s.english_autocomplete = j["english_autocomplete"].as_bool().unwrap_or(false);
     s.english_pending = j["english_pending"].as_bool().unwrap_or(false);
     s.english_can_start = j["english_can_start"].as_bool().unwrap_or(false);
@@ -683,7 +710,7 @@ fn parse(reply: &Value) -> Snapshot {
     s.cursor_rune = j["cursor"]["rune"].as_u64().unwrap_or(0) as usize;
     s.cursor_utf16 = j["cursor"]["utf16"].as_u64().unwrap_or(0) as usize;
     if let Some(c) = j.get("candidates") {
-        s.columns = c["columns"].as_u64().unwrap_or(0).min(5) as usize;
+        s.columns = c["columns"].as_u64().unwrap_or(0).min(10) as usize;
         s.candidate_kind = c["kind"].as_str().unwrap_or("").to_string();
         s.candidate_title = c["title"].as_str().unwrap_or("").to_string();
         s.page = c["page"].as_i64().unwrap_or(0);
@@ -712,6 +739,22 @@ fn parse(reply: &Value) -> Snapshot {
 #[cfg(test)]
 mod parse_tests {
     use super::*;
+
+    #[test]
+    fn chinese_full_width_preflight_covers_literal_keys_without_claiming_tones() {
+        let snap = parse(&json!({"snapshot":{"mode":"zhuyin","full_width":true}}));
+        for key in ["A", "Z", " ", "'", "\"", "\\", "<", ">", "?"] { assert!(snap.full_width_extra_key(key), "{key}"); }
+        for key in ["3", "a", "Tab", "ShiftSpace"] { assert!(!snap.full_width_extra_key(key), "{key}"); }
+        assert!(!Snapshot::default().full_width_extra_key("\\"));
+    }
+
+    #[test]
+    fn full_width_english_preflight_consumes_printable_keys_without_completion() {
+        let snap = parse(&json!({"snapshot":{"mode":"english","full_width":true}}));
+        for key in ["a", "A", "0", "9", " ", "'", "\\"] { assert!(snap.english_wants_key(key), "{key}"); }
+        for key in ["Tab", "Escape", "Left", "KP1"] { assert!(!snap.english_wants_key(key), "{key}"); }
+        assert!(!parse(&json!({"snapshot":{"mode":"english"}})).english_wants_key("a"));
+    }
 
     #[test]
     fn english_key_preflight_matches_buffer_boundaries() {
@@ -1433,7 +1476,7 @@ mod tests {
             HandoffServer::new("引擎正在切換", Some(std::time::Duration::from_millis(500)));
         let mut s = Session::with_client(Client::with_pipe(&server.name));
         assert!(s.idle_key("a"), "從沒問到過：字母交給引擎（同 0.2.4）");
-        assert!(s.client.handoff_pending(), "引擎回了「引擎正在切換」");
+        assert!(s.client.restart_pending(), "引擎回了「引擎正在切換」");
         // 上一次在舊連線上問到的答案（許氏：數字交還宿主、字母交給引擎）照樣適用，不因交接把數字也吃掉。
         s.idle_info = Some(json!({"idle_keys": "!\"&'(),.:;<=>?[\\]^_`abcdefghijklmnoprstuvwxyz{}~"}));
         assert!(s.idle_key("a") && s.idle_key("j"));
@@ -1451,11 +1494,232 @@ mod tests {
         let start = std::time::Instant::now();
         assert!(!s.key("Enter").ok);
         assert!(
-            start.elapsed() < std::time::Duration::from_millis(2500),
+            start.elapsed() < crate::ipc::RESTART_WAIT + std::time::Duration::from_millis(1500),
             "refusals must not extend the deadline"
         );
         drop(s);
         assert_eq!(server.finish(), 0);
+    }
+
+    /// #216 的假引擎：模擬改設定套用、更新交接或當掉後的重啟。第一個引擎回覆 `old_keys` 個按鍵後關掉連線與管道（退出），
+    /// 管道消失 `gap` 之後新引擎才建立管道（None：永遠不回來）。`hung`：第一個引擎回覆 `old_keys` 個按鍵後不退出，
+    /// 之後收下請求卻永遠不回覆（卡住，不是重啟）。
+    /// 每個引擎收到的按鍵依序記下（引擎代號, 按鍵）。
+    struct RestartServer {
+        name: String,
+        keys: std::sync::Arc<std::sync::Mutex<Vec<(u32, String)>>>,
+        stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        gone: std::sync::mpsc::Receiver<()>,
+    }
+
+    impl RestartServer {
+        fn new(old_keys: usize, gap: Option<Duration>, hung: bool) -> Self {
+            use std::io::{Read, Write};
+            use std::os::windows::io::FromRawHandle;
+            use std::sync::atomic::{AtomicBool, Ordering};
+            use std::sync::{Arc, Mutex};
+            use windows::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
+            use windows::Win32::System::Pipes::{
+                ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT,
+            };
+            use windows_core::PCWSTR;
+            let name = format!(
+                r"\\.\pipe\0c-tsf-restart-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            );
+            let keys = Arc::new(Mutex::new(Vec::new()));
+            let stop = Arc::new(AtomicBool::new(false));
+            let (seen, stopping) = (keys.clone(), stop.clone());
+            let pipe_name = zuin_win_common::wide(&name);
+            let (ready, wait) = std::sync::mpsc::channel();
+            let (gone_tx, gone) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                // 一個引擎：一次一條連線，連線斷了再開下一個實例；回覆滿 limit 個按鍵就退出（關掉連線與管道）。
+                let serve = |engine: u32, limit: Option<usize>, ready: Option<std::sync::mpsc::Sender<()>>| {
+                    let mut ready = ready;
+                    let mut served = 0;
+                    while !stopping.load(Ordering::SeqCst) {
+                        let handle = unsafe {
+                            CreateNamedPipeW(
+                                PCWSTR::from_raw(pipe_name.as_ptr()),
+                                PIPE_ACCESS_DUPLEX,
+                                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                                1,
+                                65536,
+                                65536,
+                                0,
+                                None,
+                            )
+                        };
+                        assert!(!handle.is_invalid());
+                        let mut file = unsafe { std::fs::File::from_raw_handle(handle.0) };
+                        if let Some(r) = ready.take() {
+                            r.send(()).unwrap();
+                        }
+                        let _ = unsafe { ConnectNamedPipe(handle, None) };
+                        if stopping.load(Ordering::SeqCst) {
+                            return;
+                        }
+                        loop {
+                            let mut header = [0; 4];
+                            if file.read_exact(&mut header).is_err() {
+                                break;
+                            }
+                            let mut body = vec![0; u32::from_le_bytes(header) as usize];
+                            if file.read_exact(&mut body).is_err() {
+                                break;
+                            }
+                            let request: Value = serde_json::from_slice(&body).unwrap();
+                            if hung && limit.is_some_and(|n| served >= n) {
+                                continue; // 卡住：收下請求、永遠不回覆
+                            }
+                            let reply = if request["op"] == "open" {
+                                json!({"ok": true, "session": engine, "info": {}})
+                            } else if request["op"] == "handle" && request["req"]["type"] == "key" {
+                                let key = request["req"]["key"].as_str().unwrap_or("").to_string();
+                                seen.lock().unwrap().push((engine, key.clone()));
+                                served += 1;
+                                json!({"ok": true, "snapshot": {"handled": true, "commit": key}})
+                            } else {
+                                json!({"ok": true, "info": {}})
+                            };
+                            if file.write_all(&zuin_win_common::frame(&reply).unwrap()).is_err() {
+                                break;
+                            }
+                            if !hung && limit.is_some_and(|n| served >= n) {
+                                return; // 退出：drop(file) 關掉連線，管道跟著消失
+                            }
+                        }
+                    }
+                };
+                serve(1, Some(old_keys), Some(ready));
+                if hung {
+                    return;
+                }
+                let _ = gone_tx.send(());
+                let Some(gap) = gap else { return };
+                std::thread::sleep(gap);
+                serve(2, None, None);
+            });
+            wait.recv_timeout(Duration::from_secs(2)).unwrap();
+            Self { name, keys, stop, gone }
+        }
+
+        /// 等第一個引擎退出（回覆完最後一個按鍵、關掉管道）。
+        fn wait_gone(&self) {
+            self.gone.recv_timeout(Duration::from_secs(2)).unwrap();
+        }
+
+        fn keys(&self) -> Vec<(u32, String)> {
+            self.keys.lock().unwrap().clone()
+        }
+    }
+
+    impl Drop for RestartServer {
+        fn drop(&mut self) {
+            self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+            // 叫醒等著連線的實例。
+            let _ = std::fs::OpenOptions::new().read(true).write(true).open(&self.name);
+        }
+    }
+
+    fn keyed(list: &[(u32, &str)]) -> Vec<(u32, String)> {
+        list.iter().map(|(e, k)| (*e, k.to_string())).collect()
+    }
+
+    // #216：改設定套用後引擎重啟（舊引擎關掉連線退出、新引擎約 1 秒後才開始監聽），這時打的字不能不見。
+    // 修正前 handle() 試 3 次就放行（距上次啟動不到 10 秒時連等都不等），TestKeyDown 已吃下的字母就消失了。
+    #[test]
+    fn keys_typed_while_the_engine_restarts_reach_the_new_engine_in_order() {
+        let gap = Duration::from_millis(800);
+        let server = RestartServer::new(1, Some(gap), false);
+        let mut s = Session::with_client(Client::with_pipe(&server.name));
+        assert!(s.key("a").handled);
+        server.wait_gone();
+        // TestKeyDown 的查詢不等新引擎（不卡宿主的這一次呼叫），字母照舊交給引擎。
+        let start = Instant::now();
+        assert!(s.idle_key("g"), "交接中的字母交給引擎");
+        assert!(start.elapsed() < Duration::from_millis(300), "TestKeyDown 不等：{:?}", start.elapsed());
+        assert!(s.client.restart_pending(), "舊引擎關掉連線：等新引擎");
+        // OnKeyDown：等到新引擎起來才送；之後的按鍵（宿主的訊息佇列裡依序排著）照順序送到新引擎。
+        let first = s.key("g");
+        assert!(first.ok && first.handled, "第一個字母要等到新引擎");
+        assert!(start.elapsed() >= gap - Duration::from_millis(100), "{:?}", start.elapsed());
+        assert!(first.reconnected);
+        for k in ["4", "s", "u", "3"] {
+            assert!(s.key(k).handled, "{k}");
+        }
+        assert!(!s.client.restart_pending(), "接上新引擎就不再等");
+        assert_eq!(
+            server.keys(),
+            keyed(&[(1, "a"), (2, "g"), (2, "4"), (2, "s"), (2, "u"), (2, "3")]),
+            "依序、沒有遺失、沒有重複"
+        );
+    }
+
+    // #216：更新交接剛好在兩個詞之間、使用者還在連續打字：舊引擎退出前的鍵在舊引擎，之後的都到新引擎。
+    #[test]
+    fn typing_through_a_handover_between_words_loses_nothing() {
+        let server = RestartServer::new(3, Some(Duration::from_millis(400)), false);
+        let mut s = Session::with_client(Client::with_pipe(&server.name));
+        for k in ["s", "u", "3", "c", "l", "3"] {
+            assert!(s.key(k).ok, "{k}");
+        }
+        assert_eq!(
+            server.keys(),
+            keyed(&[(1, "s"), (1, "u"), (1, "3"), (2, "c"), (2, "l"), (2, "3")])
+        );
+    }
+
+    // #216：組字中（還沒送出）引擎重啟：新引擎起來後重播組字一次，接著的鍵照順序到。
+    #[test]
+    fn composition_survives_the_restart_and_is_replayed_once() {
+        let server = RestartServer::new(1, Some(Duration::from_millis(500)), false);
+        let mut s = Session::with_client(Client::with_pipe(&server.name));
+        // 假引擎回 commit；這裡把 "a" 記成組字中的請求，模擬打到一半。
+        assert!(s.key("a").handled);
+        s.log.push(json!({"type": "key", "key": "a"}));
+        server.wait_gone();
+        assert!(s.key("b").handled);
+        assert_eq!(server.keys(), keyed(&[(1, "a"), (2, "a"), (2, "b")]), "新引擎先重播一次組字，再收到這一鍵");
+    }
+
+    // #216：等到期限新引擎仍沒起來（例如啟動失敗）：這一鍵放行（外殼改以原字元送進文件），之後的鍵立刻放行，不每鍵都等。
+    #[test]
+    fn engine_that_never_returns_releases_within_the_deadline() {
+        let server = RestartServer::new(1, None, false);
+        let mut s = Session::with_client(Client::with_pipe(&server.name));
+        assert!(s.key("a").handled);
+        server.wait_gone();
+        let start = Instant::now();
+        assert!(!s.key("g").ok);
+        let waited = start.elapsed();
+        assert!(
+            waited >= crate::ipc::RESTART_WAIT - Duration::from_millis(200)
+                && waited < crate::ipc::RESTART_WAIT + Duration::from_millis(1500),
+            "等到期限為止：{waited:?}"
+        );
+        let start = Instant::now();
+        assert!(!s.key("4").ok);
+        assert!(!s.available());
+        assert!(start.elapsed() < Duration::from_millis(500), "之後不再等：{:?}", start.elapsed());
+        assert_eq!(server.keys(), keyed(&[(1, "a")]));
+    }
+
+    // #216：引擎卡住（連線還在、只是不回覆）不是重啟：照舊每次 I/O 逾時、試 3 次就放行，不另外等到重啟期限。
+    #[test]
+    fn a_hung_engine_is_not_a_restart() {
+        let server = RestartServer::new(1, None, true);
+        let mut s = Session::with_client(Client::with_pipe(&server.name));
+        assert!(s.key("a").handled);
+        let start = Instant::now();
+        assert!(!s.key("g").ok);
+        // 記成重啟的話會等到 RESTART_WAIT（5 秒）才放行。
+        assert!(start.elapsed() < Duration::from_millis(4500), "逾時不記成重啟：{:?}", start.elapsed());
     }
 
     /// 依 open 回覆的 info 決定 vocab_keys 的管道伺服器；記下收到的按鍵。
@@ -1629,6 +1893,10 @@ mod tests {
                             let request: Value = serde_json::from_slice(&body).unwrap();
                             let info = json!({
                                 "caps_lock_english": caps.load(Ordering::SeqCst).to_string(),
+                                "left_shift": caps.load(Ordering::SeqCst).to_string(),
+                                "right_shift": caps.load(Ordering::SeqCst).to_string(),
+                                "input_style_shift_space": if caps.load(Ordering::SeqCst) { "fullwidth" } else { "disabled" },
+                                "input_style_caps_letter": if caps.load(Ordering::SeqCst) { "lower" } else { "platform" },
                                 "start_mode": if start_english { "english" } else { "zhuyin" },
                                 "initial_mode": if start_english { "english" } else { "zhuyin" },
                                 "mode_memory": "native",
@@ -1681,6 +1949,25 @@ mod tests {
             // 上一次重啟後這條連線已經斷了：第一次呼叫才發現，重連再送。
             assert!(s.client.call(&restart).or_else(|| s.client.call(&restart)).is_some());
             self.restarted.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+        }
+    }
+
+    #[test]
+    fn first_style_modifier_after_handoff_uses_replacement_capabilities() {
+        for first in ["shift", "space", "caps"] {
+            let server = CapsServer::new(false, false);
+            let mut s = Session::with_client(Client::with_pipe(&server.name));
+            assert!(!s.style_shift_space() && !s.style_caps_lower());
+            assert!(!s.shift_config().toggles(crate::keys::Side::Left));
+            for enabled in [true, false] {
+                server.restart(&mut s);
+                let actual = match first {
+                    "shift" => s.shift_config().toggles(crate::keys::Side::Left),
+                    "space" => s.style_shift_space(),
+                    _ => s.style_caps_lower(),
+                };
+                assert_eq!(actual, enabled, "first {first} after handoff");
+            }
         }
     }
 

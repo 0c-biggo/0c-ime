@@ -69,7 +69,7 @@ func TestKeepToggleKey(t *testing.T) {
 					t.Fatalf("只該多 toggle_key：%s", b)
 				}
 			}
-			if c.body == nil && c.wrote && (len(members) != 2 || string(members["schema"]) != "1") {
+			if c.body == nil && c.wrote && (len(members) != 2 || string(members["schema"]) != "2") {
 				t.Fatalf("缺檔時只寫 schema 與 toggle_key，其他維持預設：%s", b)
 			}
 			if c.want != "" {

@@ -342,3 +342,9 @@ func SetOutputSimplified(dial Dialer, on bool) error {
 	}
 	return nil
 }
+
+// DeferSettings keeps the apply request armed until every composition finishes.
+func DeferSettings(dial Dialer) error {
+	_, err := call(dial, ipc.OpApplySettings)
+	return err
+}

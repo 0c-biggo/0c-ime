@@ -47,20 +47,21 @@ const (
 
 // 具名鍵。
 const (
-	KeyEnter     = "Enter"
-	KeyEscape    = "Escape"
-	KeyBackspace = "Backspace"
-	KeyDelete    = "Delete"
-	KeyTab       = "Tab"
-	KeyBackTab   = "BackTab" // Shift+Tab；組字中吃掉不動作
-	KeyLeft      = "Left"
-	KeyRight     = "Right"
-	KeyUp        = "Up"
-	KeyDown      = "Down"
-	KeyPageDown  = "PageDown"
-	KeyPageUp    = "PageUp"
-	KeyHome      = "Home" // 組字中移到組字區最前；候選開啟時到第一個候選
-	KeyEnd       = "End"  // 組字中移到組字區最後；候選開啟時到最後一個候選
+	KeyEnter      = "Enter"
+	KeyEscape     = "Escape"
+	KeyBackspace  = "Backspace"
+	KeyDelete     = "Delete"
+	KeyTab        = "Tab"
+	KeyShiftSpace = "ShiftSpace"
+	KeyBackTab    = "BackTab" // Shift+Tab；組字中吃掉不動作
+	KeyLeft       = "Left"
+	KeyRight      = "Right"
+	KeyUp         = "Up"
+	KeyDown       = "Down"
+	KeyPageDown   = "PageDown"
+	KeyPageUp     = "PageUp"
+	KeyHome       = "Home" // 組字中移到組字區最前；候選開啟時到第一個候選
+	KeyEnd        = "End"  // 組字中移到組字區最後；候選開啟時到最後一個候選
 	// 0.2.0（#123）：外殼只在引擎回報 vocab_keys=true 時送這些鍵；引擎沒有開放這些功能（Preview02 為零值）時回 handled=false。
 	KeyShiftLeft      = "ShiftLeft"      // 組字中往左標示要加入詞庫的範圍
 	KeyShiftRight     = "ShiftRight"     // 組字中往右標示
@@ -175,7 +176,7 @@ type CandidateList struct {
 	Length int             `json:"length"` // 替換格數；0 表示插入符號或選取未完成注音
 	// Highlight 是反白的候選在 Items 裡的索引；上下鍵移動、Enter 選取。外殼只照著畫。
 	Highlight int    `json:"highlight"`
-	Columns   int    `json:"columns,omitempty"` // 0/1: legacy vertical; 2..5: row-major grid.
+	Columns   int    `json:"columns,omitempty"` // 0/1: legacy vertical; 2..5: row-major grid; 9/10: one horizontal page.
 	Kind      string `json:"kind,omitempty"`    // emoji / kaomoji; absent for ordinary candidates.
 	Title     string `json:"title,omitempty"`
 	// StepKeys：這是改字的候選，小寫 j／k 把要修改的字換到前一個／後一個字（#193）。外殼據此顯示「J K 換字」；
@@ -201,6 +202,7 @@ type ReadingHint struct {
 }
 
 type Snapshot struct {
+	FullWidth           bool            `json:"full_width,omitempty"`
 	EnglishAutocomplete bool            `json:"english_autocomplete,omitempty"`
 	EnglishPending      bool            `json:"english_pending,omitempty"`
 	EnglishCanStart     bool            `json:"english_can_start,omitempty"`

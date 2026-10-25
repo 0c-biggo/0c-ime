@@ -184,6 +184,14 @@ pub fn composing_wants(english: bool, protocol: Option<&str>) -> bool {
 /// 協定的 Key；不該交給輸入法的按鍵回傳 None。數字鍵盤送 "KP" 加上產生的字元，核心不當注音鍵（#75）。
 /// `vocab` 見 [`named_with`]；只有 Shift（沒有 Ctrl／Alt／Win，組合鍵在這裡已回 None）時才換成新鍵名。
 /// `caps_lock` 見 [`printable`]：英文模式傳 true，中文模式傳 false（不理 Caps Lock，#168）。
+pub fn style_key(key: String, shift: bool, caps: bool, shift_space: bool, caps_lower: bool) -> String {
+    if key == " " && shift && shift_space { return "ShiftSpace".into(); }
+    if caps && caps_lower && key.len() == 1 && key.as_bytes()[0].is_ascii_alphabetic() {
+        return if shift { key.to_ascii_uppercase() } else { key.to_ascii_lowercase() };
+    }
+    key
+}
+
 pub fn to_key(vk: u32, lparam: isize, vocab: bool, caps_lock: bool) -> Option<String> {
     if modifier_down() || is_modifier(vk) {
         return None;
@@ -546,6 +554,16 @@ mod tests {
         assert_eq!(ShiftConfig::from_info(Some(&custom)).tap_ms, 450);
         let bad = json!({"shift_tap_ms": "abc"});
         assert_eq!(ShiftConfig::from_info(Some(&bad)).tap_ms, 300);
+    }
+
+    #[test]
+    fn input_style_modifier_keys() {
+        assert_eq!(style_key(" ".into(), true, false, true, false), "ShiftSpace");
+        assert_eq!(style_key(" ".into(), true, false, false, false), " ");
+        assert_eq!(style_key("A".into(), false, true, false, true), "a");
+        assert_eq!(style_key("A".into(), true, true, false, true), "A");
+        assert_eq!(style_key("a".into(), true, true, false, true), "A");
+        assert_eq!(style_key("a".into(), true, true, false, false), "a");
     }
 
     #[test]

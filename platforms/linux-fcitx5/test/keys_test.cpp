@@ -31,6 +31,14 @@ int main() {
     EXPECT(asked == 0);
 
     // #168：中文模式不理 Caps Lock；Shift＋字母照舊大寫。
+    EXPECT(zuin::foldStyleCaps('A', true, false, true, true) == 'a');
+    EXPECT(zuin::foldStyleCaps('a', true, true, true, true) == 'A');
+    EXPECT(zuin::foldStyleCaps('a', true, true, true, false) == 'a');
+    EXPECT(zuin::foldStyleCaps('A', true, false, true, false) == 'A');
+    EXPECT(zuin::foldStyleCaps('A', false, true, true, true) == 'A');
+    EXPECT(zuin::foldStyleCaps('a', false, false, true, true) == 'a');
+    EXPECT(zuin::foldStyleCaps('A', true, false, false, false) == 'a');
+    EXPECT(zuin::foldStyleCaps('a', true, true, false, false) == 'A');
     EXPECT(zuin::foldCaps('S', true, false) == 's');
     EXPECT(zuin::foldCaps('s', true, true) == 'S');
     EXPECT(zuin::foldCaps('S', false, true) == 'S');
@@ -58,6 +66,13 @@ int main() {
     EXPECT(!zuin::simplifiedHotkey(zuin::keyF11, true, true, true));    // 多按 Alt／Super
     EXPECT(!zuin::simplifiedHotkey(0xffc9, true, true, false));         // Ctrl＋Shift＋F12
     EXPECT(!zuin::simplifiedHotkey('F', true, true, false));            // Ctrl＋Shift＋F
+
+    asked = 0;
+    EXPECT(zuin::styleKey(" ", true, yes) == "ShiftSpace");
+    EXPECT(zuin::styleKey(" ", true, no) == " ");
+    EXPECT(zuin::styleKey(" ", false, yes) == " ");
+    EXPECT(zuin::styleKey("BackTab", true, yes) == "BackTab");
+    EXPECT(asked == 2);
 
     if (failures) { std::fprintf(stderr, "%d failure(s)\n", failures); return 1; }
     std::puts("keys_test ok");

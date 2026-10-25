@@ -19,6 +19,27 @@ final class EngineConnection {
         if fd >= 0 { Darwin.close(fd); fd = -1 }
     }
 
+    /// A fresh controller has no connection; an existing one uses a nonblocking
+    /// EOF probe. Do not consume or close the old session here:
+    /// handle() must still report disconnection so composition recovery runs.
+    private var needsCapabilitiesProbe: Bool {
+        guard fd >= 0 else { return true }
+        var byte: UInt8 = 0
+        let count = Darwin.recv(fd, &byte, 1, MSG_PEEK | MSG_DONTWAIT)
+        if count < 0 && [EAGAIN, EWOULDBLOCK, EINTR].contains(errno) { return false }
+        return count <= 0
+    }
+
+    /// A healthy session keeps its cached capabilities. A fresh controller or EOF
+    /// ask the replacement engine over a separate, short-lived connection.
+    /// This never retries an uncertain input request or changes its session ID.
+    func replacementInfo() -> [String: String]? {
+        guard needsCapabilitiesProbe else { return nil }
+        let probe = EngineConnection(path: path, timeout: 0.05, start: start)
+        defer { probe.disconnect() }
+        return try? probe.call(Envelope(op: "health")).info
+    }
+
     private func connectOnce() throws -> Bool {
         var address = sockaddr_un()
         address.sun_family = sa_family_t(AF_UNIX)
@@ -179,6 +200,10 @@ final class EngineSession {
     // 不為按鍵另外查詢；設定套用會重啟引擎，下一次 open 就拿到新值。舊引擎沒有這個欄位，視為 false。
     private static var vocabKeysSetting = false
     var vocabKeys: Bool { Self.vocabKeysSetting }
+    private static var styleShiftSpaceSetting = false
+    var styleShiftSpace: Bool { refreshCapabilities(); return Self.styleShiftSpaceSetting }
+    private static var styleCapsLowerSetting = false
+    var styleCapsLower: Bool { refreshCapabilities(); return Self.styleCapsLowerSetting }
     // 引擎是否認得 Ctrl＋標點的鍵名而且設定開著（#168，info 的 ctrl_punctuation）；更新方式同 vocabKeys。
     // 舊引擎沒有這個欄位，視為 false，Ctrl＋標點照舊交給 App。
     private static var ctrlPunctSetting = false
@@ -205,6 +230,9 @@ final class EngineSession {
         rightShiftSetting = toggle.right
         shiftTapLimitSetting = toggle.tapLimit
         vocabKeysSetting = info["vocab_keys"] == "true"
+        let shiftSpace = info["input_style_shift_space"] ?? "disabled"
+        styleShiftSpaceSetting = !shiftSpace.isEmpty && shiftSpace != "disabled"
+        styleCapsLowerSetting = info["input_style_caps_letter"] == "lower"
         ctrlPunctSetting = info["ctrl_punctuation"] == "true"
         simplifiedLive = info["output_simplified_live"] == "true"
         simplifiedHotkeySetting = info["simplified_hotkey"] == "true"
@@ -215,8 +243,15 @@ final class EngineSession {
     /// 引擎目前載入的設定是否讓單按這一側 Shift 切換中英。
     /// 按鍵路徑上不等引擎（#148）：主執行緒卡在 IPC 時，系統把按鍵原樣交給 App、選單裡靈犀的項目只剩「……」。
     /// 設定由 open 的回覆與背景 health 更新（換到 App 時、每 5 秒，設定套用後回到 App 就是新值）；
-    /// 只有這個行程還沒拿到過設定時才同步問一次（這時沒有開著的組字 session，失敗也不會斷掉別的請求）。
+    /// 已有連線只做非阻塞 EOF 探測；確認交接後才短暫查新引擎，避免第一個 modifier 用到舊風格。
+    /// 從未拿過設定時仍同步問一次。探測不關閉舊 session，保留原有斷線／組字復原路徑。
+    private func refreshCapabilities() {
+        guard Self.settingsKnown, inputAllowed(), let info = connection.replacementInfo() else { return }
+        Self.update(from: info)
+    }
+
     func shiftToggles(left: Bool) -> Bool {
+        refreshCapabilities()
         if !Self.settingsKnown, inputAllowed(), let info = try? connection.call(Envelope(op: "health")).info {
             Self.update(from: info)
         }

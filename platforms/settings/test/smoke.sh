@@ -19,7 +19,13 @@ eval "$(dbus-launch --sh-syntax)"
 home_of() { echo "/tmp/home-$1"; }
 base_of() { echo "/tmp/home-$1/.local/share/zuin"; }
 settings_of() { echo "/tmp/home-$1/.local/share/0c/settings.json"; }
-new_home() { rm -rf "$(home_of "$1")"; mkdir -p "$(base_of "$1")/update"; }
+# 舊設定會保留為自訂習慣，既有逐項操作測試從升級情境開始。
+# 全新安裝的固定預設另於 fresh 與 styles.sh 刪除此檔驗證。
+new_home() {
+  rm -rf "$(home_of "$1")"
+  mkdir -p "$(base_of "$1")/update"
+  printf '{"schema":1}\n' > "$(base_of "$1")/settings.json"
+}
 state_json() { # 更新器狀態；排程標為已移除，狀態檢查就不會去查這台機器的系統排程
   cat > "$(base_of "$1")/update/state.json" <<JSON
 {"schema":1,"install_id":"smoke","mode":"auto","stage":"${2:-idle}","schedule_removed":true$3}
@@ -42,9 +48,9 @@ shoot() { # 場景 頁面
   stop_app
 }
 run_update() { local name=$1; shift; HOME=$(home_of "$name") "$UPDATE_BIN" "$@"; }
-# 側欄的導覽按鈕數（總覽、中英切換、選字、鍵盤與符號、輸出設定、我的詞彙、模型、更新、問題排解、關於；#207）。
+# 側欄的導覽按鈕數（總覽、輸入習慣、中英切換、選字、鍵盤與符號、輸出設定、我的詞彙、模型、更新、問題排解、關於；#207）。
 # 每一頁的第一個控制項是第 NAV+1 個 Tab；vocab.sh、models.sh 也用它。
-NAV=10
+NAV=11
 tabs() { local n=$1; local keys=(); for _ in $(seq "$n"); do keys+=(Tab); done; xdotool key --delay 120 "${keys[@]}"; }
 
 # SMOKE_ONLY=vocab／models：只跑「我的詞彙」（vocab.sh）或「模型」（models.sh），開發時省時間。
@@ -52,7 +58,8 @@ if [ -z "${SMOKE_ONLY:-}" ]; then
 
 # ---- 場景 A：全新安裝，沒有設定檔也沒有引擎 ----
 new_home fresh
-for page in overview mode candidates keyboard output update troubleshoot about; do shoot fresh "$page"; done
+rm "$(base_of fresh)/settings.json"
+for page in styles overview mode candidates keyboard output update troubleshoot about; do shoot fresh "$page"; done
 
 # ---- 舊的頁名 input（0.2.5 以前的「輸入設定」，#207）導到「中英切換」：第一個控制項是中英切換鍵 ----
 new_home alias
@@ -383,7 +390,7 @@ if window_up; then
   check "Emoji 開關可以關閉" toggle_value emoji_off
   sleep 1
   import -window root "$OUT/toggles-off.png"
-  # 子選項停用時不在 Tab 順序裡：Emoji 是這一頁最後一個能按的，Tab＋空白不會改到等號首項。
+  # 子選項停用時不在 Tab 順序裡：Tab 跳到下一項符號習慣，不會改到等號首項。
   xdotool key Tab space
   sleep 1
   check "Emoji 關閉時 Tab 跳過停用的子選項，保留等號首項原值" toggle_value first_on
@@ -400,11 +407,11 @@ if window_up; then
   check "Emoji 重新啟用後子選項可再次操作" toggle_value first_off
 else bad "toggles/keyboard 重新開啟失敗"; cat /tmp/app-toggles-keyboard.log; fi
 stop_app
-# 模糊音在「選字」最後：選字方式、前文、空白選字、修改位置、選字後游標、排列、選字鍵、Esc、不打聲調（#150）→ 模糊音（導覽後第 10 個）。
+# 模糊音在「選字」最後：原有 9 項＋7 項選字習慣規則之後（導覽後第 17 個）。
 launch toggles candidates
 if window_up; then
   sleep 2.5
-  tabs $((NAV + 10)); xdotool key space
+  tabs $((NAV + 17)); xdotool key space
   check "預設開啟的模糊音總開關一次關閉四組，保留未知設定" toggle_value fuzzy_off
   sleep 1
   import -window root "$OUT/toggles-fuzzy-off.png"
@@ -709,6 +716,9 @@ if [ "${SMOKE_ONLY:-vocab}" = vocab ]; then . "$(dirname "$0")/vocab.sh"; fi
 
 # ---- 模型（#180）----
 if [ "${SMOKE_ONLY:-models}" = models ]; then . "$(dirname "$0")/models.sh"; fi
+
+# ---- 輸入習慣（#225）----
+if [ "${SMOKE_ONLY:-styles}" = styles ]; then . "$(dirname "$0")/styles.sh"; fi
 
 echo "SMOKE_RESULT=$([ $fail -eq 0 ] && echo PASS || echo FAIL)"
 exit $fail

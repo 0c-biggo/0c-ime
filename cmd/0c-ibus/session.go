@@ -229,6 +229,24 @@ func (s *session) vocabKeys() bool {
 
 // ctrlPunct 回報引擎是否認得 Ctrl＋標點的鍵名而且設定開著（open 回覆的 ctrl_punctuation，#168）；快取方式同 vocabKeys。
 // 舊引擎沒有這一項時為 false，Ctrl＋標點照舊交給應用程式。
+func (s *session) styleShiftSpace() bool {
+	if s.client.conn != nil {
+		s.client.alive() // retire old connection before consulting the session cache
+	}
+	if !s.client.connect() || !s.ensureOpen() {
+		return false
+	}
+	value := s.info["input_style_shift_space"]
+	return value != "" && value != "disabled"
+}
+
+func (s *session) styleCapsLower() bool {
+	if s.client.conn != nil {
+		s.client.alive() // retire old connection before consulting the session cache
+	}
+	return s.client.connect() && s.ensureOpen() && s.info["input_style_caps_letter"] == "lower"
+}
+
 func (s *session) ctrlPunct() bool {
 	return s.client.connect() && s.ensureOpen() && s.info["ctrl_punctuation"] == "true"
 }
@@ -311,8 +329,8 @@ func (s *session) ensureOpen() bool {
 		return false
 	}
 	s.id, s.generation, s.info = reply.Session, s.client.generation, reply.Info
-	// GNOME 的候選窗是原生直排，沒有格狀版面；核心的上下鍵導覽要與畫面一致。
-	if _, ok := reply.Info["candidate_layout"]; ok {
+	// 原生候選窗支援方向提示但沒有格狀版面；保留明確橫排，其他格狀設定回直排。
+	if _, ok := reply.Info["candidate_layout"]; ok && reply.Info["candidate_layout"] != "horizontal" {
 		if _, ok := s.do(proto.Request{Type: proto.Display, Columns: 1}); !ok {
 			s.id = 0
 			return false

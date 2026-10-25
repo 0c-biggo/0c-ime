@@ -112,7 +112,7 @@ func TestOpenSettingsReportsAProgramThatDiesRightAway(t *testing.T) {
 }
 
 func TestOpenSettingsRejectsExtraArguments(t *testing.T) {
-	if err := openSettings([]string{"update", "extra"}); err == nil || !strings.Contains(err.Error(), "overview|mode|candidates|keyboard|output|update|troubleshoot|about") {
+	if err := openSettings([]string{"update", "extra"}); err == nil || !strings.Contains(err.Error(), "overview|styles|mode|candidates|keyboard|output|update|troubleshoot|about") {
 		t.Fatalf("%v", err)
 	}
 }

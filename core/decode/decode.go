@@ -48,6 +48,7 @@ type Seg struct {
 
 // Lock 是使用者鎖定的區間：從某位置起 Len 個音節必須是 Word。硬條件。
 type Lock struct {
+	Segmentation    bool // Explicit word boundary: the locked word cannot merge with neighbors.
 	Word            string
 	Len             int
 	Completion      bool // 鎖定來自 Tab 補全；session 用來區分學習來源
@@ -197,7 +198,7 @@ func allowed(locks map[int]Lock, i, j int, w string) bool {
 		if s < i || s >= j || s == i && l.Word == w && l.Len == j-i {
 			continue
 		}
-		if l.LiteralBoundary == 0 && s+l.Len <= j {
+		if !l.Segmentation && l.LiteralBoundary == 0 && s+l.Len <= j {
 			if runes == nil {
 				runes = []rune(w)
 			}

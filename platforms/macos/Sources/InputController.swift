@@ -56,11 +56,23 @@ final class LingxiInputController: IMKInputController {
     private var capsMode = false
 
     private func syncCaps(_ on: Bool, client: IMKTextInput, showHint: Bool) {
+        if session.styleCapsLower {
+            guard on != capsMode || (snapshot?.capsLock ?? false) != on else { return }
+            guard send(Request(type: "caps_lock", on: on), to: client) else { return }
+            capsMode = on
+            if showHint {
+                hint.level = panel.level
+                hint.showHint(on ? "英" : "中", at: caretRect(client))
+            }
+            return
+        }
         guard on != capsMode else { return }
         if on, snapshot?.composing == true || !queued.isEmpty {
             _ = send(Request(type: "commit"), to: client)
         }
         guard send(Request(type: "mode", on: on), to: client) else { return }
+        // 冷啟動的 open 可能剛在上面取得風格能力，補同步 Caps 的來源。
+        if session.styleCapsLower, !send(Request(type: "caps_lock", on: on), to: client) { return }
         capsMode = on
         if showHint {
             hint.level = panel.level
@@ -129,7 +141,8 @@ final class LingxiInputController: IMKInputController {
             return false
         }
         guard let key = KeyMapping.key(code: event.keyCode, characters: event.characters,
-                                       modifiers: event.modifierFlags, vocabKeys: session.vocabKeys) else {
+                                       modifiers: event.modifierFlags, vocabKeys: session.vocabKeys,
+                                       styleShiftSpace: session.styleShiftSpace, capsLower: session.styleCapsLower) else {
             if !flushQueuedEnglish(to: client) { commitComposition(sender) }
             return false
         }
@@ -451,6 +464,9 @@ final class LingxiInputController: IMKInputController {
     /// 引擎無法使用：畫面上的組字照原樣留成文字，按鍵交還 App；下一個按鍵開新的 session。
     private func fail(_ error: Error, client: IMKTextInput) -> Bool {
         dropQueued()
+        // EngineSession discarded its session. Reapply held Caps Lock to the
+        // next one even when there were no queued requests to drop.
+        capsMode = false
         // Preserve the visible composition as literal text on failure, then
         // release the original key. The next key starts a fresh session.
         rendering = true

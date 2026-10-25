@@ -276,11 +276,12 @@ public:
             }
         }
         fcitx::Key typed = event.key();
+        const auto raw = event.rawKey().states();
+        const bool lower = session.english() && raw.test(fcitx::KeyState::CapsLock) && session.styleCapsLower();
+        const auto folded = zuin::foldStyleCaps(typed.sym(), raw.test(fcitx::KeyState::CapsLock),
+                                               raw.test(fcitx::KeyState::Shift), session.english(), lower);
+        if (folded != static_cast<uint32_t>(typed.sym())) { typed = fcitx::Key(static_cast<fcitx::KeySym>(folded), typed.states()); }
         if (!session.english()) {
-            // 中文模式不理 Caps Lock（#168）：字母換回沒開 Caps Lock 時的大小寫。英文模式照 Caps Lock 打大寫。
-            auto raw = event.rawKey().states();
-            auto folded = zuin::foldCaps(typed.sym(), raw.test(fcitx::KeyState::CapsLock), raw.test(fcitx::KeyState::Shift));
-            if (folded != static_cast<uint32_t>(typed.sym())) { typed = fcitx::Key(static_cast<fcitx::KeySym>(folded), typed.states()); }
             // Ctrl＋標點打全形（#168）：只在中文模式、引擎回報 ctrl_punctuation（認得鍵名而且設定開著）時送；
             // 引擎沒處理（設定剛關掉、模式不同步）就照下面的一般快捷鍵先送出組字再交給應用程式。
             auto ctrlKey = zuin::ctrlPunctKey(fcitx::Key::keySymToUnicode(typed.sym()), typed.states().test(fcitx::KeyState::Ctrl),
@@ -332,6 +333,7 @@ public:
         }
         // 按著 Shift 的 ←→、Delete、Backspace：引擎回報支援時送 0.2.0 的新鍵名（#123）；toKey 已排除 Ctrl／Alt／Super。
         // Shift 要看 rawKey：Fcitx 正規化按鍵時，有對應字元的鍵（Delete 是 U+007F、BackSpace 是 U+0008）會拿掉 Shift。
+        key = zuin::styleKey(key, event.rawKey().states().test(fcitx::KeyState::Shift), [&] { return session.styleShiftSpace(); });
         key = zuin::vocabKey(key, event.rawKey().states().test(fcitx::KeyState::Shift), [&] { return session.vocabKeys(); });
         syncContext(ic);
         zuin::Snapshot snap = session.key(key);
@@ -539,7 +541,7 @@ private:
             }
             list->setLabels(labels);
             list->setPageSize(static_cast<int>(snap.candidates.size()));
-            list->setLayoutHint(fcitx::CandidateLayoutHint::Vertical);
+            list->setLayoutHint(snap.columns > 5 ? fcitx::CandidateLayoutHint::Horizontal : fcitx::CandidateLayoutHint::Vertical);
             list->setGlobalCursorIndex(snap.highlight); // 反白由核心決定（上下鍵移動、Enter 選取）
             panel.setCandidateList(std::move(list));
         }

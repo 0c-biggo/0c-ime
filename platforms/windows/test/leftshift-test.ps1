@@ -1,5 +1,5 @@
-﻿# 左 Shift 切換中英驗收（#65、#206）：Windows 的中英切換鍵預設左右 Shift（#206），單按左 Shift 切換，按住超過 0.3 秒、
-# 按著 Shift 點滑鼠（Shift＋點選延伸選取）不切換；以 0c-update set left-shift off -apply 關掉後左 Shift 照系統原本的用途、
+﻿# 左 Shift 切換中英驗收（#65、#206、#217）：Windows 的中英切換鍵預設左右 Shift（#206），單按左 Shift 切換，按住超過 0.3 秒、
+# 按著 Shift 點滑鼠（Shift＋點選延伸選取）不切換；切換時 Shift 放開跟按下一樣交給應用程式（#217，同系統注音）；以 0c-update set left-shift off -apply 關掉後左 Shift 照系統原本的用途、
 # 放開事件交給應用程式；再以 set left-shift on -apply 開啟後，單按左 Shift 像右 Shift 一樣切換並保留組字，
 # Shift＋字母、左右同按、Ctrl／Alt＋Shift 不切換，放開後 Shift 不會卡住；Edge、Chrome 一般與無痕視窗同樣可切換；
 # 關回 off 後恢復系統行為。左 Shift 一律以 VK_LSHIFT（0xA0）與掃描碼 0x2A 送出。
@@ -157,8 +157,8 @@ public static class LeftShiftProbe {
 
  # ---- 0. 預設（#206：Windows 左右 Shift 都切換）----
  $n=$script:shiftUps;NativeFocus;LTap
- Check ($script:shiftUps -eq $n) 'default_left_shift_up_owned_by_ime' "app saw $($script:shiftUps-$n) Shift key-ups"
- Check (-not [LeftShiftProbe]::ShiftDown()) 'default_shift_not_stuck' 'Shift still down after owned key-up'
+ Check ($script:shiftUps -eq $n+1) 'default_left_shift_up_reaches_app' "app saw $($script:shiftUps-$n) Shift key-ups"
+ Check (-not [LeftShiftProbe]::ShiftDown()) 'default_shift_not_stuck' 'Shift still down after toggling key-up'
  Send 'abc';Expect 'abc' 'default_left_tap_english'
  NativeFocus;LTap;Send 'su3{ENTER}';Expect 'abc你' 'default_left_tap_back_to_zhuyin'
  ClearBox;Send 'su3{ENTER}';NativeFocus;ShiftClick;Send 'su3{ENTER}';Expect '你你' 'default_shift_click_no_toggle'
@@ -181,8 +181,8 @@ public static class LeftShiftProbe {
  # ---- 2. 開啟 ----
  SetLeftShift 'on';NativeFocus;Warmup
  $n=$script:shiftUps;NativeFocus;LTap
- Check ($script:shiftUps -eq $n) 'on_left_shift_up_owned_by_ime' "app saw $($script:shiftUps-$n) Shift key-ups"
- Check (-not [LeftShiftProbe]::ShiftDown()) 'on_shift_not_stuck' 'Shift still down after owned key-up'
+ Check ($script:shiftUps -eq $n+1) 'on_left_shift_up_reaches_app' "app saw $($script:shiftUps-$n) Shift key-ups"
+ Check (-not [LeftShiftProbe]::ShiftDown()) 'on_shift_not_stuck' 'Shift still down after toggling key-up'
  Send 'abc';Expect 'abc' 'on_tap_english_lowercase'
  Shot $form.Handle 'native-on-english' 60
  NativeFocus;LTap;Send 'su3{ENTER}';Expect 'abc你' 'on_tap_back_to_zhuyin'

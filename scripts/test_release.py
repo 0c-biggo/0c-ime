@@ -329,6 +329,39 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual({name: (self.home / name).read_bytes() for name in old}, old)
         self.assertEqual(self.user.read_text(), 'private learning')
 
+    def test_kde_icon_refresh_only_targets_installing_users_session(self):
+        with patch.object(installer.Path, 'home', return_value=self.home), \
+             patch.dict(os.environ, {'DBUS_SESSION_BUS_ADDRESS': 'unix:path=/private-test-bus'}), \
+             patch.object(installer.shutil, 'which', return_value='/usr/bin/busctl'), \
+             patch.object(installer.subprocess, 'run') as run:
+            run.return_value.returncode = 0
+            self.assertFalse(installer.refresh_kde_icons(self.home / 'other-user', run))
+            with patch.dict(os.environ, {'DBUS_SESSION_BUS_ADDRESS': ''}):
+                self.assertFalse(installer.refresh_kde_icons(self.home, run))
+            run.assert_not_called()
+            self.assertTrue(installer.refresh_kde_icons(self.home, run))
+            run.assert_called_once_with(
+                ['busctl', '--user', 'emit', '/KIconLoader', 'org.kde.KIconLoader', 'iconChanged', 'i', '0'],
+                capture_output=True, timeout=3)
+            run.reset_mock()
+            with patch.object(installer.shutil, 'which', side_effect=lambda name: '/usr/bin/dbus-send' if name == 'dbus-send' else None):
+                self.assertTrue(installer.refresh_kde_icons(self.home, run))
+            self.assertEqual(run.call_args.args[0], [
+                'dbus-send', '--session', '--type=signal', '/KIconLoader', 'org.kde.KIconLoader.iconChanged', 'int32:0'])
+            run.side_effect = subprocess.TimeoutExpired('busctl', 3)
+            self.assertFalse(installer.refresh_kde_icons(self.home, run))
+
+    def test_icon_refresh_notifies_kde_only_when_icons_change(self):
+        with patch.object(installer, 'refresh_kde_icons') as notify:
+            self.assertFalse(installer.refresh_icon_theme(self.home, installer.icon_files(self.home)))
+            notify.assert_not_called()
+            before = installer.icon_files(self.home)
+            icon = self.home / next(iter(installer.STATUS_ICONS.values()))
+            icon.parent.mkdir(parents=True, exist_ok=True)
+            icon.write_text('<svg/>')
+            self.assertTrue(installer.refresh_icon_theme(self.home, before))
+            notify.assert_called_once_with(self.home)
+
     def add_status_icons(self):
         for name in installer.STATUS_ICONS:
             target = self.bundle / name

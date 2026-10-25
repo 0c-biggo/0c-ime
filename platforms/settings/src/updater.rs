@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 /// 可以指定開啟的頁面；與 internal/settingsapp 的白名單一致（vocab 是 0.2.0 的「我的詞彙」，
 /// features.vocab 不為 true（舊版 0c-update）時畫面改開總覽；models 是 #180 的「模型」）。
 /// mode、candidates、keyboard 是 0.2.5 拆開的「中英切換」「選字」「鍵盤與符號」（#207）；舊的 input 照樣收下，畫面導到「中英切換」。
-pub const PAGES: [&str; 11] = [
-    "overview", "input", "update", "troubleshoot", "about", "vocab", "output", "models", "mode", "candidates", "keyboard",
+pub const PAGES: [&str; 12] = [
+    "overview", "input", "update", "troubleshoot", "about", "vocab", "output", "models", "mode", "candidates", "keyboard", "styles",
 ];
 
 /// 取出命令列的 `--page X`；不認得的頁面開總覽。
@@ -158,6 +158,32 @@ pub fn vocab_request_body(request: &Value) -> Result<Vec<u8>, String> {
         return Err("一次送出的內容太多，請分批加入".to_string());
     }
     Ok(body)
+}
+
+/// 輸入習慣僅允許固定動作，名稱作為一個獨立參數交給 Go 驗證與儲存。
+/// 不用 shell，也不把使用者名稱拆成旗標；選取／複製一律一次套用整份風格。
+pub fn profile_args(action: &str, id: &str, name: Option<&str>) -> Result<Vec<String>, String> {
+    if !matches!(action, "select" | "copy" | "rename" | "delete") {
+        return Err("未知的輸入習慣動作".to_string());
+    }
+    if !id.chars().next().is_some_and(|c| c.is_ascii_alphanumeric()) || id.len() > 128 || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err("輸入習慣識別碼不正確".to_string());
+    }
+    let mut out = vec!["profile".to_string(), action.to_string(), id.to_string()];
+    if matches!(action, "copy" | "rename") {
+        let name = name.ok_or("請輸入自訂習慣名稱")?.trim();
+        if name.is_empty() || name.chars().count() > 80 || name.chars().any(char::is_control) {
+            return Err("自訂習慣名稱請使用 1～80 個字，不含控制字元".to_string());
+        }
+        out.extend(["--name".to_string(), name.to_string()]);
+    } else if name.is_some() {
+        return Err("這個動作不接受名稱".to_string());
+    }
+    if matches!(action, "select" | "copy") {
+        out.push("-apply".to_string());
+    }
+    out.push("-json".to_string());
+    Ok(out)
 }
 
 /// 「讓 AI 幫你加詞」的固定動作對應到 0c-update api 的參數。埠號只在 enable 時有意義。
@@ -614,6 +640,25 @@ mod tests {
         let text = build_summary(&json!({}), &windows, "0.1.0-dev.43", 0, r"C:\Users\alice");
         assert!(!text.contains("alice"), "{text}");
         assert!(text.contains(r"~\\AppData\\Local\\Zuin\\settings.json") && text.contains("~/x"), "{text}");
+    }
+
+    #[test]
+    fn profile_actions_are_fixed_and_names_stay_single_arguments() {
+        assert_eq!(profile_args("select", "microsoft", None).unwrap(), vec!["profile", "select", "microsoft", "-apply", "-json"]);
+        assert_eq!(profile_args("copy", "custom-123", Some("  我的習慣 $(x)  ")).unwrap(),
+            vec!["profile", "copy", "custom-123", "--name", "我的習慣 $(x)", "-apply", "-json"]);
+        assert_eq!(profile_args("rename", "custom-123", Some("新名稱")).unwrap(),
+            vec!["profile", "rename", "custom-123", "--name", "新名稱", "-json"]);
+        assert_eq!(profile_args("delete", "custom-123", None).unwrap(), vec!["profile", "delete", "custom-123", "-json"]);
+        for (action, id, name) in [
+            ("exec", "zc", None), ("select", "-apply", None), ("select", "a/b", None),
+            ("select", "zc", Some("不接受")), ("copy", "zc", None), ("copy", "zc", Some(" ")),
+            ("rename", "custom-123", Some("名稱\n下一行")),
+        ] {
+            assert!(profile_args(action, id, name).is_err());
+        }
+        assert!(profile_args("copy", "zc", Some(&"字".repeat(81))).is_err());
+        assert_eq!(page_from_args(&["--page".into(), "styles".into()]), "styles");
     }
 
     #[test]

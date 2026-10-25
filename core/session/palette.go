@@ -26,6 +26,9 @@ func (s *Session) candidateID(index int) int {
 
 func (s *Session) candidateColumns() int {
 	columns := s.CandidateColumns
+	if s.styleGrid {
+		columns = 5
+	}
 	if s.cand != nil {
 		switch s.cand.kind {
 		case "emoji":
@@ -36,7 +39,13 @@ func (s *Session) candidateColumns() int {
 			columns = 1
 		}
 	}
-	columns = max(1, min(columns, s.selectionKeyColumns()))
+	limit := s.selectionKeyColumns()
+	// A horizontal row uses the entire page. Named palettes keep their own
+	// compact grid, even when ordinary word candidates use a horizontal row.
+	if columns > 5 {
+		limit = s.pageSize()
+	}
+	columns = max(1, min(columns, limit))
 	if s.displayColumns > 0 {
 		columns = min(columns, s.displayColumns)
 	}
@@ -46,8 +55,8 @@ func (s *Session) candidateColumns() int {
 func (s *Session) gridMove(key string) {
 	c := s.cand
 	cols := s.candidateColumns()
-	lo := c.page() * perPage
-	hi := min(lo+perPage, len(c.items))
+	lo := s.candidatePage() * s.pageSize()
+	hi := min(lo+s.pageSize(), len(c.items))
 	at := c.cursor - lo
 	switch key {
 	case proto.KeyLeft:
@@ -63,8 +72,8 @@ func (s *Session) gridMove(key string) {
 			c.cursor -= cols
 		} else if lo > 0 {
 			// Previous page's last row, keeping the visual column when present.
-			previous := lo - perPage
-			c.cursor = min(previous+(perPage-1)/cols*cols+at%cols, lo-1)
+			previous := lo - s.pageSize()
+			c.cursor = min(previous+(s.pageSize()-1)/cols*cols+at%cols, lo-1)
 		} else {
 			c.cursor = 0
 			s.moveHighlight(-1)

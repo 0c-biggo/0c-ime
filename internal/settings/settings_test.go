@@ -15,7 +15,7 @@ import (
 func TestDefaultsMissingFieldsAndRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := Path(filepath.Join(dir, "user.json"))
-	if s, err := Load(path); err != nil || s != Default() || s.Selection != Neural || s.Punctuation || !s.DocumentContext {
+	if s, err := Load(path); err != nil || s != freshSettings() || s.Selection != Neural || s.Punctuation || !s.DocumentContext {
 		t.Fatalf("缺檔應回預設值：%+v %v", s, err)
 	}
 	os.WriteFile(path, []byte(`{"selection":"statistical"}`), 0o600)
@@ -280,7 +280,7 @@ func TestFutureFieldsAndValuesSurviveSave(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(path)
-	for _, want := range []string{`"selection": "remote"`, `"punctuation": false`, `"document_context": false`, `"sync"`, `"enabled": true`, `"zeta"`, `"schema": 1`} {
+	for _, want := range []string{`"selection": "remote"`, `"punctuation": false`, `"document_context": false`, `"sync"`, `"enabled": true`, `"zeta"`, `"schema": 2`} {
 		if !strings.Contains(string(b), want) {
 			t.Errorf("存檔應包含 %s：%s", want, b)
 		}
@@ -328,7 +328,7 @@ func TestUnusableBoolValueIsKeptUntilSet(t *testing.T) {
 // schema 比本版新（或不是整數）：可以讀，但不覆寫，檔案內容不變。
 func TestNewerSchemaIsReadOnly(t *testing.T) {
 	for _, body := range []string{
-		`{"schema":2,"selection":"statistical","future":"x"}`,
+		`{"schema":3,"selection":"statistical","future":"x"}`,
 		`{"schema":"v2","selection":"statistical"}`,
 	} {
 		path := filepath.Join(t.TempDir(), FileName)
@@ -338,8 +338,8 @@ func TestNewerSchemaIsReadOnly(t *testing.T) {
 			t.Fatalf("%s：可讀、標記只讀：%+v %v", body, r, err)
 		}
 		s := r.Settings
-		if err = s.Set("punctuation", "off"); err != nil {
-			t.Fatal(err)
+		if err = s.Set("punctuation", "off"); !errors.Is(err, ErrReadOnly) {
+			t.Fatalf("唯讀設定應拒絕修改：%v", err)
 		}
 		if err = Save(path, s); !errors.Is(err, ErrReadOnly) {
 			t.Fatalf("%s：應拒絕覆寫：%v", body, err)
@@ -370,7 +370,7 @@ func TestSaveWritesSchemaFirstInStableOrder(t *testing.T) {
 	b, _ := os.ReadFile(path)
 	text := string(b)
 	last := -1
-	for _, key := range []string{`"schema": 1`, `"selection"`, `"punctuation"`, `"document_context"`} {
+	for _, key := range []string{`"schema": 2`, `"selection"`, `"punctuation"`, `"document_context"`} {
 		at := strings.Index(text, key)
 		if at <= last {
 			t.Fatalf("%s 應依固定順序出現：%s", key, text)
@@ -410,7 +410,7 @@ func TestCorruptFileIsReportedAndCanBeQuarantined(t *testing.T) {
 func TestItemsListEveryKeyWithCurrentValue(t *testing.T) {
 	s := Default()
 	items := s.Items()
-	want := 21 + len(fuzzy.Pairs()) // 含 simplified-hotkey（#192）、toneless（#150）
+	want := 21 + len(fuzzy.Pairs()) + len(ruleSpecs()) // 含 simplified-hotkey（#192）、toneless（#150）
 	if CapsLockEnglishSetting(runtime.GOOS) {
 		want++ // caps-lock-english（#173）只有 Windows、Linux
 	}

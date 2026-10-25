@@ -21,6 +21,11 @@ std::string vocabKey(const std::string &key, bool shiftOnly, Supported &&support
     return renamed;
 }
 
+template <class Supported>
+std::string styleKey(const std::string &key, bool shift, Supported &&supported) {
+    return key == " " && shift && supported() ? "ShiftSpace" : key;
+}
+
 // foldCaps：中文模式不理 Caps Lock（#168，同常見注音輸入法與 ibus-chewing），ASCII 字母換回沒開 Caps Lock 時的大小寫：
 // 沒按 Shift 是小寫注音鍵，Shift＋字母照舊是大寫。caps、shift 要看 rawKey（Fcitx 正規化按鍵時拿掉 CapsLock 與字母的 Shift）。
 // 英文模式不呼叫，照 Caps Lock 打大寫。
@@ -29,6 +34,11 @@ inline uint32_t foldCaps(uint32_t sym, bool caps, bool shift) {
     if (!caps || !(lower || upper)) { return sym; }
     return shift ? (sym & ~0x20u) : (sym | 0x20u);
 }
+
+inline uint32_t foldStyleCaps(uint32_t sym, bool caps, bool shift, bool english, bool lower) {
+    return !english || lower ? foldCaps(sym, caps, shift) : sym;
+}
+
 
 // ctrlPunctKey：只按著 Ctrl（可以加 Shift，沒有 Alt／Super／Hyper）的 , . ' ; ? ! 換成協定的 Ctrl＋標點鍵名（#168）。
 // unicode 是已經套用 Shift 的字元（Ctrl+Shift+/ 是 ?），其他鍵回傳空字串。

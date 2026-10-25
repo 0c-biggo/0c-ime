@@ -1035,8 +1035,29 @@ def icon_files(home):
             for path in root.rglob("0c-*") if path.is_file() and not path.is_symlink()}
 
 
+def refresh_kde_icons(home, run=subprocess.run):
+    """通知目前工作階段的 KIconLoader 重新掃描圖示目錄（#227）。
+
+    KDE 在載入主題時記住當時存在的目錄，首次安裝才建立的 scalable/status 不會因 touch
+    hicolor 被加入。使用與 KIconLoader::emitChange 相同的廣播；不啟動桌面服務、不改主題。
+    安裝到別的 --home 或沒有工作階段匯流排時，不影響目前使用者的桌面。
+    """
+    if home.resolve() != Path.home().resolve() or not os.environ.get("DBUS_SESSION_BUS_ADDRESS"):
+        return False
+    try:
+        if shutil.which("busctl"):
+            return run(["busctl", "--user", "emit", "/KIconLoader", "org.kde.KIconLoader", "iconChanged", "i", "0"],
+                       capture_output=True, timeout=3).returncode == 0
+        if shutil.which("dbus-send"):
+            return run(["dbus-send", "--session", "--type=signal", "/KIconLoader", "org.kde.KIconLoader.iconChanged", "int32:0"],
+                       capture_output=True, timeout=3).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        pass  # 圖示通知失敗不應回復已成功的安裝
+    return False
+
+
 def refresh_icon_theme(home, before):
-    """自有圖示有增刪改時，讓登入中的 GNOME Shell 重讀圖示主題。
+    """自有圖示有增刪改時，讓登入中的 GNOME Shell／KDE 重讀圖示主題。
 
     GNOME Shell 只在應用程式清單變動時、依 hicolor 目錄本身的時間判斷要不要重讀；只換 scalable/status
     裡的檔案，工作階段會一直沿用登入時的結果。dev.51 刪掉單色圖後，在那之前登入的桌面還照舊選它，
@@ -1051,6 +1072,7 @@ def refresh_icon_theme(home, before):
                 os.utime(path)
             except OSError:
                 pass  # 只影響登入中的桌面何時換圖，不影響安裝結果
+    refresh_kde_icons(home)
     return True
 
 

@@ -114,8 +114,15 @@ func toKey(keyval, state uint32) string {
 	return ""
 }
 
+func styleKey(key string, shift bool, supported func() bool) string {
+	if key == " " && shift && supported() {
+		return "ShiftSpace"
+	}
+	return key
+}
+
 // foldCaps：中文模式不理 Caps Lock（#168，同常見注音輸入法與 ibus-chewing 的 self_key_sym_fix），字母換回沒開 Caps Lock 時的
-// 大小寫：沒按 Shift 是小寫注音鍵，Shift＋字母照舊是大寫。英文模式不呼叫，照 Caps Lock 打大寫。
+// 大小寫：沒按 Shift 是小寫注音鍵，Shift＋字母照舊是大寫。小麥 Caps 風格也沿用此規則；其他英文風格保留 OS 大小寫。
 func foldCaps(keyval, state uint32) uint32 {
 	if state&maskLock == 0 || !(keyval >= 'a' && keyval <= 'z' || keyval >= 'A' && keyval <= 'Z') {
 		return keyval
@@ -124,6 +131,15 @@ func foldCaps(keyval, state uint32) uint32 {
 		return keyval &^ 0x20
 	}
 	return keyval | 0x20
+}
+
+// A lower-case Caps style uses Shift for upper-case letters even when the OS
+// already inverted Caps+Shift to lower-case. Other English styles keep OS case.
+func foldStyleCaps(keyval, state uint32, english, lower bool) uint32 {
+	if !english || lower {
+		return foldCaps(keyval, state)
+	}
+	return keyval
 }
 
 // ctrlPunctKey：只按著 Ctrl（可以加 Shift，沒有 Alt／Super 等）的 , . ' ; ? ! 換成協定的 Ctrl＋標點鍵名（#168）。
@@ -300,8 +316,9 @@ func (e *engine) processKey(keyval, keycode, state uint32) bool {
 	} else {
 		e.syncCaps(state&maskLock != 0, true)
 	}
+	lower := e.session.english && state&maskLock != 0 && e.session.styleCapsLower()
+	keyval = foldStyleCaps(keyval, state, e.session.english, lower)
 	if !e.session.english {
-		keyval = foldCaps(keyval, state)
 		// Ctrl＋標點打全形（#168）：只在中文模式、引擎回報 ctrl_punctuation（認得鍵名而且設定開著）時送；
 		// 引擎沒處理（設定剛關掉、模式不同步）就照下面的一般快捷鍵先送出組字再交給應用程式。
 		if k := ctrlPunctKey(keyval, state); k != "" && e.session.ctrlPunct() {
@@ -314,6 +331,7 @@ func (e *engine) processKey(keyval, keycode, state uint32) bool {
 		}
 	}
 	key := toKey(keyval, state)
+	key = styleKey(key, state&maskShift != 0, e.session.styleShiftSpace)
 	// 按著 Shift 的 ←→、Delete、Backspace：引擎回報支援時送 0.2.0 的新鍵名（#123）。
 	key = vocabKey(key, state&maskShift != 0, e.session.vocabKeys)
 	if key == "" {
@@ -441,7 +459,7 @@ func (e *engine) setTable(items, labels []string, cursor int) {
 		return
 	}
 	e.table, e.tableAt = items, cursor
-	e.emit("UpdateLookupTable", newLookupTable(items, labels, cursor), len(items) > 0)
+	e.emit("UpdateLookupTable", newLookupTable(items, labels, cursor, e.session != nil && e.session.info["candidate_layout"] == "horizontal"), len(items) > 0)
 }
 
 func equalStrings(a, b []string) bool {

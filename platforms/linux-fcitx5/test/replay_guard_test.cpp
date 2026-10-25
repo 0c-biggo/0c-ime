@@ -1,6 +1,7 @@
 // 使用真 C++ Session/IPC 對照重播前後文字，不依賴 trace 或桌面服務。
 #include "../src/session.h"
 #include <cassert>
+#include <atomic>
 #include <cstring>
 #include <thread>
 #include <sys/socket.h>
@@ -81,4 +82,44 @@ static void run(const std::string &action) {
     assert(commits == ((action == "commit" || action == "cancel") ? 0 : 1));
 }
 
-int main() { for (const auto &action : {"enter", "context", "commit", "cancel"}) { run(action); } }
+static void styleHandoff(const std::string &first) {
+    std::string path = "/tmp/0c-style-handoff-" + std::to_string(getpid()) + "-" + first + ".sock";
+    int listener = socket(AF_UNIX, SOCK_STREAM, 0); assert(listener >= 0);
+    sockaddr_un address{}; address.sun_family = AF_UNIX; std::strcpy(address.sun_path, path.c_str());
+    assert(bind(listener, reinterpret_cast<sockaddr *>(&address), sizeof(address)) == 0);
+    assert(listen(listener, 2) == 0);
+    std::atomic<int> retired{0};
+    std::thread server([&]() {
+        for (int generation = 0; generation < 3; generation++) {
+            int fd = accept(listener, nullptr, nullptr); assert(fd >= 0);
+            bool enabled = generation == 1;
+            json info = {{"input_style_shift_space", enabled ? "fullwidth" : "disabled"},
+                         {"input_style_caps_letter", enabled ? "lower" : "platform"},
+                         {"left_shift", enabled ? "true" : "false"}, {"right_shift", enabled ? "true" : "false"}};
+            json request;
+            while (receive(fd, request)) {
+                auto op = request.value("op", "");
+                send(fd, {{"ok", true}, {"session", generation + 1}, {"info", info}});
+                if (op == "test_restart" || op == "close") { break; }
+            }
+            shutdown(fd, SHUT_RDWR); close(fd); retired.store(generation + 1);
+        }
+    });
+    {
+        zuin::Client client(path, "/bin/false"); zuin::Session session(client);
+        assert(!session.styleShiftSpace() && !session.styleCapsLower());
+        for (int generation = 1; generation < 3; generation++) {
+            json reply; assert(client.call({{"op", "test_restart"}}, reply));
+            while (retired.load() < generation) { std::this_thread::yield(); }
+            bool got = first == "space" ? session.styleShiftSpace() :
+                       first == "caps" ? session.styleCapsLower() : session.shiftKeys().left;
+            assert(got == (generation == 1));
+        }
+    }
+    server.join(); close(listener); unlink(path.c_str());
+}
+
+int main() {
+    for (const auto &action : {"enter", "context", "commit", "cancel"}) { run(action); }
+    for (const auto &first : {"space", "caps", "shift"}) { styleHandoff(first); }
+}

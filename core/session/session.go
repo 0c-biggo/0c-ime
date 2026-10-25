@@ -14,6 +14,7 @@ import (
 	"github.com/0c-biggo/0c-ime/core/english"
 	"github.com/0c-biggo/0c-ime/core/fuzzy"
 	"github.com/0c-biggo/0c-ime/core/input"
+	"github.com/0c-biggo/0c-ime/core/inputstyle"
 	"github.com/0c-biggo/0c-ime/core/layout"
 	"github.com/0c-biggo/0c-ime/core/personal"
 	"github.com/0c-biggo/0c-ime/core/proto"
@@ -49,7 +50,7 @@ type candState struct {
 	single int
 }
 
-func (c *candState) page() int { return c.cursor / perPage }
+func (s *Session) candidatePage() int { return s.cand.cursor / s.pageSize() }
 
 // span 回報第 id 項候選替換的組字範圍：混合清單的單字項目只替換游標那個字。
 func (c *candState) span(id int) (start, length int) {
@@ -89,6 +90,11 @@ func DefaultOptions() Options {
 }
 
 type Session struct {
+	styleCycle   *candState
+	InputStyle   inputstyle.Rules
+	fullWidth    bool
+	symbolPrefix bool
+	styleGrid    bool
 	// Rerank 由宿主在第一次 Handle 前設定；零值保持原引擎。
 	Rerank rerank.Options
 	// Punct 由宿主設定：提交時補標點（只插入、不改原字）；nil 停用。私人／暫停／英數狀態一律不送出文字。
@@ -233,13 +239,19 @@ func (s *Session) emojiEquals() bool {
 	return s.EmojiShortcut == "equals" && !phonetic
 }
 
-func (s *Session) composing() bool { return len(s.syls) > 0 || !s.comp.Empty() || s.mixed.raw != "" }
+func (s *Session) composing() bool {
+	return s.symbolPrefix || len(s.syls) > 0 || !s.comp.Empty() || s.mixed.raw != ""
+}
 
 // Composing 回報是否有未提交的組字；引擎交接只在沒有組字時進行。
 func (s *Session) Composing() bool { return s.composing() || s.cand != nil }
 
 // Handle 處理一個請求並回傳完整快照。
 func (s *Session) Handle(r proto.Request) proto.Snapshot {
+	cycleKey := r.Type == proto.Key && ((s.InputStyle.Tab == "cycle" && (r.Key == proto.KeyTab || r.Key == proto.KeyBackTab)) || s.InputStyle.Up == "cycle" && r.Key == proto.KeyUp)
+	if !cycleKey && r.Type != proto.Context && r.Type != proto.Display {
+		s.styleCycle = nil
+	}
 	if r.Type == proto.OutputSimplified {
 		// #169：引擎已換好所有 session 的 Simplified。切換是全域設定、不是對這個輸入框的操作：
 		// 不能清掉下面這些只跟著按鍵的狀態（Shift 誤觸還原、Tab 修正的撤銷、加詞標示……）。
@@ -291,7 +303,7 @@ func (s *Session) Handle(r proto.Request) proto.Snapshot {
 	case proto.Context:
 		s.confirmDocumentContext(r)
 	case proto.Display:
-		if r.Columns >= 1 && r.Columns <= 5 {
+		if r.Columns >= 1 && r.Columns <= 10 {
 			s.displayColumns = r.Columns
 		}
 	case proto.Key:
@@ -312,7 +324,7 @@ func (s *Session) Handle(r proto.Request) proto.Snapshot {
 		s.openCandidates(r.Length)
 	case proto.Page:
 		if s.cand != nil && r.Index >= 0 && r.Index < s.pages() {
-			s.cand.cursor = r.Index * perPage
+			s.cand.cursor = r.Index * s.pageSize()
 		}
 	case proto.Select:
 		if !s.selectCandidate(r.Index) {
@@ -415,6 +427,7 @@ func (s *Session) status(snap *proto.Snapshot) {
 // setMode 切換中英模式（單按 Shift、外殼設定模式、Caps Lock）。切到英文清掉未打完的注音（#90），已組好的字與游標保留；
 // 切換本身也關閉候選。restore 是外殼確認中間沒有任何操作就立即切回注音：把剛清掉的注音放回原處（防誤觸）。
 func (s *Session) setMode(english, restore bool, stash *pendingStash) {
+	s.symbolPrefix = false
 	if english && !s.english {
 		s.finishUntoned() // 聲調選填：已是完整音節的注音留在組字區，不當成打到一半清掉（#150）
 		s.toggleStash = s.clearPendingZhuyin()
@@ -463,7 +476,6 @@ func (s *Session) CapsLockOn() bool { return s.capsLock }
 func (s *Session) EnglishMode() bool { return s.english }
 
 func (s *Session) key(k string) (handled bool, commit string) {
-	k = s.normalizeVocabKey(k) // #123 的新鍵名在沒有對應功能時就是原本的鍵
 	if s.paletteUndo != nil && k != proto.KeyBackspace {
 		s.paletteUndo = nil
 	}
@@ -473,6 +485,10 @@ func (s *Session) key(k string) (handled bool, commit string) {
 	s.retypeLiteral = false
 	run := s.untonedRun // 聲調選填時連續打的注音鍵（#150）：只有緊接著的這一鍵能接續
 	s.untonedRun = nil
+	if handled, commit, done := s.styleKey(k); done {
+		return handled, commit
+	}
+	k = s.normalizeVocabKey(k) // #123 的新鍵名在沒有對應功能時就是原本的鍵
 	// 數字鍵盤永遠不是注音鍵（#75）：英文模式與候選選號同主鍵盤數字；沒在組字交還應用程式；
 	// 組字中以半形插在游標處，未打完的注音保留成符號（同 Shift＋字母）。
 	if c, ok := proto.KeypadChar(k); ok {
@@ -525,10 +541,19 @@ func (s *Session) key(k string) (handled bool, commit string) {
 			s.cand = nil // 關閉候選、保留組字；Backspace／Del 不刪字（#106）
 		case proto.KeyEnter:
 			s.selectCandidate(s.candidateID(s.cand.cursor))
-		case proto.KeyPageDown, " ":
-			s.cand.cursor = (s.cand.page() + 1) % s.pages() * perPage
+			if s.InputStyle.CandidateEnter == "commit" {
+				return true, s.commit()
+			}
+		case " ":
+			if s.InputStyle.CandidateSpace == "select" {
+				s.selectCandidate(s.candidateID(s.cand.cursor))
+			} else {
+				s.cand.cursor = (s.candidatePage() + 1) % s.pages() * s.pageSize()
+			}
+		case proto.KeyPageDown:
+			s.cand.cursor = (s.candidatePage() + 1) % s.pages() * s.pageSize()
 		case proto.KeyPageUp:
-			s.cand.cursor = (s.cand.page() + s.pages() - 1) % s.pages() * perPage
+			s.cand.cursor = (s.candidatePage() + s.pages() - 1) % s.pages() * s.pageSize()
 		case proto.KeyDown:
 			if s.candidateColumns() > 1 {
 				s.gridMove(k)
@@ -545,19 +570,26 @@ func (s *Session) key(k string) (handled bool, commit string) {
 			if s.candidateColumns() > 1 {
 				s.gridMove(k)
 			} else if k == proto.KeyRight {
-				s.cand.cursor = (s.cand.page() + 1) % s.pages() * perPage
+				s.cand.cursor = (s.candidatePage() + 1) % s.pages() * s.pageSize()
 			} else {
-				s.cand.cursor = (s.cand.page() + s.pages() - 1) % s.pages() * perPage
+				s.cand.cursor = (s.candidatePage() + s.pages() - 1) % s.pages() * s.pageSize()
 			}
 		case proto.KeyHome:
 			s.cand.cursor = 0 // 第一個候選（#106）
 		case proto.KeyEnd:
 			s.cand.cursor = len(s.cand.items) - 1 // 清單的最後一個候選（混合清單是單字的原樣注音）
 		case proto.KeyTab:
-			s.nextCandidateLength() // 不必走過所有單字候選才能改選長詞
+			switch s.InputStyle.CandidateTab {
+			case "grid":
+				s.styleGrid = true
+			case "next":
+				s.moveHighlight(1)
+			default:
+				s.nextCandidateLength()
+			}
 		default:
 			if n := s.selectionIndex(k); n >= 0 {
-				s.selectCandidate(s.candidateID(s.cand.page()*perPage + n))
+				s.selectCandidate(s.candidateID(s.candidatePage()*s.pageSize() + n))
 			} else if k == "j" { // 選字鍵優先：asdfghjkl; 時上面已選字（#193）
 				s.stepCandidate(-1)
 			} else if k == "k" {
@@ -960,6 +992,9 @@ func (s *Session) signature() string {
 	sort.Ints(starts)
 	for _, st := range starts {
 		fmt.Fprintf(&b, "%d:%s:%d:%v:%d:%s;", st, s.locks[st].Word, s.locks[st].Len, s.locks[st].Completion, s.locks[st].LiteralBoundary, s.locks[st].Matched)
+		if s.locks[st].Segmentation {
+			b.WriteString("seg;")
+		}
 	}
 	for i := range s.syls {
 		if s.literals[i] {
@@ -1013,6 +1048,7 @@ func (s *Session) refresh() {
 }
 
 func (s *Session) openCandidates(length int) {
+	s.styleGrid = false
 	if s.englishWord {
 		s.englishDismissed = false
 		s.cand = nil
@@ -1046,7 +1082,16 @@ func (s *Session) openCandidates(length int) {
 		for _, r := range s.syls[start:end] {
 			text.WriteString(string(r))
 		}
-		s.openSymbols(s.literalKeyAlternatives(symbolAlternatives(text.String()), start, end-start), start, end-start, false)
+		alternatives := symbolAlternatives(text.String())
+		if (s.InputStyle.Punctuation == "standard" || s.InputStyle.Punctuation == "chewing") && (text.String() == "＼" || text.String() == "／") {
+			alternatives = []string{text.String()}
+			if text.String() == "＼" {
+				alternatives = append(alternatives, "／")
+			} else {
+				alternatives = append(alternatives, "＼")
+			}
+		}
+		s.openSymbols(s.literalKeyAlternatives(alternatives, start, end-start), start, end-start, false)
 		return
 	}
 	anchor := pos
@@ -1259,7 +1304,7 @@ func (s *Session) openAt(pos, length int) bool {
 	return true
 }
 
-func (s *Session) pages() int { return (len(s.cand.items) + perPage - 1) / perPage }
+func (s *Session) pages() int { return (len(s.cand.items) + s.pageSize() - 1) / s.pageSize() }
 
 // 候選開啟時 Tab 切至下一個較長詞長，最長後回到最短；不接受補全或提交。
 func (s *Session) nextCandidateLength() {
@@ -1524,8 +1569,11 @@ func (s *Session) punctuate(text string) string {
 }
 
 func (s *Session) reset() {
+	s.styleCycle = nil
 	s.englishWord, s.englishDismissed, s.englishTokenBlocked = false, false, false
 	s.paletteUndo = nil
+	s.symbolPrefix = false
+	s.styleGrid = false
 	s.mark = nil
 	s.phonetic, s.phoneticUndo = nil, nil
 	s.phoneticCache = phoneticHintCache{}
@@ -1551,8 +1599,11 @@ func (s *Session) reset() {
 }
 
 func (s *Session) snapshot() proto.Snapshot {
-	snap := proto.Snapshot{Revision: s.rev, EnglishAutocomplete: s.EnglishAutocomplete, EnglishPending: s.englishWord, EnglishCanStart: s.englishCanStart()}
+	snap := proto.Snapshot{FullWidth: s.fullWidth, Revision: s.rev, EnglishAutocomplete: s.EnglishAutocomplete, EnglishPending: s.englishWord, EnglishCanStart: s.englishCanStart()}
 	pending := s.comp.String()
+	if s.symbolPrefix {
+		pending += "`"
+	}
 	if s.mixed.raw != "" {
 		pending = s.mixedText()
 	}
@@ -1644,7 +1695,7 @@ func (s *Session) snapshot() proto.Snapshot {
 	if s.cand != nil {
 		// 範圍跟著反白：混合清單反白單字時，外殼標示與標題都只指游標那個字（#161）。
 		start, length := s.cand.span(s.cand.cursor)
-		cl := &proto.CandidateList{Page: s.cand.page(), Pages: s.pages(), Start: start, Length: length, Highlight: s.cand.cursor % perPage, Columns: s.candidateColumns(), Kind: s.cand.kind}
+		cl := &proto.CandidateList{Page: s.candidatePage(), Pages: s.pages(), Start: start, Length: length, Highlight: s.cand.cursor % s.pageSize(), Columns: s.candidateColumns(), Kind: s.cand.kind}
 		if cl.Columns == 1 {
 			cl.Columns = 0
 		}
@@ -1659,8 +1710,8 @@ func (s *Session) snapshot() proto.Snapshot {
 		}
 		// 選字鍵含 j、k（asdfghjkl;）時它們是選字，不是換字。
 		cl.StepKeys = s.canStepCandidate() && s.selectionIndex("j") < 0 && s.selectionIndex("k") < 0
-		lo := s.cand.page() * perPage
-		for id := lo; id < min(lo+perPage, len(s.cand.items)); id++ {
+		lo := s.candidatePage() * s.pageSize()
+		for id := lo; id < min(lo+s.pageSize(), len(s.cand.items)); id++ {
 			item := proto.CandidateItem{ID: s.candidateID(id), Text: s.cand.items[id].Entry.Surface}
 			if s.cand.kind == "phrases" {
 				item.Text = phraseLabel(item.Text)

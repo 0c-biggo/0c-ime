@@ -339,7 +339,7 @@ fn grid_row(m: &UiMessage, width: i32, t: &Theme, hdc: HDC) -> i32 {
 }
 
 fn grid_size(m: &UiMessage, max_width: i32, t: &Theme, hdc: HDC) -> (i32, i32) {
-    let columns = m.columns.clamp(1, 5) as i32;
+    let columns = m.columns.clamp(1, 10) as i32;
     let cell = m
         .candidates
         .iter()

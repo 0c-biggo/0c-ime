@@ -410,13 +410,22 @@ func (s *Session) finishMixedTone(key string) bool {
 		}
 	}
 	if key != " " && s.mixed.choice == 0 && (s.digitToneNumber(raw, sym) || s.numberAfterLiteral(raw, key) ||
-		s.englishThenNumber(raw, key) || s.rareDigitReading(raw, sym)) {
+		s.rareDigitReading(raw, sym)) {
+		return false
+	}
+	// #119：緊接中文的完整反序音節（摺＋u2,6 → 摺疊）不拆成英文 u＋數字 2,6。
+	// 句首、空白或英文後仍保留 #200 的數字寫法；也不放寬後面的英→中切分。
+	englishNumber := key != " " && s.mixed.choice == 0 && s.englishThenNumber(raw, key)
+	if englishNumber && !s.mixedAfterChinese() {
 		return false
 	}
 	if done, ok := s.mixedReading(raw, sym); ok {
 		s.clearMixed()
 		s.insertMixedTyped(done, raw+key)
 		return true
+	}
+	if englishNumber {
+		return false
 	}
 	// A tone can resolve an unseparated English→Chinese boundary: helloji3.
 	// A complete English word keeps its space instead (#59: hell+o → ㄟ), and

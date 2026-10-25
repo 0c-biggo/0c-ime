@@ -77,10 +77,11 @@ func retireMacShells(current string, wait time.Duration, whenAway bool) (int, []
 // listMacShells、macShellControl、userAway、launchMacShell 測試替換用：go test 不結束、不啟動這台機器上真的輸入法程式
 // （isolate_darwin_test.go）。
 var (
-	listMacShells   = runningMacShells
-	macShellControl = darwinShellControl
-	userAway        = macUserAway
-	launchMacShell  = openMacShell
+	listMacShells    = runningMacShells
+	observeMacShells = runningMacShellsChecked
+	macShellControl  = darwinShellControl
+	userAway         = macUserAway
+	launchMacShell   = openMacShell
 )
 
 // ioregTimeout：ioreg 平常幾十毫秒；卡住時當成查不到（人還在、沒停手），不讓交接或排程一直等下去。
@@ -142,31 +143,53 @@ func macShellRoots() []string {
 }
 
 func runningMacShells(current string) []uiProcess {
+	list, _ := runningMacShellsChecked(current)
+	return list
+}
+
+// 排程接管必須區分「沒有舊外殼」與「觀察失敗」，不能把 ps/lsof 失敗當成已退場。
+func runningMacShellsChecked(current string) ([]uiProcess, error) {
 	uid := strconv.Itoa(os.Getuid())
 	// 先取參數再取執行檔：兩次之間才出現的程序沒有參數紀錄，一律不碰。
-	argsOut, err := exec.Command("/bin/ps", "-U", uid, "-o", "pid=,args=").Output()
+	argsOut, err := macShellOutput("/bin/ps", "-U", uid, "-o", "pid=,args=")
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	commOut, err := exec.Command("/bin/ps", "-U", uid, "-o", "pid=,comm=").Output()
+	commOut, err := macShellOutput("/bin/ps", "-U", uid, "-o", "pid=,comm=")
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	var inode uint64
 	if current != "" {
 		info, err := os.Stat(current)
 		if err != nil {
-			return nil
+			return nil, err
 		}
 		inode = info.Sys().(*syscall.Stat_t).Ino
 	}
-	return retirableMacShells(macShellProcesses(string(commOut)), psArgs(string(argsOut)), macShellRoots(), current, func(pid string) (bool, error) {
-		out, err := exec.Command("/usr/sbin/lsof", "-a", "-p", pid, "-d", "txt", "-F", "fni").Output()
+	procs, args, roots := macShellProcesses(string(commOut)), psArgs(string(argsOut)), macShellRoots()
+	for _, p := range procs {
+		if _, known := args[p.PID]; !known && underAny(p.Exe, roots) {
+			return nil, fmt.Errorf("外殼程序觀察中有變動")
+		}
+	}
+	var observationError error
+	list := retirableMacShells(procs, args, roots, current, func(pid string) (bool, error) {
+		out, err := macShellOutput("/usr/sbin/lsof", "-a", "-p", pid, "-d", "txt", "-F", "fni")
 		if err != nil {
+			observationError = err
 			return false, err
 		}
 		return mappedMacShell(string(out), current, inode), nil
 	})
+	return list, observationError
+}
+
+// 一次 status 最多等五秒；個別系統查詢設更短上限，未知時下次既有喚起再試。
+func macShellOutput(name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, name, args...).Output()
 }
 
 // psArgs 把 `ps -o pid=,args=` 的輸出整理成 PID → 完整命令列。

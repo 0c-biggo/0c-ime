@@ -16,7 +16,7 @@ SWIFTC ?= xcrun swiftc
 SWIFTFLAGS := -swift-version 5 -O -target $(shell uname -m)-apple-macosx13.0
 SHARED := Sources/Protocol.swift Sources/MarkedText.swift Sources/EngineClient.swift Sources/KeyMapping.swift Sources/ModelStatus.swift Sources/CaretGeometry.swift Sources/RequestQueue.swift Sources/SecureInputPolicy.swift Sources/RightShift.swift
 
-.PHONY: all app server test test-request-queue test-input-source test-retire test-ui test-update-ui test-update-notification test-settings-launcher data-basic install clean icon
+.PHONY: all app server test test-controller-recovery test-request-queue test-input-source test-retire test-ui test-update-ui test-update-notification test-settings-launcher data-basic install clean icon
 all: app
 
 $(BUILD)/0c: $(wildcard Sources/*.swift)
@@ -92,8 +92,21 @@ $(BUILD)/integration-test: $(SHARED) Tests/main.swift
 	@mkdir -p $(BUILD)
 	$(SWIFTC) $(SWIFTFLAGS) -framework AppKit -framework Carbon $^ -o $@
 
-test: $(BUILD)/integration-test server test-input-source test-request-queue test-retire
+test: $(BUILD)/integration-test server test-input-source test-request-queue test-retire test-controller-recovery
 	$(BUILD)/integration-test "$(abspath $(BUILD)/0c-server)" "$(abspath $(ROOT)/testdata/toy)"
+
+# Same controller/IPC implementation with headless host adapters; no IMK
+# registration, desktop event injection, installation or real user data.
+$(BUILD)/controller-recovery/InputController.swift: Sources/InputController.swift Tests/ControllerRecovery/prepare.py
+	@mkdir -p "$(dir $@)"
+	python3 Tests/ControllerRecovery/prepare.py $< $@
+
+$(BUILD)/controller-recovery-test: $(filter-out Sources/ModelStatus.swift,$(SHARED)) $(BUILD)/controller-recovery/InputController.swift Tests/ControllerRecovery/Host.swift Tests/ControllerRecovery/main.swift
+	@mkdir -p $(BUILD)
+	$(SWIFTC) $(SWIFTFLAGS) -framework AppKit -framework Carbon $^ -o $@
+
+test-controller-recovery: $(BUILD)/controller-recovery-test server
+	python3 Tests/ControllerRecovery/run.py "$(abspath $(BUILD)/0c-server)" "$(abspath $(ROOT)/testdata/toy)" "$(abspath $(BUILD)/controller-recovery-test)"
 
 $(BUILD)/request-queue-test: Sources/Protocol.swift Sources/RequestQueue.swift Tests/RequestQueue/main.swift
 	@mkdir -p $(BUILD)

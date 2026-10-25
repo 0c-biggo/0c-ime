@@ -73,7 +73,7 @@ func TestLinuxSettingsFallbackThenSaveToNewPath(t *testing.T) {
 func TestLinuxSettingsFreshInstallAndCustomPaths(t *testing.T) {
 	path, _ := linuxPaths(t)
 	r, err := Read(path)
-	if err != nil || r.Path != path || r.State != StateMissing || r.Settings != Default() {
+	if err != nil || r.Path != path || r.State != StateMissing || r.Settings != freshSettings() {
 		t.Fatalf("fresh read: %+v %v", r, err)
 	}
 	if err := Save(path, r.Settings); err != nil {

@@ -40,7 +40,7 @@ const (
 	applyNotRequested  = "not_requested"      // 沒有要求套用：下次引擎啟動時生效
 	applyApplied       = "applied"            // 引擎已交接退出，下一個按鍵以新設定重新啟動
 	applyEngineStopped = "engine_not_running" // 引擎沒有在執行：外殼下一個按鍵啟動引擎時就是新設定
-	applyDeferred      = "deferred_composing" // 仍在組字：已儲存，等引擎自然重啟
+	applyDeferred      = "deferred_composing" // 仍在組字：新版引擎會在所有組字完成後套用
 	applyTimeout       = "timeout"
 	applyFailed        = "failed"
 )
@@ -123,13 +123,14 @@ type settingsItem struct {
 }
 
 type settingsDoc struct {
-	Schema         int            `json:"schema"`
-	OK             bool           `json:"ok"`
-	File           fileView       `json:"file"`
-	Engine         engineView     `json:"engine"`
-	Items          []settingsItem `json:"items"`
-	PendingRestart bool           `json:"pending_restart"`
-	Features       features       `json:"features"`
+	Profiles       settings.ProfileView `json:"profiles"`
+	Schema         int                  `json:"schema"`
+	OK             bool                 `json:"ok"`
+	File           fileView             `json:"file"`
+	Engine         engineView           `json:"engine"`
+	Items          []settingsItem       `json:"items"`
+	PendingRestart bool                 `json:"pending_restart"`
+	Features       features             `json:"features"`
 }
 
 // features 是 0.2.0 的介面入口（#128）。開發期間由內部開關控制，0.2.0 起恆為 true；設定程式與外殼仍依此
@@ -277,6 +278,12 @@ func buildSettingsDoc(base string, dial autoupdate.Dialer) settingsDoc {
 	case up:
 		doc.Engine = engineView{State: "running", Version: info["version"]}
 		running = runningValues(info)
+	}
+	doc.Profiles = r.Settings.Profiles()
+	if up && herr == nil {
+		doc.Profiles.Running = info["input_profile"]
+		doc.Profiles.Pending = info["input_profile_fingerprint"] != "" && info["input_profile_fingerprint"] != r.Settings.ProfileFingerprint()
+		doc.PendingRestart = doc.Profiles.Pending
 	}
 	for _, it := range r.Settings.Items() {
 		item := settingsItem{Item: it}
@@ -447,6 +454,12 @@ func applySettings(dial autoupdate.Dialer, notice func(string)) applyView {
 		v.State = applyEngineStopped
 		restartResidentEngine()
 		return v
+	}
+	if info["composing"] != "0" && info["settings_deferred_apply"] == "true" {
+		if err := autoupdate.DeferSettings(dial); err != nil {
+			return applyView{Requested: true, State: applyFailed, Detail: err.Error()}
+		}
+		return applyView{Requested: true, State: applyDeferred, Detail: "所有輸入框完成組字後自動套用"}
 	}
 	if info["composing"] != "0" {
 		notice("設定已儲存；請先完成組字，完成後會切換設定。")

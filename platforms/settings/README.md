@@ -132,3 +132,9 @@ Windows 完整更新視窗驗收另有 `test/settings-update-test.ps1`：在沒�
 輸出設定頁的「用快捷鍵切換簡體字」（`simplified-hotkey`，`settings.json` 的 `simplified_hotkey`，#192）預設關閉，排在「輸出簡體字」下面；說明由 `0c-update settings` 依平台寫出快捷鍵（Windows／Linux Ctrl＋Shift＋F11、macOS ⌃⇧F11，提醒 F 鍵是媒體鍵時加按 Fn／fn）。開啟後四個外殼攔這個鍵，跟輸入法選單一樣即時切換「輸出簡體字」；這個開關本身照一般設定交接重啟引擎套用。
 
 輸入設定的「選字後游標移到下一個字」（`advance-after-select`，`settings.json` 的 `advance_after_select`）預設關閉，選字後游標留在原處。開啟後從候選窗選好字（數字鍵、Enter、滑鼠都算），游標移到所選詞的後面，可以接著按 ↓ 改下一個字；修改游標前方字詞時往後移一個字（同新酷音的 autoShiftCur），游標在句尾時不動（#133）。符號、Emoji 與原樣注音本來就插入在游標處、游標停在它們後面。引擎讀設定，套用（引擎重啟）後生效，外殼不必改。
+
+## 輸入習慣
+
+「輸入習慣」頁提供靈犀、微軟新注音、新酷音、小麥注音與 macOS 預設五種內建風格，以及可直接修改的「我的原有設定」。內建風格的相關設定固定；複製成自訂後可命名、微調或刪除，自訂也依實際規則停用不相容功能。參考風格只支援標準排列，暫停中英混打、英文補全與聲調選填；不影響全域的模型、模糊音與輸出繁簡設定。這些風格涵蓋已實作的常用操作，字庫與候選排序仍由靈犀提供。
+
+`0c-update profile select|copy|rename|delete <id> [--name 名稱] [-apply] [-json]` 與設定程式共用寫入鎖。`settings.json` schema 2 的 `input_profile` 保存 active/items 與規則版本，保留舊平面欄位投影供舊版基本輸入；舊版不寫回較新的格式。`profiles.active/running/pending` 呈現已選與執行中的風格，規則 fingerprint 辨識同 ID 自訂內容的修改。組字中切換會等所有 session 完成、最後提交回覆送達後才交接引擎。

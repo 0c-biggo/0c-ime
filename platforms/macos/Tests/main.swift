@@ -313,6 +313,39 @@ func run() throws {
         session.reset()
         stop()
     }
+    // Profile handoff: the first event is a modifier, with no ordinary key to
+    // reopen the old session. Capability probes must not swallow its EOF.
+    try Data(#"{"schema":1,"selection":"statistical","toggle_key":"none"}"#.utf8)
+        .write(to: directory.appendingPathComponent("settings.json"))
+    _ = try key(" ")
+    check(!session.shiftToggles(left: true), "old profile disables Shift")
+    stop()
+    try Data(#"{"schema":1,"selection":"statistical","toggle_key":"both"}"#.utf8)
+        .write(to: directory.appendingPathComponent("settings.json"))
+    try start()
+    let modifierReady = EngineConnection(path: socketPath)
+    let modifierDeadline = Date(timeIntervalSinceNow: 5)
+    while !modifierReady.ready() && Date() < modifierDeadline { Thread.sleep(forTimeInterval: 0.02) }
+    modifierReady.disconnect()
+    let freshModifierSession = EngineSession(connection: EngineConnection(path: socketPath), inputAllowed: { true })
+    check(freshModifierSession.shiftToggles(left: true), "new controller must refresh process-wide stale Shift settings before first modifier")
+    EngineSession.update(from: ["left_shift": "false", "right_shift": "false"])
+    check(session.shiftToggles(left: true), "first Shift after handoff reads new profile without a warmup key")
+    check(session.isOpen, "capability probe does not consume the retired session's recovery state")
+    var modifierEOF = false
+    do { _ = try session.handle(Request(type: "key", key: " ")) } catch EngineError.disconnected { modifierEOF = true }
+    check(modifierEOF, "normal input still receives the original session disconnection")
+    _ = try key(" ")
+    EngineSession.update(from: ["left_shift": "true", "right_shift": "true", "input_style_shift_space": "fullwidth", "input_style_caps_letter": "lower"])
+    stop()
+    try start()
+    let styleDeadline = Date(timeIntervalSinceNow: 5)
+    while !modifierReady.ready() && Date() < styleDeadline { Thread.sleep(forTimeInterval: 0.02) }
+    modifierReady.disconnect()
+    check(!session.styleShiftSpace && !session.styleCapsLower, "first style key reads replacement capabilities without ordinary input")
+    session.reset()
+    stop()
+
     // #192：「用快捷鍵切換簡體字」預設關（設定檔沒有這一項）；打開後引擎重啟，下一次 open 就回報，⌃⇧F11 才攔。
     check(!session.simplifiedHotkey, "simplified_hotkey defaults off")
     try Data(#"{"schema":1,"selection":"statistical","punctuation":false,"simplified_hotkey":true}"#.utf8)
@@ -375,6 +408,12 @@ func run() throws {
     try vocabKeyChecks(directory: directory, session: session, key: key)
     stop()
 
+    check(KeyMapping.key(code: 49, characters: " ", modifiers: [.shift], styleShiftSpace: true) == "ShiftSpace", "style Shift Space reaches core")
+    check(KeyMapping.key(code: 49, characters: " ", modifiers: [.shift]) == " ", "old engine receives plain space")
+    check(KeyMapping.key(code: 49, characters: " ", modifiers: [.control, .shift], styleShiftSpace: true) == nil, "Ctrl Shift Space remains host shortcut")
+    check(KeyMapping.key(code: 0, characters: "A", modifiers: [.capsLock], capsLower: true) == "a", "style Caps lower")
+    check(KeyMapping.key(code: 0, characters: "A", modifiers: [.capsLock, .shift], capsLower: true) == "A", "style Caps Shift preserves uppercase")
+    check(KeyMapping.text(for: "ShiftSpace") == " ", "cold-start fallback inserts space")
     check(KeyMapping.key(code: 36, characters: "\r", modifiers: []) == "Enter", "Return mapping")
     check(KeyMapping.key(code: 123, characters: nil, modifiers: []) == "Left", "arrow mapping")
     check(KeyMapping.key(code: 43, characters: "<", modifiers: [.shift]) == "<", "shift punctuation")
