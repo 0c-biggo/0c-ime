@@ -9,11 +9,19 @@
 | `src/updater.rs` | 找出並啟動 `0c-update`、逾時、解析 JSON、匯出摘要；附單元測試 |
 | `src/main.rs` | 指令白名單、視窗、單一實例 |
 | `src/watch.rs` | 「我的詞彙」的即時同步：常駐 `0c-update vocab watch`、轉成 `vocab-changed` 事件、意外結束時重新連上 |
-| `ui/` | `index.html`、`app.css`、`app.js`；設定項目依契約動態產生。`vocab.js` 是「我的詞彙」頁，`models.js` 是「模型」頁 |
-| `test/` | `smoke.sh`（容器 Xvfb 冒煙測試）、`vocab.sh`（我的詞彙）、`models.sh`（模型）、`fake-update.py`（測試用的 0c-update 替身，只模擬 vocab、api 與 models）、`*_test.js`（`node --test`，不碰畫面的判斷） |
+| `ui/` | `index.html`、`app.css`、`app.js`；設定項目依契約動態產生。`vocab.js` 是「我的詞彙」頁，`models.js` 是「模型」頁，`input-styles.js` 是「輸入習慣」頁 |
+| `test/` | `smoke.sh`（容器 Xvfb 冒煙測試）、`vocab.sh`（我的詞彙）、`models.sh`（模型）、`styles.sh`（輸入習慣）、`fake-update.py`（測試用的 0c-update 替身，只模擬 vocab、api 與 models）、`*_test.js`（`node --test`，不碰畫面的判斷） |
 | `build.rs`、`capabilities/main.json` | 只有 `build.rs` 列出的指令能被前端呼叫，capability 只授權這些指令與事件監聽 |
 | `tauri.linux.conf.json` | Linux 的 identifier 改為 `com.biggo.zc.settings`：外掛用它組 D-Bus 服務名，而服務名的每一段不能以數字開頭，`com.biggo.0c.settings` 會讓程式一啟動就 panic。macOS 與 Windows 維持 `com.biggo.0c.settings` |
 | `tauri.conf.json` | CSP：`default-src 'none'; script-src 'self'; style-src 'self'`；不載入任何遠端內容 |
+
+## 輸入習慣（#225）
+
+側欄「輸入習慣」（`--page styles`）讀取 `settings -json` 的 `profiles`；挑選風格先列操作摘要與設定差異，按「套用這個習慣」才呼叫 `profile select`。內建風格固定，顯示其實際設定值；`items[].locked` 只鎖定編輯，與條件不適用的 `disabled` 分開。鍵盤排列保持獨立。
+
+「複製成自訂」輸入名稱後呼叫 `profile copy`，建立並啟用副本，相關設定恢復可編輯。自訂可重新命名，非使用中的自訂可確認後刪除。中文名稱組字期間背景更新不重建輸入框；後端回報 pending 時提示完成目前輸入後套用。
+
+Rust 的 `profile_command(action,id,name)` 只允許 `select`、`copy`、`rename`、`delete`；名稱作為單一參數交給 `0c-update profile`，select／copy 固定附 `-apply`。實際驗證、持久化及引擎交接由 Go 負責。`test/input_styles_test.js` 驗證預覽與提交、唯讀值、命名管理及失敗恢復；`test/styles.sh` 在真正 WebView 操作後核對 Go 契約。
 
 ## 中英切換、選字、鍵盤與符號（輸入設定，#207）
 
@@ -132,9 +140,3 @@ Windows 完整更新視窗驗收另有 `test/settings-update-test.ps1`：在沒�
 輸出設定頁的「用快捷鍵切換簡體字」（`simplified-hotkey`，`settings.json` 的 `simplified_hotkey`，#192）預設關閉，排在「輸出簡體字」下面；說明由 `0c-update settings` 依平台寫出快捷鍵（Windows／Linux Ctrl＋Shift＋F11、macOS ⌃⇧F11，提醒 F 鍵是媒體鍵時加按 Fn／fn）。開啟後四個外殼攔這個鍵，跟輸入法選單一樣即時切換「輸出簡體字」；這個開關本身照一般設定交接重啟引擎套用。
 
 輸入設定的「選字後游標移到下一個字」（`advance-after-select`，`settings.json` 的 `advance_after_select`）預設關閉，選字後游標留在原處。開啟後從候選窗選好字（數字鍵、Enter、滑鼠都算），游標移到所選詞的後面，可以接著按 ↓ 改下一個字；修改游標前方字詞時往後移一個字（同新酷音的 autoShiftCur），游標在句尾時不動（#133）。符號、Emoji 與原樣注音本來就插入在游標處、游標停在它們後面。引擎讀設定，套用（引擎重啟）後生效，外殼不必改。
-
-## 輸入習慣
-
-「輸入習慣」頁提供靈犀、微軟新注音、新酷音、小麥注音與 macOS 預設五種內建風格，以及可直接修改的「我的原有設定」。內建風格的相關設定固定；複製成自訂後可命名、微調或刪除，自訂也依實際規則停用不相容功能。參考風格只支援標準排列，暫停中英混打、英文補全與聲調選填；不影響全域的模型、模糊音與輸出繁簡設定。這些風格涵蓋已實作的常用操作，字庫與候選排序仍由靈犀提供。
-
-`0c-update profile select|copy|rename|delete <id> [--name 名稱] [-apply] [-json]` 與設定程式共用寫入鎖。`settings.json` schema 2 的 `input_profile` 保存 active/items 與規則版本，保留舊平面欄位投影供舊版基本輸入；舊版不寫回較新的格式。`profiles.active/running/pending` 呈現已選與執行中的風格，規則 fingerprint 辨識同 ID 自訂內容的修改。組字中切換會等所有 session 完成、最後提交回覆送達後才交接引擎。

@@ -16,6 +16,8 @@ Fcitx5 引擎透過 `InputMethodEngineV2::subModeIconImpl` 回報目前欄位的
 
 `make install`、`make upgrade` 與 Linux 套件安裝均帶入兩張彩色圖，並移除舊單色檔。GNOME Shell 只在應用程式清單變動時、依 `hicolor` 目錄本身的時間決定是否重讀圖示主題，只換 `scalable/status/` 裡的檔案不會生效；`make upgrade` 與套件的安裝、回復、移除在自有圖示有變動時，會更新 `hicolor` 與 `applications` 兩個目錄的時間，讓登入中的桌面改用新圖（否則會一直畫已刪除的單色圖：黑色狀態列上的暗灰「注」）。安裝位置為 `~/.local/share/icons/hicolor/scalable/status/`。套件驗證要求注／英彩色圖成對存在；舊包可以都不帶，也持續接受帶四張圖的舊包。完整更新備份舊單色檔，回復／降版可放回，移除沿用檔案交易及收據。
 
+KDE 的 KIconLoader 另外記住載入主題時存在的目錄；第一次安裝新增 `scalable/status` 時，只更新目錄時間還不足以讓已執行的載入器找到圖示（#227）。上述共用更新流程也會送出 KDE 的 `iconChanged` 工作階段廣播，讓載入器重新掃描。只通知安裝對象就是目前使用者、且已有 D-Bus 工作階段的情況；不啟動服務、不改主題，通知失敗也不撤回安裝。已驗證真實 KIconLoader 的正反對照，Plasma Wayland 完整桌面驗收仍待補。
+
 如果 `PreferTextIcon=True`，Fcitx5 會優先自行畫「注／英」文字，不使用 SVG。完整套件安裝及 `make upgrade` 會將 Classic UI／Kimpanel 的這個偏好設為 `False`，保留其他設定、區段與註解；回復也保留使用者之後的主題變更。`make install` 沿用使用者設定，需自行關閉「偏好文字圖示」。
 
 圖示本身為正方形。GNOME／Yaru 的 `system-status-icon` 左右各有 6 px padding 與 4 px margin，讓 Kimpanel 按鈕比內建文字指示器寬。`kimpanel-spacing.js` 只在目前圖示為 `0c-zhuyin` 或 `0c-english` 時移除這層留白，切到其他輸入法會還原原本的 inline style；不縮小 SVG，也不修改主題。安裝與回復界線見 [Linux 外殼說明](../README.md)。
