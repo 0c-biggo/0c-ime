@@ -7,21 +7,21 @@ const defaultSelectionKeys = "1234567890"
 // （不含大寫，那是 Shift＋字母），否則用預設。設定只開放 1234567890、1234qweras、asdfghjkl;，這裡只防不合用的值。
 func (s *Session) selectionKeys() string {
 	keys := s.SelectionKeys
-	if len(keys) != perPage {
-		return defaultSelectionKeys
+	if len(keys) != s.pageSize() && !(s.pageSize() == 9 && len(keys) == 10) {
+		return defaultSelectionKeys[:s.pageSize()]
 	}
 	for i := range len(keys) {
 		c := keys[i]
 		if c <= ' ' || c > '~' || c >= 'A' && c <= 'Z' {
-			return defaultSelectionKeys
+			return defaultSelectionKeys[:s.pageSize()]
 		}
 		for j := range i {
 			if keys[j] == c {
-				return defaultSelectionKeys
+				return defaultSelectionKeys[:s.pageSize()]
 			}
 		}
 	}
-	return keys
+	return keys[:s.pageSize()]
 }
 
 // selectionKeyColumns 是多排候選（含 Emoji）每排最多幾個（#112）：選字鍵分在鍵盤幾排，候選就照著排。
@@ -47,7 +47,10 @@ func (s *Session) selectionIndex(k string) int {
 		}
 	}
 	if k[0] >= '0' && k[0] <= '9' {
-		return (int(k[0]-'0') + 9) % 10 // 1..9,0 → 第 0..9 項
+		if n := (int(k[0]-'0') + 9) % 10; n < s.pageSize() {
+			return n
+		}
+		return -1 // // 1..9,0 → 第 0..9 項
 	}
 	return -1
 }

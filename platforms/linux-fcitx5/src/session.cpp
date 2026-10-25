@@ -148,6 +148,18 @@ bool Session::vocabKeys() {
     return value != serverInfo_.end() && value->is_string() && value->get<std::string>() == "true";
 }
 
+bool Session::styleShiftSpace() {
+    if (client_.connected()) { client_.alive(); } // refresh a retired session before reading cached capabilities
+    if (!client_.connect() || !ensureOpen()) { return false; }
+    auto value = serverInfo_.value("input_style_shift_space", std::string());
+    return !value.empty() && value != "disabled";
+}
+
+bool Session::styleCapsLower() {
+    if (client_.connected()) { client_.alive(); } // refresh a retired session before reading cached capabilities
+    return client_.connect() && ensureOpen() && serverInfo_.value("input_style_caps_letter", "") == "lower";
+}
+
 bool Session::capsLockEnglish(bool spawn) {
     if (!spawn) {
         // Caps Lock 鍵本身：不為此啟動 0c-server。剛在設定程式打開這一項時引擎重啟了，open 的快取是舊的，
@@ -205,10 +217,10 @@ bool Session::ensureOpen() {
     id_ = reply.value("session", uint64_t(0));
     serverInfo_ = reply.value("info", nlohmann::json::object());
     gen_ = client_.generation();
-	// The native Fcitx/Kimpanel UI owns its layout and has no grid hint. Keep
-	// engine navigation consistent with the displayed list, including on replay.
+	// Native panels support vertical and horizontal hints, but not arbitrary grids.
+	// Preserve explicit horizontal styles; flatten other grids to a vertical list.
 	nlohmann::json display;
-    if (serverInfo_.contains("candidate_layout") &&
+    if (serverInfo_.contains("candidate_layout") && serverInfo_.value("candidate_layout", "") != "horizontal" &&
 		(!client_.call({{"op", "handle"}, {"session", id_}, {"req", {{"type", "display"}, {"columns", 1}}}}, display) || !display.value("ok", false))) {
 		id_ = 0; return false;
 	}
@@ -382,6 +394,7 @@ Snapshot Session::parse(const nlohmann::json &reply) {
     }
     if (j.contains("candidates")) {
         const auto &c = j["candidates"];
+        s.columns = c.value("columns", 1);
         s.page = c.value("page", 0);
         s.pages = c.value("pages", 0);
         s.highlight = c.value("highlight", 0);

@@ -32,6 +32,7 @@ struct Snapshot {
     // 與 candidates 等長的鍵標（#112）：核心給的選字鍵（1、q、;）；舊核心沒有時依位置 1–0，英文模式的補字候選為空字串（不畫）。
     std::vector<std::string> candidateKeys;
     int page = 0, pages = 0;
+    int columns = 1;
     int highlight = 0; // 反白的候選在 candidates 裡的索引
 	std::string candidateTitle;
     std::vector<std::string> notices;
@@ -113,6 +114,8 @@ public:
     // 引擎剛重啟、還沒有任何請求時沿用舊值：舊值 false 只是這一鍵照原本的鍵送；舊值 true 送到新引擎，
     // 開關關閉時它把新鍵名當原本的鍵處理。引擎不可用或舊版引擎沒有這一項時為 false。
     bool vocabKeys();
+    bool styleShiftSpace();
+    bool styleCapsLower();
     // 引擎是否認得 Ctrl＋標點的鍵名而且設定開著（open 回覆的 ctrl_punctuation，#168）；快取方式同 vocabKeys。
     // 舊引擎沒有這一項時為 false，Ctrl＋標點照舊交給應用程式。
     bool ctrlPunct();

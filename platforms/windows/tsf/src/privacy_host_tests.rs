@@ -419,6 +419,16 @@ fn host(view: HWND, focus: HWND, scope: Scope, static_flags: u32, dynamic_flags:
     .into_interface()
 }
 
+/// 給其他模組的宿主測試（#217）：本執行緒焦點所在、InputScope 是一般欄位的假 context（`field` 為 Open）。
+/// 回傳的視窗由呼叫端 DestroyWindow。
+pub(crate) fn open_field() -> (HWND, ITfContext) {
+    init();
+    let view = window(w!("UnrealWindow"), 0);
+    let ctx = host(view, view, Scope::Scopes(vec![IS_DEFAULT]), TS_SS_NOHIDDENTEXT, 0);
+    assert_eq!(field(Some(&ctx), 1, false), Field::Open);
+    (view, ctx)
+}
+
 fn init() {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);

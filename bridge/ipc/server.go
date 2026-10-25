@@ -38,13 +38,14 @@ type Server struct {
 	// OnVocab 在自訂詞彙指令改了詞彙後呼叫；宿主應立即存檔。
 	OnVocab func()
 
-	mu       sync.Mutex
-	conns    map[net.Conn]bool
-	draining bool
-	lastKey  time.Time // 最近一次按鍵請求；更新協調器在 OS 無法判斷閒置時以此判斷
-	closing  bool
-	active   int        // 處理中的請求；交接須等它們完成後才存檔
-	idle     *sync.Cond // active 歸零時通知（與 mu 配對）
+	mu              sync.Mutex
+	conns           map[net.Conn]bool
+	draining        bool
+	settingsPending bool
+	lastKey         time.Time // 最近一次按鍵請求；更新協調器在 OS 無法判斷閒置時以此判斷
+	closing         bool
+	active          int        // 處理中的請求；交接須等它們完成後才存檔
+	idle            *sync.Cond // active 歸零時通知（與 mu 配對）
 }
 
 // Serve 接受連線直到監聽器關閉。可對多個監聽器同時呼叫（例如過渡期的新舊名稱），共用引擎與連線計數。
@@ -90,6 +91,7 @@ func (s *Server) health() map[string]string {
 	total, composing := s.Engine.Sessions()
 	s.mu.Lock()
 	info["draining"] = fmt.Sprint(s.draining)
+	info["settings_deferred_apply"] = "true"
 	info["connections"] = fmt.Sprint(len(s.conns))
 	if !s.lastKey.IsZero() {
 		info["idle_seconds"] = fmt.Sprint(int(time.Since(s.lastKey).Seconds()))
@@ -144,18 +146,32 @@ func (s *Server) runDrain() {
 	}
 	go func() {
 		deadline := time.Now().Add(timeout)
-		for time.Now().Before(deadline) {
+		for {
+			s.mu.Lock()
+			pending := s.settingsPending
+			s.mu.Unlock()
+			if !pending && !time.Now().Before(deadline) {
+				break
+			}
 			if _, composing := s.Engine.Sessions(); composing == 0 {
 				s.mu.Lock()
-				s.closing = true
-				for c := range s.conns {
-					c.Close()
-				}
 				if s.idle == nil {
 					s.idle = sync.NewCond(&s.mu)
 				}
 				for s.active > 0 { // 已開始處理的請求（可能含提交）完成後才讓宿主存檔
 					s.idle.Wait()
+				}
+				// A request may have started a composition after the initial
+				// check. Holding mu prevents new handlers entering until the
+				// final check and transition to closing are complete.
+				if _, composing := s.Engine.Sessions(); composing != 0 {
+					s.mu.Unlock()
+					time.Sleep(50 * time.Millisecond)
+					continue
+				}
+				s.closing = true
+				for c := range s.conns {
+					c.Close()
 				}
 				s.mu.Unlock()
 				if s.BeforeDrain != nil {
@@ -219,12 +235,13 @@ func (s *Server) handle(c net.Conn) {
 		s.mu.Unlock()
 		startDrain := false
 		reply := s.do(env, sessions, &startDrain)
+		writeErr := WriteFrame(c, reply)
 		s.mu.Lock()
 		if s.active--; s.active == 0 && s.idle != nil {
 			s.idle.Broadcast()
 		}
 		s.mu.Unlock()
-		if err := WriteFrame(c, reply); err != nil {
+		if writeErr != nil {
 			return
 		}
 		if startDrain {
@@ -246,6 +263,12 @@ func (s *Server) do(env Envelope, sessions map[uint64]bool, startDrain *bool) Re
 	case OpPing:
 		return Reply{OK: true}
 	case OpHealth:
+		return Reply{OK: true, Info: s.health()}
+	case OpApplySettings:
+		s.mu.Lock()
+		s.settingsPending = true
+		s.mu.Unlock()
+		*startDrain = s.markDrain()
 		return Reply{OK: true, Info: s.health()}
 	case OpDrain:
 		*startDrain = s.markDrain()

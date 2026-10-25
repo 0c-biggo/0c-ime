@@ -31,7 +31,7 @@ final class CandidatePanel: NSPanel {
         stack.spacing = 2
         stack.edgeInsets = NSEdgeInsets(top: 8, left: 10, bottom: 8, right: 10)
         if let candidates = snapshot.candidates {
-            let columns = max(1, min(candidates.columns ?? 1, 5))
+            let columns = max(1, min(candidates.columns ?? 1, 10))
             let screen = NSScreen.screens.first { $0.frame.intersects(caret) } ?? NSScreen.main
             let available = max(100, (screen?.visibleFrame.width ?? 1440) - 20)
             let cellWidth = min(candidates.kind == "kaomoji" ? 240 : 160,

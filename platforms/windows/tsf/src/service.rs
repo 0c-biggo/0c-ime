@@ -81,9 +81,6 @@ struct State {
     ui: UiClient,
     right_shift: keys::ShiftTap,
     left_shift: keys::ShiftTap,
-    // 這次右／左 Shift 放開由外殼處理（設定開啟、單按而且沒超過時限），OnTestKeyUp 決定、OnKeyUp 用。
-    right_owned: bool,
-    left_owned: bool,
     secure: bool,
     /// 以 TF_TMAE_UIELEMENTENABLEDONLY 啟用：宿主自行繪製候選（遊戲等，#86）。
     ui_less: bool,
@@ -112,6 +109,8 @@ struct State {
     left_from: Option<ITfContext>,
     /// OnTestKeyDown 對 Ctrl＋Shift＋F11 的決定（#192），OnKeyDown 沿用。
     hotkey_tested: keys::Tested,
+    /// OnTestKeyDown 對其他按鍵的決定（#216）：說要吃、OnKeyDown 卻沒吃成時（等不到重啟中的引擎），以原字元補送。
+    key_tested: keys::Tested,
 }
 
 /// 候選窗最近一次的呈現：OnLayoutChange 時重查游標位置並補送。
@@ -207,8 +206,16 @@ fn drop_expired_notice(message: &mut UiMessage, age: Duration) -> bool {
 }
 
 impl State {
-    /// 這一鍵要不要送 #123 的新鍵名：引擎回報支援（0.2.0 開關打開），而且不在英文模式
-    /// （英文模式沒有加詞與反悔鍵，維持原本的鍵）。TestKeyDown 與 OnKeyDown 用同一個答案。
+    /// 保留風格需要的 Shift＋Space 與 Caps 字母語意；預判和送鍵共用。
+    fn styled_key(&mut self, vk: u32, lparam: isize, vocab: bool, english: bool) -> Option<String> {
+        let key = keys::to_key(vk, lparam, vocab, english)?;
+        let shift = keys::shift_down();
+        let caps = keys::caps_lock_on();
+        let shift_space = key == " " && shift && self.session.style_shift_space();
+        let caps_lower = caps && self.session.style_caps_lower();
+        Some(keys::style_key(key, shift, caps, shift_space, caps_lower))
+    }
+
     fn vocab_keys(&self) -> bool {
         self.session.vocab_keys() && !self.session.english()
     }
@@ -248,13 +255,6 @@ impl State {
         }
     }
 
-    fn owned(&mut self, side: keys::Side) -> &mut bool {
-        match side {
-            keys::Side::Left => &mut self.left_owned,
-            keys::Side::Right => &mut self.right_owned,
-        }
-    }
-
     /// 這次 Shift 放開是否切換：單按（中間沒有別的鍵、沒點滑鼠）、設定開啟這一側、而且沒超過時限。只有單按時才向引擎查設定。
     fn shift_toggles(&mut self, side: keys::Side, modified: bool, now: u64) -> bool {
         let mouse = keys::mouse_state();
@@ -268,8 +268,6 @@ impl State {
     fn reset_shift(&mut self) {
         self.right_shift = keys::ShiftTap::default();
         self.left_shift = keys::ShiftTap::default();
-        self.right_owned = false;
-        self.left_owned = false;
     }
 }
 
@@ -290,8 +288,6 @@ impl TextService {
                 ui: UiClient::new(),
                 right_shift: keys::ShiftTap::default(),
                 left_shift: keys::ShiftTap::default(),
-                right_owned: false,
-                left_owned: false,
                 secure: false,
                 ui_less: false,
                 callback: None,
@@ -307,6 +303,7 @@ impl TextService {
                 openclose_value: 0,
                 left_from: None,
                 hotkey_tested: keys::Tested::default(),
+                key_tested: keys::Tested::default(),
             }),
             applying: Cell::new(0),
             layout_missed: Cell::new(false),
@@ -847,6 +844,32 @@ impl TextService_Impl {
         self.present(ctx, &snapshot)
     }
 
+    /// OnTestKeyDown 已經說要吃、OnKeyDown 卻沒吃成的鍵（#216）：WPF 等宿主看 TestKeyDown 的答案就不再自己處理，
+    /// 不補送就整個不見。只在沒在組字的注音模式發生：引擎正在重啟（改設定套用、更新交接、當掉後）而且等到期限仍連不上，
+    /// 或新引擎以新設定不處理這個鍵（例如剛改成許氏的數字）。以沒有輸入法時會打出的字送進文件（照 Shift 與 Caps Lock）；
+    /// 轉不成可見字元或按著 Ctrl／Alt 時照舊交還宿主。
+    fn type_literal(&self, ctx: Option<&ITfContext>, vk: u32, lparam: isize) -> bool {
+        if keys::modifier_down() {
+            return false;
+        }
+        let Some(text) = keys::printable(vk, lparam, true) else {
+            return false;
+        };
+        zlog!("TestKeyDown 已吃下的鍵引擎沒有處理，以原字元送進文件"); // 不記鍵碼（隱私）
+        zdebug!("type_literal vk={}", vk);
+        let literal = Snapshot {
+            ok: true,
+            handled: true,
+            commit: text,
+            ..Default::default()
+        };
+        let eaten = self.present(ctx, &literal);
+        if eaten {
+            self.state.borrow_mut().eaten.insert(vk);
+        }
+        eaten
+    }
+
     /// 結束目前組字：commit（失焦、停用）或 cancel（應用程式自行終止組字）。
     fn finish(&self, ctx: Option<&ITfContext>, kind: &str) {
         let composing = self.state.borrow().composing;
@@ -1003,7 +1026,8 @@ impl TextService_Impl {
                 st.session.english_state.clone()
             }
         };
-        if !snap.ok || !snap.english_autocomplete || snap.composing() && !snap.english_pending {
+        let caps_lower = snap.caps_lock && self.state.borrow_mut().session.style_caps_lower();
+        if !snap.ok || (!snap.english_autocomplete && !snap.full_width && !caps_lower) || snap.composing() && !snap.english_pending {
             return None;
         }
         if keys::modifier_down() {
@@ -1012,8 +1036,9 @@ impl TextService_Impl {
             }
             return Some(false);
         }
-        let key = keys::to_key(vk, lparam, false, true); // Shift+Tab 已是 BackTab；英文模式不送 #123 的新鍵名，照 Caps Lock
-        if key.as_ref().is_some_and(|k| snap.english_wants_key(k)) {
+        let key = self.state.borrow_mut().styled_key(vk, lparam, false, true);
+        if key.as_deref() == Some("ShiftSpace") { return Some(true); }
+        if key.as_ref().is_some_and(|k| snap.english_wants_key(k) || caps_lower && k.len() == 1 && k.as_bytes()[0].is_ascii_alphabetic()) {
             return Some(true);
         }
         if let Some(key) = key {
@@ -1064,6 +1089,26 @@ impl TextService_Impl {
         }
     }
 
+    /// Shift 放開（#117、#217）：單按、設定開啟這一側、沒超過時限就切換中英，回傳有沒有切換。
+    /// 在第一次收到這次放開時判斷並結束這次按放（一般是 OnTestKeyUp；宿主沒先問就直接呼叫 OnKeyUp 時在那裡），
+    /// 同一次放開之後再來的 OnTestKeyUp／OnKeyUp 不會再切一次。呼叫端一律不吃放開：Shift 按下本來就交給應用程式，
+    /// 放開也照樣交給它（同系統注音與新酷音）。以前吃掉放開、等 OnKeyUp 才切換，IMM32 程式要對放開呼叫
+    /// TranslateMessage 才會有 OnKeyUp，PuTTY 從不呼叫，Shift 就切不了；吃掉的放開在程式那裡也變成 VK_PROCESSKEY。
+    fn shift_released(&self, ctx: Option<&ITfContext>, side: keys::Side) -> bool {
+        let toggle = {
+            let mut st = self.state.borrow_mut();
+            let toggle = st.shift_toggles(side, keys::modifier_down(), keys::now_ms());
+            *st.tap(side) = keys::ShiftTap::default();
+            toggle
+        };
+        zdebug!("Shift 放開 side={:?} toggle={}", side, toggle);
+        if toggle {
+            let snapshot = self.state.borrow_mut().session.toggle();
+            self.present(ctx, &snapshot);
+        }
+        toggle
+    }
+
     fn wants_key(&self, vk: u32, lparam: isize) -> bool {
         // Ctrl＋標點（#168）：中文模式而且引擎回報 ctrl_punctuation 時吃，組字中或沒在組字都一樣；核心插進組字區。
         if keys::modifier_down() && self.state.borrow_mut().ctrl_punct_key(vk, lparam).is_some() {
@@ -1082,10 +1127,14 @@ impl TextService_Impl {
         // 只有英文模式的 ↓ 回未處理；轉不成的鍵（F 鍵、Insert…）已由 commit_before_host_key 先送出組字（#106）。
         // 這裡的答案與 OnKeyDown 的結果一致，WPF 不會掉鍵。Shift＋←→ Delete Backspace 的新鍵名（#123）
         // 核心在組字中同樣都回 handled（沒有對應功能時就是原本的鍵）。
+        let english = st.session.english();
+        let style_key = st.styled_key(vk, lparam, false, english);
+        if style_key.as_deref() == Some("ShiftSpace") { return true; }
+        if style_key.as_ref().is_some_and(|k| st.session.english_state.full_width_extra_key(k)) { return true; }
         if st.composing {
             let english = st.session.english();
             let vocab = st.vocab_keys();
-            return keys::composing_wants(english, keys::to_key(vk, lparam, vocab, english).as_deref());
+            return keys::composing_wants(english, st.styled_key(vk, lparam, vocab, english).as_deref());
         }
         if st.session.english() {
             return false;
@@ -1096,13 +1145,9 @@ impl TextService_Impl {
         }
         keys::printable(vk, lparam, false) // 中文模式不理 Caps Lock（#168）
             .map(|key| {
-                // 答案依鍵盤排列與設定而不同的鍵（數字、= - /）問引擎：引擎回報它沒在組字時處理哪些鍵（#183），
-                // 涵蓋倚天的 1–4、許氏的數字交還宿主、= 的 Emoji 設定、聲調鍵的設定（#83、#135、#175）。其他鍵不多查一次引擎。
-                if keys::layout_dependent(&key) {
-                    st.session.idle_key(&key)
-                } else {
-                    keys::starts_composition(keys::Layout::Standard, &key)
-                }
+                // 排列與風格都可能改變閒置時攔哪些字元；包含 Shift 字母及標點。
+                // idle_keys 依連線快取，不會每鍵往返。
+                st.session.idle_key(&key)
             })
             .unwrap_or(false)
     }
@@ -1297,7 +1342,12 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
         lparam: LPARAM,
     ) -> windows_core::Result<BOOL> {
         crate::guarded("OnTestKeyDown", || {
-            self.state.borrow_mut().hotkey_tested.forget(); // 上一次按鍵的決定不留給這一次（keys::Tested）
+            {
+                // 上一次按鍵的決定不留給這一次（keys::Tested）
+                let mut st = self.state.borrow_mut();
+                st.hotkey_tested.forget();
+                st.key_tested.forget();
+            }
             if !self.allowed(pic.as_ref()) {
                 return Ok(false.into());
             }
@@ -1315,6 +1365,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
                 .english_key_policy(pic.as_ref(), vk, lparam.0)
                 .unwrap_or_else(|| self.wants_key(vk, lparam.0));
             zdebug!("OnTestKeyDown vk={} -> {}", wparam.0, wants);
+            self.state.borrow_mut().key_tested.record(vk, wants);
             Ok(wants.into())
         })
     }
@@ -1326,7 +1377,11 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
         lparam: LPARAM,
     ) -> windows_core::Result<BOOL> {
         crate::guarded("OnTestKeyUp", || {
-            self.state.borrow_mut().hotkey_tested.forget();
+            {
+                let mut st = self.state.borrow_mut();
+                st.hotkey_tested.forget();
+                st.key_tested.forget();
+            }
             if !self.allowed(pic.as_ref()) {
                 return Ok(false.into());
             }
@@ -1334,18 +1389,12 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             if vk == keys::VK_CAPS_LOCK {
                 self.sync_caps(pic.as_ref(), 0); // #173：按下時沒同步到的話（宿主時序不同），放開時一定已切換
             }
-            let mut st = self.state.borrow_mut();
-            // Shift 只在設定開啟這一側、單按而且沒超過時限時才吃 key-up；其他情況照舊交給宿主與系統。
+            // Shift 放開在這裡就切換、不吃（#217）：IMM32 程式（PuTTY）不一定讓 OnKeyUp 來。
             if let Some(side) = keys::shift_side(vk, lparam.0) {
-                let owned = st.shift_toggles(side, keys::modifier_down(), keys::now_ms());
-                *st.owned(side) = owned;
-                if !owned {
-                    // 不吃時 TSF 通常不會再呼叫 OnKeyUp；這裡就結束這次按放，下次 Shift 才能重新判斷單按。
-                    *st.tap(side) = keys::ShiftTap::default();
-                }
-                return Ok(owned.into());
+                self.shift_released(pic.as_ref(), side);
+                return Ok(false.into());
             }
-            Ok(st.eaten.contains(&vk).into())
+            Ok(self.state.borrow().eaten.contains(&vk).into())
         })
     }
 
@@ -1358,7 +1407,10 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
         crate::guarded("OnKeyDown", || {
             let vk = wparam.0 as u32;
             // TestKeyDown 的決定一進來就取走，在 allowed() 提早回傳時也不留給之後的按鍵（keys::Tested）。
-            let tested = self.state.borrow_mut().hotkey_tested.take(vk);
+            let (tested, key_tested) = {
+                let mut st = self.state.borrow_mut();
+                (st.hotkey_tested.take(vk), st.key_tested.take(vk))
+            };
             if !self.allowed(pic.as_ref()) {
                 return Ok(false.into());
             }
@@ -1376,11 +1428,19 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             self.commit_before_host_key(pic.as_ref(), vk, lparam.0);
             self.learn_mode(vk);
             self.sync_caps(pic.as_ref(), vk);
+            // TestKeyDown 吃下、沒在組字的注音模式按鍵，最後沒吃成就以原字元補送（type_literal，#216）。
+            let literal_fallback = key_tested == Some(true) && {
+                let st = self.state.borrow();
+                !st.composing && !st.session.english()
+            };
             if !self
                 .english_key_policy(pic.as_ref(), vk, lparam.0)
                 .unwrap_or_else(|| self.wants_key(vk, lparam.0))
             {
                 zdebug!("OnKeyDown vk={} wants=false", vk);
+                if literal_fallback {
+                    return Ok(self.type_literal(pic.as_ref(), vk, lparam.0).into());
+                }
                 return Ok(false.into());
             }
             let (vocab, english) = {
@@ -1395,12 +1455,15 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             };
             let Some(key) = ctrl
                 .map(str::to_string)
-                .or_else(|| keys::to_key(vk, lparam.0, vocab, english))
+                .or_else(|| self.state.borrow_mut().styled_key(vk, lparam.0, vocab, english))
             else {
                 return Ok(false.into());
             };
             self.confirm_document_context(pic.as_ref());
-            let eaten = self.handle_key(pic.as_ref(), &key);
+            let mut eaten = self.handle_key(pic.as_ref(), &key);
+            if !eaten && literal_fallback && !self.state.borrow().composing {
+                eaten = self.type_literal(pic.as_ref(), vk, lparam.0);
+            }
             zdebug!("OnKeyDown vk={} handled={}", vk, eaten);
             if eaten {
                 self.state.borrow_mut().eaten.insert(vk);
@@ -1416,23 +1479,17 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
         lparam: LPARAM,
     ) -> windows_core::Result<BOOL> {
         crate::guarded("OnKeyUp", || {
-            self.state.borrow_mut().hotkey_tested.forget();
+            {
+                let mut st = self.state.borrow_mut();
+                st.hotkey_tested.forget();
+                st.key_tested.forget();
+            }
             if !self.allowed(pic.as_ref()) {
                 return Ok(false.into());
             }
             if let Some(side) = keys::shift_side(wparam.0 as u32, lparam.0) {
-                let toggle = {
-                    let mut st = self.state.borrow_mut();
-                    // 一般由 OnTestKeyUp 決定；宿主直接呼叫 OnKeyUp 時在這裡補問。
-                    let owned = std::mem::take(st.owned(side))
-                        || st.shift_toggles(side, keys::modifier_down(), keys::now_ms());
-                    *st.tap(side) = keys::ShiftTap::default();
-                    owned
-                };
-                if toggle {
-                    let snapshot = self.state.borrow_mut().session.toggle();
-                    return Ok(self.present(pic.as_ref(), &snapshot).into());
-                }
+                // 一般已在 OnTestKeyUp 切換過；宿主沒先問 OnTestKeyUp 就直接呼叫 OnKeyUp 時在這裡切換。
+                self.shift_released(pic.as_ref(), side);
                 return Ok(false.into());
             }
             Ok(self
@@ -1760,3 +1817,77 @@ mod composition_tests {
 #[cfg(test)]
 #[path = "focus_host_tests.rs"]
 mod focus_host_tests;
+
+#[cfg(test)]
+mod shift_tests {
+    //! #217：PuTTY 這類 IMM32 程式對 Shift 放開只經 OnTestKeyUp 問輸入法；放開被吃掉後，要宿主對那個放開
+    //! 呼叫 TranslateMessage 才會有 OnKeyUp，PuTTY 從不呼叫。以前在 OnKeyUp 才切換，單按左右 Shift 都切不了。
+    //! 以一般欄位的假 context 照各種宿主的呼叫順序走 ITfKeyEventSink；需要 ZUIN_TEST_PIPE 的測試引擎（預設左右 Shift，#206）。
+    use super::*;
+    use windows::Win32::UI::TextServices::ITfKeyEventSink;
+    use windows::Win32::UI::WindowsAndMessaging::DestroyWindow;
+
+    const SHIFT: WPARAM = WPARAM(0x10);
+    const RIGHT: isize = 0x36;
+    const LEFT: isize = 0x2a;
+
+    /// 按鍵訊息的 lParam：重複次數 1、掃描碼；放開時帶「先前按著」與「放開」兩個位元。
+    fn lparam(scan: isize, up: bool) -> LPARAM {
+        LPARAM(1 | scan << 16 | if up { 0xC000_0000u32 as i32 as isize } else { 0 })
+    }
+
+    fn test_down(sink: &ITfKeyEventSink, ctx: &ITfContext, vk: WPARAM, scan: isize) -> bool {
+        unsafe { sink.OnTestKeyDown(ctx, vk, lparam(scan, false)) }.unwrap().as_bool()
+    }
+    fn test_up(sink: &ITfKeyEventSink, ctx: &ITfContext, vk: WPARAM, scan: isize) -> bool {
+        unsafe { sink.OnTestKeyUp(ctx, vk, lparam(scan, true)) }.unwrap().as_bool()
+    }
+    fn key_up(sink: &ITfKeyEventSink, ctx: &ITfContext, vk: WPARAM, scan: isize) -> bool {
+        unsafe { sink.OnKeyUp(ctx, vk, lparam(scan, true)) }.unwrap().as_bool()
+    }
+
+    #[test]
+    fn shift_release_toggles_without_on_key_up_and_reaches_the_app() {
+        let Some(pipe) = std::env::var("ZUIN_TEST_PIPE").ok() else {
+            return;
+        };
+        let (view, ctx) = crate::privacy::host_tests::open_field();
+        let service = ComObject::new(TextService::new());
+        service.state.borrow_mut().session = Session::with_client(crate::ipc::Client::with_pipe(&pipe));
+        let sink: ITfKeyEventSink = service.to_interface();
+        let english = || service.state.borrow().session.english();
+        let start = english();
+        for (scan, side) in [(RIGHT, "右"), (LEFT, "左")] {
+            // PuTTY：按下不吃，放開只有 OnTestKeyUp。修正前這裡回 true（吃掉）而且沒切換。
+            assert!(!test_down(&sink, &ctx, SHIFT, scan));
+            assert!(!test_up(&sink, &ctx, SHIFT, scan), "{side} Shift 放開交給程式");
+            assert_ne!(english(), start, "{side} Shift 只有 OnTestKeyUp 也要切換");
+            // 一般 TSF 宿主：OnTestKeyUp 之後宿主仍呼叫 OnKeyUp 也只切一次。
+            assert!(!test_down(&sink, &ctx, SHIFT, scan));
+            assert!(!test_up(&sink, &ctx, SHIFT, scan));
+            assert!(!key_up(&sink, &ctx, SHIFT, scan));
+            assert_eq!(english(), start, "{side} Shift 同一次放開不切兩次");
+            // 同一次放開的 OnTestKeyUp 來兩次也只切一次。
+            assert!(!test_down(&sink, &ctx, SHIFT, scan));
+            assert!(!test_up(&sink, &ctx, SHIFT, scan));
+            assert!(!test_up(&sink, &ctx, SHIFT, scan));
+            assert_ne!(english(), start);
+            // 宿主沒先問、直接 OnKeyDown／OnKeyUp：在 OnKeyUp 切換，放開一樣交給程式。
+            unsafe { sink.OnKeyDown(&ctx, SHIFT, lparam(scan, false)) }.unwrap();
+            assert!(!key_up(&sink, &ctx, SHIFT, scan));
+            assert_eq!(english(), start, "{side} Shift 只有 OnKeyUp 也要切換");
+        }
+        // Shift＋方向鍵（選取）不切換：中間有別的鍵，放開不是單按。
+        assert!(!test_down(&sink, &ctx, SHIFT, LEFT));
+        assert!(!test_down(&sink, &ctx, WPARAM(0x25), 0x4b));
+        assert!(!test_up(&sink, &ctx, SHIFT, LEFT));
+        assert_eq!(english(), start, "Shift＋← 不切換");
+        // 單按下一次照常判斷。
+        assert!(!test_down(&sink, &ctx, SHIFT, RIGHT));
+        assert!(!test_up(&sink, &ctx, SHIFT, RIGHT));
+        assert_ne!(english(), start);
+        unsafe {
+            let _ = DestroyWindow(view);
+        }
+    }
+}

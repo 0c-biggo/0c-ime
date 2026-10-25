@@ -111,8 +111,11 @@ try {
         $resultFile=Join-Path $directory ($outputs[$name]+'-result.json')
         try {
             # 每個套件都有新的學習資料，避免前一套選字結果影響下一套。
-            # 記事本與 Terminal 的快速連打斷言不含標點（補標點會把「你好你好」補成「你好，你好」），這兩套關閉補標點；其餘維持預設。
+            # 記事本與 Terminal 的快速連打斷言不含標點（補標點會把「你好你好」補成「你好，你好」），這兩套關閉補標點。
             if($name -in @('notepad','terminal')){'{"punctuation":false}'|Set-Content (Join-Path $directory 'settings.json') -Encoding ASCII}
+            # search 比對同引擎的參考 session 與 SearchHost 的數字選字（#214）。
+            # 只驗外殼：兩邊都用統計排序、全新詞庫、無前文與補標點；Esc 用來證明候選已收起。
+            if($name -eq 'search'){'{"selection":"statistical","punctuation":false,"document_context":false,"esc_clear":true}'|Set-Content (Join-Path $directory 'settings.json') -Encoding ASCII}
             $args='-data "'+$installed+'\data" -user "'+$directory+'\test-user.json" -idle-exit 300s'
             $server=Start-Process "$installed\0c-server.exe" -ArgumentList $args -PassThru -NoNewWindow -RedirectStandardOutput "$directory\server.out" -RedirectStandardError "$directory\server.err"
             Start-Sleep -Seconds 1

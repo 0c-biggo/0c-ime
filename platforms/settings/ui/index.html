@@ -11,6 +11,7 @@
   <nav class="side" aria-label="設定頁面">
     <div class="brand"><img src="icon.png" alt="" width="32" height="32"><span>靈犀注音</span></div>
     <button type="button" class="nav" data-page="overview">總覽</button>
+    <button type="button" class="nav" data-page="styles">輸入習慣</button>
     <button type="button" class="nav" data-page="mode">中英切換</button>
     <button type="button" class="nav" data-page="candidates">選字</button>
     <button type="button" class="nav" data-page="keyboard">鍵盤與符號</button>
@@ -24,6 +25,7 @@
   <main>
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
     <section id="page-overview" class="page" hidden></section>
+    <section id="page-styles" class="page" hidden></section>
     <section id="page-mode" class="page" hidden></section>
     <section id="page-candidates" class="page" hidden></section>
     <section id="page-keyboard" class="page" hidden></section>
@@ -38,6 +40,7 @@
 <script src="engine-state.js"></script>
 <script src="vocab.js"></script>
 <script src="models.js"></script>
+<script src="input-styles.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

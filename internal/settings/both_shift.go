@@ -60,7 +60,7 @@ func adoptBothShift(path string, b []byte) (bool, error) {
 	if err := json.Unmarshal(b, &s); err != nil {
 		return false, fmt.Errorf("%s：%w：%v", path, ErrCorrupt, err)
 	}
-	if s.readOnly {
+	if s.readOnly || s.profiles != "" {
 		return false, nil
 	}
 	members, err := orderedMembers(b)

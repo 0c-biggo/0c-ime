@@ -23,96 +23,88 @@ func writeBundledAgent(t *testing.T, app string) string {
 	return p
 }
 
-// #205：macOS 15 上，被移入備份、仍在執行的舊輸入法程式每次查詢 SMAppService 都會把背景項目的登記拉到它所在的備份，
-// 排程就一直執行備份裡的舊 0c-update。備份裡的 App 沒有內附排程 plist 時查詢不會拉走登記，所以把它改名。
-func TestQuietBackupAgentsRenamesOnlyBackupPlists(t *testing.T) {
+// #213：原版 .inactive fixture 必須精確還原；完整 App 的檔案／名稱不可再改。
+func TestRestoreBackupAgentsPreservesCompleteBundles(t *testing.T) {
 	backups := t.TempDir()
-	old := filepath.Join(backups, "macos-20261020-115117-454278212", "0c.app")
-	older := filepath.Join(backups, "macos-20261019-010101-1", "0c.app")
-	stranger := filepath.Join(backups, "someone-else", "0c.app") // 不是安裝備份的命名，不動
-	for _, app := range []string{old, older, stranger} {
-		writeBundledAgent(t, app)
-	}
-	if n := quietBackupAgents(backups); n != 2 {
-		t.Fatalf("quieted %d backups, want 2", n)
-	}
-	for _, app := range []string{old, older} {
-		if present(bundledAgentPlist(app)) || !present(bundledAgentPlist(app)+inactiveAgentSuffix) {
-			t.Fatalf("%s: bundled plist must be renamed out of the way", app)
+	for _, name := range []string{"macos-20261020-115117-1", "macos-20261019-010101-2", "someone-else"} {
+		app := filepath.Join(backups, name, "0c.app")
+		p := writeBundledAgent(t, app)
+		if err := os.Rename(p, p+inactiveAgentSuffix); err != nil {
+			t.Fatal(err)
 		}
 	}
-	if !present(bundledAgentPlist(stranger)) {
-		t.Fatal("directories not named like install backups are left alone")
+	healthy := filepath.Join(backups, "macos-20261021-010101-3", "0c.app")
+	p := writeBundledAgent(t, healthy)
+	before, _ := os.Stat(p)
+	if n := restoreBackupAgents(backups); n != 2 {
+		t.Fatalf("restored %d, want 2", n)
 	}
-	if n := quietBackupAgents(backups); n != 0 {
-		t.Fatalf("second pass quieted %d, want 0 (nothing new)", n)
+	for _, name := range []string{"macos-20261020-115117-1", "macos-20261019-010101-2"} {
+		p := bundledAgentPlist(filepath.Join(backups, name, "0c.app"))
+		b, err := os.ReadFile(p)
+		if err != nil || string(b) != "<plist/>" || present(p+inactiveAgentSuffix) {
+			t.Fatal("original bytes and filename must be restored")
+		}
 	}
-	if n := quietBackupAgents(filepath.Join(backups, "missing")); n != 0 {
-		t.Fatal("missing backups directory is not an error")
+	after, _ := os.Stat(p)
+	if !os.SameFile(before, after) || !before.ModTime().Equal(after.ModTime()) {
+		t.Fatal("complete bundle must remain untouched")
+	}
+	if !present(bundledAgentPlist(filepath.Join(backups, "someone-else", "0c.app")) + inactiveAgentSuffix) {
+		t.Fatal("not an installation backup")
+	}
+	if n := restoreBackupAgents(backups); n != 0 {
+		t.Fatal("restoration must be idempotent")
+	}
+	if n := restoreBackupAgents(filepath.Join(backups, "absent")); n != 0 {
+		t.Fatal("absent backups")
 	}
 }
 
-// 回復進行中（安裝鎖）時不改名：選單每 15 秒的 status 會在回復把 plist 改回之後、核對之前又改掉（VM 實測）。
-func TestQuietBackupAgentsWaitsForInstallLock(t *testing.T) {
+func TestRestoreBackupAgentsWaitsForInstallLock(t *testing.T) {
 	support := t.TempDir()
 	backups := filepath.Join(support, "backups")
 	app := filepath.Join(backups, "macos-20261020-115117-1", "0c.app")
-	writeBundledAgent(t, app)
+	p := writeBundledAgent(t, app)
+	os.Rename(p, p+inactiveAgentSuffix)
 	lock := filepath.Join(support, "update.lock")
 	os.WriteFile(lock, []byte("1\n"), 0o600)
-	if n := quietBackupAgents(backups); n != 0 || !present(bundledAgentPlist(app)) {
-		t.Fatal("an install or rollback in progress: leave the backups alone")
+	if n := restoreBackupAgents(backups); n != 0 || present(p) {
+		t.Fatal("leave a running transaction alone")
 	}
 	if !bundlesAgent(app) {
-		t.Fatal("bundlesAgent sees the plist")
+		t.Fatal("renamed agent still counts")
 	}
 	old := time.Now().Add(-2 * time.Hour)
 	os.Chtimes(lock, old, old)
-	if n := quietBackupAgents(backups); n != 1 {
-		t.Fatal("a lock left over from an interrupted update long ago does not block")
-	}
-	if !bundlesAgent(app) || bundlesAgent(filepath.Join(backups, "none")) {
-		t.Fatal("bundlesAgent counts the renamed plist too")
+	if n := restoreBackupAgents(backups); n != 1 || !bundlesAgent(app) {
+		t.Fatal("stale lock does not block repair")
 	}
 }
 
-func TestQuietBackupAgentsSkipsSymlinkedPlist(t *testing.T) {
-	backups := t.TempDir()
-	app := filepath.Join(backups, "macos-20261020-115117-1", "0c.app")
-	target := filepath.Join(t.TempDir(), "elsewhere.plist")
-	os.WriteFile(target, []byte("x"), 0o644)
-	p := bundledAgentPlist(app)
-	os.MkdirAll(filepath.Dir(p), 0o755)
-	if err := os.Symlink(target, p); err != nil {
-		t.Fatal(err)
-	}
-	if n := quietBackupAgents(backups); n != 0 {
-		t.Fatal("only regular files are renamed")
-	}
-}
-
-// 回復（rollback／恢復）把備份裡的 App 放回 Input Methods 之前先改回原名，放回的 App 與收據、簽章一致，排程照常登記。
-func TestRestoreBundledAgent(t *testing.T) {
-	backups := t.TempDir()
-	app := filepath.Join(backups, "macos-20261020-115117-1", "0c.app")
+func TestRestoreBundledAgentSkipsSymlinkAndExistingFile(t *testing.T) {
+	app := filepath.Join(t.TempDir(), "0c.app")
 	p := writeBundledAgent(t, app)
-	quietBackupAgents(backups)
-	if !restoreBundledAgent(app) {
-		t.Fatal("renamed plist must be restored")
-	}
-	if !present(p) || present(p+inactiveAgentSuffix) {
-		t.Fatal("plist back under its own name")
-	}
 	if restoreBundledAgent(app) {
-		t.Fatal("nothing to restore the second time")
+		t.Fatal("complete bundle is not modified")
 	}
-	// 兩個都在（不該發生）時不覆蓋現有的 plist。
 	os.WriteFile(p+inactiveAgentSuffix, []byte("other"), 0o644)
 	if restoreBundledAgent(app) {
-		t.Fatal("an existing plist is never overwritten")
+		t.Fatal("existing plist is never overwritten")
 	}
-	if b, _ := os.ReadFile(p); string(b) != "<plist/>" {
-		t.Fatal("existing plist kept")
+	b, _ := os.ReadFile(p)
+	if string(b) != "<plist/>" {
+		t.Fatal("original plist changed")
+	}
+	os.Remove(p)
+	os.Remove(p + inactiveAgentSuffix)
+	target := filepath.Join(t.TempDir(), "elsewhere.plist")
+	os.WriteFile(target, []byte("x"), 0o644)
+	if err := os.Symlink(target, p+inactiveAgentSuffix); err != nil {
+		t.Fatal(err)
+	}
+	if restoreBundledAgent(app) || present(p) {
+		t.Fatal("only regular legacy files can be restored")
 	}
 }
 
@@ -165,15 +157,15 @@ func TestAgentAdoption(t *testing.T) {
 		want agentAdoption
 	}{
 		{"steady state: nothing could have pulled the registration", agentObservation{State: "enabled"}, adoptNothing},
-		{"a backup was just quieted: pull the registration back", agentObservation{Quieted: 1, State: "enabled"}, adoptPull},
-		{"quieted inside the job itself: pulling is safe", agentObservation{Quieted: 2, State: "enabled", InJob: true}, adoptPull},
-		{"user turned it off in System Settings: leave it", agentObservation{Quieted: 1, State: "requires-approval"}, adoptNothing},
+		{"a installed bundle was just restored: pull the registration back", agentObservation{Restored: true, State: "enabled"}, adoptPull},
+		{"restored inside the job itself: pulling is safe", agentObservation{Restored: true, State: "enabled", InJob: true}, adoptPull},
+		{"user turned it off in System Settings: leave it", agentObservation{Restored: true, State: "requires-approval"}, adoptNothing},
 		{"launchd cannot spawn it (backup deleted): re-register", agentObservation{Broken: true, State: "enabled"}, adoptReregister},
 		{"never unregister from inside the job", agentObservation{Broken: true, State: "enabled", InJob: true}, adoptNothing},
 		{"broken and disabled by the user: leave it", agentObservation{Broken: true, State: "requires-approval"}, adoptNothing},
 		{"old rollback put back a quieted app: register again", agentObservation{Restored: true, State: "not-registered"}, adoptPull},
 		{"unless the user removed the schedule", agentObservation{Restored: true, State: "not-registered", Removed: true}, adoptNothing},
-		{"not registered for other reasons: the app's own monitor handles it", agentObservation{Quieted: 1, State: "not-registered"}, adoptNothing},
+		{"not registered for other reasons: the app's own monitor handles it", agentObservation{State: "not-registered"}, adoptNothing},
 	}
 	for _, c := range cases {
 		if got := c.o.adoption(); got != c.want {
@@ -183,7 +175,7 @@ func TestAgentAdoption(t *testing.T) {
 	if (agentObservation{State: "enabled"}).needsState() {
 		t.Error("the menu's 15-second status must not launch the app when nothing changed")
 	}
-	if !(agentObservation{Broken: true}).needsState() || !(agentObservation{Quieted: 1}).needsState() || !(agentObservation{Restored: true}).needsState() {
+	if !(agentObservation{Broken: true}).needsState() || !(agentObservation{Restored: true}).needsState() {
 		t.Error("query the state when something may need fixing")
 	}
 }
@@ -205,7 +197,7 @@ func TestNeedsLaunchdCheck(t *testing.T) {
 		{"menu status, never checked", false, agentObservation{}, -1, time.Time{}, true},
 		{"menu status, last check one interval ago: look for spawn failed", false, agentObservation{}, -1, old, true},
 		{"clock went backwards", false, agentObservation{}, -1, now.Add(time.Hour), true},
-		{"background update left a backup to quiet: pull it back now", false, agentObservation{Quieted: 1}, -1, recent, true},
+		{"completed handover must schedule the new updater now", false, agentObservation{Rebound: true}, -1, recent, true},
 		{"rollback put back a quieted app", false, agentObservation{Restored: true}, -1, recent, true},
 		{"kick marker waiting for the new updater to run", false, agentObservation{}, 6, recent, true},
 		{"kick marker recorded at runs 0", false, agentObservation{}, 0, recent, true},
@@ -231,7 +223,7 @@ func TestNeedsLaunchdCheck(t *testing.T) {
 	if !launchdCheckDue(base, false, agentObservation{}, -1, time.Now().Add(agentCheckInterval)) {
 		t.Fatal("an interval later: check again")
 	}
-	if !launchdCheckDue(base, false, agentObservation{Quieted: 1}, -1, time.Now()) {
+	if !launchdCheckDue(base, false, agentObservation{Rebound: true}, -1, time.Now()) {
 		t.Fatal("a fresh backup must not wait for the interval")
 	}
 }

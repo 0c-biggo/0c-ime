@@ -293,3 +293,15 @@ input.port { width: 8em; }
 .model-card button.link.ext { padding: 0 4px; margin-left: -4px; text-align: left; overflow-wrap: anywhere; }
 .download-note { margin: 0 0 4px; }
 .model-actions { margin-bottom: 18px; }
+
+/* 輸入習慣：預覽整份差異後套用，內建唯讀值仍維持開關的實際狀態。 */
+.style-card { padding: 16px 18px; }
+.style-card h2 { margin: 0 0 8px; }
+.style-card h3 { font-size: 15px; margin: 18px 0 8px; }
+.style-card p { margin: 8px 0; }
+.style-select, .style-name { display: block; width: 100%; margin-top: 8px; padding: 9px 10px; font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+.style-summary { padding-left: 1.5em; margin: 10px 0; }
+.style-diff { list-style: none; padding: 0; margin: 0; }
+.style-diff li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 20px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.style-diff li:last-child { border-bottom: 0; }
+.side { overflow-y: auto; }

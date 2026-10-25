@@ -342,3 +342,39 @@ func TestOpenAndHealthRefreshRuntimeInfo(t *testing.T) {
 		t.Fatal("runtime query mutated a previous reply or static info")
 	}
 }
+
+// A settings change is not an update timeout: it stays armed while any field
+// is composing, and applies only after the last field has finished.
+func TestSettingsApplyWaitsForAllSessionsBeyondDrainTimeout(t *testing.T) {
+	drained := make(chan struct{})
+	srv := &Server{Engine: toyEngine(t), DrainTimeout: 20 * time.Millisecond, OnDrained: func() { close(drained) }}
+	sessions := map[uint64]bool{}
+	call := func(env Envelope) Reply { return srv.do(env, sessions, new(bool)) }
+	var ids []uint64
+	for range 2 {
+		id := call(Envelope{Op: OpOpen, Version: proto.Version}).Session
+		ids = append(ids, id)
+		call(Envelope{Op: OpHandle, Session: id, Req: &proto.Request{Type: proto.Key, Key: "a"}})
+	}
+	start := false
+	if r := srv.do(Envelope{Op: OpApplySettings}, sessions, &start); !r.OK || !start {
+		t.Fatal(r)
+	}
+	srv.runDrain()
+	time.Sleep(100 * time.Millisecond)
+	if !srv.Draining() {
+		t.Fatal("settings apply expired while composing")
+	}
+	call(Envelope{Op: OpHandle, Session: ids[0], Req: &proto.Request{Type: proto.Cancel}})
+	select {
+	case <-drained:
+		t.Fatal("another field is still composing")
+	case <-time.After(100 * time.Millisecond):
+	}
+	call(Envelope{Op: OpHandle, Session: ids[1], Req: &proto.Request{Type: proto.Cancel}})
+	select {
+	case <-drained:
+	case <-time.After(time.Second):
+		t.Fatal("settings did not apply after the last field finished")
+	}
+}

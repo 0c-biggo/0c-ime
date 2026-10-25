@@ -29,7 +29,7 @@ const (
 	FileName    = "settings.json"
 
 	// SchemaVersion 是本版寫入、也完全理解的檔案格式。
-	SchemaVersion = 1
+	SchemaVersion = 2
 
 	LayoutStandard = "standard" // 標準（大千）注音鍵盤排列
 	LayoutETen     = "eten"     // 倚天 41 鍵（#83）
@@ -105,9 +105,11 @@ type Settings struct {
 
 	// extra 是本版沒有解讀、但存檔要原樣寫回的成員（JSON 物件，鍵已排序）：未知欄位，
 	// 以及已知欄位中本版讀不懂的值。用原文字串保存，Settings 才能維持可比較。
-	extra string
+	extra    string
+	profiles string // canonical JSON keeps Settings comparable
 	// readOnly：檔案的 schema 比本版新，或不是整數，所以不覆寫。
-	readOnly bool
+	readOnly       bool
+	profileInvalid bool
 }
 
 // Fuzzy 是各組模糊音的啟用方式：off、select（預設，開候選時合併近音）或 auto（另在語境明顯支持近音時自動改字）。
@@ -382,7 +384,7 @@ func (s *Settings) UnmarshalJSON(b []byte) error {
 		values []string
 	}{
 		{"candidate_cursor", &s.CandidateCursor, []string{"before", "after"}},
-		{"candidate_layout", &s.CandidateLayout, []string{"vertical", "grid"}},
+		{"candidate_layout", &s.CandidateLayout, []string{"vertical", "grid", "horizontal"}},
 		{"emoji_shortcut", &s.EmojiShortcut, []string{"off", "equals"}},
 		{"keyboard_layout", &s.KeyboardLayout, []string{LayoutStandard, LayoutETen, LayoutHsu}},
 		{"selection_keys", &s.SelectionKeys, []string{SelectDigits, SelectQwer, SelectHome}},
@@ -409,6 +411,9 @@ func (s *Settings) UnmarshalJSON(b []byte) error {
 		if json.Unmarshal(raw, &n) != nil || n > SchemaVersion {
 			s.readOnly = true // 比本版新，或本版讀不懂的格式標記：不覆寫
 		}
+	}
+	if raw, ok := take("input_profile"); ok {
+		s.loadProfiles(raw)
 	}
 	for key, raw := range members {
 		kept[key] = raw
@@ -463,6 +468,9 @@ func (s Settings) MarshalJSON() ([]byte, error) {
 		if err := typed(field.key, field.value); err != nil {
 			return nil, err
 		}
+	}
+	if s.profiles != "" {
+		put("input_profile", []byte(s.profiles))
 	}
 	if s.Fuzzy != (Fuzzy{}) {
 		raw, err := json.Marshal(s.Fuzzy)
@@ -573,7 +581,7 @@ func Read(path string) (Report, error) {
 		}
 	}
 	if missing {
-		return Report{Path: path, Settings: Default(), State: StateMissing}, nil
+		return Report{Path: path, Settings: freshSettings(), State: StateMissing}, nil
 	}
 	if err != nil {
 		return Report{Path: path, Settings: Default(), State: StateUnreadable}, err
@@ -733,6 +741,9 @@ func (s Settings) disabledReason(key string) string {
 }
 
 func (s Settings) disabledReasonOn(goos, key string) string {
+	if s.styleExtensionDisabled(key) {
+		return styleExtensionReason
+	}
 	switch key {
 	case "mixed-input", "emoji-shortcut", "emoji-equals-first":
 		if s.KeyboardLayout == LayoutETen {
@@ -767,6 +778,8 @@ const startModeLockedReason = "不用 Shift 切換時固定從注音開始"
 // 原因那一項在別頁時，用它帶人過去改。新增停用原因時要一起加在這裡（TestDisabledItemsNameTheirCause）。
 func disabledBy(reason string) string {
 	switch reason {
+	case styleExtensionReason:
+		return "style-punctuation"
 	case "倚天 41 鍵時關閉", "許氏排列時關閉":
 		return "keyboard-layout"
 	case startModeLockedReason:
@@ -809,7 +822,7 @@ func specs() []spec {
 		{"candidate-cursor", "修改字詞的位置", "按 ↓（開啟空白鍵選字、沒開中英混打時也可按空白鍵）開候選時，修改游標前方或後方的字詞；橫排時前方是左側，後方是右側。游標在句尾時後方沒有字，一律修改前方的詞", Default().CandidateCursor, []string{"before", "after"}, func(s Settings) string { return s.CandidateCursor }},
 		{"advance-after-select", "選字後游標移到下一個字", "從候選窗選好字後，游標跳到所選的詞後面，可以接著按 ↓ 改下一個字；修改游標前方字詞時往後移一個字。游標在句尾時不動", "off", []string{"on", "off"},
 			func(s Settings) string { return onOff(s.AdvanceAfterSelect) }},
-		{"candidate-layout", "選字排列", "直排，或每排五個的多排選字（選字鍵 1234qweras 時每排四個）；Linux 原生候選窗依桌面介面呈現", "vertical", []string{"vertical", "grid"}, func(s Settings) string { return s.CandidateLayout }},
+		{"candidate-layout", "選字排列", "直排，或每排五個的多排選字（選字鍵 1234qweras 時每排四個）；Linux 原生候選窗依桌面介面呈現", "vertical", []string{"vertical", "grid", "horizontal"}, func(s Settings) string { return s.CandidateLayout }},
 		{"output-simplified", "輸出簡體字", "組字和候選仍顯示繁體，送出時才轉成簡體字；我的詞彙與我的片語也一起轉，英文、數字與標點不變", "off", []string{"on", "off"},
 			func(s Settings) string { return onOff(s.OutputSimplified) }},
 		{"simplified-hotkey", "用快捷鍵切換簡體字", simplifiedHotkeyDescription(runtime.GOOS), "off", []string{"on", "off"},
@@ -834,6 +847,10 @@ func specs() []spec {
 	for _, p := range fuzzy.Pairs() {
 		out = append(out, spec{"fuzzy-" + p.ID(), "模糊音 " + p.Symbols(), "把近音的字也列進候選，原音仍排在前面；「自動修正」（實驗）會在上下文明顯支持近音時另外自動改字", DefaultFuzzy, []string{"off", "select", "auto"},
 			func(s Settings) string { return s.FuzzyConfig().Mode(p).String() }})
+	}
+	for _, r := range ruleSpecs() {
+		r := r
+		out = append(out, spec{r.key, r.label, r.description, r.get(inputstyleDefaultRules()), r.values, func(s Settings) string { return r.get(s.ProfileRules()) }})
 	}
 	return out
 }
@@ -955,13 +972,15 @@ func Keys() map[string]string {
 
 // Item 描述一個可修改的設定及其目前的值，是 settings --json 契約的一項。
 type Item struct {
-	Key         string   `json:"key"`
-	Type        string   `json:"type"` // 目前都是 choice：從 Values 擇一
-	Values      []string `json:"values"`
-	Default     string   `json:"default"`
-	Value       string   `json:"value"` // 設定檔中的值（讀不懂的值顯示為預設值）
-	Label       string   `json:"label"`
-	Description string   `json:"description"`
+	Locked       bool     `json:"locked"`
+	LockedReason string   `json:"locked_reason,omitempty"`
+	Key          string   `json:"key"`
+	Type         string   `json:"type"` // 目前都是 choice：從 Values 擇一
+	Values       []string `json:"values"`
+	Default      string   `json:"default"`
+	Value        string   `json:"value"` // 設定檔中的值（讀不懂的值顯示為預設值）
+	Label        string   `json:"label"`
+	Description  string   `json:"description"`
 	// Disabled：這一項目前因其他設定而不起作用（例如倚天 41 鍵時的中英混打），介面顯示為不能改，
 	// 旁邊顯示 DisabledReason。Value 仍是設定檔中的值，條件解除後照舊生效。舊版介面忽略這兩個欄位。
 	Disabled       bool   `json:"disabled,omitempty"`
@@ -988,6 +1007,18 @@ func (s Settings) Items() []Item {
 		out = append(out, Item{Key: sp.key, Type: "choice", Values: sp.values, Default: sp.def, Value: value, Label: sp.label, Description: sp.description,
 			Disabled: reason != "", DisabledReason: reason, DisabledBy: disabledBy(reason), Effective: effective, ValueLabels: s.valueLabels(sp.key)})
 	}
+	for i := range out {
+		if sp, ok := lookupRule(out[i].Key); ok {
+			out[i].ValueLabels = sp.labels
+		}
+		if out[i].Key == "candidate-layout" {
+			out[i].ValueLabels = map[string]string{"vertical": "直排", "grid": "多排", "horizontal": "橫排"}
+		}
+		if s.profileLocked(out[i].Key) {
+			out[i].Locked = true
+			out[i].LockedReason = "此項由選用的輸入習慣固定；請先複製成自訂"
+		}
+	}
 	return out
 }
 
@@ -1002,6 +1033,24 @@ func (s Settings) Value(key string) (string, bool) {
 
 // Set 依命令列的鍵與值修改設定；錯誤為 *SetError。明確設定某個欄位會丟掉先前為它保留的原文。
 func (s *Settings) Set(key, value string) error {
+	next := *s
+	if err := next.set(key, value); err != nil {
+		return err
+	}
+	if err := next.validateProfileCombination(); err != nil {
+		return err
+	}
+	*s = next
+	return nil
+}
+
+func (s *Settings) set(key, value string) error {
+	if s.ReadOnly() {
+		return ErrReadOnly
+	}
+	if s.profileLocked(key) {
+		return &SetError{Code: "locked_by_profile", Key: key, Msg: "此項由選用的輸入習慣固定；請先複製成自訂"}
+	}
 	sp, ok := lookup(key)
 	if !ok {
 		names := make([]string, 0, len(specs()))
@@ -1021,6 +1070,9 @@ func (s *Settings) Set(key, value string) error {
 	}
 	if !valid {
 		return &SetError{Code: CodeInvalidValue, Key: key, Msg: fmt.Sprintf("%s 只接受 %s", key, strings.Join(sp.values, " 或 "))}
+	}
+	if rule, ok := lookupRule(key); ok {
+		return s.setRule(rule, value)
 	}
 	switch key {
 	case "selection":
@@ -1099,12 +1151,18 @@ func (s *Settings) Set(key, value string) error {
 		s.EmojiEqualsFirst = value == "on"
 		s.forget("emoji_equals_first")
 	case "keyboard-layout":
+		next := *s
+		next.KeyboardLayout = value
+		if available, reason := next.profileAvailability(s.ActiveProfile()); !available {
+			return profileError(reason)
+		}
 		s.KeyboardLayout = value
 		s.forget("keyboard_layout")
 	case "selection-keys":
 		s.SelectionKeys = value
 		s.forget("selection_keys")
 	case PreviewRetiredKey: // 已正式開放：不改任何東西
+		return nil
 	default:
 		p, _ := fuzzy.ParsePair(strings.TrimPrefix(key, "fuzzy-"))
 		if value == DefaultFuzzy {
@@ -1112,5 +1170,6 @@ func (s *Settings) Set(key, value string) error {
 		}
 		s.Fuzzy.set(p, value)
 	}
+	s.syncProfile()
 	return nil
 }

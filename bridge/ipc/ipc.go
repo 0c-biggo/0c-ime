@@ -20,13 +20,14 @@ const MaxFrame = 1 << 20
 
 // 操作。
 const (
-	OpOpen   = "open"   // 開一個 session，回傳 Session
-	OpClose  = "close"  // 關閉 Session
-	OpHandle = "handle" // 在 Session 上處理 Req，回傳 Snapshot
-	OpPing   = "ping"   // 健康檢查
-	OpHealth = "health" // 運作版本與狀態（不含文字），供更新協調器與 E2E 核對
-	OpDrain  = "drain"  // 更新交接：沒有組字時存檔並退出，外殼重連時改接新版引擎
-	OpVocab  = "vocab"  // 自訂詞彙管理指令（#122）：Vocab 進、Vocab 出；不需要 session
+	OpOpen          = "open"           // 開一個 session，回傳 Session
+	OpClose         = "close"          // 關閉 Session
+	OpHandle        = "handle"         // 在 Session 上處理 Req，回傳 Snapshot
+	OpPing          = "ping"           // 健康檢查
+	OpHealth        = "health"         // 運作版本與狀態（不含文字），供更新協調器與 E2E 核對
+	OpApplySettings = "apply_settings" // 等所有輸入框組字完成後套用設定，不因等待逾時取消
+	OpDrain         = "drain"          // 更新交接：沒有組字時存檔並退出，外殼重連時改接新版引擎
+	OpVocab         = "vocab"          // 自訂詞彙管理指令（#122）：Vocab 進、Vocab 出；不需要 session
 )
 
 // Envelope 是薄殼送出的訊息。

@@ -44,6 +44,48 @@ public static class SearchProbe {
   return $null
  }
  function Check([bool]$ok,[string]$name,[string]$detail){ if(-not $ok){throw "$name failed: $detail"}; $script:report.checks+=$name }
+ # 以同一個隔離引擎、相同的全新詞庫取得這版資料包的候選；用 Select(ID) 當參考，
+ # SearchHost 則真的按數字鍵。參考 session 不提交、不學習，也不依賴第三項一定不是原字。
+ function Reference([int]$index){
+  $pipeName='0c-'+[Security.Principal.WindowsIdentity]::GetCurrent().User.Value.ToLowerInvariant()
+  $pipe=[IO.Pipes.NamedPipeClientStream]::new('.',$pipeName,[IO.Pipes.PipeDirection]::InOut)
+  function ReadExact([int]$count){
+   $bytes=New-Object byte[] $count;$offset=0
+   while($offset -lt $count){$read=$pipe.Read($bytes,$offset,$count-$offset);if($read -eq 0){throw 'Reference engine disconnected'};$offset+=$read}
+   return ,$bytes
+  }
+  function Exchange($request){
+   $bytes=[Text.Encoding]::UTF8.GetBytes(($request|ConvertTo-Json -Depth 6 -Compress))
+   $header=[BitConverter]::GetBytes([uint32]$bytes.Length)
+   $pipe.Write($header,0,4);$pipe.Write($bytes,0,$bytes.Length);$pipe.Flush()
+   $length=[BitConverter]::ToUInt32((ReadExact 4),0)
+   if($length -gt 1048576){throw 'Reference reply exceeds frame limit'}
+   $reply=[Text.Encoding]::UTF8.GetString((ReadExact $length))|ConvertFrom-Json
+   if(-not $reply.ok){throw "Reference engine: $($reply.error)"}
+   return $reply
+  }
+  try {
+   $pipe.Connect(3000)
+   $session=(Exchange @{op='open'}).session
+   foreach($key in @('s','u','3','c','l','3','Down')){
+    $reply=Exchange @{op='handle';session=$session;req=@{type='key';key=$key;private=$true}}
+   }
+   $items=@($reply.snapshot.candidates.items)
+   if($items.Count -le $index){throw "Reference has only $($items.Count) candidates"}
+   $before=-join @($reply.snapshot.preedit|ForEach-Object text)
+   $chosen=Exchange @{op='handle';session=$session;req=@{type='select';index=$items[$index].id;private=$true}}
+   return [pscustomobject]@{index=$index;candidate=$items[$index];items=$items;before=$before;selected=(-join @($chosen.snapshot.preedit|ForEach-Object text))}
+  } finally {$pipe.Dispose()}
+ }
+ $third=Reference 2
+ $alternative=$null
+ for($i=0;$i -lt $third.items.Count -and $i -lt 9;$i++){
+  $choice=Reference $i
+  if($choice.selected -ne $choice.before){$alternative=$choice;break}
+ }
+ Check ($null -ne $alternative) 'search_has_distinct_candidate_control' 'No candidate changes the composed text'
+ $report.reference=[ordered]@{items=$third.items;third=$third.candidate;third_expected=$third.selected;alternative=$alternative.candidate;alternative_key=($alternative.index+1);alternative_expected=$alternative.selected}
+
  if(-not(Test-Path $log)){New-Item -ItemType Directory $log|Out-Null;$createdLog=$true}
  $logStart=if(Test-Path "$log\tsf.log"){(Get-Item "$log\tsf.log").Length}else{0}
  # 重新啟動 SearchHost，讓它載入目前註冊的 DLL。
@@ -69,8 +111,20 @@ public static class SearchProbe {
  Check ($text -match 'open: session=') 'search_engine_session' 'no session in sandbox log'
  [SearchProbe]::Key(0x33); Start-Sleep -Milliseconds 1200
  $report.values.selected=Value
- Check ($report.values.selected -and $report.values.selected.Length -eq 2 -and $report.values.selected.StartsWith('你') -and $report.values.selected -ne '你好') 'search_keyboard_selects_third_candidate' "$($report.values.selected)"
+ Check ($report.values.selected -ceq $third.selected) 'search_keyboard_selects_third_candidate' "expected [$($third.selected)], got [$($report.values.selected)]"
  Shot 'search-selected'
+ # 第三項若恰好就是原字，只比對文字還不足以證明按鍵有效。一次 Esc 應清掉整段；
+ # 若 3 被漏掉、仍在選字，一次 Esc 只會收起候選並留下「你好」。
+ [SearchProbe]::Key(0x1B);Start-Sleep -Milliseconds 500
+ Check ((Value) -ceq '') 'search_selection_closed_before_escape' "$(Value)"
+ [SearchProbe]::Keys('su3cl3');[SearchProbe]::Key(0x28);Start-Sleep -Milliseconds 800
+ Shot 'search-control-candidates'
+ [SearchProbe]::Key([byte](0x31+$alternative.index));Start-Sleep -Milliseconds 1200
+ $report.values.control=Value
+ Check ($report.values.control -ceq $alternative.selected -and $report.values.control -cne $third.before) 'search_keyboard_selects_distinct_candidate' "expected [$($alternative.selected)], got [$($report.values.control)]"
+ Shot 'search-control-selected'
+ [SearchProbe]::Key(0x1B);Start-Sleep -Milliseconds 500
+ Check ((Value) -ceq '') 'search_control_selection_closed_before_escape' "$(Value)"
  $report.passed=$true
 } catch {$report.error=$_.Exception.ToString()} finally {
  try { [SearchProbe]::Key(0x1B); [SearchProbe]::Key(0x1B); Start-Sleep -Milliseconds 500; [SearchProbe]::Key(0x1B) } catch {}

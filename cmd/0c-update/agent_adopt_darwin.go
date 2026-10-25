@@ -14,26 +14,31 @@ import (
 	"github.com/0c-biggo/0c-ime/internal/autoupdate"
 )
 
-// adoptSchedule 讓背景項目的登記留在已安裝的 App（#205，原因見 agent_backup_mac.go）：把備份裡 App 內附的排程 plist
-// 改名，舊輸入法程式就拉不走登記；有改名時以已安裝的 App 註冊一次，把已經被拉走的登記拉回來，下一次喚起排程就執行
-// 新版的 0c-update，不必重新登入。launchd 啟動不了排程（登記指著的備份已刪除）時取消再重新註冊。
-//
-// status、check、auto、finish 都先做這一步：仍在執行的舊輸入法程式的選單每 15 秒以啟動時的路徑（就是 Input Methods
-// 裡新版的 0c-update）查詢 status，設定程式、選單「檢查更新」、排程也都經過這裡，所以舊版更新器在背景裝好新版後，
-// 新版在幾秒內就接手。平常只多讀一次 backups 目錄；launchctl print 在 check、auto、finish 每次都做，status 只在剛改名、
-// 改回 plist 或有 kick 記號時做，其他時候每 15 分鐘一次（needsLaunchdCheck：看登記指著的備份被刪掉的 spawn failed）。
+// adoptSchedule 保留每份 App 的完整簽章（#213）。舊版外殼可能把 SMAppService 登記拉回備份（#205），
+// 所以只在使用者離開、舊外殼安全退場後接手。舊選單每 15 秒查 installed updater 的 status，
+// 可以喚起一次有界 schedule adopt；不跑下載／安裝協調器，不新增常駐服務。
 var adoptSchedule = adoptInstalledSchedule // 測試換掉：go test 不動這台機器的登記與備份
 
 // foreground 為 false 時（status：選單每 15 秒查一次，5 秒就被結束）需要重新註冊的話交給另一個行程（schedule adopt），
 // 免得取消之後、重新註冊之前被結束，排程就不見了。
 func adoptInstalledSchedule(foreground bool) {
-	app := installedApp()
+	adoptScheduleAt(basePath(), installedApp(), foreground)
+}
+
+func adoptScheduleAt(base, app string, foreground bool) {
+	restoreBackupAgents(filepath.Join(base, "backups"))
 	o := agentObservation{Restored: restoreBundledAgent(app)}
 	if !fileExists(appAgent(app)) {
 		return // 沒有內附排程的 App（或沒有安裝）：舊的 LaunchAgents plist 不受影響
 	}
-	base := basePath()
-	o.Quieted = quietBackupAgents(filepath.Join(base, "backups"))
+	if s, err := autoupdate.Load(base); err != nil || s.ScheduleRemoved {
+		return
+	}
+	ready, pulled := adoptCurrentShell(base, app, foreground)
+	if !ready {
+		return
+	}
+	o.Rebound = pulled
 	marker := filepath.Join(base, "update", "agent-kick")
 	pending := readKickMarker(marker)
 	if !launchdCheckDue(base, foreground, o, pending, time.Now()) {
@@ -46,16 +51,15 @@ func adoptInstalledSchedule(foreground bool) {
 		o.Broken, running, runs = agentSpawnFailed(out), agentRunning(out), agentRuns(out)
 	}
 	o.InJob = os.Getenv("XPC_SERVICE_NAME") == agentLabel
-	pulled := false
-	if o.needsState() {
-		if s, err := autoupdate.Load(basePath()); err == nil {
+	if !pulled && o.needsState() {
+		if s, err := autoupdate.Load(base); err == nil {
 			o.Removed = s.ScheduleRemoved
 		}
-		if state, err := agentState(app, "status"); err == nil {
+		if state, err := agentScheduleState(app, "status"); err == nil {
 			o.State = state
 			switch o.adoption() {
 			case adoptPull:
-				state, err = agentState(app, "register")
+				state, err = agentScheduleState(app, "register")
 				pulled = err == nil && state == "enabled"
 			case adoptReregister:
 				if foreground {
@@ -66,6 +70,12 @@ func adoptInstalledSchedule(foreground bool) {
 			}
 		}
 	}
+	// 使用者在登記之後關閉背景執行時，不再重試 kick。
+	if pending >= 0 && !pulled {
+		if state, err := agentScheduleState(app, "status"); err != nil || state != "enabled" {
+			return
+		}
+	}
 	k := kickAfterAdoption(pulled, pending, runs, running, o.InJob)
 	switch {
 	case k.Marker < 0 && fileExists(marker):
@@ -74,10 +84,85 @@ func adoptInstalledSchedule(foreground bool) {
 		_ = os.WriteFile(marker, []byte(fmt.Sprintf("%d\n", k.Marker)), 0o600)
 	}
 	if k.Kick {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = exec.CommandContext(ctx, "/bin/launchctl", "kickstart", fmt.Sprintf("gui/%d/%s", os.Getuid(), agentLabel)).Run()
+		kickAgent()
 	}
+}
+
+// adoptCurrentShell 以 installed executable 的檔案身分記錄已接管；同版重裝／rollback 也會重新判斷。
+// status 不等待退場：它的呼叫者五秒後會結束它，改用既有 detached schedule adopt 完成一次有界工作。
+func adoptCurrentShell(base, app string, foreground bool) (ready, pulled bool) {
+	r, err := readMacReceiptFile(filepath.Join(base, "install-receipt.json"))
+	if err != nil || r == nil || !r.Active {
+		return false, false
+	}
+	current := filepath.Join(app, "Contents/MacOS/0c")
+	identity := agentInstallIdentity(base, current)
+	if identity == "" || macInstallLocked(base) {
+		return false, false
+	}
+	if agentTakeoverDone(base, identity) {
+		return true, false
+	}
+	if agentReloginRequired(base) {
+		return false, false
+	}
+	if !foreground {
+		old, err := observeMacShells(current)
+		if err == nil && (len(old) == 0 || userAway()) && claimAgentSpawn(base, identity, time.Now()) {
+			spawnAdopt()
+		}
+		return false, false
+	}
+	_ = autoupdate.WithLock(base, "agent-takeover.lock", func() error {
+		if macInstallLocked(base) || agentReloginRequired(base) || agentInstallIdentity(base, current) != identity {
+			return nil
+		}
+		if agentTakeoverDone(base, identity) {
+			ready = true
+			return nil
+		}
+		s, err := autoupdate.Load(base)
+		if err != nil || s.ScheduleRemoved {
+			return err
+		}
+		// 與外殼 UpdateAgentMonitor.check 一致：沒有使用者移除記號時可補註冊；
+		// requires-approval 則保留。status 先修回 inactive 後，理由不必依賴單一行程的布林值。
+		state, err := agentScheduleState(app, "status")
+		if err != nil || state != "enabled" && state != "not-registered" {
+			return err
+		}
+		c := agentTakeoverControl{
+			identity: func() string { return agentInstallIdentity(base, current) },
+			shells:   func() ([]uiProcess, error) { return observeMacShells(current) },
+			away:     userAway,
+			retire:   func() bool { return retireForAdoption(current) },
+			pull: func() bool {
+				// 等待退場時可能關閉了背景執行／移除排程；登記前重讀，不覆蓋使用者的新選擇。
+				s, err := autoupdate.Load(base)
+				if err != nil || s.ScheduleRemoved || macInstallLocked(base) {
+					return false
+				}
+				state, err := agentScheduleState(app, "status")
+				if err != nil || state != "enabled" && state != "not-registered" {
+					return false
+				}
+				state, err = agentScheduleState(app, "register")
+				return err == nil && state == "enabled"
+			},
+		}
+		if !finishAgentTakeover(identity, c) {
+			return nil
+		}
+		if err := os.MkdirAll(filepath.Dir(agentTakeoverStamp(base)), 0o700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(agentTakeoverStamp(base), []byte(identity), 0o600); err != nil {
+			return err
+		}
+		ready, pulled = true, true
+		return nil
+	})
+	return ready, pulled
 }
 
 // readKickMarker 讀 agentKick 的記號；沒有、讀不懂或超過一小時（runs 在重新登入後從頭算）時為 -1。
@@ -97,7 +182,23 @@ func readKickMarker(path string) int {
 }
 
 // spawnAdopt 以脫離的行程（setsid）執行 0c-update schedule adopt：呼叫者結束時不會一起被結束。
-func spawnAdopt() {
+// 系統操作集中為可替換的 hooks；原生 go test 不啟動自己的副本或操作背景項目。
+var (
+	agentScheduleState   = agentState
+	agentReloginRequired = macReloginRequired
+	retireForAdoption    = func(current string) bool {
+		_, left := retireMacShells(current, uiWaitAuto, true)
+		return len(left) == 0
+	}
+	spawnAdopt = spawnScheduleAdopt
+	kickAgent  = func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = exec.CommandContext(ctx, "/bin/launchctl", "kickstart", fmt.Sprintf("gui/%d/%s", os.Getuid(), agentLabel)).Run()
+	}
+)
+
+func spawnScheduleAdopt() {
 	self, err := os.Executable()
 	if err != nil {
 		return
@@ -131,12 +232,12 @@ func reregisterAgent(app string) {
 			return nil
 		}
 		_ = os.WriteFile(stamp, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o600)
-		if _, err := agentState(app, "unregister"); err != nil {
+		if _, err := agentScheduleState(app, "unregister"); err != nil {
 			return err
 		}
 		for i := 0; i < 10; i++ {
 			time.Sleep(500 * time.Millisecond)
-			if state, err := agentState(app, "register"); err == nil && state == "enabled" {
+			if state, err := agentScheduleState(app, "register"); err == nil && state == "enabled" {
 				return nil
 			}
 		}

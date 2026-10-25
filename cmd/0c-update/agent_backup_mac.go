@@ -19,8 +19,8 @@ import (
 // 一次排程狀態；macOS 15 以它現在所在的位置（備份）當呼叫者，登記就被拉到備份，排程一直執行備份裡的舊 0c-update，
 // 新版更新器的修正到重新登入前都不生效（macOS 14 以啟動時的路徑當呼叫者，所以沒有這個問題）。
 //
-// 備份裡的 App 沒有內附的排程 plist 時，查詢只回報找不到、不會拉走登記（VM 實測），所以把備份裡的 plist 改名；
-// 已發布的舊版程式也一樣適用，不必等它們結束。回復時先改回原名（restoreBundledAgent），放回的 App 與收據、簽章一致。
+// 0.2.5 曾將備份裡的 plist 改名來阻止登記被拉走，會破壞仍執行 App 的資源簽章（#213）。
+// 現在只還原舊改名，絕不再修改完整 App；安全退場後才接管排程，見 agent_adopt_darwin.go。
 
 const inactiveAgentSuffix = ".inactive"
 
@@ -29,11 +29,10 @@ func bundledAgentPlist(app string) string {
 	return filepath.Join(app, "Contents/Library/LaunchAgents", macAgentLabel+".plist")
 }
 
-// quietBackupAgents 把 backups 下每份安裝備份（macos-<時間>-<亂數>/0c.app）內附的排程 plist 改名，回傳這次改了幾份。
-// 只改一般檔案；讀不到、改不動時跳過，下次再試。
-func quietBackupAgents(backups string) int {
-	// 安裝、回復進行中（持有 update.lock）時不動：回復要放回的那份剛由 PrepareRollback 改回原名。一小時以前留下的鎖不算。
-	if info, err := os.Stat(filepath.Join(filepath.Dir(backups), "update.lock")); err == nil && time.Since(info.ModTime()) < time.Hour {
+// restoreBackupAgents 只還原 0.2.5 留下的 .inactive，不覆蓋完整備份或使用者已有的原檔。
+// 安裝／回復交易中不動備份；下次既有 updater 入口會再試。
+func restoreBackupAgents(backups string) int {
+	if macInstallLocked(filepath.Dir(backups)) {
 		return 0
 	}
 	entries, err := os.ReadDir(backups)
@@ -45,21 +44,19 @@ func quietBackupAgents(backups string) int {
 		if !e.IsDir() || !macBackupDir.MatchString(e.Name()) {
 			continue
 		}
-		p := bundledAgentPlist(filepath.Join(backups, e.Name(), "0c.app"))
-		if info, err := os.Lstat(p); err != nil || !info.Mode().IsRegular() {
-			continue
-		}
-		if _, err := os.Lstat(p + inactiveAgentSuffix); err == nil {
-			continue // 不覆蓋
-		}
-		if os.Rename(p, p+inactiveAgentSuffix) == nil {
+		if restoreBundledAgent(filepath.Join(backups, e.Name(), "0c.app")) {
 			n++
 		}
 	}
 	return n
 }
 
-// restoreBundledAgent 把 quietBackupAgents 改名的 plist 改回原名（app 要放回 Input Methods 或已經放回時）；有改回時回傳 true。
+func macInstallLocked(base string) bool {
+	info, err := os.Stat(filepath.Join(base, "update.lock"))
+	return err == nil && time.Since(info.ModTime()) < time.Hour
+}
+
+// restoreBundledAgent 把 0.2.5 改名的 plist 改回原名（app 要放回 Input Methods 或已經放回時）；有改回時回傳 true。
 // 原名的 plist 已存在時不動。
 func restoreBundledAgent(app string) bool {
 	p := bundledAgentPlist(app)
@@ -84,7 +81,7 @@ const (
 
 // agentObservation 是 adoptSchedule 觀察到的情形。
 type agentObservation struct {
-	Quieted  int    // 這次改名的備份 plist 數
+	Rebound  bool   // 安全退場後，本次已把排程登記拉回已安裝 App
 	Restored bool   // 已安裝的 App 的 plist 剛改回原名（舊版回復放回了改名過的 App）
 	Broken   bool   // launchd 啟動不了排程（agentSpawnFailed）
 	State    string // 已安裝的 App 查到的 SMAppService 狀態；沒查時為空字串
@@ -94,17 +91,17 @@ type agentObservation struct {
 
 // needsState：要不要查詢已安裝的 App 的排程狀態（啟動一次 App 的執行檔）。登記沒有被拉走的可能、launchd 也正常時不查，
 // 輸入法選單每 15 秒的 status 不必多花時間。
-func (o agentObservation) needsState() bool { return o.Quieted > 0 || o.Restored || o.Broken }
+func (o agentObservation) needsState() bool { return o.Restored || o.Broken }
 
 // agentCheckInterval：選單每 15 秒的 status 在沒有任何跡象時，多久才以 launchctl print 看一次 launchd 啟動不啟動得了
 // 排程。排程本來就每 15 分鐘才喚起一次，晚這麼久發現等於只晚一次喚起。
 const agentCheckInterval = 15 * time.Minute
 
 // needsLaunchdCheck：這次要不要執行 launchctl print（spawn failed、runs、running）。check、auto、finish、schedule adopt
-// （foreground）每次都看；status 在剛改名或改回 plist（要拉回登記，kick 要 runs）、或有 kick 記號（pending >= 0）時看，
+// （foreground）每次都看；status 在完成安全接管或改回 plist（要拉回登記，kick 要 runs）、或有 kick 記號（pending >= 0）時看，
 // 其他時候距離上次看過 agentCheckInterval 才再看（last 為零值或在未來時當成沒看過）。
 func needsLaunchdCheck(foreground bool, o agentObservation, pending int, last, now time.Time) bool {
-	if foreground || o.Quieted > 0 || o.Restored || pending >= 0 {
+	if foreground || o.Rebound || o.Restored || pending >= 0 {
 		return true
 	}
 	age := now.Sub(last)
@@ -133,9 +130,11 @@ func noteLaunchdCheck(base string) {
 // 沒有註冊的只在剛改回 plist、且不是使用者自己移除時補註冊。取消註冊會結束正在執行的排程，排程本身不做。
 func (o agentObservation) adoption() agentAdoption {
 	switch {
+	case o.Removed:
+		return adoptNothing
 	case o.State == "enabled" && o.Broken && !o.InJob:
 		return adoptReregister
-	case o.State == "enabled" && (o.Quieted > 0 || o.Restored):
+	case o.State == "enabled" && o.Restored:
 		return adoptPull
 	case o.State == "not-registered" && o.Restored && !o.Removed:
 		return adoptPull
@@ -168,7 +167,7 @@ func kickAfterAdoption(pulled bool, marker, runs int, running, inJob bool) agent
 	return agentKick{Kick: !running, Marker: marker}
 }
 
-// bundlesAgent：App 內附排程 plist（包括被 quietBackupAgents 改名的）。
+// bundlesAgent：App 內附排程 plist（包括 0.2.5 改名的）。
 func bundlesAgent(app string) bool {
 	for _, p := range []string{bundledAgentPlist(app), bundledAgentPlist(app) + inactiveAgentSuffix} {
 		if _, err := os.Lstat(p); err == nil {

@@ -28,8 +28,11 @@ const IO_TIMEOUT_MS: u32 = 1000;
 const SPAWN_WAIT_MS: u32 = 5000;
 /// 兩次啟動之間至少隔這麼久：server 反覆死掉時不會每鍵都啟動一次、也不會每鍵都等 5 秒。
 pub const RESPAWN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
-/// 舊 writer 已明確拒絕請求時，給新版接管的期限；不延長每次正常連線失敗。
-const HANDOFF_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
+/// 引擎重啟時等新引擎可以服務的期限（#216），從發現舊引擎關掉連線、或舊引擎回「引擎正在切換」起算，只設定一次。
+/// 改設定套用、更新交接、當掉後重新啟動，新引擎都要先等舊引擎存完檔放鎖、再載入資料包才開始監聽；
+/// .14 實測改設定後約 1 秒可服務。期限內 OnKeyDown 等新引擎（宿主的下一個按鍵在訊息佇列裡依序等著），
+/// 不在 server 根本沒在跑時每鍵都等（那時沒有斷線可發現，照舊立刻放行）。
+pub const RESTART_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 pub struct Client {
     pipe: Vec<u16>,           // 以 NUL 結尾
@@ -37,7 +40,12 @@ pub struct Client {
     handle: Option<HANDLE>,
     generation: u32,
     last_spawn: Option<std::time::Instant>,
-    handoff_until: Option<std::time::Instant>,
+    /// 預期引擎正在重啟、等它到這個時間（RESTART_WAIT）；成功回覆或呼叫端放棄時清掉。
+    restart_until: Option<std::time::Instant>,
+    /// 舊 writer 明確拒絕過（「引擎正在切換」）：接管者由更新器或 0c-update 啟動，等的期間不自己啟動引擎。
+    closing_writer: bool,
+    /// 連不上時可以啟動安裝的 0c-server；只有日常的管道（Client::new）可以，測試用的管道不啟動真的引擎。
+    may_start: bool,
 }
 
 impl Drop for Client {
@@ -168,6 +176,7 @@ impl Client {
     pub fn new() -> Client {
         let mut client = Client::with_pipe(&server_pipe());
         client.legacy = Some(wide(&legacy_server_pipe()));
+        client.may_start = true;
         client
     }
 
@@ -178,7 +187,9 @@ impl Client {
             handle: None,
             generation: 0,
             last_spawn: None,
-            handoff_until: None,
+            restart_until: None,
+            closing_writer: false,
+            may_start: false,
         }
     }
 
@@ -192,13 +203,45 @@ impl Client {
         self.generation
     }
 
-    pub fn handoff_pending(&self) -> bool {
-        self.handoff_until
+    /// 引擎正在重啟（交接、改設定、當掉後重新啟動），還在等新引擎的期限內（#216）。
+    pub fn restart_pending(&self) -> bool {
+        self.restart_until
             .is_some_and(|until| std::time::Instant::now() < until)
     }
 
-    pub fn abandon_handoff(&mut self) {
-        self.handoff_until = None;
+    /// 等新引擎的期限（過了也照樣回報，直到成功或放棄）；呼叫端以第一次看到的期限為準，持續斷線不能一直延長。
+    pub fn restart_deadline(&self) -> Option<std::time::Instant> {
+        self.restart_until
+    }
+
+    /// 呼叫端不再等：下一次按鍵照一般情況連線（server 不在就立刻放行）。
+    pub fn abandon_restart(&mut self) {
+        self.restart_until = None;
+        self.closing_writer = false;
+    }
+
+    /// 舊引擎關掉了這條連線（交接、改設定後退出、當掉）：新引擎通常馬上會由登入工作、更新器或這裡啟動，
+    /// 從現在起 RESTART_WAIT 內等它。已經在等就不延長。
+    fn expect_restart(&mut self) {
+        if self.restart_until.is_none() {
+            self.restart_until = Some(std::time::Instant::now() + RESTART_WAIT);
+        }
+    }
+
+    /// 剛失敗的把手是不是被另一端關掉（不是逾時）：引擎還在、只是慢，不當成重啟。
+    fn peer_closed(&self) -> bool {
+        let Some(h) = self.handle else {
+            return false;
+        };
+        unsafe { PeekNamedPipe(h, None, 0, None, None, None) }.is_err()
+    }
+
+    /// I/O 失敗後關掉連線；另一端已經關掉時記下引擎正在重啟。
+    fn close_after_failure(&mut self) {
+        if self.peer_closed() {
+            self.expect_restart();
+        }
+        self.close();
     }
 
     /// 目前是否持有連線（不代表引擎仍在；下一次呼叫才會發現斷線）。
@@ -214,6 +257,9 @@ impl Client {
         };
         let mut available = 0u32;
         let ok = unsafe { PeekNamedPipe(h, None, 0, None, Some(&mut available), None) }.is_ok();
+        if !ok {
+            self.expect_restart(); // 引擎關掉了連線：多半正在重啟（#216）
+        }
         if !ok || available != 0 {
             self.close();
             return false;
@@ -226,7 +272,7 @@ impl Client {
         if self.handle.is_some() {
             return true;
         }
-        if self.handoff_until.is_some() {
+        if self.closing_writer && self.restart_pending() {
             return false;
         }
         self.connect_once().is_ok() || self.connect_legacy()
@@ -282,7 +328,7 @@ impl Client {
     /// 啟動 0c-server；回傳是否真的啟動了（有速率限制）。引擎常駐、不閒置結束：
     /// 沙箱應用程式（Windows 搜尋框等）裡的 DLL 不能啟動程式，只能連上已在執行的引擎。
     fn spawn_server(&mut self) -> bool {
-        if !may_spawn(&mut self.last_spawn) {
+        if !self.may_start || !may_spawn(&mut self.last_spawn) {
             return false;
         }
         spawn_sibling("0c-server.exe", "").is_some()
@@ -293,10 +339,26 @@ impl Client {
         if self.handle.is_some() {
             return true;
         }
-        if self.handoff_until.is_some() {
-            // 接管者由更新器啟動。不要連回仍在關閉的 writer 後一直使用
-            // 同一把手，也不要在每次探測時啟動程序或等待五秒。
-            return self.handoff_pending() && (self.connect_once().is_ok() || self.connect_legacy());
+        if self.restart_pending() {
+            // 引擎正在重啟（#216）：只試一次、不在這裡等，由 Session::handle 在期限內反覆試（TestKeyDown 的查詢不卡住宿主）。
+            // 舊 writer 拒絕過時接管者由更新器啟動：不要連回仍在關閉的 writer 後一直使用同一把手，也不自己啟動。
+            // 其他情況（改設定後退出、當掉）管道不在就照舊啟動一次（有速率限制；登入工作同時啟動的那個會讓位）。
+            return match self.connect_once() {
+                Ok(()) => true,
+                Err(code) if code == ERROR_FILE_NOT_FOUND.0 => {
+                    if self.connect_legacy() {
+                        return true;
+                    }
+                    if !self.closing_writer && self.spawn_server() {
+                        zlog!("connect: 引擎重啟中，管道還不在，已啟動 0c-server");
+                    }
+                    false
+                }
+                Err(_) => self.connect_legacy(),
+            };
+        }
+        if self.restart_until.is_some() {
+            self.abandon_restart(); // 期限已過：照一般情況處理，這一次 server 不在就不等
         }
         for attempt in 0..2 {
             match self.connect_once() {
@@ -316,8 +378,9 @@ impl Client {
                     if !self.spawn_server() {
                         return false; // 沒有啟動就不等：server 不在時每鍵立刻放行，不卡宿主
                     }
-                    // 等 server 建好管道
+                    // 等 server 建好管道；沒等到的話之後的呼叫在同一個期限內繼續等（restart_pending），不再多等一輪。
                     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(SPAWN_WAIT_MS as u64);
+                    self.restart_until = Some(deadline);
                     while std::time::Instant::now() < deadline {
                         if self.connect_once().is_ok() {
                             return true;
@@ -343,13 +406,13 @@ impl Client {
         let h = self.handle?;
         if !write_all(h, &bytes, IO_TIMEOUT_MS) {
             zlog!("call: 寫入失敗，斷線");
-            self.close();
+            self.close_after_failure();
             return None;
         }
         let mut hdr = [0u8; 4];
         if !read_all(h, &mut hdr, IO_TIMEOUT_MS) {
             zlog!("call: 讀取失敗，斷線");
-            self.close();
+            self.close_after_failure();
             return None;
         }
         let n = u32::from_le_bytes(hdr);
@@ -359,7 +422,7 @@ impl Client {
         }
         let mut buf = vec![0u8; n as usize];
         if !read_all(h, &mut buf, IO_TIMEOUT_MS) {
-            self.close();
+            self.close_after_failure();
             return None;
         }
         match serde_json::from_slice::<Value>(&buf) {
@@ -367,12 +430,11 @@ impl Client {
                 if v["ok"].as_bool() == Some(false) && v["error"].as_str() == Some("引擎正在切換") {
                     // 此回覆表示請求完全未執行，重試不會重複提交。
                     // 只設定一次期限；持續拒絕不能無限延長宿主等待。
-                    if self.handoff_until.is_none() {
-                        self.handoff_until = Some(std::time::Instant::now() + HANDOFF_WAIT);
-                    }
+                    self.expect_restart();
+                    self.closing_writer = true;
                     self.close();
                 } else if v["ok"].as_bool() == Some(true) {
-                    self.handoff_until = None;
+                    self.abandon_restart(); // 新引擎接上了
                 }
                 Some(v)
             }

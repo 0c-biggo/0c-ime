@@ -148,6 +148,12 @@ async fn install_update(version: String, sha256: String) -> Result<Value, String
     call(updater::update_action_args("install", &version, &sha256)?, 2400).await
 }
 
+/// 風格管理與整份套用交給 0c-update，Rust 只限制可呼叫的動作與參數形式。
+#[tauri::command]
+async fn profile_command(action: String, id: String, name: Option<String>) -> Result<Value, String> {
+    call(updater::profile_args(&action, &id, name.as_deref())?, 120).await
+}
+
 /// 「我的詞彙」的一個指令（core/engine 的 VocabRequest），經 0c-update vocab request 交給引擎。
 /// 結果原樣交給前端；錯誤在回應的 error（code、message…），引擎沒執行時寫入類指令回 error.code=engine。
 #[tauri::command]
@@ -302,7 +308,7 @@ fn main() {
         .manage(watch::Watcher::default())
         .invoke_handler(tauri::generate_handler![
             app_info, get_status, get_settings, set_settings, check_update, download_update, install_update, export_summary,
-            vocab_request, api_command, vocab_watch, vocab_unwatch, models_command, open_url
+            profile_command, vocab_request, api_command, vocab_watch, vocab_unwatch, models_command, open_url
         ])
         .setup(move |app| {
             open_window(app.handle(), page)?;

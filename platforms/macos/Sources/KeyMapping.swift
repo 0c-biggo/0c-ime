@@ -10,8 +10,9 @@ enum KeyMapping {
 
     /// `vocabKeys`：引擎回報 `vocab_keys`（認得上面的新鍵名）時才送；舊引擎或開關關閉時 Shift 照舊忽略，
     /// Shift＋←／→ 與 ←／→ 相同。
-    static func key(code: UInt16, characters: String?, modifiers: NSEvent.ModifierFlags, vocabKeys: Bool = false) -> String? {
+    static func key(code: UInt16, characters: String?, modifiers: NSEvent.ModifierFlags, vocabKeys: Bool = false, styleShiftSpace: Bool = false, capsLower: Bool = false) -> String? {
         guard modifiers.intersection([.command, .control, .option]).isEmpty else { return nil }
+        if styleShiftSpace, code == 49, modifiers.contains(.shift) { return "ShiftSpace" }
         if vocabKeys, modifiers.contains(.shift), let key = vocabCodes[code] { return key }
         let named: [UInt16: String] = [36: "Enter", 76: "Enter", 48: "Tab", 51: "Backspace", 117: "Delete",
             53: "Escape", 123: "Left", 124: "Right", 125: "Down", 126: "Up",
@@ -25,7 +26,7 @@ enum KeyMapping {
         if keypadCodes.contains(code), scalar.value > 32 { return "KP" + characters }
         // Caps Lock 是英文大寫模式（#84）：字母一律大寫；同 macOS 系統的大寫鎖定，按住 Shift 也還是大寫（不像 Windows 會反轉成小寫）。
         if modifiers.contains(.capsLock), scalar.properties.isAlphabetic {
-            return characters.uppercased()
+            return capsLower && !modifiers.contains(.shift) ? characters.lowercased() : characters.uppercased()
         }
         return characters
     }
@@ -62,6 +63,7 @@ enum KeyMapping {
     /// 引擎沒處理這個鍵時要原樣補送給 App 的文字。只有單一可見字元才有；Enter、Backspace、方向鍵等
     /// 具名鍵沒有文字——把鍵名當文字送出，App 會收到 "Enter"、"Backspace" 這幾個英文字母。
     static func text(for key: String) -> String? {
+        if key == "ShiftSpace" { return " " }
         if key.hasPrefix("KP"), key.unicodeScalars.count == 3 { return String(key.dropFirst(2)) }
         guard key.unicodeScalars.count == 1 else { return nil }
         return key

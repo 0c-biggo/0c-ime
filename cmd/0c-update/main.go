@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/0c-biggo/0c-ime/core/fuzzy"
@@ -93,6 +94,11 @@ func listSettings(w io.Writer, r settings.Report, path string) {
 	}
 	fmt.Fprintf(w, "toneless=%s（不打聲調也能選字：沒打聲調的字依前後文決定，有打的照聲調，組字中的 ' 切字；只在標準排列有效；開啟時中英混打停用）\n", onOff(s.Toneless))
 	fmt.Fprintf(w, "keyboard-layout=%s（鍵盤排列：standard 標準；eten 倚天 41 鍵，這時不提供 Emoji 選單與中英混打；hsu 許氏，這時不提供中英混打）\n", s.KeyboardLayout)
+	for _, it := range s.Items() {
+		if strings.HasPrefix(it.Key, "style-") {
+			fmt.Fprintf(w, "%s=%s（%s）\n", it.Key, it.Value, it.Label)
+		}
+	}
 	fuzzyConfig := s.FuzzyConfig()
 	for _, p := range fuzzy.Pairs() {
 		fmt.Fprintf(w, "fuzzy-%s=%s（%s 模糊音：off 關閉；select 開候選時合併近音；auto 另在語境明顯支持近音時自動改字，實驗）\n", p.ID(), fuzzyConfig.Mode(p), p.Symbols())
@@ -199,6 +205,8 @@ func run(args []string) error {
 	switch action {
 	case "settings":
 		return settingsCommand(args[1:])
+	case "profile":
+		return profileCommand(args[1:])
 	case "set":
 		return setCommand(args[1:])
 	case "models": // 個人目錄的神經模型（#180）

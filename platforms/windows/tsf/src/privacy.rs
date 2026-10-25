@@ -457,7 +457,7 @@ impl ITfEditSession_Impl for ScopeProbe_Impl {
 
 #[cfg(test)]
 #[path = "privacy_host_tests.rs"]
-mod host_tests;
+pub(crate) mod host_tests;
 
 #[cfg(test)]
 mod tests {

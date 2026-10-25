@@ -5,10 +5,12 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/0c-biggo/0c-ime/core/english"
 	"github.com/0c-biggo/0c-ime/core/fuzzy"
+	"github.com/0c-biggo/0c-ime/core/inputstyle"
 	"github.com/0c-biggo/0c-ime/core/layout"
 	"github.com/0c-biggo/0c-ime/core/lexicon"
 	"github.com/0c-biggo/0c-ime/core/lm"
@@ -22,8 +24,9 @@ import (
 )
 
 type Engine struct {
-	mu    sync.Mutex // 個人化資料只有一個寫入者
-	Model *personal.Model
+	InputStyle inputstyle.Rules
+	mu         sync.Mutex // 個人化資料只有一個寫入者
+	Model      *personal.Model
 	// 由宿主在建立 session 前設定；nil 使用核心預設值。
 	// 資料包可攜帶其開發集校準的前文權重，不寫入個人詞庫。
 	DocumentContextWeight *float64
@@ -88,7 +91,19 @@ func (e *Engine) ToneMarkKeys() bool {
 // IdleKeys 回報沒在組字、注音模式時輸入法會處理的可見 ASCII 按鍵（session.IdleKeys），依鍵盤排列與設定而不同（#183）。
 // 給自己過濾閒置按鍵的外殼（Windows）查詢，外殼不必各自維護每種排列的按鍵表。
 func (e *Engine) IdleKeys() string {
-	return session.IdleKeys(e.Layout, e.MixedInput && !e.Toneless, e.EmojiShortcut) // 聲調選填時混打停用（#150）
+	keys := session.IdleKeys(e.Layout, e.MixedInput && !e.Toneless, e.EmojiShortcut)
+	if e.InputStyle.Punctuation == "microsoft" {
+		keys = strings.Map(func(r rune) rune {
+			if strings.ContainsRune("\\'\"<>?", r) {
+				return -1
+			}
+			return r
+		}, keys)
+	}
+	if e.InputStyle.ShiftLetter == "commit" {
+		keys += "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	}
+	return keys // 聲調選填時混打停用（#150）
 }
 
 func (e *Engine) OpenSession() uint64 {
@@ -106,6 +121,7 @@ func (e *Engine) OpenSession() uint64 {
 	e.sessions[e.next].SelectionKeys = e.SelectionKeys
 	e.sessions[e.next].CtrlPunct = e.CtrlPunct
 	e.sessions[e.next].CapsLockEnglish = e.CapsLockEnglish
+	e.sessions[e.next].InputStyle = e.InputStyle
 	e.sessions[e.next].Fuzzy = e.Fuzzy
 	e.sessions[e.next].Toneless = e.Toneless
 	e.sessions[e.next].EnglishAutocomplete = e.EnglishAutocomplete

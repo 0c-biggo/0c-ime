@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -129,9 +130,9 @@ func TestFindRuntimeMissing(t *testing.T) {
 // 缺少 numpy／onnxruntime 是持續的狀態：回報 runtime_missing，十分鐘才重試一次，不每幾秒啟動 Python。
 func TestSupervisorRuntimeMissingStateAndSlowRetry(t *testing.T) {
 	load := func(Config) (Manifest, error) { return Manifest{}, nil }
-	attempts := 0
+	var attempts atomic.Int32
 	s, err := openSupervisedAsync(Config{}, load, func(c Config) (*Worker, error) {
-		attempts++
+		attempts.Add(1)
 		return nil, &StartupError{Reason: ReasonRuntimeMissing, what: "neural worker"}
 	})
 	if err != nil {
@@ -153,7 +154,7 @@ func TestSupervisorRuntimeMissingStateAndSlowRetry(t *testing.T) {
 	}
 	time.Sleep(50 * time.Millisecond)
 	s.mu.Lock()
-	n := attempts
+	n := attempts.Load()
 	s.lastFailure = time.Now().Add(-RuntimeMissingRetry) // 十分鐘後
 	s.mu.Unlock()
 	if n != 1 {
@@ -162,7 +163,7 @@ func TestSupervisorRuntimeMissingStateAndSlowRetry(t *testing.T) {
 	s.Score(request())
 	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
 		s.mu.Lock()
-		n, starting := attempts, s.starting
+		n, starting := attempts.Load(), s.starting
 		s.mu.Unlock()
 		if n == 2 && !starting {
 			break
