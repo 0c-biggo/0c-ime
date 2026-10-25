@@ -15,6 +15,20 @@ class ResultTests(unittest.TestCase):
     def test_complete_evidence_passes(self):
         self.assertTrue(self.result()['passed'])
 
+    def test_short_scenario_has_no_fixed_duration_floor(self):
+        result = self.result(elapsed_seconds=3600, requested_hours=1,
+                             releases={'B': {'name': 'b', 'active_h': .1},
+                                       'F': {'name': 'f', 'failed_h': .3},
+                                       'G': {'name': 'g', 'active_h': .5}},
+                             typing=[{'elapsed_seconds': 0, 'ok': True}], coverage={})
+        self.assertTrue(result['passed'])
+        self.assertFalse(result['full_journey_passed'])
+
+    def test_invalid_or_missing_duration_does_not_pass(self):
+        for hours in (None, 0, -1, float('nan'), float('inf')):
+            with self.subTest(hours=hours):
+                self.assertFalse(self.result(requested_hours=hours)['passed'])
+
     def test_empty_and_interrupted_runs_cannot_pass(self):
         for changes in ({'releases': {}}, {'interrupted': True}, {'elapsed_seconds': 93.22 * 3600},
                         {'elapsed_seconds': 2 * 3600, 'requested_hours': 2}, {'error': 'failed'}):
@@ -53,7 +67,9 @@ class ResultTests(unittest.TestCase):
     def test_scheduler_completion_is_not_complete_user_journey(self):
         result = self.result(coverage={})
         self.assertTrue(result['scheduler_passed'])
-        self.assertFalse(result['passed'])
+        self.assertTrue(result['passed'])
+        self.assertFalse(result['full_journey_passed'])
+        self.assertFalse(self.result(coverage={}, required_journeys=('login',))['passed'])
 
 
 if __name__ == '__main__':

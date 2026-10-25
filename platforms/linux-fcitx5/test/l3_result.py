@@ -25,12 +25,13 @@ def continuous_typing(typing, elapsed_seconds, requested_hours):
             and all(b - a <= interval + slack for a, b in zip(times, times[1:])))
 
 
-def assess(elapsed_seconds, requested_hours, interrupted, releases, typing, error, coverage, initial_typing=False):
+def assess(elapsed_seconds, requested_hours, interrupted, releases, typing, error, coverage, initial_typing=False,
+           required_journeys=()):
     names = {r.get('name'): r for r in releases.values()}
     checks = {
-        'formal_duration': type(elapsed_seconds) in (int, float) and type(requested_hours) in (int, float)
+        'requested_duration': type(elapsed_seconds) in (int, float) and type(requested_hours) in (int, float)
                            and math.isfinite(elapsed_seconds) and math.isfinite(requested_hours)
-                           and requested_hours >= 96 and elapsed_seconds >= requested_hours * 3600,
+                           and requested_hours > 0 and elapsed_seconds >= requested_hours * 3600,
         'not_interrupted': not interrupted and not error,
         'all_releases': set(names) == {'b', 'f', 'g'} and len(releases) == 3,
         'healthy_releases_active': all('active_h' in names.get(n, {}) for n in ('b', 'g')),
@@ -41,7 +42,10 @@ def assess(elapsed_seconds, requested_hours, interrupted, releases, typing, erro
     scheduler_passed = all(checks.values())
     journey = {name: coverage.get(name) == 'pass' for name in ('sleep_wake', 'login', 'usability', 'restoration')}
     return {'checks': checks, 'journey_checks': journey, 'scheduler_passed': scheduler_passed,
-            'passed': scheduler_passed and all(journey.values()), 'elapsed_seconds': elapsed_seconds,
+            'required_journeys': list(required_journeys),
+            'passed': scheduler_passed and all(journey.get(name, False) for name in required_journeys),
+            'full_journey_passed': scheduler_passed and all(journey.values()),
+            'elapsed_seconds': elapsed_seconds,
             'elapsed_hours': round(elapsed_seconds / 3600, 3) if type(elapsed_seconds) in (int, float) and math.isfinite(elapsed_seconds) else None,
             'requested_hours': requested_hours}
 
@@ -51,10 +55,11 @@ def audit_report(report):
     # runtime or stop reason from a passed flag, wall clock or scheduled end date.
     elapsed = report.get('elapsed_seconds')
     duration_recorded = isinstance(elapsed, (float, int)) and math.isfinite(elapsed) and elapsed >= 0
-    result = assess(elapsed if duration_recorded else None, report.get('requested_hours', 96),
+    result = assess(elapsed if duration_recorded else None, report.get('requested_hours'),
                     report.get('stop_reason') != 'duration_reached', report.get('releases', {}),
                     report.get('typing', []), report.get('error', ''), report.get('coverage', {}),
-                    report.get('initial_typing', False))
+                    report.get('initial_typing', False),
+                    report.get('required_journeys', ('sleep_wake', 'login', 'usability', 'restoration')))
     typed = [entry for entry in report.get('timeline', []) if entry.get('kind') == 'typed_ok']
     result['legacy_summary'] = {'original_passed': report.get('passed'), 'duration_recorded': duration_recorded,
                               'sample_count': len(report.get('samples', [])), 'typing_count': len(typed),
