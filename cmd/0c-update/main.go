@@ -88,7 +88,7 @@ func listSettings(w io.Writer, r settings.Report, path string) {
 	fmt.Fprintf(w, "output-simplified=%s（輸出簡體字：組字和候選仍是繁體，送出時轉成簡體）\n", onOff(s.OutputSimplified))
 	fmt.Fprintf(w, "simplified-hotkey=%s（按 %s 切換輸出簡體字；關閉時這個鍵交給應用程式）\n", onOff(s.SimplifiedHotkey), settings.SimplifiedHotkeyLabel(runtime.GOOS))
 	fmt.Fprintf(w, "selection-keys=%s（選字鍵：1234567890、1234qweras 或 asdfghjkl;；換成字母時數字仍照位置選字）\n", s.SelectionKeys)
-	fmt.Fprintf(w, "ctrl-punctuation=%s（注音模式按 Ctrl＋, . ' ; 與 Ctrl＋Shift＋/ 1 打全形標點；關閉時交給應用程式）\n", onOff(s.CtrlPunctuation))
+	fmt.Fprintf(w, "ctrl-punctuation=%s（注音模式按 Ctrl＋, . ' ; 與 Ctrl＋Shift＋/ 1 ; 9 0 打全形標點；關閉時交給應用程式）\n", onOff(s.CtrlPunctuation))
 	if settings.CapsLockEnglishSetting(runtime.GOOS) {
 		fmt.Fprintf(w, "caps-lock-english=%s（Caps Lock 開著時直接打英文：字母大寫、數字與符號半形，關掉回到注音；關閉時注音模式不理 Caps Lock）\n", onOff(s.CapsLockEnglish))
 	}
@@ -186,7 +186,7 @@ func onOff(v bool) string {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("用法：0c-update status|settings|set|models|vocab|api|open-settings|engine|auto|finish|mode|pause|resume|snooze|schedule|verify|check|download|download-now|apply|install|rollback|uninstall [選項]")
+		return fmt.Errorf("用法：0c-update status|settings|profile|set|models|vocab|api|open-settings|engine|auto|finish|mode|pause|resume|snooze|schedule|verify|check|download|download-now|apply|install|rollback|uninstall [選項]")
 	}
 	action := args[0]
 	// macOS 以 root 執行時（sudo installer、MDM）改以登入的使用者身分重新執行，成功時不會返回（#198）

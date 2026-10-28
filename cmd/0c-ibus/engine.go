@@ -142,14 +142,14 @@ func foldStyleCaps(keyval, state uint32, english, lower bool) uint32 {
 	return keyval
 }
 
-// ctrlPunctKey：只按著 Ctrl（可以加 Shift，沒有 Alt／Super 等）的 , . ' ; ? ! 換成協定的 Ctrl＋標點鍵名（#168）。
-// keyval 是已經套用 Shift 的字元（Ctrl+Shift+/ 是 question），其他鍵回傳空字串。
+// ctrlPunctKey：只按著 Ctrl（可以加 Shift，沒有 Alt／Super 等）的 , . ' ; ? ! 與 : ( )（#231）換成協定的 Ctrl＋標點鍵名（#168）。
+// keyval 是已經套用 Shift 的字元（Ctrl+Shift+/ 是 question），其他鍵回傳空字串。引擎認不認得由 session.ctrlPunct 判斷。
 func ctrlPunctKey(keyval, state uint32) string {
 	if state&maskControl == 0 || state&(modifiedMask&^maskControl) != 0 {
 		return ""
 	}
 	switch keyval {
-	case ',', '.', '\'', ';', '?', '!':
+	case ',', '.', '\'', ';', '?', '!', ':', '(', ')':
 		return proto.CtrlPrefix + string(rune(keyval))
 	}
 	return ""
@@ -321,7 +321,7 @@ func (e *engine) processKey(keyval, keycode, state uint32) bool {
 	if !e.session.english {
 		// Ctrl＋標點打全形（#168）：只在中文模式、引擎回報 ctrl_punctuation（認得鍵名而且設定開著）時送；
 		// 引擎沒處理（設定剛關掉、模式不同步）就照下面的一般快捷鍵先送出組字再交給應用程式。
-		if k := ctrlPunctKey(keyval, state); k != "" && e.session.ctrlPunct() {
+		if k := ctrlPunctKey(keyval, state); k != "" && e.session.ctrlPunct(k) {
 			e.syncContext()
 			snap := e.session.key(k)
 			if snap.ok && snap.Handled {

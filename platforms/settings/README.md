@@ -129,7 +129,7 @@ Windows 完整更新視窗驗收另有 `test/settings-update-test.ps1`：在沒�
 
 輸入設定的「修改字詞的位置」（`candidate-cursor`）可選「游標前方」／「游標後方」。macOS 未指定時採前方，Linux／Windows 採後方；舊設定缺少欄位時同樣使用平台預設，明確保存的 before／after 會保留。後方模式的游標在組字尾端時後面沒有字，改選結束在游標的詞（同前方模式），說明文字也註明這個例外。設定儲存在 `settings.json` 的 `candidate_cursor`，透過既有組字保護套用；不變更個人詞庫格式。
 
-輸入設定的「Ctrl＋標點打全形」（`ctrl-punctuation`，`settings.json` 的 `ctrl_punctuation`）預設開啟，放在「鍵盤與符號」頁、鍵盤排列之後（#207）。開啟時注音模式按 Ctrl＋, . ' ; 與 Ctrl＋Shift＋/ 1 打全形的 ，。、；？！；說明寫出會占用 VS Code 的 Ctrl＋, 、Ctrl＋. 等快速鍵，要保留時可以關掉。關閉後這些鍵同其他快捷鍵交給應用程式（#168）。引擎讀設定，套用（引擎重啟）後生效；外殼依 health 的 `ctrl_punctuation` 決定要不要送這些鍵。
+輸入設定的「Ctrl＋標點打全形」（`ctrl-punctuation`，`settings.json` 的 `ctrl_punctuation`）預設開啟，放在「鍵盤與符號」頁、鍵盤排列之後（#207）。開啟時注音模式按 Ctrl＋, . ' ; 與 Ctrl＋Shift＋/ 1 ; 9 0 打全形的 ，。、；？！：（）（#231）；說明寫出會占用 VS Code 的 Ctrl＋, 、Ctrl＋. 、Excel 的 Ctrl＋Shift＋; 9、Konsole 的 Ctrl＋Shift＋9 0 等快速鍵，要保留時可以關掉；Windows 另寫明系統預設把 Ctrl＋Shift＋0 留給切換輸入法、這一鍵打不出「）」。關閉後這些鍵同其他快捷鍵交給應用程式（#168）。引擎讀設定，套用（引擎重啟）後生效；外殼依 health 的 `ctrl_punctuation` 決定要不要送這些鍵。
 
 輸入設定的「Caps Lock 開著時直接打英文」（`caps-lock-english`，`settings.json` 的 `caps_lock_english`）預設關閉，放在「中英切換」頁最後（#207），只有 Windows、Linux 有：macOS 開 Caps Lock 一律切到英文大寫（#84），`0c-update settings` 不列這一項，設定程式就不顯示。開啟時 Caps Lock 是暫時的英文模式（字母大寫、數字與符號半形，正在打的字先送出，關掉回到注音；先用 Shift 切到英文時只改大小寫）；關閉時注音模式不理 Caps Lock（#173、#168）。引擎讀設定，套用（引擎重啟）後生效；外殼依 health／open 的 `caps_lock_english` 決定要不要回報 Caps Lock 狀態。
 

@@ -50,6 +50,10 @@ func TestCtrlPunctKey(t *testing.T) {
 		{'?', maskControl | maskShift, "Ctrl+?"},
 		{'!', maskControl | maskShift, "Ctrl+!"},
 		{',', maskControl | maskLock, "Ctrl+,"},
+		{':', maskControl | maskShift, "Ctrl+:"}, // #231：Ctrl+Shift+; ( )
+		{'(', maskControl | maskShift, "Ctrl+("},
+		{')', maskControl | maskShift, "Ctrl+)"},
+		{')', maskControl | maskShift | maskMod1, ""},
 		{',', 0, ""},                       // 沒按 Ctrl
 		{',', maskControl | maskMod1, ""},  // Ctrl+Alt
 		{',', maskControl | maskSuper, ""}, // Ctrl+Super
@@ -124,6 +128,46 @@ func TestCtrlPunctuationKeys(t *testing.T) {
 			tapRightShift(e)
 			if !e.english || e.processKey('.', 0, maskControl) || e.preedit != "" {
 				t.Fatalf("英文模式的 Ctrl+. 應先送出組字再交給應用程式：%v %q", e.english, e.preedit)
+			}
+		})
+	}
+}
+
+// #231：Ctrl+Shift+; ( ) 只在引擎的 ctrl_punctuation_keys 列了那個字元時才送；舊引擎（只有 ctrl_punctuation）照舊交給應用程式，
+// 最早的六個鍵不受影響。
+func TestCtrlPunctuationAddedKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		info map[string]string
+		on   bool
+	}{
+		{"新引擎", map[string]string{"ctrl_punctuation": "true", "ctrl_punctuation_keys": ",.';?!:()"}, true},
+		{"舊引擎", map[string]string{"ctrl_punctuation": "true"}, false},
+		{"設定關閉", map[string]string{"ctrl_punctuation": "false", "ctrl_punctuation_keys": ",.';?!:()"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e, _, sock := newTestEngine(t)
+			eng := toyEngine(t)
+			eng.CtrlPunct = tc.info["ctrl_punctuation"] == "true"
+			defer serveEngine(t, sock, eng, tc.info)()
+			for _, c := range []struct {
+				keyval uint32
+				want   string
+			}{{':', "："}, {'(', "（"}, {')', "）"}} {
+				typeKeys(e, "ji3")
+				got := e.processKey(c.keyval, 0, maskControl|maskShift)
+				if tc.on && (!got || e.preedit != "我"+c.want) {
+					t.Fatalf("Ctrl+Shift+%c 應接 %s：%v %q", c.keyval, c.want, got, e.preedit)
+				}
+				if !tc.on && (got || e.preedit != "") {
+					t.Fatalf("Ctrl+Shift+%c 應先送出組字再交給應用程式：%v %q", c.keyval, got, e.preedit)
+				}
+				e.processKey(keyEscape, 0, 0)
+				e.processKey(keyEscape, 0, 0)
+			}
+			// 最早的六個鍵只看 ctrl_punctuation。
+			if got := e.processKey(',', 0, maskControl); got != (tc.info["ctrl_punctuation"] == "true") {
+				t.Fatalf("Ctrl+,：%v %q", got, e.preedit)
 			}
 		})
 	}

@@ -198,8 +198,8 @@ func TestFullEnglishPackEnglishModeTabCompletionAndCorrection(t *testing.T) {
 			if snap = do(proto.Request{Type: proto.Key, Key: proto.KeyEscape}); snap.Text() != tc.typed {
 				t.Fatalf("Escape undo: %+v", snap)
 			}
-			if snap = do(proto.Request{Type: proto.Key, Key: proto.KeyEnter}); snap.Commit != tc.typed || snap.Handled {
-				t.Fatalf("literal commit and app Enter: %+v", snap)
+			if snap = do(proto.Request{Type: proto.Key, Key: proto.KeyEnter}); snap.Commit != tc.typed || !snap.Handled {
+				t.Fatalf("literal commit; Enter stays in the IME (#235): %+v", snap)
 			}
 		})
 	}

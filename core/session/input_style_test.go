@@ -218,11 +218,13 @@ func TestStyleLiteralPreservesPendingEnglishOrder(t *testing.T) {
 			key(s, string(r))
 		}
 		key(s, proto.KeyShiftSpace)
-		if a := key(s, "x"); a.Text() != word+"ｘ" || a.Commit != "" || a.Candidates != nil {
+		// Wide English has no completions: the pending word ends as typed, in
+		// order, instead of keeping every later wide key marked (#233).
+		if a := key(s, "x"); a.Commit != word+"ｘ" || a.Text() != "" || a.Candidates != nil {
 			t.Fatalf("%q + wide x reordered or accepted completion: %+v", word, a)
 		}
-		if a := key(s, proto.KeyEnter); a.Commit != word+"ｘ" {
-			t.Fatalf("commit reordered text: %+v", a)
+		if a := key(s, "y"); a.Commit != "ｙ" || a.Text() != "" {
+			t.Fatalf("later wide key stayed marked: %+v", a)
 		}
 	}
 }
@@ -233,7 +235,7 @@ func TestStyleLiteralPreservesMixedRunAndShiftCommit(t *testing.T) {
 		width, commit      bool
 	}{
 		{"microsoft", "A", "Ａ", true, false},
-		{"mcbopomofo", "\\", "＼", false, false},
+		{"mcbopomofo", "\\", "\\", false, false}, // 打到一半的英文收下 \（C:\Users，#233）
 		{"mcbopomofo", "A", "A", false, true},
 	} {
 		s := styleSession(tc.style)

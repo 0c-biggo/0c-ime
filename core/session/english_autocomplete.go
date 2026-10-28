@@ -91,8 +91,16 @@ func (s *Session) englishKey(k string) (handled bool, commit string, active bool
 			}
 		}
 	}
+	// Enter 只送出畫面上的英文（#235），同注音組字與中英混打：組字區有底線時按 Enter 是確認這段字；
+	// 連 Enter 一起交給程式，終端機會直接執行命令、聊天室會直接送出。要執行或換行再按一次 Enter。
+	// 一樣不替使用者接受反白的建議。
+	if k == proto.KeyEnter {
+		commit = s.commit()
+		s.englishTokenBlocked = false
+		return true, commit, true
+	}
 	// Deliver exactly the displayed word before letting the original key reach
-	// the application. Enter/space never select the highlighted completion.
+	// the application. Space never selects the highlighted completion.
 	// A URL, identifier or full buffer may continue in the host after this
 	// prefix. Only a word boundary or ordinary enclosing punctuation confirms it.
 	if !englishBoundary(k) && !(len(k) == 1 && strings.ContainsAny(k, "\"'()[]{}<>,!?;")) {

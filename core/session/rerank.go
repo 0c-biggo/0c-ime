@@ -43,9 +43,8 @@ type neuralHint struct {
 // 單音節段（例：已提交「有下載失敗」後單獨打 ㄇㄚ）只在套件宣告 TextWeight 時以 ModeText
 // 評分：句尾助詞常被打成一聲，讀音會偏向「媽」，改由前文決定。
 func (s *Session) rerankPath() {
-	opt := s.Rerank
 	s.hint = nil
-	if opt.Scorer == nil || !s.allowRerank || !s.comp.Empty() || s.cand != nil || s.private || s.paused || s.english || len(s.locks) > 0 {
+	if !s.rerankAllowed() {
 		return
 	}
 	lat := s.lattice()
@@ -58,11 +57,21 @@ func (s *Session) rerankPath() {
 		for end < len(s.syls) && !s.literals[end] {
 			end++
 		}
-		if n := end - start; (n >= 2 && n <= 32 || n == 1 && opt.TextWeight > 0) && !zhuyin.HasUntoned(s.syls[start:end]) {
-			s.rerankSegment(lat, start, end) // 有沒打聲調音節（#150）的段落沒有共用讀音可送，照統計引擎
+		if s.rerankable(start, end) {
+			s.rerankSegment(lat, start, end)
 		}
 		start = end
 	}
+}
+
+func (s *Session) rerankAllowed() bool {
+	return s.Rerank.Scorer != nil && s.allowRerank && s.comp.Empty() && s.cand == nil && !s.private && !s.paused && !s.english && len(s.locks) == 0
+}
+
+// rerankable：段落長度在模型範圍內；有沒打聲調音節（#150）的段落沒有共用讀音可送，照統計引擎。
+func (s *Session) rerankable(start, end int) bool {
+	n := end - start
+	return (n >= 2 && n <= 32 || n == 1 && s.Rerank.TextWeight > 0) && !zhuyin.HasUntoned(s.syls[start:end])
 }
 
 // rerankSegment 以與 decodeWithLiterals 相同的段落設定取 N-best；段內顯示必須等於 N-best 首選，

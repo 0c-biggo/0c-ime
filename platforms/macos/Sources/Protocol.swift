@@ -55,6 +55,8 @@ struct Snapshot: Decodable {
     var englishPending: Bool? = nil
     var fullWidth: Bool? = nil
     var capsLock: Bool? = nil
+    /// 目前的英文是 Caps Lock 帶來的（#173、#219）：關掉 Caps Lock 會回到開啟前的模式。重連時據此還原；舊引擎缺欄位。
+    var capsEnglish: Bool? = nil
     let contextID: UInt64?
     /// 這次按鍵的提示（例如「已加入詞庫：世傑」，#123）；舊引擎或沒有提示時缺欄位。
     var notices: [String]? = nil
@@ -68,6 +70,7 @@ struct Snapshot: Decodable {
         case englishPending = "english_pending"
         case fullWidth = "full_width"
         case capsLock = "caps_lock"
+        case capsEnglish = "caps_english"
         case contextID = "context_id"
     }
     var text: String { (preedit ?? []).map(\.text).joined() }

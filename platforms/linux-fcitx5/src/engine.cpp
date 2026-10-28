@@ -289,7 +289,7 @@ public:
             // Ctrl+; 是 Fcitx5 剪貼簿外掛的預設熱鍵。剪貼簿在輸入法之後（PostInputMethod）才看這個鍵，輸入法吃掉就叫不出剪貼簿，
             // 所以剪貼簿外掛載入時照舊放行，不搶走使用者原本就有的功能（#168）。
             if (ctrlKey == "Ctrl+;" && instance_->addonManager().addon("clipboard")) { ctrlKey.clear(); }
-            if (!ctrlKey.empty() && session.ctrlPunct()) {
+            if (!ctrlKey.empty() && session.ctrlPunct(ctrlKey)) {
                 syncContext(ic);
                 zuin::Snapshot snap = session.key(ctrlKey);
                 if (snap.ok && snap.handled) {

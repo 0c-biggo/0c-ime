@@ -116,9 +116,9 @@ public:
     bool vocabKeys();
     bool styleShiftSpace();
     bool styleCapsLower();
-    // 引擎是否認得 Ctrl＋標點的鍵名而且設定開著（open 回覆的 ctrl_punctuation，#168）；快取方式同 vocabKeys。
-    // 舊引擎沒有這一項時為 false，Ctrl＋標點照舊交給應用程式。
-    bool ctrlPunct();
+    // 引擎是否認得 Ctrl＋標點的鍵名 key 而且設定開著（open 回覆的 ctrl_punctuation 與 ctrl_punctuation_keys，#168、#231）；
+    // 快取方式同 vocabKeys。舊引擎沒有這一項時為 false，Ctrl＋標點照舊交給應用程式。
+    bool ctrlPunct(const std::string &key);
     // 引擎是否認得 caps_lock 請求而且「Caps Lock 開著時直接打英文」開著（open 回覆的 caps_lock_english，#173）；快取方式同 vocabKeys。
     // 舊引擎沒有這一項、或設定關閉時為 false，注音模式照舊不理 Caps Lock（#168）。spawn=false（Caps Lock 鍵本身）不為此啟動 0c-server，
     // 並以 health 重新確認（設定剛打開、引擎重啟後 open 的快取還是舊的）。

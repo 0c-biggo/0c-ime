@@ -42,3 +42,19 @@ func TestInvalidRulesAreRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// #210：Shift＋字母可改打小寫；預設仍是 inline（大寫）。
+func TestShiftLetterLowerIsValid(t *testing.T) {
+	p, _ := Get("0c")
+	if p.Rules.ShiftLetter != "inline" {
+		t.Fatalf("default changed: %q", p.Rules.ShiftLetter)
+	}
+	p.Rules.ShiftLetter = "lower"
+	if err := p.Rules.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	p.Rules.ShiftLetter = "upper"
+	if p.Rules.Validate() == nil {
+		t.Fatal("unknown shift_letter accepted")
+	}
+}

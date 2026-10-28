@@ -61,8 +61,18 @@ func TestCtrlPunctuationSettingInServer(t *testing.T) {
 			if open.Info["ctrl_punctuation"] != want {
 				t.Fatalf("open：%+v", open.Info)
 			}
-			req := proto.Request{Type: proto.Key, Key: proto.KeyCtrlComma}
+			// #231：認得哪些鍵不跟著設定，新外殼據此決定要不要送 Ctrl+: ( )。
+			if open.Info["ctrl_punctuation_keys"] != ",.';?!:()" {
+				t.Fatalf("open 的 ctrl_punctuation_keys：%+v", open.Info)
+			}
+			req := proto.Request{Type: proto.Key, Key: proto.KeyCtrlParenLeft}
 			snap := call(ipc.Envelope{Op: ipc.OpHandle, Session: open.Session, Req: &req}).Snapshot
+			if snap == nil || snap.Handled != tc.on || (tc.on && snap.Text() != "（") || (!tc.on && snap.Text() != "") {
+				t.Fatalf("ctrl_punctuation=%v Ctrl+(：%+v", tc.on, snap)
+			}
+			call(ipc.Envelope{Op: ipc.OpHandle, Session: open.Session, Req: &proto.Request{Type: proto.Key, Key: proto.KeyEscape}})
+			req = proto.Request{Type: proto.Key, Key: proto.KeyCtrlComma}
+			snap = call(ipc.Envelope{Op: ipc.OpHandle, Session: open.Session, Req: &req}).Snapshot
 			if snap == nil || snap.Handled != tc.on || (tc.on && snap.Text() != "，") || (!tc.on && snap.Text() != "") {
 				t.Fatalf("ctrl_punctuation=%v：%+v", tc.on, snap)
 			}

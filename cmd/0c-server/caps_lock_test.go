@@ -18,7 +18,8 @@ import (
 
 // #173：settings.json 的 caps_lock_english（缺欄位時預設關）決定 caps_lock 請求有沒有作用；health 與 open 的 info 回報
 // 引擎載入的值，外殼據此決定要不要回報 Caps Lock 狀態，設定程式據此比較「已儲存，尚未套用」。
-// macOS 沒有這個選項：設定檔寫了也不生效（開 Caps Lock 本來就是英文，由外殼送 mode）。
+// macOS 沒有這個選項：設定檔寫了也不改 caps_lock_english；開 Caps Lock 一律是英文，引擎一律處理 caps_lock（#219），
+// 由 caps_lock_request 告訴外殼改送 caps_lock，關閉時回到開啟前的模式。
 func TestCapsLockEnglishSettingInServer(t *testing.T) {
 	binary := buildServer(t)
 	dir := t.TempDir()
@@ -37,6 +38,7 @@ func TestCapsLockEnglishSettingInServer(t *testing.T) {
 			t.Fatal(err)
 		}
 		tc.on = tc.on && settings.CapsLockEnglishSetting(runtime.GOOS)
+		handles := tc.on || runtime.GOOS == "darwin"
 		func() {
 			defer func() { server.Process.Signal(os.Interrupt); server.Wait() }()
 			waitDial(t, sock)
@@ -57,17 +59,18 @@ func TestCapsLockEnglishSettingInServer(t *testing.T) {
 				return r
 			}
 			want := map[bool]string{false: "false", true: "true"}[tc.on]
-			if health := call(ipc.Envelope{Op: ipc.OpHealth}); health.Info["caps_lock_english"] != want {
+			wantRequest := map[bool]string{false: "false", true: "true"}[handles]
+			if health := call(ipc.Envelope{Op: ipc.OpHealth}); health.Info["caps_lock_english"] != want || health.Info["caps_lock_request"] != wantRequest {
 				t.Fatalf("health：%+v", health.Info)
 			}
 			open := call(ipc.Envelope{Op: ipc.OpOpen, Version: proto.Version})
-			if open.Info["caps_lock_english"] != want {
+			if open.Info["caps_lock_english"] != want || open.Info["caps_lock_request"] != wantRequest {
 				t.Fatalf("open：%+v", open.Info)
 			}
 			req := proto.Request{Type: proto.CapsLock, On: true}
 			snap := call(ipc.Envelope{Op: ipc.OpHandle, Session: open.Session, Req: &req}).Snapshot
-			wantMode := map[bool]string{false: proto.ModeZhuyin, true: proto.ModeEnglish}[tc.on]
-			if snap == nil || snap.Handled != tc.on || snap.Mode != wantMode || snap.CapsLock != tc.on {
+			wantMode := map[bool]string{false: proto.ModeZhuyin, true: proto.ModeEnglish}[handles]
+			if snap == nil || snap.Handled != handles || snap.Mode != wantMode || snap.CapsLock != handles {
 				t.Fatalf("caps_lock_english=%v：%+v", tc.on, snap)
 			}
 		}()

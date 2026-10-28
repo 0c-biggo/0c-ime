@@ -71,8 +71,11 @@ const (
 
 // Ctrl＋標點（#168）：中文模式按 Ctrl＋, 打「，」等全形標點。Key 為 CtrlPrefix 加上不按 Ctrl 時這一鍵產生的字元
 // （Ctrl+Shift+/ 是 "Ctrl+?"、Ctrl+Shift+1 是 "Ctrl+!"）。外殼只在引擎回報 ctrl_punctuation=true、而且在中文模式時
-// 送這六個鍵，其他 Ctrl 組合鍵照舊交給應用程式；引擎在設定關閉或英文模式時回 handled=false，外殼照一般快捷鍵處理
+// 送這些鍵，其他 Ctrl 組合鍵照舊交給應用程式；引擎在設定關閉或英文模式時回 handled=false，外殼照一般快捷鍵處理
 // （先送出組字再交給應用程式，#106）。
+//
+// #231 加了 Ctrl+Shift+; ( ) 的 "Ctrl+:"、"Ctrl+("、"Ctrl+)"。舊引擎不認得，外殼只在引擎的 ctrl_punctuation_keys
+// （CtrlPunctKeys）列了這個字元時才送；最早的六個鍵只看 ctrl_punctuation（舊引擎沒有 ctrl_punctuation_keys）。
 const (
 	CtrlPrefix       = "Ctrl+"
 	KeyCtrlComma     = "Ctrl+," // ，
@@ -81,12 +84,20 @@ const (
 	KeyCtrlSemicolon = "Ctrl+;" // ；
 	KeyCtrlQuestion  = "Ctrl+?" // ？（Ctrl+Shift+/）
 	KeyCtrlExclaim   = "Ctrl+!" // ！（Ctrl+Shift+1）
+	// #231
+	KeyCtrlColon      = "Ctrl+:" // ：（Ctrl+Shift+;）
+	KeyCtrlParenLeft  = "Ctrl+(" // （（Ctrl+Shift+9）
+	KeyCtrlParenRight = "Ctrl+)" // ）（Ctrl+Shift+0）
 )
 
-// CtrlPunct 回傳 Ctrl＋標點鍵打出的全形標點；不是這六個鍵回傳 false。
+// CtrlPunctKeys 是引擎認得的 Ctrl＋標點鍵（去掉 CtrlPrefix 的字元），在 health 與 open 的 info 以 ctrl_punctuation_keys 回報。
+const CtrlPunctKeys = ",.';?!:()"
+
+// CtrlPunct 回傳 Ctrl＋標點鍵打出的全形標點；不是 CtrlPunctKeys 裡的鍵回傳 false。
 func CtrlPunct(k string) (string, bool) {
 	p, ok := map[string]string{KeyCtrlComma: "，", KeyCtrlPeriod: "。", KeyCtrlQuote: "、",
-		KeyCtrlSemicolon: "；", KeyCtrlQuestion: "？", KeyCtrlExclaim: "！"}[k]
+		KeyCtrlSemicolon: "；", KeyCtrlQuestion: "？", KeyCtrlExclaim: "！",
+		KeyCtrlColon: "：", KeyCtrlParenLeft: "（", KeyCtrlParenRight: "）"}[k]
 	return p, ok
 }
 

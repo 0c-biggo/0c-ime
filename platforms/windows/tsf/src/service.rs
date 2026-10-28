@@ -84,6 +84,9 @@ struct State {
     secure: bool,
     /// 以 TF_TMAE_UIELEMENTENABLEDONLY 啟用：宿主自行繪製候選（遊戲等，#86）。
     ui_less: bool,
+    /// TSF 啟用本輸入法時給的旗標（ActivateEx）。系統相容層（CUAS）替 IMM32 程式啟用時是 0；
+    /// 自己接 TSF 的程式依它呼叫 ActivateEx 的旗標（Windows Terminal 是 0x40000040）。
+    activate_flags: u32,
     callback: Option<CandidateWindow>,
     revision: u32,
     selection: Option<(ITfContext, Vec<i64>)>,
@@ -221,13 +224,14 @@ impl State {
     }
 
     /// 這一鍵是不是要交給引擎的 Ctrl＋標點（#168）：中文模式、引擎可用而且回報 ctrl_punctuation（認得鍵名、設定開著）。
-    /// 先看按鍵本身，不是那六個鍵就不問引擎。TestKeyDown 與 OnKeyDown 用同一個答案；是的話不先送出組字。
+    /// 先看按鍵本身，不是 Ctrl＋標點鍵就不問引擎；Ctrl+: ( )（#231）還要引擎的 ctrl_punctuation_keys 列了它。
+    /// TestKeyDown 與 OnKeyDown 用同一個答案；是的話不先送出組字。
     fn ctrl_punct_key(&mut self, vk: u32, lparam: isize) -> Option<&'static str> {
         if self.session.english() {
             return None;
         }
         let key = keys::ctrl_punct(vk, lparam)?;
-        (self.session.available() && self.session.ctrl_punctuation()).then_some(key)
+        (self.session.available() && self.session.ctrl_punctuation(key)).then_some(key)
     }
 
     /// 這一鍵是不是要攔下來切換「輸出簡體字」的 Ctrl＋Shift＋F11（#192）：引擎可用而且回報 simplified_hotkey
@@ -290,6 +294,7 @@ impl TextService {
                 left_shift: keys::ShiftTap::default(),
                 secure: false,
                 ui_less: false,
+                activate_flags: 0,
                 callback: None,
                 revision: 0,
                 selection: None,
@@ -1038,6 +1043,15 @@ impl TextService_Impl {
         }
         let key = self.state.borrow_mut().styled_key(vk, lparam, false, true);
         if key.as_deref() == Some("ShiftSpace") { return Some(true); }
+        // IMM32 程式的焦點不是文字框（Photoshop 的畫布）：英文模式的按鍵是快捷鍵，整個交給程式，不開始補字（#210）。
+        let flags = self.state.borrow().activate_flags;
+        if !snap.english_pending && ctx.is_some_and(|c| privacy::english_passthrough(c, flags)) {
+            crate::log::once(&format!(
+                "英文模式：IMM32 程式的焦點沒有插入點，不開始英文補字，按鍵直接交給程式 exe={}",
+                crate::log::exe_name()
+            ));
+            return Some(false);
+        }
         if key.as_ref().is_some_and(|k| snap.english_wants_key(k) || caps_lower && k.len() == 1 && k.as_bytes()[0].is_ascii_alphabetic()) {
             return Some(true);
         }
@@ -1312,6 +1326,7 @@ impl ITfTextInputProcessorEx_Impl for TextService_Impl {
                 let mut st = self.state.borrow_mut();
                 st.secure = flags & TF_TMAE_SECUREMODE != 0;
                 st.ui_less = flags & TF_TMAE_UIELEMENTENABLEDONLY != 0;
+                st.activate_flags = flags;
             }
             zlog!("activate flags={:#x} comless={}", flags, flags & TF_TMAE_COMLESS != 0);
             self.Activate(ptim, tid)

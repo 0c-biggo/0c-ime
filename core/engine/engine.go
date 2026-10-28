@@ -100,8 +100,8 @@ func (e *Engine) IdleKeys() string {
 			return r
 		}, keys)
 	}
-	if e.InputStyle.ShiftLetter == "commit" {
-		keys += "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	if e.InputStyle.ShiftLetter == "commit" || e.InputStyle.ShiftLetter == "lower" {
+		keys += "ABCDEFGHIJKLMNOPQRSTUVWXYZ" // 送出組字或改打小寫（#210）：沒在組字時也要吃，不能交給應用程式打大寫
 	}
 	return keys // 聲調選填時混打停用（#150）
 }

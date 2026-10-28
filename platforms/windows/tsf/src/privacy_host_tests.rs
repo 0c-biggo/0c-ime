@@ -521,3 +521,28 @@ fn missing_inputscope_on_a_native_edit_checks_the_password_style() {
         let _ = DestroyWindow(edit);
     }
 }
+
+#[test]
+fn imm32_context_without_caret_passes_english_keys_to_the_app() {
+    use windows::Win32::UI::WindowsAndMessaging::{CreateCaret, DestroyCaret};
+    init();
+    // #210：IMM32 程式的暫時 context（系統相容層）在焦點不是文字框時也有；Photoshop 的畫布沒有系統插入點。
+    let canvas = window(w!("UnrealWindow"), 0);
+    let ctx = host(canvas, canvas, Scope::Scopes(vec![IS_DEFAULT]), TS_SS_TRANSITORY, 0);
+    assert_eq!(field(Some(&ctx), 1, false), Field::Open);
+    assert!(english_passthrough(&ctx, 0), "沒有插入點：英文模式按鍵交給程式");
+    assert!(!english_passthrough(&ctx, 0x4000_0040), "程式自己呼叫 ActivateEx（Windows Terminal）：照常補字");
+    // 文字框有焦點時有插入點（EDIT、PuTTY）：照常英文補字。
+    unsafe { CreateCaret(canvas, None, 1, 16) }.unwrap();
+    assert!(!english_passthrough(&ctx, 0), "有插入點：照常補字");
+    unsafe {
+        let _ = DestroyCaret();
+    }
+    assert!(english_passthrough(&ctx, 0));
+    // 自己實作 TSF 的程式（瀏覽器、Windows Terminal）沒有系統插入點也照常補字。
+    let ctx = host(canvas, canvas, Scope::Scopes(vec![IS_DEFAULT]), TS_SS_NOHIDDENTEXT, 0);
+    assert!(!english_passthrough(&ctx, 0));
+    unsafe {
+        let _ = DestroyWindow(canvas);
+    }
+}

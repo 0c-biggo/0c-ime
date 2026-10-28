@@ -16,10 +16,11 @@ import (
 // errPackageManaged：在這個模式下被拒絕的命令。設定程式依 code 判斷（契約 package_managed）。
 var errPackageManaged = errors.New("這份靈犀注音由系統套件管理員安裝與更新，請用套件管理員（例如 apt）更新或移除")
 
-// packageModeCommands 是套件管理員模式下照常可用的命令（models：#180 的模型下載，Debian 套件不帶模型）；其他（check、download、download-now、apply、install、
+// packageModeCommands 是套件管理員模式下照常可用的命令（models：#180 的模型下載，Debian 套件不帶模型；
+// profile：輸入習慣，同 set 只改使用者的設定，#229）；其他（check、download、download-now、apply、install、
 // verify、rollback、uninstall、schedule、auto、finish、mode、pause、resume、snooze、notify-action、protocol）都拒絕。
 var packageModeCommands = map[string]bool{
-	"status": true, "settings": true, "set": true, "models": true, "vocab": true, "api": true, "engine": true, "open-settings": true,
+	"status": true, "settings": true, "profile": true, "set": true, "models": true, "vocab": true, "api": true, "engine": true, "open-settings": true,
 }
 
 // packageManagedCheck 測試替換用。

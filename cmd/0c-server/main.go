@@ -159,7 +159,8 @@ func serve() string {
 	eng.AdvanceAfterSelect = config.AdvanceAfterSelect
 	eng.CtrlPunct = config.CtrlPunctuation // #168
 	// #173：Windows、Linux 的設定；macOS 開 Caps Lock 一律切到英文（#84），不看設定檔的值。
-	eng.CapsLockEnglish = config.CapsLockEnglish && (settings.CapsLockEnglishSetting(runtime.GOOS) || config.ProfileRules().CapsLetter == "lower")
+	capsSetting := config.CapsLockEnglish && (settings.CapsLockEnglishSetting(runtime.GOOS) || config.ProfileRules().CapsLetter == "lower")
+	eng.CapsLockEnglish = capsLockRequests(runtime.GOOS, capsSetting)
 
 	if config.OutputSimplified { // #118：字典編在執行檔裡，只有開啟時才解析
 		if conv, err := simplified.TW2S(); err != nil {
@@ -449,9 +450,15 @@ func serve() string {
 		// #168：引擎認得 Ctrl＋標點的鍵名而且設定開著；外殼只在這一項是 true、又在中文模式時送那六個鍵，
 		// 舊引擎沒有這一項，外殼照舊交給應用程式。
 		"ctrl_punctuation": fmt.Sprint(eng.CtrlPunct),
+		// #231：引擎認得的 Ctrl＋標點鍵（不跟著設定）。外殼送 Ctrl+: ( ) 前要看到這一項列了那個字元，
+		// 舊引擎沒有這一項，外殼只送最早的六個鍵。
+		"ctrl_punctuation_keys": proto.CtrlPunctKeys,
 		// #173：引擎認得 caps_lock 請求而且設定「Caps Lock 開著時直接打英文」開著；外殼只在這一項是 true 時回報
 		// Caps Lock 狀態，舊引擎沒有這一項、或設定關閉時，注音模式照舊不理 Caps Lock（#168）。
-		"caps_lock_english": fmt.Sprint(eng.CapsLockEnglish),
+		"caps_lock_english": fmt.Sprint(capsSetting),
+		// #219：引擎處理 caps_lock 請求（開啟暫時切英文、關閉回到開啟前的模式，期間手動切換為準）。macOS 一律是 true，
+		// macOS 外殼看到這一項才改送 caps_lock；舊引擎沒有這一項，外殼照舊送 mode。Windows、Linux 同 caps_lock_english。
+		"caps_lock_request": fmt.Sprint(eng.CapsLockEnglish),
 		// #150：不打聲調也能選字；外殼不用看，0c-update 拿它跟設定檔比較。
 		"toneless": fmt.Sprint(eng.Toneless),
 		// #192：設定「用快捷鍵切換簡體字」開著；外殼只在這一項是 true 時攔切換鍵，按下時送 output_simplified（同選單）。
@@ -678,3 +685,8 @@ func watchSignals(sig chan os.Signal, onSignal func(), stopNotify func(chan<- os
 		}
 	}
 }
+
+// capsLockRequests 回報引擎要不要處理外殼送來的 caps_lock 請求（#173、#219）。Windows、Linux 照設定「Caps Lock 開著時
+// 直接打英文」（setting）；macOS 開 Caps Lock 一律是英文（#84），交給 caps_lock 讓核心記住開啟前的模式，關閉時回到那個模式
+// （開著期間手動切換過就照手動的）。設定檔的值只影響 info 的 caps_lock_english，不影響 macOS。
+func capsLockRequests(goos string, setting bool) bool { return goos == "darwin" || setting }

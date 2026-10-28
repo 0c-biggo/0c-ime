@@ -13,19 +13,22 @@ use std::rc::Rc;
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateFontW, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect, GetDC,
-    GetMonitorInfoW, GetTextExtentPoint32W, InvalidateRect, MonitorFromPoint, ReleaseDC,
+    GetMonitorInfoW, GetTextExtentPoint32W, InvalidateRect, MonitorFromPoint, MonitorFromWindow, ReleaseDC,
     SelectObject, SetBkMode, SetTextColor, TextOutW, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS,
-    DEFAULT_CHARSET, DEFAULT_PITCH, DT_CALCRECT, DT_CENTER, DT_NOPREFIX, DT_WORDBREAK, FW_NORMAL,
+    DEFAULT_CHARSET, DEFAULT_PITCH, DRAW_TEXT_FORMAT, DT_CALCRECT, DT_CENTER, DT_EDITCONTROL, DT_NOPREFIX,
+    DT_WORDBREAK, FW_NORMAL,
     HBRUSH, HDC, HFONT, HGDIOBJ, MONITORINFO, MONITOR_DEFAULTTONEAREST, OUT_DEFAULT_PRECIS,
     PAINTSTRUCT, TRANSPARENT,
 };
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
-use windows::Win32::UI::Shell::{SHQueryUserNotificationState, QUERY_USER_NOTIFICATION_STATE, QUNS_RUNNING_D3D_FULL_SCREEN};
+use windows::Win32::UI::Shell::{
+    SHQueryUserNotificationState, QUERY_USER_NOTIFICATION_STATE, QUNS_BUSY, QUNS_RUNNING_D3D_FULL_SCREEN,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, GetAncestor, GetClientRect, GetForegroundWindow, GetGUIThreadInfo, GetWindow,
-    GetWindowLongPtrW, GetWindowThreadProcessId, GUITHREADINFO, KillTimer, LoadCursorW, PostMessageW,
+    GetWindowLongPtrW, GetWindowLongW, GetWindowRect, GetWindowThreadProcessId, GUITHREADINFO, KillTimer, LoadCursorW, PostMessageW,
     RegisterClassW, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow, CS_HREDRAW, CS_VREDRAW,
-    GA_ROOT, GWLP_USERDATA, GW_OWNER, HWND_TOPMOST, IDC_ARROW,
+    GA_ROOT, GWLP_USERDATA, GWL_EXSTYLE, GW_OWNER, HWND_TOPMOST, IDC_ARROW,
     MA_NOACTIVATE, SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE, WM_APP, WM_DPICHANGED, WM_LBUTTONUP,
     WM_MOUSEACTIVATE, WM_NCDESTROY, WM_PAINT, WM_PRINTCLIENT, WM_SETTINGCHANGE, WM_SYSCOLORCHANGE,
     WM_THEMECHANGED, WM_TIMER, WNDCLASSW, WNDPROC, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
@@ -217,15 +220,77 @@ fn measure(hdc: HDC, font: HFONT, text: &[u16]) -> i32 {
     }
 }
 
-/// 候選列的文字：鍵標（#112，1、q、;；英文補字沒有）、候選，有附註（模糊音近音）時接在候選之後。
-fn candidate_line(i: usize, c: &UiCandidate) -> String {
+/// 候選本身：鍵標（#112，1、q、;；英文補字沒有）加候選文字，不含附註。
+fn candidate_label(i: usize, c: &UiCandidate) -> String {
     let key = candidate_key(i, c);
-    let prefix = if key.is_empty() { String::new() } else { format!("{key}. ") };
-    if c.note.is_empty() {
-        format!("{prefix}{}", c.text)
+    if key.is_empty() {
+        c.text.clone()
     } else {
-        format!("{prefix}{}　〔{}〕", c.text, c.note)
+        format!("{key}. {}", c.text)
     }
+}
+
+/// 直排候選列的文字：有附註（模糊音近音、我的詞彙）時接在候選之後。多排格子另把附註畫在候選下方（grid_texts）。
+fn candidate_line(i: usize, c: &UiCandidate) -> String {
+    let label = candidate_label(i, c);
+    if c.note.is_empty() {
+        label
+    } else {
+        format!("{label}　〔{}〕", c.note)
+    }
+}
+
+/// 多排格子裡附註最多佔多寬（含左右留白），以候選列高為單位：4 列高在 96 DPI 是 112 px，「近音 ㄆㄧㄣˊ」
+/// 一行放得下；更長的附註（多字詞的近音讀音）在格子裡折行，不再撐寬整排格子（#230）。
+const NOTE_CAP_ROWS: i32 = 4;
+
+/// 多排格子的寬度：取最寬的候選本身，附註只在上限內算進去；至少 3 個列高。
+/// 以前用含附註的整行寬度，一個「〔近音 ㄆㄧㄣˊ〕」就讓 5 欄全部變寬（#230）。
+fn grid_cell_width(labels: &[i32], notes: &[i32], pad: i32, row: i32) -> i32 {
+    let label = labels.iter().map(|w| w + pad * 2).max().unwrap_or(0);
+    let note = notes
+        .iter()
+        .map(|w| (w + pad * 2).min(row * NOTE_CAP_ROWS))
+        .max()
+        .unwrap_or(0);
+    label.max(note).max(row * 3)
+}
+
+/// 多排格子的內容：第一行候選本身（一般字級），有附註時下面用小字畫附註（note_text）。
+fn grid_texts(i: usize, c: &UiCandidate) -> (Vec<u16>, Option<&str>) {
+    let note = (!c.note.is_empty()).then_some(c.note.as_str());
+    (candidate_label(i, c).encode_utf16().collect(), note)
+}
+
+/// 附註依空白分成字詞與音節，逐個排進格子寬，放不下才換行。GDI 自己折行會在注音符號之間斷開，
+/// 「近音 ㄓㄨˇ ㄕˋ」的聲調會單獨掉到下一行；這裡只在空白處換行，單一音節比格子寬時才交給 GDI 斷字。
+fn break_note(words: &[(&str, i32)], space: i32, width: i32) -> String {
+    let mut out = String::new();
+    let mut used = 0;
+    for (i, (word, w)) in words.iter().enumerate() {
+        if i > 0 {
+            if used + space + w > width {
+                out.push_str("\r\n");
+                used = 0;
+            } else {
+                out.push(' ');
+                used += space;
+            }
+        }
+        out.push_str(word);
+        used += w;
+    }
+    out
+}
+
+fn note_text(hdc: HDC, font: HFONT, note: &str, width: i32) -> Vec<u16> {
+    let wide = |s: &str| s.encode_utf16().collect::<Vec<_>>();
+    let words: Vec<(&str, i32)> = note
+        .split(' ')
+        .filter(|w| !w.is_empty())
+        .map(|w| (w, measure(hdc, font, &wide(w))))
+        .collect();
+    wide(&break_note(&words, measure(hdc, font, &wide(" ")), width))
 }
 
 /// 補全提示列開頭的「⇥ 」：用提示色畫，後面的補全內容用一般文字色（#118）。
@@ -312,50 +377,51 @@ fn uses_grid(m: &UiMessage) -> bool {
     m.columns > 1 || m.kind == "emoji"
 }
 
+/// 格子文字的折行方式；DT_EDITCONTROL 讓放不下的長詞（沒有空白的附註）在字元間折行，不被裁掉。
+const GRID_TEXT: DRAW_TEXT_FORMAT = DRAW_TEXT_FORMAT(DT_WORDBREAK.0 | DT_EDITCONTROL.0 | DT_NOPREFIX.0);
+
+/// 格子裡文字折行後的高度（DT_CALCRECT）；量測、繪製與命中都用這個值。
+unsafe fn text_height(hdc: HDC, font: HFONT, text: &[u16], width: i32) -> i32 {
+    let old = SelectObject(hdc, HGDIOBJ(font.0));
+    let mut text = text.to_vec();
+    let mut rect = RECT {
+        right: width.max(1),
+        ..Default::default()
+    };
+    DrawTextW(hdc, &mut text, &mut rect, DT_CALCRECT | GRID_TEXT);
+    SelectObject(hdc, old);
+    rect.bottom - rect.top
+}
+
 fn grid_row(m: &UiMessage, width: i32, t: &Theme, hdc: HDC) -> i32 {
     unsafe {
-        let old = SelectObject(hdc, HGDIOBJ(grid_font(m, t).0));
         let cells = candidate_cells(m, width, t.pad, t.row, t.small_row);
         let mut height = t.row;
         for (index, cell) in cells.iter().enumerate() {
-            let mut text: Vec<u16> = candidate_line(index, &m.candidates[index])
-                .encode_utf16()
-                .collect();
-            let mut rect = RECT {
-                right: (cell.width - t.pad * 2).max(1),
-                ..Default::default()
-            };
-            DrawTextW(
-                hdc,
-                &mut text,
-                &mut rect,
-                DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX,
-            );
-            height = height.max(rect.bottom - rect.top + t.pad * 2);
+            let inner = cell.width - t.pad * 2;
+            let (label, note) = grid_texts(index, &m.candidates[index]);
+            let mut text = text_height(hdc, grid_font(m, t), &label, inner);
+            if let Some(note) = note {
+                text += text_height(hdc, t.small, &note_text(hdc, t.small, note, inner), inner);
+            }
+            height = height.max(text + t.pad * 2);
         }
-        SelectObject(hdc, old);
         height
     }
 }
 
 fn grid_size(m: &UiMessage, max_width: i32, t: &Theme, hdc: HDC) -> (i32, i32) {
     let columns = m.columns.clamp(1, 10) as i32;
-    let cell = m
-        .candidates
-        .iter()
-        .enumerate()
-        .map(|(i, candidate)| {
-            measure(
-                hdc,
-                grid_font(m, t),
-                &candidate_line(i, candidate)
-                    .encode_utf16()
-                    .collect::<Vec<_>>(),
-            ) + t.pad * 2
-        })
-        .max()
-        .unwrap_or(t.row * 3)
-        .max(t.row * 3);
+    let mut labels = Vec::with_capacity(m.candidates.len());
+    let mut notes = Vec::new();
+    for (i, candidate) in m.candidates.iter().enumerate() {
+        let (label, note) = grid_texts(i, candidate);
+        labels.push(measure(hdc, grid_font(m, t), &label));
+        if let Some(note) = note {
+            notes.push(measure(hdc, t.small, &note.encode_utf16().collect::<Vec<_>>()));
+        }
+    }
+    let cell = grid_cell_width(&labels, &notes, t.pad, t.row);
     let headings = header_lines(m)
         .iter()
         .map(|h| {
@@ -416,7 +482,7 @@ unsafe fn draw_grid(m: &UiMessage, hdc: HDC, width: i32, t: &Theme) {
         } else {
             t.colors.background
         };
-        let mut text: Vec<u16> = candidate_line(i, &m.candidates[i]).encode_utf16().collect();
+        let (mut text, note) = grid_texts(i, &m.candidates[i]);
         if m.kind == "emoji"
             && t.color_emoji.as_ref().is_some_and(|renderer| {
                 renderer
@@ -426,25 +492,30 @@ unsafe fn draw_grid(m: &UiMessage, hdc: HDC, width: i32, t: &Theme) {
         {
             continue;
         }
-        SetTextColor(
-            hdc,
-            windows::Win32::Foundation::COLORREF(if selected {
-                t.colors.selected_text
-            } else {
-                t.colors.text
-            }),
-        );
+        SetTextColor(hdc, windows::Win32::Foundation::COLORREF(foreground));
         rect.left += t.pad;
         rect.right -= t.pad;
         rect.top += t.pad / 2;
-        let flags = DT_WORDBREAK
-            | DT_NOPREFIX
+        let flags = GRID_TEXT
             | if m.kind == "emoji" {
                 DT_CENTER
             } else {
                 Default::default()
             };
+        let label_height = text_height(hdc, grid_font(m, t), &text, rect.right - rect.left);
         DrawTextW(hdc, &mut text, &mut rect, flags);
+        // 附註畫在候選下方、小字提示色（選取時跟候選同色），像 macOS 多排一樣在格子裡折行，不撐寬格子（#230）。
+        if let Some(note) = note {
+            rect.top += label_height;
+            let mut note = note_text(hdc, t.small, note, rect.right - rect.left);
+            SelectObject(hdc, HGDIOBJ(t.small.0));
+            SetTextColor(
+                hdc,
+                windows::Win32::Foundation::COLORREF(if selected { t.colors.selected_text } else { t.colors.hint }),
+            );
+            DrawTextW(hdc, &mut note, &mut rect, GRID_TEXT);
+            SelectObject(hdc, HGDIOBJ(grid_font(m, t).0));
+        }
     }
     SelectObject(hdc, old);
     let bottom = cells.last().map(|cell| cell.top + row).unwrap_or(heading_y);
@@ -505,16 +576,45 @@ pub fn foreground_belongs_to(pid: u32, foreground: HWND) -> bool {
     in_front(pid, foreground_pid, || focus_pid(thread))
 }
 
-/// 使用者狀態是不是「D3D 獨佔全螢幕」。無邊框全螢幕是 QUNS_BUSY、簡報模式是 QUNS_PRESENTATION_MODE，
-/// 都由 DWM 合成，疊上候選窗不會把程式踢出全螢幕。
-fn yields_to(state: QUERY_USER_NOTIFICATION_STATE) -> bool {
-    state == QUNS_RUNNING_D3D_FULL_SCREEN
+/// 候選窗要不要讓開前景的全螢幕程式。QUNS_RUNNING_D3D_FULL_SCREEN 是 D3D 獨佔全螢幕，一律讓開（#159）。
+/// QUNS_BUSY 是「有全螢幕程式」：無邊框遊戲、Edge F11、影片都是它，由 DWM 合成、疊上候選窗沒事，照常顯示；
+/// 但 DXGI 全螢幕的遊戲（SetFullscreenState）在系統沒回報獨佔時也可能是 BUSY（全螢幕最佳化，#210 的疑點），
+/// 這時看前景視窗本身：DXGI 進全螢幕會把視窗設成 TOPMOST 並蓋滿螢幕，離開全螢幕就拿掉（.14 量到獨佔時
+/// ex=0x8、被踢出後變 0）；無邊框遊戲、Edge F11、一般最大化視窗都不是 TOPMOST。簡報模式與其他狀態照常顯示。
+fn yields_to(state: QUERY_USER_NOTIFICATION_STATE, dxgi_fullscreen: impl FnOnce() -> bool) -> bool {
+    state == QUNS_RUNNING_D3D_FULL_SCREEN || state == QUNS_BUSY && dxgi_fullscreen()
 }
 
-/// 前景程式正在 D3D 獨佔全螢幕（SHQueryUserNotificationState；系統不通知變化，每次顯示前查，約 0.1–0.3 ms）。
+/// 視窗是 TOPMOST 而且蓋滿它所在的螢幕（DXGI 全螢幕的樣子）。
+fn topmost_covering(ex_style: u32, window: RECT, monitor: RECT) -> bool {
+    ex_style & WS_EX_TOPMOST.0 != 0
+        && window.left <= monitor.left
+        && window.top <= monitor.top
+        && window.right >= monitor.right
+        && window.bottom >= monitor.bottom
+}
+
+fn dxgi_fullscreen(foreground: HWND) -> bool {
+    if foreground.is_invalid() {
+        return false;
+    }
+    unsafe {
+        let ex = GetWindowLongW(foreground, GWL_EXSTYLE) as u32;
+        let mut window = RECT::default();
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        GetWindowRect(foreground, &mut window).is_ok()
+            && GetMonitorInfoW(MonitorFromWindow(foreground, MONITOR_DEFAULTTONEAREST), &mut info).as_bool()
+            && topmost_covering(ex, window, info.rcMonitor)
+    }
+}
+
+/// 前景程式在全螢幕、候選窗要讓開（SHQueryUserNotificationState；系統不通知變化，每次顯示前查，約 0.1–0.3 ms）。
 /// 查不到時當作不是。
-fn exclusive_fullscreen() -> bool {
-    unsafe { SHQueryUserNotificationState() }.is_ok_and(yields_to)
+fn exclusive_fullscreen(foreground: HWND) -> bool {
+    unsafe { SHQueryUserNotificationState() }.is_ok_and(|state| yields_to(state, || dxgi_fullscreen(foreground)))
 }
 
 /// 依呈現訊息顯示、移動或隱藏候選窗。
@@ -539,8 +639,9 @@ pub fn present(hwnd: HWND, m: UiMessage) {
             return;
         }
         // 送出者是獨佔全螢幕的遊戲（D3D exclusive）：疊上任何最上層視窗都會讓它失去前景與全螢幕、
-        // 跳回桌面（#159）。寧可看不到候選（照常組字、可用數字鍵選字），不出視窗；無邊框視窗由 DWM 合成，照常顯示。
-        if exclusive_fullscreen() {
+        // 跳回桌面（#159），Present 回 DXGI_ERROR_INVALID_CALL，有的遊戲會直接結束（#210 疑點）。寧可看不到候選
+        // （照常組字、可用數字鍵選字），不出視窗；無邊框視窗由 DWM 合成，照常顯示（見 yields_to）。
+        if exclusive_fullscreen(foreground) {
             let _ = KillTimer(Some(hwnd), NOTICE_TIMER);
             with_state(hwnd, |s| *s.borrow_mut() = None);
             let _ = ShowWindow(hwnd, SW_HIDE);
@@ -783,20 +884,39 @@ mod tests {
     #[test]
     fn only_exclusive_fullscreen_hides_the_window() {
         use windows::Win32::UI::Shell::{
-            QUNS_ACCEPTS_NOTIFICATIONS, QUNS_APP, QUNS_BUSY, QUNS_NOT_PRESENT, QUNS_PRESENTATION_MODE, QUNS_QUIET_TIME,
+            QUNS_ACCEPTS_NOTIFICATIONS, QUNS_APP, QUNS_NOT_PRESENT, QUNS_PRESENTATION_MODE, QUNS_QUIET_TIME,
         };
-        // #159：獨佔全螢幕的遊戲被疊上視窗就跳回桌面；無邊框（BUSY）、簡報與一般桌面照常顯示。
-        assert!(yields_to(QUNS_RUNNING_D3D_FULL_SCREEN));
+        // #159：獨佔全螢幕的遊戲被疊上視窗就跳回桌面，不看視窗樣式。
+        assert!(yields_to(QUNS_RUNNING_D3D_FULL_SCREEN, || unreachable!()));
+        // 無邊框（BUSY）照常顯示；BUSY 時只有前景視窗是 DXGI 全螢幕的樣子才讓開（#210）。
+        assert!(!yields_to(QUNS_BUSY, || false));
+        assert!(yields_to(QUNS_BUSY, || true));
+        // 簡報與一般桌面照常顯示，也不必查前景視窗。
         for state in [
             QUNS_NOT_PRESENT,
-            QUNS_BUSY,
             QUNS_PRESENTATION_MODE,
             QUNS_ACCEPTS_NOTIFICATIONS,
             QUNS_QUIET_TIME,
             QUNS_APP,
         ] {
-            assert!(!yields_to(state), "{state:?}");
+            assert!(!yields_to(state, || unreachable!()), "{state:?}");
         }
+    }
+
+    #[test]
+    fn dxgi_fullscreen_is_a_topmost_window_covering_its_monitor() {
+        let monitor = RECT { left: 0, top: 0, right: 1024, bottom: 768 };
+        let topmost = WS_EX_TOPMOST.0;
+        // .14 量到的值：DXGI 獨佔時遊戲視窗 ex=0x8、蓋滿螢幕。
+        assert!(topmost_covering(topmost, monitor, monitor));
+        // 無邊框遊戲、Edge F11（ex=0x00200000）：蓋滿但不是 TOPMOST。
+        assert!(!topmost_covering(0x0020_0000, monitor, monitor));
+        // 一般 TOPMOST 小視窗（工具列、置頂的便利貼）沒蓋滿螢幕。
+        assert!(!topmost_covering(topmost, RECT { left: 100, top: 100, right: 500, bottom: 400 }, monitor));
+        // 第二個螢幕上的全螢幕視窗對照它自己的螢幕。
+        let second = RECT { left: 1024, top: 0, right: 2944, bottom: 1080 };
+        assert!(topmost_covering(topmost, second, second));
+        assert!(!topmost_covering(topmost, monitor, second));
     }
 
     #[test]
@@ -885,6 +1005,42 @@ mod tests {
         assert_eq!(candidate_line(0, &plain), "1. 吃");
         // 舊 DLL 沒送鍵標時第 10 項畫 0（按 0 選），不是「10」（#112）。
         assert_eq!(candidate_line(9, &near), "0. 痴　〔近音 ㄔ〕");
+    }
+
+    #[test]
+    fn grid_note_goes_under_the_candidate() {
+        let near = UiCandidate { id: 3, text: "拼".into(), note: "近音 ㄆㄧㄣˊ".into(), ..Default::default() };
+        let (label, note) = grid_texts(2, &near);
+        assert_eq!(String::from_utf16(&label).unwrap(), "3. 拼", "格子第一行只有候選，不含附註");
+        assert_eq!(note, Some("近音 ㄆㄧㄣˊ"));
+        let plain = UiCandidate { id: 0, text: "品".into(), ..Default::default() };
+        assert_eq!(grid_texts(0, &plain).1, None);
+    }
+
+    #[test]
+    fn long_notes_break_between_syllables() {
+        let words = [("近音", 26), ("ㄓㄨˇ", 30), ("ㄕˋ", 20)];
+        assert_eq!(break_note(&words, 4, 200), "近音 ㄓㄨˇ ㄕˋ");
+        // 放不下時在空白處換行，聲調不會跟音節分開。
+        assert_eq!(break_note(&words, 4, 64), "近音 ㄓㄨˇ\r\nㄕˋ");
+        assert_eq!(break_note(&words, 4, 30), "近音\r\nㄓㄨˇ\r\nㄕˋ");
+        assert_eq!(break_note(&[("我的詞彙", 52)], 4, 30), "我的詞彙", "單一詞比格子寬交給 GDI 斷字");
+        assert_eq!(break_note(&[], 4, 30), "");
+    }
+
+    #[test]
+    fn a_note_does_not_widen_every_grid_cell() {
+        // #230：多排 2×5，一個近音附註以前讓 5 欄都撐到含附註的整行寬（截圖約 1165 px）。
+        let (pad, row) = (8, 28);
+        let labels = [40, 40, 40, 40, 40];
+        let plain = grid_cell_width(&labels, &[], pad, row);
+        assert_eq!(plain, row * 3, "短候選維持最小格寬");
+        // 附註比候選寬：只在上限內算進去，長附註在格子裡折行。
+        assert_eq!(grid_cell_width(&labels, &[400], pad, row), row * NOTE_CAP_ROWS);
+        assert!(grid_cell_width(&labels, &[70], pad, row) <= row * NOTE_CAP_ROWS);
+        // 候選本身不設上限：顏文字、英文補字照舊依最寬的候選。
+        assert_eq!(grid_cell_width(&[300, 40], &[400], pad, row), 300 + pad * 2);
+        assert_eq!(grid_cell_width(&[], &[], pad, row), row * 3);
     }
 
     #[test]

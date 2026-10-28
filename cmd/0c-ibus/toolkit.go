@@ -174,15 +174,27 @@ func removeToolkits(home string) error {
 	return nil
 }
 
-// syncRegisteredToolkits 是 toolkits 子命令：只在已登錄時補上新版本加入的工具包設定。
+// syncRegisteredToolkits 是 toolkits 子命令：只在已登錄時補上新版本加入的工具包設定與 X11 工作階段設定。
 func syncRegisteredToolkits() error {
 	home := os.Getenv("HOME")
 	if _, err := os.Stat(filepath.Join(home, componentFile)); err != nil {
 		return nil
 	}
 	relogin, err := syncToolkits(home, nil)
+	if err != nil {
+		return err
+	}
 	reloginNote(relogin)
-	return err
+	// 0.2.6 以前在 Cinnamon 等 X11 桌面登錄時沒寫 ~/.xsessionrc，也沒加輸入來源，IBus 一直列不出靈犀注音
+	// （#237）：第一次補上時一併刪掉不含使用者目錄的登錄快取並加入輸入來源，重新登入後生效。不重啟 IBus。
+	changed, err := syncSessionRC(home, true)
+	if err != nil || !changed {
+		return err
+	}
+	os.Remove(filepath.Join(home, registryCache))
+	addSource()
+	fmt.Println("已把靈犀注音的 IBus 元件路徑加入 ~/.xsessionrc，重新登入後生效。")
+	return nil
 }
 
 func reloginNote(labels []string) {

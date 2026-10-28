@@ -48,7 +48,7 @@ func (r Rules) Validate() error {
 		{"tab", r.Tab, []string{"0c", "cycle", "segment"}},
 		{"candidate_space", r.CandidateSpace, []string{"page", "select"}},
 		{"candidate_enter", r.CandidateEnter, []string{"select", "commit"}},
-		{"shift_letter", r.ShiftLetter, []string{"inline", "commit"}},
+		{"shift_letter", r.ShiftLetter, []string{"inline", "commit", "lower"}},
 	} {
 		ok := false
 		for _, v := range f.allowed {

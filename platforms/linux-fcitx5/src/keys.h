@@ -40,16 +40,24 @@ inline uint32_t foldStyleCaps(uint32_t sym, bool caps, bool shift, bool english,
 }
 
 
-// ctrlPunctKey：只按著 Ctrl（可以加 Shift，沒有 Alt／Super／Hyper）的 , . ' ; ? ! 換成協定的 Ctrl＋標點鍵名（#168）。
-// unicode 是已經套用 Shift 的字元（Ctrl+Shift+/ 是 ?），其他鍵回傳空字串。
+// ctrlPunctKey：只按著 Ctrl（可以加 Shift，沒有 Alt／Super／Hyper）的 , . ' ; ? ! 與 : ( )（#231）換成協定的 Ctrl＋標點鍵名（#168）。
+// unicode 是已經套用 Shift 的字元（Ctrl+Shift+/ 是 ?），其他鍵回傳空字串。引擎認不認得見 ctrlPunctKnown。
 inline std::string ctrlPunctKey(uint32_t unicode, bool ctrl, bool otherModifier) {
     if (!ctrl || otherModifier) { return ""; }
     switch (unicode) {
-    case ',': case '.': case '\'': case ';': case '?': case '!':
+    case ',': case '.': case '\'': case ';': case '?': case '!': case ':': case '(': case ')':
         return std::string("Ctrl+") + static_cast<char>(unicode);
     default:
         return "";
     }
+}
+
+// ctrlPunctKnown：引擎認得這個 Ctrl＋標點鍵名。最早的六個鍵（#168）只要引擎回報 ctrl_punctuation；Ctrl+: ( )（#231）
+// 要引擎的 ctrl_punctuation_keys（engineKeys）列了那個字元，舊引擎沒有這一項，照舊交給應用程式。
+inline bool ctrlPunctKnown(const std::string &key, const std::string &engineKeys) {
+    if (key.size() != 6 || key.rfind("Ctrl+", 0) != 0) { return false; }
+    const char c = key[5];
+    return std::string(",.';?!").find(c) != std::string::npos || engineKeys.find(c) != std::string::npos;
 }
 
 // simplifiedHotkey：切換「輸出簡體字」的 Ctrl＋Shift＋F11（#192，settings.SimplifiedHotkeyLabel）。只按著 Ctrl 與 Shift，

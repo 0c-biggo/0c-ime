@@ -20,6 +20,24 @@ func TestMicrosoftIdleKeysDoNotClaimRawHalfwidthPunctuation(t *testing.T) {
 	}
 }
 
+// #210：Shift＋字母打小寫時，沒在組字的大寫字母也由核心吃下改成小寫；Windows 的 TestKeyDown 照 idle_keys 決定。
+func TestShiftLetterLowerClaimsIdleUppercase(t *testing.T) {
+	e := testEngine()
+	p, _ := inputstyle.Get("0c")
+	e.InputStyle = p.Rules
+	if strings.ContainsAny(e.IdleKeys(), "AZ") {
+		t.Fatalf("預設 Shift＋字母交還應用程式：%q", e.IdleKeys())
+	}
+	e.InputStyle.ShiftLetter = "lower"
+	if !strings.Contains(e.IdleKeys(), "ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
+		t.Fatalf("小寫規則要吃大寫字母：%q", e.IdleKeys())
+	}
+	id := e.OpenSession()
+	if snap := styleDo(t, e, id, proto.Request{Type: proto.Key, Key: "Q"}); !snap.Handled || snap.Commit != "q" {
+		t.Fatalf("閒置的 Shift＋Q：%+v", snap)
+	}
+}
+
 func styleDo(t *testing.T, e *Engine, id uint64, r proto.Request) proto.Snapshot {
 	t.Helper()
 	s, err := e.Do(id, r)
