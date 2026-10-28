@@ -58,6 +58,17 @@ a = next(x for x in p['items'] if x['id'] == p['active'])
 assert not a['builtin'] and a['name'] == 'My Microsoft style'
 assert not any(x.get('locked') for x in s['items'])
 PY
+  # #233：逐條規則判斷相容性。微軟習慣的 Shift＋空白全半形停用混打、標點停用聲調選填，英文補全照開；原因指向那一條規則。
+  check "自訂習慣只停用衝突的功能並指出是哪一條規則" python3 - "$OUT/styles-copy.json" <<'PY_CONFLICT'
+import json, sys
+s = json.load(open(sys.argv[1]))
+items = {x['key']: x for x in s['items']}
+assert items['style-shift-space']['value'] == 'fullwidth', items['style-shift-space']
+assert items['mixed-input'].get('disabled_by') == 'style-shift-space', items['mixed-input']
+assert 'Shift＋空白' in items['mixed-input']['disabled_reason'], items['mixed-input']
+assert items['toneless'].get('disabled_by') == 'style-punctuation', items['toneless']
+assert not items['english-autocomplete'].get('disabled'), items['english-autocomplete']
+PY_CONFLICT
   import -window root "$OUT/styles-custom.png"
 else bad "輸入習慣複製頁沒有出現"; fi
 stop_app

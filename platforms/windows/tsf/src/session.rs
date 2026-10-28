@@ -79,8 +79,10 @@ impl Snapshot {
         }
         let letter = key.len() == 1 && key.as_bytes()[0].is_ascii_alphabetic();
         if self.english_pending {
+            // Enter 只送出單字、不交給宿主（#235），TestKeyDown 就要說吃，OnKeyDown 才由核心送出；
+            // 在 TestKeyDown 先送出再放行的話，Windows Terminal 會連同命令一起執行。
             letter && self.text().len() < 48
-                || matches!(key, "Backspace" | "Escape")
+                || matches!(key, "Backspace" | "Escape" | "Enter")
                 || (!self.candidates.is_empty() && matches!(key, "Tab" | "Up" | "Down"))
         } else {
             self.english_can_start && letter
@@ -409,12 +411,14 @@ impl Session {
         self.simplified_live && reply["info"]["simplified_hotkey"] == "true"
     }
 
-    /// 引擎是否認得 Ctrl＋標點的鍵名而且設定開著（health 的 ctrl_punctuation，#168）。只在按下那六個鍵時查詢，
-    /// 設定套用（引擎重啟）後立即生效；引擎不可用或舊版引擎沒有這一項時為 false，照舊交給應用程式。
-    pub fn ctrl_punctuation(&mut self) -> bool {
-        self.client
-            .call(&json!({"op": "health"}))
-            .is_some_and(|reply| reply["ok"] == true && reply["info"]["ctrl_punctuation"] == "true")
+    /// 引擎是否認得 Ctrl＋標點的鍵名 `key` 而且設定開著（health 的 ctrl_punctuation 與 ctrl_punctuation_keys，#168、#231）。
+    /// 只在按下 Ctrl＋標點鍵時查詢，設定套用（引擎重啟）後立即生效；引擎不可用或舊版引擎沒有這一項時為 false，照舊交給應用程式。
+    pub fn ctrl_punctuation(&mut self, key: &str) -> bool {
+        self.client.call(&json!({"op": "health"})).is_some_and(|reply| {
+            reply["ok"] == true
+                && reply["info"]["ctrl_punctuation"] == "true"
+                && crate::keys::ctrl_punct_known(key, reply["info"]["ctrl_punctuation_keys"].as_str().unwrap_or(""))
+        })
     }
 
     /// 引擎目前載入的中英切換鍵設定（左右 Shift 與單按時限，#117）。在 Shift 單按放開時查詢，
@@ -764,11 +768,11 @@ mod parse_tests {
             "candidates": {"items":[{"id":0,"text":"hello"}]}}}),
         );
         assert!(s.english_pending);
-        for k in ["h", "H", "Backspace", "Escape", "Tab", "Up", "Down"] {
+        for k in ["h", "H", "Backspace", "Escape", "Enter", "Tab", "Up", "Down"] {
             assert!(s.english_wants_key(k), "{}", k);
         }
         for k in [
-            "Enter", " ", ".", "1", "Left", "Right", "Delete", "Home", "End", "PageUp", "PageDown",
+            " ", ".", "1", "Left", "Right", "Delete", "Home", "End", "PageUp", "PageDown",
         ] {
             assert!(!s.english_wants_key(k), "must pass host action: {}", k);
         }
@@ -984,7 +988,7 @@ mod tests {
         let mut s = Session::with_client(Client::with_pipe(&pipe));
         let start = s.handle(json!({"type":"mode", "on":true}));
         assert!(start.ok && start.english_can_start);
-        for boundary in ["Enter", " ", "Left", "Delete", "."] {
+        for boundary in [" ", "Left", "Delete", "."] {
             for k in ["h", "e", "l"] {
                 assert!(s.key(k).handled);
             }
@@ -1004,7 +1008,12 @@ mod tests {
         }
         let accepted = s.key("Tab");
         assert!(accepted.handled && accepted.text() != "hel");
-        assert_eq!(s.key("Enter").commit, accepted.text());
+        let enter = s.key("Enter");
+        assert_eq!(enter.commit, accepted.text());
+        // #235：Enter 只送出單字，不交給宿主；沒有組字時的 Enter 才交給宿主。
+        assert!(enter.handled && !enter.english_pending);
+        assert!(!s.english_state.english_wants_key("Enter"));
+        assert!(!s.key("Enter").handled);
     }
 
     #[test]

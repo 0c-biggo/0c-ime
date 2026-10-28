@@ -90,7 +90,7 @@ type Settings struct {
 	// SelectionKeys 是候選窗的選字鍵（#112）：1234567890（預設，檔案沒有這個欄位時也是）、1234qweras 或 asdfghjkl;。
 	// 換成字母鍵時數字 1–0 仍照位置選字。
 	SelectionKeys string `json:"selection_keys"`
-	// CtrlPunctuation：中文模式按 Ctrl＋, . ' ; 與 Ctrl＋Shift＋/ 1 打全形標點（#168）。預設 true；
+	// CtrlPunctuation：中文模式按 Ctrl＋, . ' ; 與 Ctrl＋Shift＋/ 1 ; 9 0 打全形標點（#168、#231）。預設 true；
 	// 想保留程式快速鍵（VS Code 的 Ctrl＋, 等）時關閉，這些鍵照舊交給應用程式。
 	CtrlPunctuation bool `json:"ctrl_punctuation"`
 	// CapsLockEnglish：Caps Lock 開著時直接打英文（#173，Windows、Linux）。預設 false：注音模式不理 Caps Lock（#168）。
@@ -741,8 +741,8 @@ func (s Settings) disabledReason(key string) string {
 }
 
 func (s Settings) disabledReasonOn(goos, key string) string {
-	if s.styleExtensionDisabled(key) {
-		return styleExtensionReason
+	if reason := s.styleConflictReason(key); reason != "" {
+		return reason
 	}
 	switch key {
 	case "mixed-input", "emoji-shortcut", "emoji-equals-first":
@@ -777,9 +777,10 @@ const startModeLockedReason = "不用 Shift 切換時固定從注音開始"
 // disabledBy 回報停用原因來自哪一項設定（Item.DisabledBy）：設定程式把各項分在不同頁面（#207），
 // 原因那一項在別頁時，用它帶人過去改。新增停用原因時要一起加在這裡（TestDisabledItemsNameTheirCause）。
 func disabledBy(reason string) string {
+	if rule := styleConflictRule(reason); rule != "" {
+		return rule // 輸入習慣的規則（#233）
+	}
 	switch reason {
-	case styleExtensionReason:
-		return "style-punctuation"
 	case "倚天 41 鍵時關閉", "許氏排列時關閉":
 		return "keyboard-layout"
 	case startModeLockedReason:
@@ -807,7 +808,7 @@ func specs() []spec {
 			func(s Settings) string { return onOff(s.DocumentContext) }},
 		{"mixed-input", "中英混打（試用）", "直接在注音中打英文；提供英文補全與拼字修正，由你確認接受。開啟時空白鍵輸入空白，按 ↓ 選字；數字拼得成注音時，按 Enter 留數字。若已啟用 Shift 中英切換，混打開或關都能單按 Shift 切到英文", "off", []string{"on", "off"},
 			func(s Settings) string { return onOff(s.MixedInput) }},
-		{"english-autocomplete", "英文模式自動補字", "單按 Shift 切換到英文模式後，輸入至少兩個字母時顯示補全候選，三個字母起也提供拼字修正；按 Tab 補全或修正拼字、Esc 關閉。與中英混打分開設定，空白與 Enter 保留原操作", "off", []string{"on", "off"},
+		{"english-autocomplete", "英文模式自動補字", "單按 Shift 切換到英文模式後，輸入至少兩個字母時顯示補全候選，三個字母起也提供拼字修正；按 Tab 補全或修正拼字、Esc 關閉。與中英混打分開設定。空白送出單字並輸入空格；Enter 只送出單字，再按一次才換行或執行", "off", []string{"on", "off"},
 			func(s Settings) string { return onOff(s.EnglishAutocomplete) }},
 		{"toggle-key", "中英切換鍵", toggleKeyDescription(runtime.GOOS), Default().ToggleKey, []string{ToggleRight, ToggleBoth, ToggleLeft, ToggleNone},
 			func(s Settings) string { return s.ToggleKey }},
@@ -896,14 +897,27 @@ func toggleKeyDescription(goos string) string {
 }
 
 // ctrlPunctuationDescription：說明會占用哪些程式快速鍵、可以關掉（#168）。Mac 是 Control 鍵（⌃），程式快速鍵多用 ⌘，
-// 撞到的少，不舉 VS Code 的例子。
+// 撞到的少，不舉 VS Code 的例子。#231 加了 Ctrl＋Shift＋; 9 0：Windows 舉 Excel（插入時間、取消隱藏列），
+// Linux 舉 Konsole（分割畫面）。
 func ctrlPunctuationDescription(goos string) string {
 	if goos == "darwin" {
-		return "注音模式按 ⌃, 打「，」、⌃. 打「。」、⌃' 打「、」、⌃; 打「；」、⌃⇧/ 打「？」、⌃⇧1 打「！」，沒在打字時也可以。" +
+		return "注音模式按 ⌃, 打「，」、⌃. 打「。」、⌃' 打「、」、⌃; 打「；」、⌃⇧/ 打「？」、⌃⇧1 打「！」、⌃⇧; 打「：」、⌃⇧9 打「（」、⌃⇧0 打「）」，沒在打字時也可以。" +
 			"注音模式時這幾個鍵不再交給 App，要保留時可以關掉；英文模式不受影響"
 	}
-	d := "注音模式按 Ctrl＋, 打「，」、Ctrl＋. 打「。」、Ctrl＋' 打「、」、Ctrl＋; 打「；」、Ctrl＋Shift＋/ 打「？」、Ctrl＋Shift＋1 打「！」，沒在打字時也可以。" +
-		"會占用程式的這幾個快速鍵（例如 VS Code 的 Ctrl＋, 開設定、Ctrl＋. 快速修正），要保留時可以關掉；英文模式不受影響"
+	d := "注音模式按 Ctrl＋, 打「，」、Ctrl＋. 打「。」、Ctrl＋' 打「、」、Ctrl＋; 打「；」、Ctrl＋Shift＋/ 打「？」、Ctrl＋Shift＋1 打「！」、" +
+		"Ctrl＋Shift＋; 打「：」、Ctrl＋Shift＋9 打「（」、Ctrl＋Shift＋0 打「）」，沒在打字時也可以。會占用程式的這幾個快速鍵（例如 VS Code 的 Ctrl＋, 開設定、Ctrl＋. 快速修正"
+	switch goos {
+	case "windows":
+		d += "，Excel 的 Ctrl＋Shift＋; 插入時間、Ctrl＋Shift＋9 取消隱藏列"
+	case "linux":
+		d += "，Konsole 的 Ctrl＋Shift＋9／0 分割畫面"
+	}
+	d += "），要保留時可以關掉；英文模式不受影響"
+	if goos == "windows" {
+		// 輸入法直接切換熱鍵 0x104（Ctrl＋Shift＋0 → 日文輸入法）是繁體中文 Windows 的預設值，日文沒裝也作用，
+		// 在 TSF 之前就被系統拿走。負責人決定保留這個鍵、不改系統熱鍵。
+		d += "。Windows 預設把 Ctrl＋Shift＋0 留給切換輸入法，這一鍵打不出「）」"
+	}
 	if goos == "linux" {
 		d += "。Fcitx5 的剪貼簿開著時，Ctrl＋; 照舊叫出剪貼簿"
 	}

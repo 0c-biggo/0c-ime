@@ -675,6 +675,65 @@ func TestFuzzyNearOnlySyllableKeepsEarlierText(t *testing.T) {
 	}
 }
 
+// 使用者回報：「揣摩上意」第一個字打錯成 ㄗㄨㄞˇ（精確沒有字，近音 ㄓㄨㄞˇ 才有），後面整段都只顯示注音、
+// 提交也是注音。只有那個音節留注音，其後的音節照常出字；改打正確讀音後整段恢復正常解碼。
+func TestFuzzyNearOnlySyllableDoesNotBlankLaterText(t *testing.T) {
+	s := fuzzySession(fuzzy.Config{}.With(fuzzy.SSh, fuzzy.Select), word{"送", "ㄙㄨㄥˋ", 1e-3}, word{"信", "ㄒㄧㄣˋ", 1e-3}, word{"給", "ㄍㄟˇ", 1e-3}, word{"他", "ㄊㄚ", 1e-3})
+	snap := fzType(s, "ㄕㄨㄥˋ ㄍㄟˇ ㄊㄚ")
+	if !s.nearReading || len(s.path) != 0 {
+		t.Fatalf("前提：只因近音收進，精確解不出路徑：near=%v path=%v", s.nearReading, s.path)
+	}
+	if snap.Text() != "ㄕㄨㄥˋ給他" {
+		t.Fatalf("近音音節後面的音節要照常出字：%q", snap.Text())
+	}
+	if got := s.Handle(proto.Request{Type: proto.Commit}).Commit; got != "ㄕㄨㄥˋ給他" {
+		t.Fatalf("提交 %q", got)
+	}
+	if len(s.model.Store.Corrections) != 0 {
+		t.Fatalf("保底文字不是解碼路徑，不學習：%+v", s.model.Store.Corrections)
+	}
+
+	s = fuzzySession(fuzzy.Config{}.With(fuzzy.SSh, fuzzy.Select), word{"送", "ㄙㄨㄥˋ", 1e-3}, word{"給", "ㄍㄟˇ", 1e-3}, word{"他", "ㄊㄚ", 1e-3})
+	fzType(s, "ㄕㄨㄥˋ ㄍㄟˇ ㄊㄚ")
+	s.Handle(proto.Request{Type: proto.Cursor, To: 1})
+	key(s, proto.KeyBackspace)
+	if snap := typeSyl(s, "ㄙㄨㄥˋ"); snap.Text() != "送給他" || s.nearReading {
+		t.Fatalf("改打正確讀音後整段照常解碼：%q near=%v", snap.Text(), s.nearReading)
+	}
+}
+
+// 保底狀態下照常出的字也照常送神經選字；前文只到沒有字的音節為止（左邊是原樣注音，不接文件前文）。
+func TestFuzzyNearOnlySyllableTextIsReranked(t *testing.T) {
+	s := fuzzySession(fuzzy.Config{}.With(fuzzy.SSh, fuzzy.Select), word{"送", "ㄙㄨㄥˋ", 1e-3}, word{"給", "ㄍㄟˇ", 1e-3}, word{"他", "ㄊㄚ", 1e-3}, word{"她", "ㄊㄚ", 1e-4})
+	s.Opt.PrefixAware = false
+	s.Handle(proto.Request{Type: proto.Context, ContextEnabled: true})
+	var contexts []string
+	s.Rerank = rerank.Options{Weight: .1, ContextRunes: rerank.MaxContextRunes, Scorer: rankFunc(func(r rerank.Request) ([]float64, error) {
+		contexts = append(contexts, r.Context)
+		scores := make([]float64, len(r.Candidates))
+		for i, c := range r.Candidates {
+			if strings.Contains(c.Text, "她") {
+				scores[i] = 1000
+			}
+		}
+		return scores, nil
+	})}
+	fzType(s, "ㄨㄛˇ")
+	c := key(s, proto.KeyEnter)
+	s.Handle(proto.Request{Type: proto.Context, On: true, ContextID: c.ContextID})
+	contexts = nil
+	snap := fzType(s, "ㄕㄨㄥˋ ㄍㄟˇ ㄊㄚ")
+	if snap.Text() != "ㄕㄨㄥˋ給她" || len(s.path) != 0 || snap.Suggestion != "" {
+		t.Fatalf("保底文字應採神經的選擇、不留路徑與提示：%q path=%v suggestion=%q", snap.Text(), s.path, snap.Suggestion)
+	}
+	if len(contexts) == 0 || contexts[len(contexts)-1] != "" {
+		t.Fatalf("原樣注音之後的段落不得帶文件前文：%q", contexts)
+	}
+	if got := key(s, proto.KeyEnter).Commit; got != "ㄕㄨㄥˋ給她" {
+		t.Fatalf("提交 %q", got)
+	}
+}
+
 // 審查 #3：與視窗部分重疊的近音鎖定，不能讓它留在視窗外的讀音影響原音候選的前後文。
 func TestFuzzyOverlappingLockDoesNotChangeExactCandidateOrder(t *testing.T) {
 	extra := []word{{"知世", "ㄓ ㄕˋ", 1e-3}, {"世", "ㄕˋ", 1e-4}}

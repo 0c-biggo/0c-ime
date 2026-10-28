@@ -110,6 +110,11 @@ pub fn line_height(view_window: Option<HWND>, recent: Option<RECT>) -> i32 {
     (24 * dpi / 96) as i32
 }
 
+/// 呼叫端執行緒（宿主的 UI 執行緒）現在有沒有系統插入點。
+pub fn thread_has_caret() -> bool {
+    thread_caret(unsafe { windows::Win32::System::Threading::GetCurrentThreadId() }).is_some()
+}
+
 /// 執行緒的系統插入點（螢幕座標）。
 fn thread_caret(thread: u32) -> Option<RECT> {
     let mut info = GUITHREADINFO {

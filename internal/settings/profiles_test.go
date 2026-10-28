@@ -197,18 +197,88 @@ func TestCustomRulesCannotBypassCompatibility(t *testing.T) {
 	if err := s.Set("style-punctuation", "microsoft"); err != nil {
 		t.Fatal(err)
 	}
-	for _, p := range [][2]string{{"keyboard-layout", "hsu"}, {"mixed-input", "on"}, {"english-autocomplete", "on"}, {"toneless", "on"}} {
+	for _, p := range [][2]string{{"keyboard-layout", "hsu"}, {"toneless", "on"}} {
 		before := s
 		if err := s.Set(p[0], p[1]); err == nil || s != before {
 			t.Fatalf("unsupported combination accepted: %v", p)
 		}
 	}
 	s = Default()
-	if err := s.Set("english-autocomplete", "on"); err != nil {
+	if err := s.Set("mixed-input", "on"); err != nil {
 		t.Fatal(err)
 	}
 	before := s
 	if err := s.Set("style-shift-space", "fullwidth"); err == nil || s != before {
 		t.Fatal("reverse-order rule edit bypassed constraint")
+	}
+}
+
+// #233：一條規則只停用它真正衝突的功能，停用原因寫出是哪一條規則、帶到那一項。
+func TestStyleRulesDisableOnlyConflictingFeatures(t *testing.T) {
+	type want struct{ mixed, autocomplete, toneless string }
+	for _, tc := range []struct {
+		rule, value string
+		want        want
+	}{
+		{"style-punctuation", "microsoft", want{"", "", "style-punctuation"}},
+		{"style-punctuation", "standard", want{"", "", "style-punctuation"}},
+		{"style-punctuation", "chewing", want{"", "", "style-punctuation"}},
+		{"style-shift-space", "fullwidth", want{"style-shift-space", "", ""}},
+		{"style-shift-space", "space", want{}},
+		{"style-shift-space", "single", want{}},
+		{"style-tab", "segment", want{"style-tab", "", ""}},
+		{"style-tab", "cycle", want{}},
+		{"style-up", "cycle", want{}},
+		{"style-shift-letter", "commit", want{"style-shift-letter", "", ""}},
+		{"style-shift-letter", "lower", want{"style-shift-letter", "", ""}},
+		{"style-caps-letter", "lower", want{}},
+		{"style-shift-delete", "tone", want{}},
+		{"style-candidate-tab", "grid", want{}},
+		{"style-candidate-tab", "next", want{}},
+		{"style-candidate-space", "select", want{}},
+		{"style-candidate-enter", "commit", want{}},
+		{"style-candidate-navigation", "horizontal", want{}},
+		{"style-page-size", "9", want{}},
+	} {
+		s := Default()
+		if err := s.ProfileAction("copy", "0c", "custom"); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Set(tc.rule, tc.value); err != nil {
+			t.Fatal(err)
+		}
+		for key, by := range map[string]string{"mixed-input": tc.want.mixed, "english-autocomplete": tc.want.autocomplete, "toneless": tc.want.toneless} {
+			var item Item
+			for _, it := range s.Items() {
+				if it.Key == key {
+					item = it
+				}
+			}
+			if item.DisabledBy != by || item.Disabled != (by != "") {
+				t.Errorf("%s=%s：%s 停用=%v、原因 %q（%q），要 %q", tc.rule, tc.value, key, item.Disabled, item.DisabledReason, item.DisabledBy, by)
+			}
+			before := s
+			err := s.Set(key, "on")
+			if by != "" && (err == nil || s != before || !strings.Contains(err.Error(), "不能同時使用")) {
+				t.Errorf("%s=%s：衝突的 %s 被打開：%v", tc.rule, tc.value, key, err)
+			}
+			if by == "" && err != nil {
+				t.Errorf("%s=%s：相容的 %s 打不開：%v", tc.rule, tc.value, key, err)
+			}
+			s = before
+		}
+	}
+	// #233 回報者的組合：靈犀風格只改成微軟標點，混打與英文補全照開。
+	s := Default()
+	if err := s.ProfileAction("copy", "0c", "半形標點"); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range [][2]string{{"style-punctuation", "microsoft"}, {"mixed-input", "on"}, {"english-autocomplete", "on"}} {
+		if err := s.Set(p[0], p[1]); err != nil {
+			t.Fatalf("%v：%v", p, err)
+		}
+	}
+	if err := s.Set("style-shift-letter", "lower"); err == nil || !strings.Contains(err.Error(), "打小寫字母") {
+		t.Fatalf("混打開著時改成 Shift 小寫要擋並說明：%v", err)
 	}
 }

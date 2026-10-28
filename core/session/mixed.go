@@ -281,6 +281,17 @@ func (s *Session) openMixedCandidates() {
 		}
 	}
 	add(s.mixed.raw) // The original keys are always reachable.
+	// #146：照字面留下、結尾是聲調鍵的按鍵（句首或空白、英文後的 u1,6、u2,6）有完整讀音時，
+	// 原按鍵後面接著列那個讀音的中文字，選了就是那個字；預設顯示仍是原按鍵。
+	if at, syl, chars := s.mixedToneChars(); len(chars) > 0 {
+		c.mixedAt, c.mixedSyl, c.mixedChars = at, syl, map[int]string{}
+		for _, char := range chars {
+			if text := s.mixed.raw[:at] + char; !seen[text] {
+				c.mixedChars[len(c.items)] = char
+				add(text)
+			}
+		}
+	}
 	if comp, ok := s.mixedComposer(s.mixed.raw); ok {
 		add(comp.String())
 	}
@@ -308,6 +319,19 @@ func (s *Session) selectMixed(id int) bool {
 	if s.cand == nil || id < 0 || id >= len(s.cand.items) {
 		return false
 	}
+	if char, ok := s.cand.mixedChars[id]; ok {
+		at, syl, raw := s.cand.mixedAt, s.cand.mixedSyl, s.mixed.raw
+		s.cand = nil
+		s.clearMixed()
+		if at > 0 {
+			s.insertMixedLiteral(raw[:at], false, false)
+		}
+		pos := s.cursor
+		s.insertMixedReading(syl, raw[at:])
+		s.locks[pos] = decode.Lock{Word: char, Len: 1}
+		s.refresh()
+		return true
+	}
 	text := s.cand.items[id].Entry.Surface
 	s.mixed.accepted = ""
 	s.mixed.choice = 1
@@ -320,6 +344,50 @@ func (s *Session) selectMixed(id int) bool {
 	}
 	s.cand = nil
 	return true
+}
+
+// mixedToneCharLimit：照字面的按鍵在 ↓ 列出的中文字數。選了之後在那個字上再按 ↓ 就是完整的單字清單。
+const mixedToneCharLimit = 5
+
+// mixedToneChars（#146）：待定按鍵以聲調鍵結尾、照字面留下時（#200 的 u1,6、#175 的反序數字、罕用字），
+// 找出聲調前的按鍵組成的完整讀音與它的中文字，供 ↓ 選字。按鍵可以反序（u1, 是 ㄧㄅㄝ，組成 ㄅㄧㄝ）。
+// 前段可以照字面留下（hellou2,6 → hello＋疊）：整串優先，其次是 mixedLiteralPrefix 認得的切法（已知英文字、數字或標點）；
+// 字典不認得的英文前段不切（kevin87 不列 kevi挲）。
+// 字依句首的單字機率排序（含個人選過的字）；讀音只能當詞頭、沒有單字時不列。
+func (s *Session) mixedToneChars() (int, zhuyin.Syllable, []string) {
+	raw := s.mixed.raw
+	if len(raw) < 2 || s.mixed.accepted != "" {
+		return 0, "", nil
+	}
+	sym, ok := s.layout.Symbol(rune(raw[len(raw)-1]))
+	if !ok || zhuyin.ClassOf(sym) != zhuyin.Tone {
+		return 0, "", nil
+	}
+	body, key := raw[:len(raw)-1], raw[len(raw)-1:]
+	for at := 0; at < len(body); at++ {
+		prefix, rest := body[:at], body[at:]
+		if at > 0 && !s.mixedLiteralPrefix(prefix, rest, key) {
+			continue
+		}
+		done, ok := s.mixedReading(rest, sym)
+		if !ok {
+			continue
+		}
+		reading := []zhuyin.Syllable{done}
+		dec := &decode.Decoder{Lex: s.model.Source(), Score: s.model}
+		pinned := func(w string) bool { return s.model.PickedSingle(done, w) || s.model.VocabReading(w, reading) }
+		var chars []string
+		for _, c := range dec.Candidates(input.Exact{}.Expand(reading), 0, 1, dec.InitialLeft(), pinned) {
+			if len(chars) == mixedToneCharLimit {
+				break
+			}
+			chars = append(chars, c.Entry.Surface)
+		}
+		if len(chars) > 0 {
+			return at, done, chars
+		}
+	}
+	return 0, "", nil
 }
 
 // A complete phonetic reading must be reachable in the current Chinese context.
@@ -1007,7 +1075,10 @@ func (s *Session) mixedKey(k string) bool {
 		}
 		s.flushMixed()
 		// 緊接在照字面的英數後面，Shift＋, Shift＋. 也是「，」「。」（#201：我2026，我、我OK，），↓ 第二項是原按鍵 < >；
-		// 其他標點照字面（hello! 、x^2）。
+		// 其他標點照字面（hello! 、x^2）。閉括號跟著組字區裡配對的開括號（#232：我（DNS））。
+		if s.insertPairedBracket(k) {
+			return true
+		}
 		if literal && k != "<" && k != ">" {
 			s.insertMixedLiteral(k, false, false)
 		} else {

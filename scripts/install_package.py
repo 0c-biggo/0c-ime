@@ -189,6 +189,13 @@ IBUS_ENV = (".config/environment.d/91-0c-ibus.conf", *IBUS_TOOLKIT_ENV)
 ETC = Path("/etc")  # 系統 environment 設定；測試換成暫存目錄
 IBUS_CACHE = ".cache/ibus/bus/registry"
 IBUS_SOURCE = "('ibus', '0c')"
+# 有靈犀注音的輸入來源清單：GNOME 與 Cinnamon（#237）。
+IBUS_SOURCE_SCHEMAS = ("org.gnome.desktop.input-sources", "org.cinnamon.desktop.input-sources")
+# Debian 系 X11 桌面（Cinnamon、MATE、Xfce）讀不到 environment.d，0c-ibus register 把元件路徑寫在
+# ~/.xsessionrc 的這一段（cmd/0c-ibus/desktop.go）；移除時只拿掉這一段。
+IBUS_SESSION_RC = ".xsessionrc"
+IBUS_SESSION_BEGIN = "# >>> 0c-ibus："
+IBUS_SESSION_END = "# <<< 0c-ibus"
 # 0c-update 在執行時建立的應用程式選單項目（Exec 要絕對路徑）；解除安裝時一併移除，只動帶標記的檔案。
 DESKTOP_ENTRY = ".local/share/applications/0c-settings.desktop"
 DESKTOP_ICON = ".local/share/icons/hicolor/128x128/apps/0c-settings.png"
@@ -824,8 +831,40 @@ def user_assigns(home, name):
     return any(path not in ours and assigns(path, name) for path in files)
 
 
+def without_session_block(text):
+    """去掉 ~/.xsessionrc 裡 0c-ibus register 寫的那一段；找不到完整的開頭、結尾標記時不動。"""
+    start = text.find(IBUS_SESSION_BEGIN)
+    end = text.find(IBUS_SESSION_END, start) if start >= 0 else -1
+    if end < 0:
+        return text
+    end += len(IBUS_SESSION_END)
+    if text[end:end + 1] == "\n":
+        end += 1
+    return text[:start] + text[end:]
+
+
+def remove_session_block(home):
+    path = home / IBUS_SESSION_RC
+    try:
+        real = path.resolve()  # 使用者把設定檔連到別處時改那個檔案，連結保留
+        text = real.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return
+    rest = without_session_block(text)
+    if rest == text:
+        return
+    if not rest.strip():
+        real.unlink()
+        return
+    tmp = real.with_name(real.name + ".0c-new")
+    tmp.write_text(rest, encoding="utf-8")
+    os.chmod(tmp, real.stat().st_mode & 0o777)
+    os.replace(tmp, real)
+
+
 def ibus_unregister(home, run=subprocess.run):
-    """撤銷 0c-ibus register：刪元件檔、環境檔與 IBus 登錄快取，並從 GNOME 輸入來源移除。
+    """撤銷 0c-ibus register：刪元件檔、環境檔（含 ~/.xsessionrc 裡我們那一段）與 IBus 登錄快取，
+    並從 GNOME／Cinnamon 輸入來源移除。
 
     與 cmd/0c-ibus 的 unregister 做同樣的事；這裡不依賴外殼程式，回復到沒有它的版本後也能清。
     只刪內容確認是靈犀注音的元件檔；GTK_IM_MODULE／QT_IM_MODULES 只在我們的檔案有這項設定、
@@ -840,13 +879,14 @@ def ibus_unregister(home, run=subprocess.run):
     component.unlink()
     for relative in (*IBUS_ENV, IBUS_CACHE):
         destination(home, relative).unlink(missing_ok=True)
+    remove_session_block(home)
     if home.resolve() == Path.home().resolve():
         try:
-            current = run(["gsettings", "get", "org.gnome.desktop.input-sources", "sources"],
-                          capture_output=True, text=True, timeout=10)
-            if current.returncode == 0 and IBUS_SOURCE in current.stdout:
-                run(["gsettings", "set", "org.gnome.desktop.input-sources", "sources",
-                     without_ibus_source(current.stdout.strip())], capture_output=True, timeout=10)
+            for schema in IBUS_SOURCE_SCHEMAS:
+                current = run(["gsettings", "get", schema, "sources"], capture_output=True, text=True, timeout=10)
+                if current.returncode == 0 and IBUS_SOURCE in current.stdout:
+                    run(["gsettings", "set", schema, "sources",
+                         without_ibus_source(current.stdout.strip())], capture_output=True, timeout=10)
             run(["systemctl", "--user", "unset-environment", "IBUS_COMPONENT_PATH"], capture_output=True, timeout=10)
             for name in ours:
                 run(["systemctl", "--user", "unset-environment", name], capture_output=True, timeout=10)

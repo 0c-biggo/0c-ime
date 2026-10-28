@@ -31,7 +31,7 @@ IBus 特有的部分：
 一行安裝在 IBus 桌面會自動登錄；手動安裝套件或要從 Fcitx5 改用 IBus 時執行：
 
 ```sh
-~/.local/bin/0c-ibus register        # 元件檔、環境、GNOME 輸入來源
+~/.local/bin/0c-ibus register        # 元件檔、環境、GNOME／Cinnamon 輸入來源
 ~/.local/bin/0c-ibus unregister      # 移除
 ```
 
@@ -41,14 +41,17 @@ IBus 特有的部分：
 2. 寫 `~/.config/environment.d/91-0c-ibus.conf`：`IBUS_COMPONENT_PATH=/usr/share/ibus/component:${HOME}/.local/share/ibus/component`。ibus-daemon 沒有使用者元件目錄，只認這個變數。
 3. 刪掉 `~/.cache/ibus/bus/registry`。ibus-daemon 預設先讀這份快取，快取只核對它當初看過的目錄，不刪掉就看不到新目錄。
 4. `systemctl --user set-environment` 同一個變數並重新啟動 IBus 服務：systemd 使用者管理員只在啟動時讀 environment.d，已在執行（例如開了 linger）時要另外更新。這樣不必登出就能用。
-5. GNOME 上把 `('ibus', '0c')` 加到輸入來源清單最後；清單原本是空的（GNOME 用系統鍵盤配置）時，先放入 `localectl` 的系統配置，才切得回原本的鍵盤。
-6. 讓 GTK／Qt 改用 IBus 自己的輸入模組（原因見下一節；重新登入後生效，程式在 `cmd/0c-ibus/toolkit.go`）：`~/.config/environment.d/92-0c-ibus-gtk.conf` 寫 `GTK_IM_MODULE=ibus`，`93-0c-ibus-qt.conf` 寫 `QT_IM_MODULES=ibus;wayland`。
+   - IBus 不是 systemd 服務時（Cinnamon、MATE、Xfce 等 X11 桌面：ibus-daemon 由桌面或 im-config 在 Xsession 裡啟動），讀 `/proc/<pid>/cmdline` 與 `environ`，以原本的參數與環境、只換 `IBUS_COMPONENT_PATH`，加上 `--replace --daemonize --cache=refresh` 啟動新的 daemon 取代它（`cmd/0c-ibus/desktop.go`）。沿用原本的參數才不會改變桌面的安排：im-config 起的 daemon 帶 IBus 自己的面板（Mint 22.3 就是這種），新版 Cinnamon 自己起的帶 `--panel disable`、由 Cinnamon 當面板；一律換成 `ibus-daemon -rdx` 會在後者多跑一個面板跟 Cinnamon 搶。`--cache=refresh` 是因為登錄快取不記得當初的搜尋路徑，新加的目錄不會讓它失效。
+5. 把 `('ibus', '0c')` 加到桌面的輸入來源清單最後：GNOME 是 `org.gnome.desktop.input-sources`，Cinnamon（`XDG_CURRENT_DESKTOP=X-Cinnamon`）是格式相同的 `org.cinnamon.desktop.input-sources`。清單原本是空的（桌面用系統鍵盤配置）時，先放入 `localectl` 的系統配置，才切得回原本的鍵盤。MATE、Xfce 等沒有桌面的輸入來源清單，用 IBus 自己的面板與 `preload-engines`，`register` 不改，請使用者在「IBus 偏好設定」（`ibus-setup`）的「輸入法」加入。
+6. 不是 GNOME、而且是 Debian 系的 Xsession（有 `/etc/X11/Xsession.d/40x11-common_xsessionrc`，Ubuntu、Linux Mint、Debian）時，在 `~/.xsessionrc` 加一段（`# >>> 0c-ibus` 到 `# <<< 0c-ibus`），讓下次登入時桌面起的 ibus-daemon 也有 `IBUS_COMPONENT_PATH`：environment.d 只給 systemd 使用者管理員與它啟動的服務，Xsession 起的程式拿不到（#237）。這一段只在變數裡還沒有使用者元件目錄時把它接在後面，用 `case` 寫，結束狀態一定是 0：Xsession 本身以 `set -e` 執行，現在的 Debian Xsession 與 Mint／Ubuntu 的 `lightdm-session` 讀 Xsession.d 時不中斷，但不依賴這一點（`[ -d … ] && export …` 在條件不成立時結束狀態不是 0）。檔案的其他內容不動，是符號連結時改它指向的檔案。不選 `~/.profile`（終端機的登入 shell 也讀、內容通常是使用者自己的）或 `~/.xprofile`（Mint／Ubuntu 的 `lightdm-session` 會讀，但 Debian 的 `/etc/X11/Xsession` 不讀）。其他發行版的 X11 桌面沒有寫，`register` 會印出要自己設定的變數。
+7. 讓 GTK／Qt 改用 IBus 自己的輸入模組（原因見下一節；重新登入後生效，程式在 `cmd/0c-ibus/toolkit.go`）：`~/.config/environment.d/92-0c-ibus-gtk.conf` 寫 `GTK_IM_MODULE=ibus`，`93-0c-ibus-qt.conf` 寫 `QT_IM_MODULES=ibus;wayland`。
    - 使用者或系統自己指定了別的值（其他 environment.d 檔、`/etc/environment` 或目前環境裡，例如 `GTK_IM_MODULE=fcitx`、`QT_IM_MODULE=fcitx`）時不寫，並移掉我們會蓋過它的舊檔案；GNOME 自己的預設（`wayland;ibus`、`QT_IM_MODULE=ibus`）不算。
    - `-gtk-module=false`／`-qt-module=false` 停用：移掉設定，留下只有註解的停用記號，之後重跑安裝或更新都不加回來；`-qt-module=true` 才恢復。沒寫旗標時維持原本的選擇。
    - 已登錄時重跑 `register` 只補上缺少的設定，不重啟 IBus。IBus 外殼更新完成後，更新器執行 `0c-ibus toolkits` 做同樣的事，新版本加入的設定不必重跑安裝就會補上。
-7. `unregister` 移除兩個檔案；只有檔案裡是我們的設定、而且沒有使用者自己的值時才清 `GTK_IM_MODULE`／`QT_IM_MODULES`。從 environment.d 讀進 systemd 使用者管理員的變數無法以 `unset-environment` 移除，刪檔後要重新登入才還原。
+   - `toolkits` 也補上第 6 步的 `~/.xsessionrc`：0.2.6 以前在 Cinnamon 登錄的帳號沒有它，也沒加輸入來源，IBus 一直列不出靈犀注音。第一次補上時一併刪掉登錄快取、加入 Cinnamon 輸入來源，不重啟 IBus，重新登入後生效。
+8. `unregister` 移除兩個檔案、`~/.xsessionrc` 裡我們那一段（檔案只剩這一段時刪掉檔案），並從 GNOME 與 Cinnamon 的輸入來源清單移除；只有檔案裡是我們的設定、而且沒有使用者自己的值時才清 `GTK_IM_MODULE`／`QT_IM_MODULES`。從 environment.d 讀進 systemd 使用者管理員的變數無法以 `unset-environment` 移除，刪檔後要重新登入才還原。安裝器解除安裝時（`ibus_unregister`）做一樣的清理，但不自己重啟非 systemd 的 ibus-daemon：Cinnamon 的清單已經沒有靈犀注音，daemon 裡的舊項目在重新登入後消失。
 
-系統若有 `/var/cache/ibus/bus/registry`（`ibus write-cache --system` 產生），ibus-daemon 會先用它；Ubuntu 26.04 沒有這個檔，其他發行版要另外確認。
+系統若有 `/var/cache/ibus/bus/registry`（`ibus write-cache --system` 產生），ibus-daemon 會先用它；Ubuntu 26.04、Linux Mint 22.3 沒有這個檔，其他發行版要另外確認。
 
 ## GNOME：焦點移走時丟組字
 
@@ -88,4 +91,4 @@ go test ./cmd/0c-ibus
 - Fcitx5 的齒輪設定（神經選字、補標點、依前文選字）在 IBus 沒有對應，請用「靈犀注音設定」程式；GNOME 設定裡輸入來源的齒輪會執行 `0c-update open-settings`。
 - 沒有 trace 錄製。
 - `make upgrade`（開發者從原始碼更新自己的桌面）只處理 Fcitx5。
-- 未驗：KDE／其他桌面的 IBus、X11 工作階段、Ubuntu 24.04（Qt 6.4）、HiDPI／多螢幕、有系統登錄快取（`/var/cache/ibus/bus/registry`）的發行版。
+- 未驗：KDE／MATE／Xfce 的 IBus、GNOME 的 X11 工作階段、非 Debian 系的 X11 桌面、Cinnamon 的 Wayland 工作階段、Ubuntu 24.04（Qt 6.4）、HiDPI／多螢幕、有系統登錄快取（`/var/cache/ibus/bus/registry`）的發行版。Linux Mint 22.3 Cinnamon（X11）已實機驗證（#237）。

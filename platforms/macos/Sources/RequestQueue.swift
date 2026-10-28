@@ -24,11 +24,32 @@ final class RequestQueue {
         let pending = items.dropFirst(isPresenting && processingQueuedGeneration == generation ? 1 : 0)
         var text = initial
         var mode = english
+        // caps_lock（#219）：開啟暫時切到英文，關閉回到開啟前的模式；期間切換過（toggle、mode）就不再改。
+        // 關閉前在這段排隊裡沒看到開啟時，不知道核心記得的模式，不猜。
+        var capsBefore: Bool?
+        var capsSeen = false
         for item in pending {
             switch item.request.type {
+            case "caps_lock":
+                if item.request.on == true {
+                    guard !capsSeen else { continue } // 核心已記得開著，不再改模式
+                    capsBefore = mode
+                    capsSeen = true
+                    mode = true
+                } else {
+                    guard capsSeen else { return nil }
+                    if let before = capsBefore, before != mode {
+                        guard text.isEmpty else { return nil }
+                        mode = before
+                    }
+                    capsBefore = nil
+                    capsSeen = false
+                }
             case "mode", "toggle":
                 guard text.isEmpty else { return nil }
                 mode = item.request.type == "mode" ? item.request.on == true : !mode
+                capsBefore = nil
+                if item.request.type == "mode" { capsSeen = false } // mode 讓核心忘掉 Caps Lock 狀態
             case "key":
                 // 數字鍵盤送 "KP" 加字元（#75），文字就是那個字元。
                 guard mode, var key = item.request.key else { return nil }
@@ -48,7 +69,7 @@ final class RequestQueue {
         guard !composing, !isProcessing || isPresenting else { return false }
         let pending = items.dropFirst(isPresenting && processingQueuedGeneration == generation ? 1 : 0)
         return pending.allSatisfy {
-            ["mode", "toggle", "commit"].contains($0.request.type)
+            ["mode", "toggle", "commit", "caps_lock"].contains($0.request.type)
         }
     }
 

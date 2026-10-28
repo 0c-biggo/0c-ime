@@ -52,6 +52,15 @@ with tempfile.TemporaryDirectory(prefix="caps-", dir="/private/tmp") as temporar
     fault = root / "fault"
     server = subprocess.Popen([sys.argv[1], "-socket", target, "-data", sys.argv[2], "-user", str(root / "user.json")],
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # #219: per-field mode memory with right Shift, where Caps release used to force Zhuyin.
+    native = root / "native"
+    native.mkdir()
+    (native / "settings.json").write_text(json.dumps({"schema": 1, "selection": "statistical", "punctuation": False,
+        "english_autocomplete": False, "mixed_input": False, "mode_memory": "native", "start_mode": "zhuyin",
+        "toggle_key": "right"}))
+    native_target = str(native / "engine.sock")
+    native_server = subprocess.Popen([sys.argv[1], "-socket", native_target, "-data", sys.argv[2], "-user", str(native / "user.json")],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     test = None
     workers = []
     faults = []
@@ -76,8 +85,8 @@ with tempfile.TemporaryDirectory(prefix="caps-", dir="/private/tmp") as temporar
             errors.append(type(error).__name__)
     try:
         deadline = time.monotonic() + 10
-        while not pathlib.Path(target).exists():
-            if server.poll() is not None or time.monotonic() > deadline:
+        while not pathlib.Path(target).exists() or not pathlib.Path(native_target).exists():
+            if server.poll() is not None or native_server.poll() is not None or time.monotonic() > deadline:
                 raise RuntimeError("isolated engine failed to start")
             time.sleep(0.02)
         with socket.socket(socket.AF_UNIX) as listener, socket.socket(socket.AF_UNIX) as cold_listener, selectors.DefaultSelector() as ready:
@@ -85,8 +94,8 @@ with tempfile.TemporaryDirectory(prefix="caps-", dir="/private/tmp") as temporar
             listener.listen()
             ready.register(listener, selectors.EVENT_READ)
             cold_started = False
-            test = subprocess.Popen([sys.argv[3], proxy, str(fault), cold_proxy, str(start_cold)])
-            deadline = time.monotonic() + 20
+            test = subprocess.Popen([sys.argv[3], proxy, str(fault), cold_proxy, str(start_cold), native_target])
+            deadline = time.monotonic() + 40
             while test.poll() is None:
                 if time.monotonic() > deadline:
                     raise RuntimeError("controller test timed out")
@@ -110,7 +119,7 @@ with tempfile.TemporaryDirectory(prefix="caps-", dir="/private/tmp") as temporar
         cleanup_error = None
         # Try both children even if one cleanup fails; retain the original test
         # exception instead of replacing it with an unrelated cleanup failure.
-        for process, graceful in ((test, False), (server, True)):
+        for process, graceful in ((test, False), (server, True), (native_server, True)):
             try:
                 stop_process(process, graceful)
             except Exception as error:

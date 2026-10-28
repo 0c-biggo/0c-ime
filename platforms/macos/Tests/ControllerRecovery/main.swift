@@ -3,6 +3,33 @@ import Foundation
 
 var client = TextClient()
 var controller = LingxiInputController(client: client)
+func capsChanged(_ on: Bool) {
+    let event = CGEvent(keyboardEventSource: nil, virtualKey: 57, keyDown: true)!
+    event.type = .flagsChanged
+    event.flags = on ? .maskAlphaShift : []
+    _ = controller.handle(NSEvent(cgEvent: event)!, client: client)
+}
+
+// #146: Caps release restores the engine's shared mode, which can still be
+// English. Exercise the real controller and engine rather than mapping a bool
+// to a label in isolation.
+let peer = ControllerTestHost.session(inputAllowed: { true })
+_ = try peer.handle(Request(type: "toggle"))
+CandidatePanel.hints = []
+capsChanged(true)
+capsChanged(false)
+let englishHints = CandidatePanel.hints
+let englishHintOK = englishHints == ["英", "英"]
+_ = try peer.handle(Request(type: "toggle"))
+CandidatePanel.hints = []
+capsChanged(true)
+capsChanged(false)
+let chineseHints = CandidatePanel.hints
+let chineseHintOK = chineseHints == ["英", "中"]
+peer.reset()
+controller.inputControllerWillClose()
+client = TextClient()
+controller = LingxiInputController(client: client)
 func input(caps: Bool) -> Bool {
     // Synthetic fixture, never an event from a real keyboard or user application.
     let event = NSEvent.keyEvent(with: .keyDown, location: .zero,
@@ -53,6 +80,9 @@ controller.inputControllerWillClose()
 ControllerTestHost.socketPath = CommandLine.arguments[3]
 client = TextClient()
 controller = LingxiInputController(client: client)
+CandidatePanel.hints = []
+capsChanged(true)
+let coldHintOK = CandidatePanel.hints.isEmpty
 let coldFirst = input(caps: true)
 record("cold_first", coldFirst)
 let coldSecond = input(caps: true)
@@ -70,8 +100,63 @@ let coldReleased = input(caps: false)
 record("cold_released", coldReleased)
 let coldOK = buffered && replayed && !coldRecovered && coldReleased && client.markedLength == 1 && client.insertedLength == 2
 controller.inputControllerWillClose()
-let passed = capsOK && compositionOK && coldOK
+
+// #219: Caps release returns to the mode from before Caps was turned on, unless
+// a single Shift switched modes while Caps was on. Per-field mode memory, so
+// only this controller's own session decides (shared mode is covered above).
+ControllerTestHost.socketPath = CommandLine.arguments[5]
+var capsHeld = false
+func shiftTap() {
+    for flags: CGEventFlags in [.maskShift, []] {
+        let event = CGEvent(keyboardEventSource: nil, virtualKey: 60, keyDown: true)!
+        event.type = .flagsChanged
+        event.flags = capsHeld ? flags.union(.maskAlphaShift) : flags
+        // Synthetic events carry no time of their own; the tap rules compare press, release and the last toggle.
+        event.timestamp = CGEventTimestamp(ProcessInfo.processInfo.systemUptime * 1_000_000_000)
+        _ = controller.handle(NSEvent(cgEvent: event)!, client: client)
+    }
+    Thread.sleep(forTimeInterval: 0.6) // past the duplicate-press window after a toggle
+}
+func nativeScenario(_ steps: [String]) -> [String: Any] {
+    client = TextClient()
+    controller = LingxiInputController(client: client)
+    capsHeld = false
+    CandidatePanel.hints = []
+    for step in steps {
+        switch step {
+        case "shift": shiftTap()
+        case "caps+": capsHeld = true; capsChanged(true)
+        default: capsHeld = false; capsChanged(false)
+        }
+    }
+    let typedZhuyin = input(caps: false) // "5" is ㄓ in Zhuyin, handed back to the app in English
+    controller.inputControllerWillClose()
+    return ["steps": steps.joined(separator: " "), "hints": CandidatePanel.hints, "zhuyin_after": typedZhuyin]
+}
+let nativeCases: [([String], String)] = [
+    (["shift", "caps+", "caps-"], "英"),          // English before Caps stays English
+    (["caps+", "caps-"], "中"),                   // Zhuyin before Caps returns to Zhuyin (#84 unchanged)
+    (["caps+", "shift", "shift", "caps-"], "英"), // switched back to English by hand while Caps was on
+    (["shift", "caps+", "shift", "caps-"], "中"), // switched to Zhuyin by hand while Caps was on
+    (["caps+", "shift", "caps-"], "中"),
+]
+var nativeResults: [[String: Any]] = []
+var nativeOK = true
+for (steps, want) in nativeCases {
+    let result = nativeScenario(steps)
+    nativeResults.append(result)
+    let hints = result["hints"] as? [String] ?? []
+    // Every case shows 英 right after Caps turns on (the step before it may be a Shift hint).
+    let capsOnIndex = steps.firstIndex(of: "caps+")!
+    let capsOnHint = hints.count == steps.count && hints[capsOnIndex] == "英"
+    nativeOK = nativeOK && capsOnHint && hints.last == want && (result["zhuyin_after"] as? Bool) == (want == "中")
+}
+
+let passed = capsOK && compositionOK && coldOK && englishHintOK && chineseHintOK && coldHintOK && nativeOK
 let output: [String: Any] = ["passed": passed, "caps_recovery": capsOK, "composition_preserved_once": compositionOK,
-                          "cold_queue": coldOK, "timeout_seconds": elapsed, "steps": results]
+                          "native_caps_restore": nativeOK, "native_cases": nativeResults,
+                          "cold_queue": coldOK, "timeout_seconds": elapsed, "steps": results,
+                          "english_hints": englishHints, "chinese_hints": chineseHints,
+                          "cold_hint_suppressed": coldHintOK]
 print(String(data: try JSONSerialization.data(withJSONObject: output, options: [.sortedKeys]), encoding: .utf8)!)
 exit(passed ? 0 : 1)

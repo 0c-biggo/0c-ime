@@ -17,7 +17,10 @@ func fakeDesktop(t *testing.T) (home, log string) {
 		script := "#!/bin/sh\necho \"" + n + " $*\" >> " + log + "\n"
 		switch n {
 		case "gsettings":
-			script += "[ \"$1\" = get ] && echo \"[('xkb', 'us')]\"\nexit 0\n"
+			// 每個清單的值存在紀錄檔旁邊；沒設定過時是 [('xkb', 'us')]。
+			// PATH 只有假工具，只能用 shell 內建指令。
+			script += "f=\"" + log + ".$2\"\nv=\"[('xkb', 'us')]\"\n[ -f \"$f\" ] && IFS= read -r v < \"$f\"\n" +
+				"[ \"$1\" = get ] && echo \"$v\"\n[ \"$1\" = set ] && echo \"$4\" > \"$f\"\nexit 0\n"
 		case "systemctl":
 			script += "[ \"$2\" = is-active ] && exit 1\nexit 0\n" // 沒有執行中的 IBus 服務
 		case "pgrep":

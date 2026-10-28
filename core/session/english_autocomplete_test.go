@@ -44,8 +44,36 @@ func TestEnglishAutocompleteExplicitSelectionAndUndo(t *testing.T) {
 	}
 }
 
+// #235（GitHub 0c-ime#35）：英文模式打 `cd Doc` 按 Enter，只送出畫面上有底線的組字，不連 Enter 一起交給程式；
+// Windows Terminal 會直接執行命令，網頁的文字框會多一行。同注音組字與中英混打；再按一次 Enter 才交給程式。
+// 有補字候選時 Enter 也不替使用者接受建議。
+func TestEnglishAutocompleteEnterOnlyCommits(t *testing.T) {
+	for _, typed := range []string{"cd Doc", "hel", "he", "zz", "Hel"} {
+		s := autocompleteSession()
+		var app strings.Builder
+		for _, r := range typed {
+			snap := key(s, string(r))
+			app.WriteString(snap.Commit)
+			if !snap.Handled {
+				app.WriteRune(r)
+			}
+		}
+		snap := key(s, proto.KeyEnter)
+		app.WriteString(snap.Commit)
+		if !snap.Handled || app.String() != typed || snap.Text() != "" || snap.Candidates != nil || snap.EnglishPending {
+			t.Fatalf("%q: Enter must commit only: app=%q %+v", typed, app.String(), snap)
+		}
+		if again := key(s, proto.KeyEnter); again.Handled || again.Commit != "" {
+			t.Fatalf("%q: idle Enter must reach the app: %+v", typed, again)
+		}
+		if next := mixedType(s, "hel"); !next.EnglishPending || next.Candidates == nil {
+			t.Fatalf("%q: a new word must start after Enter: %+v", typed, next)
+		}
+	}
+}
+
 func TestEnglishAutocompleteBoundariesKeepAppActions(t *testing.T) {
-	for _, k := range []string{" ", proto.KeyEnter, proto.KeyLeft, proto.KeyRight, proto.KeyHome, proto.KeyEnd, proto.KeyDelete, proto.KeyPageDown, "BackTab", ".", "1"} {
+	for _, k := range []string{" ", proto.KeyLeft, proto.KeyRight, proto.KeyHome, proto.KeyEnd, proto.KeyDelete, proto.KeyPageDown, "BackTab", ".", "1"} {
 		s := autocompleteSession()
 		mixedType(s, "hel")
 		snap := key(s, k)
@@ -140,7 +168,7 @@ func TestEnglishAutocompletePreservesCase(t *testing.T) {
 		if snap.Text() != want {
 			t.Fatalf("%s -> %s", raw, snap.Text())
 		}
-		if end := key(s, proto.KeyEnter); end.Handled || end.Commit != want {
+		if end := key(s, proto.KeyEnter); !end.Handled || end.Commit != want {
 			t.Fatal(end)
 		}
 	}
@@ -212,7 +240,7 @@ func TestEnglishAutocompleteEditedCompletionDoesNotConfirm(t *testing.T) {
 		key(s, proto.KeyBackspace)
 		key(s, proto.KeyEscape)
 		end := key(s, proto.KeyEnter)
-		if end.Handled || end.Commit != "hellos" {
+		if !end.Handled || end.Commit != "hellos" {
 			t.Fatalf("edited completion must retain displayed word: %+v", end)
 		}
 		after := s.model.Store.English["hellos"]
@@ -289,7 +317,7 @@ func TestEnglishAutocompleteStandaloneWordStillConfirms(t *testing.T) {
 		s.model.AdvanceTime(100 * englishDay)
 		mixedType(s, "brandnew")
 		snap := key(s, boundary)
-		if snap.Handled || snap.Commit != "brandnew" || s.model.Store.English["brandnew"].Confirmed != 1 {
+		if snap.Handled != (boundary == proto.KeyEnter) || snap.Commit != "brandnew" || s.model.Store.English["brandnew"].Confirmed != 1 {
 			t.Fatalf("standalone word must confirm at %q: %+v %+v", boundary, snap, s.model.Store.English)
 		}
 	}
@@ -310,12 +338,12 @@ func TestEnglishAutocompleteSpellingCorrectionRequiresAcceptance(t *testing.T) {
 			if snap := key(s, proto.KeyTab); !snap.Handled || snap.Text() != tc.want || snap.Candidates != nil {
 				t.Fatalf("Tab did not accept correction: %+v", snap)
 			}
-			if snap := key(s, proto.KeyEnter); snap.Handled || snap.Commit != tc.want {
+			if snap := key(s, proto.KeyEnter); !snap.Handled || snap.Commit != tc.want {
 				t.Fatalf("accepted correction was not committed: %+v", snap)
 			}
 			for _, boundary := range []string{" ", proto.KeyEnter} {
 				mixedType(s, tc.typed)
-				if snap := key(s, boundary); snap.Handled || snap.Commit != tc.typed {
+				if snap := key(s, boundary); snap.Handled != (boundary == proto.KeyEnter) || snap.Commit != tc.typed {
 					t.Fatalf("%q implicitly corrected spelling: %+v", boundary, snap)
 				}
 			}
@@ -332,7 +360,7 @@ func TestEnglishAutocompleteSpellingCorrectionCanBeUndone(t *testing.T) {
 		if snap := key(s, undo); snap.Text() != "recieve" {
 			t.Fatalf("%s did not restore spelling: %+v", undo, snap)
 		}
-		if snap := key(s, proto.KeyEnter); snap.Commit != "recieve" || snap.Handled {
+		if snap := key(s, proto.KeyEnter); snap.Commit != "recieve" || !snap.Handled {
 			t.Fatal(snap)
 		}
 	}
@@ -392,7 +420,7 @@ func TestEnglishAutocompleteCorrectionDoesNotConfirmLearning(t *testing.T) {
 	key(s, proto.KeyTab)
 	mixedType(s, "sx")
 	key(s, proto.KeyBackspace)
-	if snap := key(s, proto.KeyEnter); snap.Commit != "receives" || snap.Handled || len(s.model.Store.English) != 0 {
+	if snap := key(s, proto.KeyEnter); snap.Commit != "receives" || !snap.Handled || len(s.model.Store.English) != 0 {
 		t.Fatalf("correction learned as independently typed: %+v %+v", snap, s.model.Store.English)
 	}
 }

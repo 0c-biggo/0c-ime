@@ -6,7 +6,7 @@ package main
 //
 // ibus-daemon 只讀 IBUS_COMPONENT_PATH（未設定時只有 /usr/share/ibus/component），而且優先使用
 // ~/.cache/ibus/bus/registry 快取；快取只核對它當初看過的目錄，所以新增使用者目錄後要刪掉快取。
-// GTK／Qt 改用 IBus 自己的輸入模組見 toolkit.go。
+// 輸入來源、X11 工作階段的環境與重新啟動 ibus-daemon 見 desktop.go；GTK／Qt 改用 IBus 自己的輸入模組見 toolkit.go。
 
 import (
 	"errors"
@@ -48,41 +48,6 @@ func replaceFile(path, content string) error {
 		return err
 	}
 	return os.Rename(tmp, path)
-}
-
-func gnome() bool {
-	return strings.Contains(strings.ToUpper(os.Getenv("XDG_CURRENT_DESKTOP")), "GNOME")
-}
-
-// restartIBus 讓 ibus-daemon 以新的元件路徑重新讀取元件；沒有在執行時不啟動它。
-// systemd 使用者管理員只在啟動時讀 environment.d，已在執行（例如 linger）時要另外更新。
-func restartIBus(home string, registered bool) []string {
-	var notes []string
-	args := []string{"--user", "unset-environment", "IBUS_COMPONENT_PATH"}
-	if registered {
-		args = []string{"--user", "set-environment", "IBUS_COMPONENT_PATH=" + componentPath(home)}
-	}
-	if exec.Command("systemctl", args...).Run() != nil {
-		notes = append(notes, "無法更新 systemd 使用者環境；重新登入後生效。")
-	}
-	for _, unit := range []string{"org.freedesktop.IBus.session.GNOME.service", "org.freedesktop.IBus.session.generic.service"} {
-		if exec.Command("systemctl", "--user", "is-active", "--quiet", unit).Run() == nil {
-			if err := exec.Command("systemctl", "--user", "restart", unit).Run(); err != nil {
-				notes = append(notes, "無法重新啟動 IBus（"+err.Error()+"）；重新登入後生效。")
-			}
-			return notes
-		}
-	}
-	if exec.Command("pgrep", "-u", fmt.Sprint(os.Getuid()), "-x", "ibus-daemon").Run() == nil {
-		// 不是 systemd 啟動的 ibus-daemon 沿用自己的環境；重新登入後才讀得到使用者目錄。
-		notes = append(notes, "IBus 不是由 systemd 啟動，重新登入後才會出現靈犀注音。")
-	}
-	return notes
-}
-
-func gsettingsSources() (string, error) {
-	out, err := exec.Command("gsettings", "get", "org.gnome.desktop.input-sources", "sources").Output()
-	return strings.TrimSpace(string(out)), err
 }
 
 var xkbName = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
@@ -127,17 +92,6 @@ func withoutSource(cur string) string {
 	return strings.ReplaceAll(next, inputSource, "")
 }
 
-func setSources(edit func(string) string) error {
-	cur, err := gsettingsSources()
-	if err != nil {
-		return err
-	}
-	if next := edit(cur); next != cur {
-		return exec.Command("gsettings", "set", "org.gnome.desktop.input-sources", "sources", next).Run()
-	}
-	return nil
-}
-
 func register(want map[string]bool) error {
 	home := os.Getenv("HOME")
 	if home == "" {
@@ -162,11 +116,15 @@ func register(want map[string]bool) error {
 	if err != nil {
 		return err
 	}
+	sessionChanged, err := syncSessionRC(home, true)
+	if err != nil {
+		return err
+	}
 	relogin, err := syncToolkits(home, want)
 	if err != nil {
 		return err
 	}
-	if registered && !changed && !envChanged {
+	if registered && !changed && !envChanged && !sessionChanged {
 		// 重跑安裝（修復排程）：已登錄且沒有變更時不重啟 IBus（會丟掉各程式正在組的字），
 		// 也不把使用者自己移掉的輸入來源加回去。
 		fmt.Println("靈犀注音已登錄在 IBus。")
@@ -178,12 +136,16 @@ func register(want map[string]bool) error {
 	for _, n := range restartIBus(home, true) {
 		fmt.Println(n)
 	}
-	if gnome() {
-		if err := setSources(func(cur string) string { return withSource(cur, systemLayout()) }); err != nil {
-			fmt.Println("無法加入 GNOME 輸入來源，請在「設定 → 鍵盤 → 輸入來源」加入「中文（靈犀注音）」。")
-		}
+	addSource()
+	fmt.Print("已登錄靈犀注音到 IBus。")
+	if sourceSchema() != "" {
+		fmt.Print("以 Super+空白鍵切換輸入來源。")
 	}
-	fmt.Println("已登錄靈犀注音到 IBus。以 Super+空白鍵切換輸入來源。")
+	fmt.Println()
+	if !gnome() && !needsSessionRC() {
+		// 不是 Debian 系的 Xsession：不知道桌面從哪裡取得環境，請使用者自己加。
+		fmt.Println("若重新登入後切換不到靈犀注音，請在登入時的環境設定 IBUS_COMPONENT_PATH=" + componentPath(home) + "（例如 ~/.xprofile）。")
+	}
 	reloginNote(relogin)
 	return nil
 }
@@ -196,8 +158,11 @@ func unregister() error {
 	if b, err := os.ReadFile(component); err == nil && !strings.Contains(string(b), "<name>"+componentName+"</name>") {
 		return fmt.Errorf("%s 不是靈犀注音的元件檔，保留不動", component)
 	}
-	setSources(withoutSource) // 沒有桌面工作階段時失敗：檔案刪掉後下次登入就不會再出現
+	removeSource()
 	if err := removeToolkits(home); err != nil {
+		return err
+	}
+	if _, err := syncSessionRC(home, false); err != nil {
 		return err
 	}
 	for _, p := range []string{componentFile, componentEnv} {

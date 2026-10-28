@@ -68,6 +68,18 @@ func TestCtrlPunctuationDefaultsOnAndPersists(t *testing.T) {
 		if goos != "darwin" && !strings.Contains(d, "VS Code") {
 			t.Fatalf("%s 的說明要寫出占用哪些快速鍵：%s", goos, d)
 		}
+		// #231：Ctrl＋Shift＋; 9 0 打「：（）」，說明也要列出來與會占用的快速鍵。
+		if !strings.Contains(d, "「：」") || !strings.Contains(d, "「（」") || !strings.Contains(d, "「）」") {
+			t.Fatalf("%s 的說明要寫出冒號與括號：%s", goos, d)
+		}
+		if goos == "windows" && !strings.Contains(d, "Excel") || goos == "linux" && !strings.Contains(d, "Konsole") {
+			t.Fatalf("%s 的說明要寫出 Ctrl＋Shift＋; 9 0 會占用的快速鍵：%s", goos, d)
+		}
+		// Windows 預設把 Ctrl＋Shift＋0 給輸入法直接切換熱鍵（0x104），系統先拿走、打不出「）」（.14 驗收）；只有 Windows 寫。
+		const reserved = "Windows 預設把 Ctrl＋Shift＋0 留給切換輸入法，這一鍵打不出「）」"
+		if strings.Contains(d, reserved) != (goos == "windows") {
+			t.Fatalf("%s 的說明對 Ctrl＋Shift＋0 的系統熱鍵：%s", goos, d)
+		}
 	}
 	for _, it := range Default().Items() {
 		if it.Key == "ctrl-punctuation" {

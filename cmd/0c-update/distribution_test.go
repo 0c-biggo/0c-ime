@@ -30,11 +30,13 @@ func captureStdout(t *testing.T, f func() error) (string, error) {
 	}
 	old := os.Stdout
 	os.Stdout = w
+	// 邊寫邊讀：Windows 管道緩衝只有 4 KB，寫完才讀會卡住。
+	out := make(chan []byte)
+	go func() { b, _ := io.ReadAll(r); out <- b }()
 	runErr := f()
 	os.Stdout = old
 	w.Close()
-	b, _ := io.ReadAll(r)
-	return string(b), runErr
+	return string(<-out), runErr
 }
 
 // 由套件管理員更新時（#181），更新、安裝、回復、排程的命令一律拒絕，不碰網路與排程；設定、詞彙、API、
@@ -70,6 +72,27 @@ func TestPackageManagedRefusesUpdateCommands(t *testing.T) {
 		if err := refusePackageManaged(action, nil); err != nil {
 			t.Errorf("%s 應照常可用：%v", action, err)
 		}
+	}
+}
+
+// #229：輸入習慣（profile，#225）跟 set 一樣只改使用者自己的設定。系統安裝的新使用者預設是內建的 0c，
+// 被它鎖住的設定要先複製成自訂才能改，profile 被擋就完全改不了。
+func TestPackageManagedAllowsProfile(t *testing.T) {
+	setPackageManaged(t, true)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("LOCALAPPDATA", home)           // Windows 的設定在 %LOCALAPPDATA%\Zuin，不能寫到建置機使用者的真設定
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir()) // 沒有引擎：只寫設定檔
+	if err := run([]string{"set", "mixed-input", "off"}); err == nil || errors.Is(err, errPackageManaged) {
+		t.Fatalf("前提：新使用者的 mixed-input 由內建輸入習慣固定：%v", err)
+	}
+	out, err := captureStdout(t, func() error { return run([]string{"profile", "copy", "0c", "--name", "mine", "-json"}) })
+	var doc struct{ OK bool }
+	if err != nil || json.Unmarshal([]byte(out), &doc) != nil || !doc.OK {
+		t.Fatalf("profile copy：%v %s", err, out)
+	}
+	if err := run([]string{"set", "mixed-input", "off"}); err != nil {
+		t.Fatalf("複製成自訂之後應能改：%v", err)
 	}
 }
 

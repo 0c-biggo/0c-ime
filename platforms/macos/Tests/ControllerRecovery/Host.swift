@@ -27,11 +27,12 @@ class IMKInputController: NSObject {
     func inputControllerWillClose() {}
 }
 final class CandidatePanel {
+    static var hints: [String] = []
     var choose: ((Int) -> Void)?
     var level = NSWindow.Level.popUpMenu
     func orderOut(_ sender: Any?) {}
     func show(_ snapshot: Snapshot, at: NSRect) {}
-    func showHint(_ text: String, at: NSRect, for duration: TimeInterval = 1) {}
+    func showHint(_ text: String, at: NSRect, for duration: TimeInterval = 1) { Self.hints.append(text) }
 }
 final class RetireMonitor { static let shared = RetireMonitor(); func noteKey() {} }
 final class ModelStatusMonitor {

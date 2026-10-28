@@ -1,4 +1,5 @@
 #include "session.h"
+#include "keys.h"
 
 namespace zuin {
 
@@ -199,10 +200,12 @@ bool Session::simplifiedHotkey() {
     return value != serverInfo_.end() && value->is_string() && value->get<std::string>() == "true";
 }
 
-bool Session::ctrlPunct() {
+bool Session::ctrlPunct(const std::string &key) {
     if (!client_.connect() || !ensureOpen()) { return false; }
     auto value = serverInfo_.find("ctrl_punctuation");
-    return value != serverInfo_.end() && value->is_string() && value->get<std::string>() == "true";
+    if (value == serverInfo_.end() || !value->is_string() || value->get<std::string>() != "true") { return false; }
+    auto keys = serverInfo_.find("ctrl_punctuation_keys");
+    return zuin::ctrlPunctKnown(key, keys != serverInfo_.end() && keys->is_string() ? keys->get<std::string>() : std::string());
 }
 
 bool Session::ensureOpen() {

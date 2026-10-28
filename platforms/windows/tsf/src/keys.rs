@@ -269,7 +269,7 @@ impl Tested {
     }
 }
 
-/// 不按 Ctrl 時的字元對應的 Ctrl＋標點鍵名。
+/// 不按 Ctrl 時的字元對應的 Ctrl＋標點鍵名（#168；: ( ) 是 #231 的 Ctrl+Shift+; 9 0）。引擎認不認得見 [`ctrl_punct_known`]。
 pub fn ctrl_punct_name(c: &str) -> Option<&'static str> {
     Some(match c {
         "," => "Ctrl+,",
@@ -278,8 +278,20 @@ pub fn ctrl_punct_name(c: &str) -> Option<&'static str> {
         ";" => "Ctrl+;",
         "?" => "Ctrl+?",
         "!" => "Ctrl+!",
+        ":" => "Ctrl+:",
+        "(" => "Ctrl+(",
+        ")" => "Ctrl+)",
         _ => return None,
     })
+}
+
+/// 引擎認得這個 Ctrl＋標點鍵名（#231）：最早的六個鍵（#168）只要引擎回報 ctrl_punctuation；Ctrl+: ( ) 要引擎的
+/// ctrl_punctuation_keys（`engine_keys`）列了那個字元，舊引擎沒有這一項，照舊交給應用程式。
+pub fn ctrl_punct_known(key: &str, engine_keys: &str) -> bool {
+    match key.strip_prefix("Ctrl+") {
+        Some(c) if c.chars().count() == 1 => ",.';?!".contains(c) || engine_keys.contains(c),
+        _ => false,
+    }
 }
 
 /// health 沒有回報 shift_tap_ms 時的單按時限（毫秒）。
@@ -768,9 +780,26 @@ mod tests {
         ] {
             assert_eq!(ctrl_punct_name(c), Some(want), "{c}");
         }
-        for c in ["/", "1", "<", ">", "[", "]", "a", "A", "\"", ":"] {
+        // #231：Ctrl+Shift+; 9 0。
+        for (c, want) in [(":", "Ctrl+:"), ("(", "Ctrl+("), (")", "Ctrl+)")] {
+            assert_eq!(ctrl_punct_name(c), Some(want), "{c}");
+        }
+        for c in ["/", "1", "<", ">", "[", "]", "a", "A", "\""] {
             assert_eq!(ctrl_punct_name(c), None, "{c}");
         }
+    }
+
+    #[test]
+    fn ctrl_punct_known_needs_engine_keys_for_new_keys() {
+        // #231：舊引擎沒有 ctrl_punctuation_keys，只認得最早的六個鍵。
+        assert!(ctrl_punct_known("Ctrl+,", ""));
+        assert!(ctrl_punct_known("Ctrl+!", ""));
+        assert!(!ctrl_punct_known("Ctrl+(", ""));
+        assert!(!ctrl_punct_known("Ctrl+:", ""));
+        assert!(ctrl_punct_known("Ctrl+(", ",.';?!:()"));
+        assert!(ctrl_punct_known("Ctrl+)", ",.';?!:()"));
+        assert!(!ctrl_punct_known("Ctrl+[", ",.';?!:()"));
+        assert!(!ctrl_punct_known("Ctrl+", ",.';?!:()"));
     }
 
     #[test]

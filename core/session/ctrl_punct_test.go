@@ -10,6 +10,7 @@ import (
 var ctrlPunctKeys = []struct{ key, want string }{
 	{proto.KeyCtrlComma, "，"}, {proto.KeyCtrlPeriod, "。"}, {proto.KeyCtrlQuote, "、"},
 	{proto.KeyCtrlSemicolon, "；"}, {proto.KeyCtrlQuestion, "？"}, {proto.KeyCtrlExclaim, "！"},
+	{proto.KeyCtrlColon, "："}, {proto.KeyCtrlParenLeft, "（"}, {proto.KeyCtrlParenRight, "）"}, // #231
 }
 
 func ctrlPunctSession() *Session { s := newSession(); s.CtrlPunct = true; return s }

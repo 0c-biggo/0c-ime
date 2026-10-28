@@ -40,29 +40,36 @@ enum InputSourceSetup {
             error("不是靈犀注音的 App：\(appPath)")
             return 1
         }
-        var failure: String?
-        // 第一輪依本行程讀到的狀態啟用；之後只補啟用子行程回報沒啟用的來源，
-        // 避免對已核准的來源重新啟用而再跳一次核准詢問。
-        var pending: Set<String>?
-        let round = InputSourceLookup.confirm(
-            enable: { round in
-                failure = enable(url, plan, only: pending, force: force && round == 1)
-                return failure == nil
-            },
-            confirmed: {
-                pending = confirm(appPath)
-                return pending?.isEmpty == true
-            },
-            wait: { Thread.sleep(forTimeInterval: $0) }
-        )
-        guard round != nil else {
-            if let failure {
-                error(failure)
-            } else {
-                error("已要求啟用 \(plan.selectable)，但系統尚未啟用（可能在等「允許」，或要重新登入後才登記新的輸入模式）；登入後會再試。")
-            }
+        // 系統啟動「系統設定」或子行程卡住時也要結束，不讓安裝程式與排程一直等（#238）。
+        DispatchQueue.global().asyncAfter(deadline: .now() + InputSourceApproval.deadline) {
+            error("等待系統啟用 \(plan.selectable) 超過 \(Int(InputSourceApproval.deadline)) 秒，先結束；登入後會再試。")
+            exit(2)
+        }
+        let registered = TISRegisterInputSource(url as CFURL)
+        if registered != noErr {
+            error("無法登記輸入來源（\(registered)）")
             return 2
         }
+        let start = Date()
+        let outcome = InputSourceApproval.run(
+            ids: plan.enabled,
+            forced: force ? plan.parent : nil,
+            state: { readState(appPath) ?? cachedState(plan) },
+            request: { request($0) },
+            wait: { Thread.sleep(forTimeInterval: $0) },
+            clock: { Date().timeIntervalSince(start) }
+        )
+        switch outcome {
+        case .enabled:
+            break
+        case .failed(let message):
+            error(message)
+            return 2
+        case .pending(let id):
+            error("已要求啟用 \(id)，但 \(Int(InputSourceApproval.window)) 秒內系統尚未啟用（可能還在等「允許」）；登入後會再試。")
+            return 2
+        }
+        _ = readState(appPath, select: true) // 正在用升級前的父項時改選這一版的模式
         // 新來源可用後才停用舊來源；登記、查詢或啟用失敗時保留使用者原有的輸入方式。
         for old in sources(includeAll: true) {
             guard let id = string(old, kTISPropertyInputSourceID),
@@ -73,52 +80,55 @@ enum InputSourceSetup {
         return 0
     }
 
-    // 登記 App，依序啟用父項與模式；回傳錯誤訊息，成功為 nil。only 為 nil 時啟用所有尚未啟用的來源。
-    static func enable(_ url: URL, _ plan: InputSourcePlan, only: Set<String>?, force: Bool) -> String? {
-        let registered = TISRegisterInputSource(url as CFURL)
-        if registered != noErr {
-            return "無法登記輸入來源（\(registered)）"
+    // 對一個來源送出啟用要求（系統會跳出「允許」詢問）；回傳錯誤訊息，成功為 nil。
+    static func request(_ id: String) -> String? {
+        guard let source = InputSourceLookup.find(
+            list: { sources(includeAll: true) },
+            matches: { string($0, kTISPropertyInputSourceID) == id },
+            wait: { Thread.sleep(forTimeInterval: $0) },
+            missing: { attempt in error("輸入來源登記回傳成功，但清單尚未包含 \(id)（第 \(attempt)/3 次查詢）") }
+        ) else {
+            return "重查兩次後仍找不到輸入來源 \(id)；請登出再登入後確認。"
         }
-        for id in plan.enabled {
-            guard let source = InputSourceLookup.find(
-                list: { sources(includeAll: true) },
-                matches: { string($0, kTISPropertyInputSourceID) == id },
-                wait: { Thread.sleep(forTimeInterval: $0) },
-                missing: { attempt in error("輸入來源登記回傳成功，但清單尚未包含 \(id)（第 \(attempt)/3 次查詢）") }
-            ) else {
-                return "重查兩次後仍找不到輸入來源 \(id)；請登出再登入後確認。"
-            }
-            // 已啟用就不再呼叫：對已核准的輸入來源重新啟用，會讓系統再跳一次核准詢問。
-            let needed = only.map { $0.contains(id) } ?? !bool(source, kTISPropertyInputSourceIsEnabled)
-            if (force && id == plan.parent) || needed {
-                let status = TISEnableInputSource(source)
-                if status != noErr {
-                    return "無法啟用 \(id)（\(status)）；請在系統設定確認是否允許。"
-                }
-            }
-        }
-        return nil
+        let status = TISEnableInputSource(source)
+        return status == noErr ? nil : "無法啟用 \(id)（\(status)）；請在系統設定確認是否允許。"
     }
 
-    // TIS 在行程內快取輸入來源的狀態，本行程重查清單仍是舊值；在新的子行程回讀，回傳尚未啟用的可選取來源。
-    // 只看可選取的來源：有模式時父項要等使用者在系統詢問中允許後才顯示為啟用（macOS 26.6.2 實測），模式則立即生效。
-    // 子行程讀不到結果時當成未啟用。
-    static func confirm(_ appPath: String) -> Set<String> {
+    // 本行程快取的狀態：子行程讀不到時退而求其次，避免對已啟用（已核准）的來源再送要求而多跳一次詢問。
+    static func cachedState(_ plan: InputSourcePlan) -> [String: Bool] {
+        var state: [String: Bool] = [:]
+        for source in sources(includeAll: true) {
+            if let id = string(source, kTISPropertyInputSourceID), plan.enabled.contains(id) {
+                state[id] = bool(source, kTISPropertyInputSourceIsEnabled)
+            }
+        }
+        return state
+    }
+
+    // 子行程回讀最多等這麼久；卡住就結束它、當成讀不到。
+    static let readTimeout: TimeInterval = 10
+
+    // TIS 在行程內快取輸入來源的狀態，本行程重查清單仍是舊值；在新的子行程回讀各來源是否已啟用。
+    // select 為 false 時用 --query-input-source（只查詢）；true 時用 --confirm-input-source（已啟用時改選這一版的模式）。
+    // 子行程讀不到結果、逾時或失敗時回傳 nil（當成未啟用）。
+    static func readState(_ appPath: String, select: Bool = false) -> [String: Bool]? {
         let process = Process()
         process.executableURL = Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])
-        process.arguments = ["--confirm-input-source", appPath]
+        process.arguments = [select ? "--confirm-input-source" : "--query-input-source", appPath]
         let output = Pipe()
         process.standardOutput = output
-        guard let plan = plan(appPath) else { return [] }
-        guard (try? process.run()) != nil else { return [plan.selectable] }
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        var pending = Set<String>()
-        for line in String(decoding: data, as: UTF8.self).split(separator: "\n") {
-            let fields = line.split(separator: " ")
-            if fields.count == 2, fields[0] == plan.selectable, fields[1] != "enabled", fields[1] != "selected" { pending.insert(plan.selectable) }
+        let done = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in done.signal() }
+        guard (try? process.run()) != nil else { return nil }
+        var data = Data()
+        let reader = DispatchQueue(label: "0c.input-source.read")
+        reader.async { data = output.fileHandleForReading.readDataToEndOfFile() }
+        if done.wait(timeout: .now() + readTimeout) == .timedOut {
+            process.terminate()
+            return nil
         }
-        return process.terminationStatus == 0 ? pending : [plan.selectable]
+        reader.sync {}
+        return process.terminationStatus == 0 ? InputSourceApproval.parse(String(decoding: data, as: UTF8.self)) : nil
     }
 
     // 子行程（0c --confirm-input-source <App 路徑>）：逐行輸出「<ID> enabled|disabled|missing」。

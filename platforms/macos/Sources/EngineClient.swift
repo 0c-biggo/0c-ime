@@ -204,10 +204,25 @@ final class EngineSession {
     var styleShiftSpace: Bool { refreshCapabilities(); return Self.styleShiftSpaceSetting }
     private static var styleCapsLowerSetting = false
     var styleCapsLower: Bool { refreshCapabilities(); return Self.styleCapsLowerSetting }
+    // 引擎處理 caps_lock 請求（#219，info 的 caps_lock_request）：開 Caps Lock 暫時切英文、關掉回到開啟前的模式，
+    // 開著期間手動切換過就照手動的。舊引擎沒有這一項，外殼照舊送 mode（關掉回注音或共用的模式）；
+    // 小寫風格（input_style_caps_letter=lower）本來就送 caps_lock。
+    private static var capsLockRequestSetting = false
+    /// 這個行程還沒問到過設定時（剛登入的第一個 Caps Lock），引擎已在服務就同步問一次；還沒起來不為此等它（當 false，照舊送 mode）。
+    var capsLockRequests: Bool {
+        refreshCapabilities()
+        if !Self.settingsKnown, inputAllowed(), connection.ready(), let info = try? connection.call(Envelope(op: "health")).info {
+            Self.update(from: info)
+        }
+        return Self.capsLockRequestSetting || Self.styleCapsLowerSetting
+    }
     // 引擎是否認得 Ctrl＋標點的鍵名而且設定開著（#168，info 的 ctrl_punctuation）；更新方式同 vocabKeys。
     // 舊引擎沒有這個欄位，視為 false，Ctrl＋標點照舊交給 App。
     private static var ctrlPunctSetting = false
     var ctrlPunct: Bool { Self.ctrlPunctSetting }
+    // 引擎認得的 Ctrl＋標點鍵（#231，info 的 ctrl_punctuation_keys）；舊引擎沒有這一項，只送最早的六個鍵。
+    private static var ctrlPunctKeysSetting = ""
+    func ctrlPunct(key: String) -> Bool { Self.ctrlPunctSetting && KeyMapping.ctrlPunctKnown(key, engineKeys: Self.ctrlPunctKeysSetting) }
     // 「輸出簡體字」（#169）：引擎能即時切換（info 的 output_simplified_live）與目前的值（info 的 output_simplified，
     // 之後每個快照的 output_simplified）。選單打勾看它；舊引擎沒有 output_simplified_live，選單改看 0c-update 的狀態。
     // 「用快捷鍵切換簡體字」開著（#192，info 的 simplified_hotkey）；更新方式同 vocabKeys，加上切回 App 時的背景 health，
@@ -233,7 +248,9 @@ final class EngineSession {
         let shiftSpace = info["input_style_shift_space"] ?? "disabled"
         styleShiftSpaceSetting = !shiftSpace.isEmpty && shiftSpace != "disabled"
         styleCapsLowerSetting = info["input_style_caps_letter"] == "lower"
+        capsLockRequestSetting = info["caps_lock_request"] == "true"
         ctrlPunctSetting = info["ctrl_punctuation"] == "true"
+        ctrlPunctKeysSetting = info["ctrl_punctuation_keys"] ?? ""
         simplifiedLive = info["output_simplified_live"] == "true"
         simplifiedHotkeySetting = info["simplified_hotkey"] == "true"
         outputSimplified = simplifiedLive && info["output_simplified"] == "true"

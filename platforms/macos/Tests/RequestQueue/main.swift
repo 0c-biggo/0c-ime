@@ -114,6 +114,27 @@ coldEnglish.perform {
 }
 coldEnglish.append(Request(type: "key", key: "Tab"))
 check(coldEnglish.englishLiteral(initial: "", english: false) == nil, "candidate selection must be resolved by engine")
+// caps_lock（#219）：開啟暫時英文，關閉回到開啟前的模式；期間切換過就照切換後的。
+func capsQueue(_ requests: [Request]) -> RequestQueue {
+    let queue = RequestQueue()
+    for request in requests { queue.append(request, characters: request.key) }
+    return queue
+}
+let capsOn = Request(type: "caps_lock", on: true), capsOff = Request(type: "caps_lock", on: false)
+let keyA = Request(type: "key", key: "A"), keyB = Request(type: "key", key: "b")
+check(capsQueue([capsOn, keyA]).englishLiteral(initial: "", english: false) == "A", "Caps Lock queued from Zhuyin types English")
+check(capsQueue([capsOn, keyA, capsOn, keyA]).englishLiteral(initial: "", english: false) == "AA", "a repeated Caps report changes nothing")
+check(capsQueue([capsOn, keyA, capsOff, keyB]).englishLiteral(initial: "", english: false) == nil,
+      "Caps release back to Zhuyin after English text is resolved by the engine")
+check(capsQueue([capsOn, capsOff, keyB]).englishLiteral(initial: "", english: false) == nil, "Caps release restores Zhuyin")
+check(capsQueue([capsOn, keyA, capsOff, keyB]).englishLiteral(initial: "", english: true) == "Ab", "Caps release keeps English from before")
+check(capsQueue([capsOn, Request(type: "toggle"), Request(type: "toggle"), capsOff, keyB]).englishLiteral(initial: "", english: false) == "b",
+      "a toggle while Caps is on wins over the mode from before")
+check(capsQueue([capsOff, keyB]).englishLiteral(initial: "", english: true) == nil, "a release without its press is not guessed")
+check(capsQueue([capsOn, Request(type: "mode", on: true), capsOff, keyB]).englishLiteral(initial: "", english: false) == nil,
+      "mode makes the engine forget Caps Lock; the release is not guessed")
+let capsNamed = capsQueue([capsOn])
+check(capsNamed.canPassNamedKey(composing: false), "a queued Caps report cannot consume a named key")
 let coldChinese = RequestQueue()
 coldChinese.append(Request(type: "key", key: "h"), characters: "h")
 check(coldChinese.englishLiteral(initial: "", english: false) == nil, "Chinese startup retains existing ordered replay")

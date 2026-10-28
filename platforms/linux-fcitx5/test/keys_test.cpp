@@ -54,6 +54,19 @@ int main() {
     EXPECT(zuin::ctrlPunctKey(';', true, false) == "Ctrl+;");
     EXPECT(zuin::ctrlPunctKey('?', true, false) == "Ctrl+?");
     EXPECT(zuin::ctrlPunctKey('!', true, false) == "Ctrl+!");
+    EXPECT(zuin::ctrlPunctKey(':', true, false) == "Ctrl+:"); // #231：Ctrl+Shift+; ( )
+    EXPECT(zuin::ctrlPunctKey('(', true, false) == "Ctrl+(");
+    EXPECT(zuin::ctrlPunctKey(')', true, false) == "Ctrl+)");
+    EXPECT(zuin::ctrlPunctKey(')', true, true).empty());
+    // #231：新加的鍵要引擎的 ctrl_punctuation_keys 列了才送；最早的六個鍵舊引擎也認得。
+    EXPECT(zuin::ctrlPunctKnown("Ctrl+,", ""));
+    EXPECT(zuin::ctrlPunctKnown("Ctrl+!", ""));
+    EXPECT(!zuin::ctrlPunctKnown("Ctrl+(", ""));
+    EXPECT(!zuin::ctrlPunctKnown("Ctrl+:", ""));
+    EXPECT(zuin::ctrlPunctKnown("Ctrl+(", ",.';?!:()"));
+    EXPECT(zuin::ctrlPunctKnown("Ctrl+)", ",.';?!:()"));
+    EXPECT(!zuin::ctrlPunctKnown("Ctrl+[", ",.';?!:()"));
+    EXPECT(!zuin::ctrlPunctKnown("Ctrl+", ",.';?!:()"));
     EXPECT(zuin::ctrlPunctKey(',', false, false).empty());
     EXPECT(zuin::ctrlPunctKey(',', true, true).empty());
     for (uint32_t c : {'/', '1', '<', '[', ']', 'A', 'v'}) { EXPECT(zuin::ctrlPunctKey(c, true, false).empty()); }

@@ -203,11 +203,22 @@ func (s *Session) styleKey(k string) (handled bool, commit string, done bool) {
 		return false, "", false
 	}
 	if s.InputStyle.Punctuation == "microsoft" && microsoftRawPunctuation(k) {
+		if s.mixedKeepsPunctuation(k) {
+			return true, "", true
+		}
 		if s.fullWidth {
+			if s.englishWord {
+				return true, s.commit() + s.fullWidthText(k), true
+			}
 			// Microsoft keeps wide punctuation as marked text even in English
 			// mode; unlike wide letters/digits it can still be cancelled.
 			s.insertStyleLiteral(s.fullWidthText(k))
 			return true, "", true
+		}
+		if s.englishWord {
+			// A pending autocomplete word treats raw punctuation like the 0c
+			// style does: deliver the word, then the key (#233).
+			return false, "", false
 		}
 		if !s.english && !s.comp.Empty() {
 			// Half-width raw punctuation cancels an unfinished syllable.
@@ -224,6 +235,11 @@ func (s *Session) styleKey(k string) (handled bool, commit string, done bool) {
 		return true, "", true
 	}
 	if s.fullWidth && s.english {
+		if s.englishWord {
+			// Wide English has no completions: a word pending from half-width
+			// typing ends as typed instead of staying marked (#233).
+			return true, s.commit() + s.fullWidthText(k), true
+		}
 		if !s.composing() {
 			return true, s.fullWidthText(k), true
 		}
@@ -235,6 +251,17 @@ func (s *Session) styleKey(k string) (handled bool, commit string, done bool) {
 		// Consume both: passing uppercase through would replay the host's
 		// original Caps+Shift lowercase event on Windows and Linux.
 		if s.InputStyle.CapsLetter == "lower" && s.capsLock && ((r[0] >= 'a' && r[0] <= 'z') || (r[0] >= 'A' && r[0] <= 'Z')) {
+			// Autocomplete still sees Caps Lock English (#233). A letter it
+			// would pass to the host is delivered here instead, for the same
+			// replay reason.
+			if s.EnglishAutocomplete {
+				if handled, commit, active := s.englishKey(k); active {
+					if !handled {
+						commit += k
+					}
+					return true, commit, true
+				}
+			}
 			if !s.composing() {
 				return true, k, true
 			}
@@ -246,6 +273,21 @@ func (s *Session) styleKey(k string) (handled bool, commit string, done bool) {
 
 	if r[0] >= 'A' && r[0] <= 'Z' && s.InputStyle.ShiftLetter == "commit" {
 		return true, s.commit() + k, true
+	}
+	if r[0] >= 'A' && r[0] <= 'Z' && s.InputStyle.ShiftLetter == "lower" {
+		// #210: Shift＋letter types the lowercase letter in Zhuyin mode, kept
+		// in the composition like the 0c uppercase. Every shell reports Shift＋
+		// letter as uppercase in Zhuyin mode regardless of Caps Lock (#168), so
+		// it is consumed rather than passed to the host.
+		text := string(unicode.ToLower(r[0]))
+		if s.fullWidth {
+			text = s.fullWidthText(text)
+		}
+		if !s.composing() {
+			return true, text, true
+		}
+		s.insertStyleLiteral(text)
+		return true, "", true
 	}
 	if s.fullWidth && !s.english {
 		_, phonetic := s.layout.Symbol(r[0])
@@ -266,10 +308,28 @@ func (s *Session) styleKey(k string) (handled bool, commit string, done bool) {
 		return true, "", true
 	}
 	if (s.InputStyle.Punctuation == "standard" || s.InputStyle.Punctuation == "chewing") && k == "\\" {
+		if s.mixedKeepsPunctuation(k) {
+			return true, "", true
+		}
 		s.insertStyleLiteral("＼")
 		return true, "", true
 	}
 	return false, "", false
+}
+
+// mixedKeepsPunctuation appends a style's half-width punctuation to a pending
+// mixed-input English token, as mixedKey does for : \ ' (#233): URLs (a?q=1),
+// paths (C:\Users), contractions (i'm) and quoted words stay one English run
+// instead of flushing it and reading the following letters as Bopomofo.
+func (s *Session) mixedKeepsPunctuation(k string) bool {
+	if s.fullWidth || s.english || !s.mixedInput() || !s.comp.Empty() || s.mixed.raw == "" || s.mixed.accepted != "" || len(s.mixed.raw) >= maxMixedPending {
+		return false
+	}
+	if s.mixedText() != s.mixed.raw && !(s.mixed.choice == 0 && s.mixedEnglishWord(s.mixed.raw)) {
+		return false
+	}
+	s.mixed.raw += k
+	return true
 }
 
 func (s *Session) cycleStyleCandidate(delta int) {

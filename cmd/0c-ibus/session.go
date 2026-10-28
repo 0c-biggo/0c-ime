@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -247,8 +248,18 @@ func (s *session) styleCapsLower() bool {
 	return s.client.connect() && s.ensureOpen() && s.info["input_style_caps_letter"] == "lower"
 }
 
-func (s *session) ctrlPunct() bool {
-	return s.client.connect() && s.ensureOpen() && s.info["ctrl_punctuation"] == "true"
+func (s *session) ctrlPunct(key string) bool {
+	return s.client.connect() && s.ensureOpen() && s.info["ctrl_punctuation"] == "true" && ctrlPunctKnown(key, s.info)
+}
+
+// ctrlPunctKnown：引擎認得這個 Ctrl＋標點鍵名。最早的六個鍵（#168）只要有 ctrl_punctuation；Ctrl+: ( )（#231）
+// 要引擎的 ctrl_punctuation_keys 列了那個字元，舊引擎沒有這一項，照舊交給應用程式。
+func ctrlPunctKnown(key string, info map[string]string) bool {
+	c, ok := strings.CutPrefix(key, proto.CtrlPrefix)
+	if !ok || len(c) != 1 {
+		return false
+	}
+	return strings.Contains(",.';?!", c) || strings.Contains(info["ctrl_punctuation_keys"], c)
 }
 
 // capsLockEnglish 回報引擎是否認得 caps_lock 請求而且「Caps Lock 開著時直接打英文」開著（open 回覆的 caps_lock_english，

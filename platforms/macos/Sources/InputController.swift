@@ -51,33 +51,44 @@ final class LingxiInputController: IMKInputController {
 
     // Caps Lock 是英文大寫模式（#84，與 Windows 同樣輸出大寫）。Info.plist 宣告 TICapsLockLanguageSwitchCapable（#67），
     // 系統的「用大寫鎖定鍵切換 ABC」開著時短按由系統切換輸入法，按住才開大寫鎖定、走到這裡：開啟時先送出組字、切到英文並提示「英」，字母輸出大寫
-    // （Shift＋字母也是大寫，同系統行為），關閉後回到注音；要中英混在同一段組字裡用右 Shift。
+    // （Shift＋字母也是大寫，同系統行為）；要中英混在同一段組字裡用右 Shift。
+    // 關閉時回到開啟前的模式（#219）：由核心記住（caps_lock 請求，與 Windows、Linux 的 #173 同一套），Shift 切到英文再開關
+    // Caps Lock 仍是英文；開著期間單按 Shift 切換過就照切換後的模式。提示照核心回覆的模式（#146）。
     // 以每個按鍵當下的 Caps Lock 狀態為準。
     private var capsMode = false
+    // 這次開啟送的是 mode（舊引擎沒有 caps_lock_request，或剛登入引擎還沒起來問不到）：關閉也送 mode，照舊回注音／共用的模式。
+    private var capsViaMode = false
 
     private func syncCaps(_ on: Bool, client: IMKTextInput, showHint: Bool) {
-        if session.styleCapsLower {
-            guard on != capsMode || (snapshot?.capsLock ?? false) != on else { return }
-            guard send(Request(type: "caps_lock", on: on), to: client) else { return }
-            capsMode = on
-            if showHint {
-                hint.level = panel.level
-                hint.showHint(on ? "英" : "中", at: caretRect(client))
+        // 沒變化時不碰引擎能力（剛登入還不知道時會同步問一次引擎）。核心忘了 Caps Lock（mode 請求、重開 session）時重新告訴它。
+        guard on != capsMode || !capsViaMode && (snapshot?.capsLock ?? false) != on else { return }
+        let tried = !capsViaMode && session.capsLockRequests
+        if tried {
+            if send(Request(type: "caps_lock", on: on), to: client) {
+                capsMode = on
+                if showHint { showModeHint(client) }
+                return
             }
-            return
-        }
-        guard on != capsMode else { return }
+            // 引擎回覆沒處理（交接中換成不認得 caps_lock 的引擎）才改送 mode；送不出去（失敗、安全輸入）就等下一個按鍵。
+            guard snapshot?.handled == false, on != capsMode else { return }
+        } else if on == capsMode { return }
         if on, snapshot?.composing == true || !queued.isEmpty {
             _ = send(Request(type: "commit"), to: client)
         }
         guard send(Request(type: "mode", on: on), to: client) else { return }
-        // 冷啟動的 open 可能剛在上面取得風格能力，補同步 Caps 的來源。
-        if session.styleCapsLower, !send(Request(type: "caps_lock", on: on), to: client) { return }
+        // 冷啟動的 open 可能剛在上面取得能力，補同步 Caps 的來源（小寫風格要靠它打小寫）；關閉照舊送 mode。
+        if on, !tried, session.capsLockRequests { _ = send(Request(type: "caps_lock", on: true), to: client) }
         capsMode = on
-        if showHint {
-            hint.level = panel.level
-            hint.showHint(on ? "英" : "中", at: caretRect(client))
-        }
+        capsViaMode = on
+        if showHint { showModeHint(client) }
+    }
+
+    private func showModeHint(_ client: IMKTextInput) {
+        // #146：Caps 關閉不一定回注音；只顯示核心已確認的模式。
+        // 冷啟動／排隊時快照仍可能是舊的，與 Shift 一樣不先猜測提示。
+        guard !queued.isProcessing, queued.isEmpty, let mode = snapshot?.mode else { return }
+        hint.level = panel.level
+        hint.showHint(mode == "english" ? "英" : "中", at: caretRect(client))
     }
 
     private func handleFlags(_ event: NSEvent, client: IMKTextInput) -> Bool {
@@ -107,10 +118,7 @@ final class LingxiInputController: IMKInputController {
         guard toggle, session.shiftToggles(left: left) else { return false }
         guard send(Request(type: "toggle", restore: toggleArmed ? true : nil), to: client) else { return false }
         toggleArmed = true
-        hint.level = panel.level
-        if !queued.isProcessing && queued.isEmpty {
-            hint.showHint(snapshot?.mode == "english" ? "英" : "中", at: caretRect(client))
-        }
+        showModeHint(client)
         return true
     }
 
@@ -134,7 +142,7 @@ final class LingxiInputController: IMKInputController {
         // Ctrl＋標點打全形（#168）：注音模式、引擎回報 ctrl_punctuation 時交給引擎插進組字區，沒在組字時也一樣。
         // 引擎沒處理（設定剛關掉、模式不同步）就照下面的一般快捷鍵先送出組字再交給 App。
         if let ctrl = KeyMapping.ctrlPunct(code: event.keyCode, modifiers: event.modifierFlags),
-           session.ctrlPunct, !capsMode, snapshot?.mode != "english" {
+           session.ctrlPunct(key: ctrl), !capsMode, snapshot?.mode != "english" {
             confirmDocumentContext(client)
             if send(Request(type: "key", key: ctrl), to: client, characters: KeyMapping.ctrlPunctText[ctrl]) { return true }
             if !flushQueuedEnglish(to: client) { commitComposition(sender) }
@@ -229,6 +237,7 @@ final class LingxiInputController: IMKInputController {
     override func activateServer(_ sender: Any!) {
         dropQueued()
         capsMode = false
+        capsViaMode = false
         toggleArmed = false
         rightShift.reset()
         leftShift.reset()
@@ -246,6 +255,7 @@ final class LingxiInputController: IMKInputController {
     override func deactivateServer(_ sender: Any!) {
         dropQueued()
         capsMode = false
+        capsViaMode = false
         toggleArmed = false
         rightShift.reset()
         leftShift.reset()
@@ -293,7 +303,7 @@ final class LingxiInputController: IMKInputController {
     private func dropQueued() {
         retry?.invalidate()
         retry = nil
-        if !queued.isEmpty { capsMode = false }
+        if !queued.isEmpty { capsMode = false; capsViaMode = false }
         queued.clear()
     }
 
@@ -306,6 +316,7 @@ final class LingxiInputController: IMKInputController {
         rightShift.reset()
         leftShift.reset()
         capsMode = false
+        capsViaMode = false
         pendingContext = nil
         lastCaret = nil
         panel.orderOut(nil)
@@ -373,15 +384,18 @@ final class LingxiInputController: IMKInputController {
               let text = queued.englishLiteral(initial: snapshot?.text ?? "",
                                                english: snapshot?.mode == "english",
                                                pending: snapshot?.englishPending == true) else { return false }
-        let caps = capsMode
+        let caps = capsMode, viaMode = capsViaMode
+        // Caps Lock 帶來的英文（#219）在新 session 用 caps_lock 還原，關掉 Caps Lock 才會回到開啟前的模式。
+        let restore = snapshot?.capsEnglish == true ? Request(type: "caps_lock", on: true) : Request(type: "mode", on: true)
         dropQueued()
         capsMode = caps
+        capsViaMode = viaMode
         let generation = queued.cancellationGeneration
         session.reset()
         snapshot = nil
         pendingContext = nil
         panel.orderOut(nil)
-        queued.append(Request(type: "mode", on: true))
+        queued.append(restore)
         let wasRendering = rendering
         rendering = true
         if !text.isEmpty {
@@ -407,8 +421,9 @@ final class LingxiInputController: IMKInputController {
     private func send(_ request: Request, to client: IMKTextInput, characters: String? = nil) -> Bool {
         if request.type != "toggle" { toggleArmed = false }
         guard !bypassSecureInput(client) else { return false }
+        // Enter 只送出英文單字、不交給 App（#235）：排隊中也照順序交給引擎，不先送出再放行。
         let bufferConsumesNamedKey = snapshot?.englishPending == true &&
-            (["Backspace", "ShiftBackspace", "Escape"].contains(request.key ?? "") ||
+            (["Backspace", "ShiftBackspace", "Escape", "Enter"].contains(request.key ?? "") ||
              snapshot?.candidates != nil && ["Tab", "Up", "Down"].contains(request.key ?? ""))
         if request.type == "key", characters == nil, !bufferConsumesNamedKey,
            flushQueuedEnglish(to: client) { return false }
@@ -446,7 +461,9 @@ final class LingxiInputController: IMKInputController {
                 return try perform(request)
             } catch EngineError.disconnected where !reopened && snapshot?.composing != true {
                 reopened = true
-                if snapshot?.mode == "english" { restoreMode = Request(type: "mode", on: true) }
+                // Caps Lock 帶來的英文（#219）用 caps_lock 還原，關掉 Caps Lock 才會回到開啟前的模式。
+                if snapshot?.capsEnglish == true { restoreMode = Request(type: "caps_lock", on: true) }
+                else if snapshot?.mode == "english" { restoreMode = Request(type: "mode", on: true) }
                 NSLog("0c: engine restarted; reconnecting")
             } catch EngineError.starting {
                 if let mode = restoreMode { enqueue(mode, characters: nil, client: client) }
@@ -467,6 +484,7 @@ final class LingxiInputController: IMKInputController {
         // EngineSession discarded its session. Reapply held Caps Lock to the
         // next one even when there were no queued requests to drop.
         capsMode = false
+        capsViaMode = false
         // Preserve the visible composition as literal text on failure, then
         // release the original key. The next key starts a fresh session.
         rendering = true

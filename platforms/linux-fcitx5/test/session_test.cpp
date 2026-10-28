@@ -480,15 +480,17 @@ int main(int argc, char **argv) {
             for (const auto *k : {"h", "e", "l"}) { s.key(k); }
             CHECK(s.englishPending(), "English word ownership must reach shell");
             auto snap = s.key(boundary);
-            CHECK(snap.ok && !snap.handled && snap.commit == "hel" && !snap.englishPending && !s.englishPending(),
-                  "boundary %s must commit raw prefix before native host key", boundary);
+            // #235：Enter 只送出單字、不交給程式；其他邊界鍵送出後交給程式。
+            bool enter = std::string(boundary) == "Enter";
+            CHECK(snap.ok && snap.handled == enter && snap.commit == "hel" && !snap.englishPending && !s.englishPending(),
+                  "boundary %s must commit raw prefix (native host key except Enter)", boundary);
             s.key(" ");
         }
         for (const auto *k : {"h", "e", "l"}) { s.key(k); }
         auto chosen = s.key("Tab");
         CHECK(chosen.handled && chosen.text() != "hel" && chosen.englishPending, "Tab must explicitly accept completion");
         auto snap = s.key("Enter");
-        CHECK(!snap.handled && snap.commit == chosen.text(), "chosen completion still preserves native Enter");
+        CHECK(snap.handled && snap.commit == chosen.text(), "Enter commits the chosen completion only (#235)");
         for (const auto *k : {"r", "e", "c", "i", "e", "v", "e"}) { snap = s.key(k); }
         CHECK(snap.ok && snap.text() == "recieve" && !snap.candidates.empty() && snap.candidates[0].second == "receive",
               "English typo must retain raw spelling and expose correction over IPC");
@@ -500,11 +502,11 @@ int main(int argc, char **argv) {
         auto restored = s.key("Backspace");
         CHECK(restored.handled && restored.text() == "recieve", "Backspace must undo spelling correction");
         auto literal = s.key("Enter");
-        CHECK(!literal.handled && literal.commit == "recieve", "unaccepted spelling must retain native Enter");
+        CHECK(literal.handled && literal.commit == "recieve", "Enter commits unaccepted spelling only (#235)");
         for (const auto *k : {"r", "e", "c", "i", "e", "v", "e"}) { s.key(k); }
         s.key("Tab");
         auto committed = s.key("Enter");
-        CHECK(!committed.handled && committed.commit == "receive", "accepted spelling must retain native Enter");
+        CHECK(committed.handled && committed.commit == "receive", "Enter commits accepted spelling only (#235)");
         for (const auto *boundary : {"Home", "End", "BackTab"}) {
             for (const auto *k : {"h", "e", "l"}) { s.key(k); }
             auto word = s.bypassEnglish(boundary);
@@ -578,8 +580,13 @@ int main(int argc, char **argv) {
         std::ofstream(home + "/settings.json") << R"({})";
         zuin::Session s(client, nullptr);
         s.handle({{"type", "cancel"}}); // 斷線要等下一個請求才發現：先重連到重啟的引擎
-        CHECK(s.ctrlPunct(), "預設應回報 ctrl_punctuation");
-        auto snap = s.key("Ctrl+,");
+        CHECK(s.ctrlPunct("Ctrl+,"), "預設應回報 ctrl_punctuation");
+        CHECK(s.ctrlPunct("Ctrl+("), "引擎應回報認得 Ctrl+(（ctrl_punctuation_keys，#231）");
+        CHECK(!s.ctrlPunct("Ctrl+["), "Ctrl+[ 不是 Ctrl＋標點");
+        auto snap = s.key("Ctrl+(");
+        CHECK(snap.handled && snap.text() == "（", "Ctrl+( 應插進組字區：%d %s", snap.handled, snap.text().c_str());
+        s.key("Escape");
+        snap = s.key("Ctrl+,");
         CHECK(snap.handled && snap.text() == "，", "Ctrl+, 應插進組字區：%d %s", snap.handled, snap.text().c_str());
         snap = s.key("Enter");
         CHECK(snap.commit == "，", "Enter 送出全形逗號：%s", snap.commit.c_str());
@@ -587,7 +594,8 @@ int main(int argc, char **argv) {
         usleep(300 * 1000);
         std::ofstream(home + "/settings.json") << R"({"ctrl_punctuation":false})";
         s.handle({{"type", "cancel"}});
-        CHECK(!s.ctrlPunct(), "設定關閉後重開的 session 不應回報 ctrl_punctuation");
+        CHECK(!s.ctrlPunct("Ctrl+,"), "設定關閉後重開的 session 不應回報 ctrl_punctuation");
+        CHECK(!s.ctrlPunct("Ctrl+)"), "設定關閉時新加的鍵也不送");
         CHECK(!s.key("Ctrl+.").handled, "設定關閉時引擎不處理 Ctrl+.");
         (void)!system((std::string("pkill -f '0c-server -socket ") + argv[1] + "'").c_str());
         usleep(300 * 1000);

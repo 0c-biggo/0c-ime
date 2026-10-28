@@ -393,22 +393,73 @@ func validProfileID(id string) bool {
 	return true
 }
 
-const styleExtensionReason = "此操作規則目前不支援混打、英文補全或聲調選填；可切回靈犀風格後複製自訂"
+// styleConflict 是一條操作規則跟靈犀擴充功能真正衝突的組合（#233）。表外的規則（標點的其他值、候選操作、
+// 每頁候選數、Tab 輪換……）跟中英混打、英文補全、聲調選填可以並用。reason 是功能停用時顯示的原因，
+// disabledBy 依它找回規則，所以每條都不同。
+type styleConflict struct {
+	rule, feature, reason string
+	when                  func(inputstyle.Rules) bool
+}
 
-func (s Settings) styleExtensionDisabled(key string) bool {
+func styleConflicts() []styleConflict {
+	return []styleConflict{
+		// 混打的英文照半形留在組字區，全形下打出「我Ｈello」這種半形全形夾雜。
+		{"style-shift-space", "mixed-input", "Shift＋空白切換全半形時關閉", func(r inputstyle.Rules) bool { return r.ShiftSpace == "fullwidth" }},
+		// Tab 要接受混打的英文補全；調整斷詞時 Tab 一律拿去改斷詞。
+		{"style-tab", "mixed-input", "Tab 調整斷詞時關閉", func(r inputstyle.Rules) bool { return r.Tab == "segment" }},
+		// 混打靠 Shift＋字母打大寫英文（DNS、iPhone）；送出組字會把字拆開（我ㄛPhone），打小寫則改掉大小寫。
+		{"style-shift-letter", "mixed-input", "Shift＋英文字母送出組字時關閉", func(r inputstyle.Rules) bool { return r.ShiftLetter == "commit" }},
+		{"style-shift-letter", "mixed-input", "Shift＋英文字母打小寫時關閉", func(r inputstyle.Rules) bool { return r.ShiftLetter == "lower" }},
+		// 聲調選填用 ' 切字、\ 打頓號；微軟參考的半形 ' 會吃掉沒打完的音節，小麥與新酷音的 \ 是全形反斜線。
+		{"style-punctuation", "toneless", "標點操作不是靈犀時關閉", func(r inputstyle.Rules) bool { return r.Punctuation != "0c" }},
+	}
+}
+
+// styleConflictReason 回報功能 key 因目前的規則停用的原因；沒有衝突時為空字串。
+func (s Settings) styleConflictReason(key string) string {
+	rules := s.ProfileRules()
+	for _, c := range styleConflicts() {
+		if c.feature == key && c.when(rules) {
+			return c.reason
+		}
+	}
+	return ""
+}
+
+// styleConflictRule 是停用原因所在的規則 key（Item.DisabledBy）；不是規則造成的回傳空字串。
+func styleConflictRule(reason string) string {
+	for _, c := range styleConflicts() {
+		if c.reason == reason {
+			return c.rule
+		}
+	}
+	return ""
+}
+
+func (s Settings) featureOn(key string) bool {
 	switch key {
-	case "mixed-input", "english-autocomplete", "toneless":
-		return s.ProfileRules() != inputstyleDefaultRules()
+	case "mixed-input":
+		return s.MixedInput
+	case "english-autocomplete":
+		return s.EnglishAutocomplete
+	case "toneless":
+		return s.Toneless
 	}
 	return false
 }
+
 func (s Settings) validateProfileCombination() error {
 	p := s.ActiveProfile()
 	if ok, reason := s.profileAvailability(p); !ok {
 		return profileError(reason)
 	}
-	if s.ProfileRules() != inputstyleDefaultRules() && (s.MixedInput || s.EnglishAutocomplete || s.Toneless) {
-		return profileError(styleExtensionReason)
+	rules := s.ProfileRules()
+	for _, c := range styleConflicts() {
+		if c.when(rules) && s.featureOn(c.feature) {
+			feature, _ := lookup(c.feature)
+			rule, _ := lookupRule(c.rule)
+			return profileError(fmt.Sprintf("「%s」與「%s：%s」不能同時使用；請先關閉其中一項", feature.label, rule.label, rule.labels[rule.get(rules)]))
+		}
 	}
 	return nil
 }

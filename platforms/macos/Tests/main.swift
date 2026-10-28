@@ -393,8 +393,9 @@ func run() throws {
         for letter in ["h", "e", "l"] { snapshot = try key(letter) }
         check(snapshot.englishPending == true && snapshot.candidates != nil, "English prefix candidates")
         snapshot = try key(boundary)
-        check(!snapshot.handled && snapshot.commit == "hel" && snapshot.englishPending != true,
-              "English boundary commits raw word before host action: \(boundary)")
+        // #235：Enter 只送出單字、不交給 App；其他邊界鍵送出後交給 App。
+        check(snapshot.handled == (boundary == "Enter") && snapshot.commit == "hel" && snapshot.englishPending != true,
+              "English boundary commits raw word (host action except Enter): \(boundary)")
         _ = try key(" ")
     }
     for letter in ["h", "e", "l"] { snapshot = try key(letter) }
@@ -402,7 +403,7 @@ func run() throws {
     let englishChosen = snapshot.text
     check(snapshot.handled && englishChosen != "hel", "explicit Tab selects completion")
     snapshot = try key("Enter")
-    check(!snapshot.handled && snapshot.commit == englishChosen, "selected word retains host Enter")
+    check(snapshot.handled && snapshot.commit == englishChosen, "Enter commits the selected word only (#235)")
     session.reset()
     stop()
     try vocabKeyChecks(directory: directory, session: session, key: key)
@@ -431,14 +432,21 @@ func run() throws {
     // #168：Control＋標點的鍵名；Command／Option、少了或多了 Shift 都不是。
     for (code, flags, want) in [(UInt16(43), NSEvent.ModifierFlags.control, "Ctrl+,"), (47, .control, "Ctrl+."), (39, .control, "Ctrl+'"),
                                 (41, .control, "Ctrl+;"), (44, [.control, .shift], "Ctrl+?"), (18, [.control, .shift], "Ctrl+!"),
-                                (43, [.control, .capsLock], "Ctrl+,")] {
+                                (43, [.control, .capsLock], "Ctrl+,"),
+                                (41, [.control, .shift], "Ctrl+:"), (25, [.control, .shift], "Ctrl+("), (29, [.control, .shift], "Ctrl+)")] {
         check(KeyMapping.ctrlPunct(code: code, modifiers: flags) == want, "ctrl punct \(want)")
         check(KeyMapping.ctrlPunctText[want] != nil, "ctrl punct text \(want)")
     }
     for (code, flags) in [(UInt16(43), NSEvent.ModifierFlags.command), (43, []), (43, [.control, .option]), (43, [.control, .command]),
-                          (43, [.control, .shift]), (44, .control), (18, .control), (33, .control), (0, .control)] {
+                          (43, [.control, .shift]), (44, .control), (18, .control), (33, .control), (0, .control),
+                          (25, .control), (29, .control), (29, [.control, .shift, .option])] {
         check(KeyMapping.ctrlPunct(code: code, modifiers: flags) == nil, "not ctrl punct: \(code) \(flags.rawValue)")
     }
+    // #231：Ctrl+: ( ) 要引擎的 ctrl_punctuation_keys 列了才送；最早的六個鍵舊引擎也認得。
+    check(KeyMapping.ctrlPunctKnown("Ctrl+,", engineKeys: "") && KeyMapping.ctrlPunctKnown("Ctrl+!", engineKeys: ""), "legacy ctrl punct keys")
+    check(!KeyMapping.ctrlPunctKnown("Ctrl+(", engineKeys: "") && !KeyMapping.ctrlPunctKnown("Ctrl+:", engineKeys: ""), "old engine lacks Ctrl+( :")
+    check(KeyMapping.ctrlPunctKnown("Ctrl+)", engineKeys: ",.';?!:()"), "new engine knows Ctrl+)")
+    check(!KeyMapping.ctrlPunctKnown("Ctrl+[", engineKeys: ",.';?!:()"), "Ctrl+[ is not ctrl punct")
     // #192：⌃⇧F11（F 鍵事件帶 .function，Caps Lock 不影響）；少了 Shift／Control、多了 Command／Option、別的 F 鍵（F2 是 120）、字母 F 都不是。
     for flags: NSEvent.ModifierFlags in [[.control, .shift], [.control, .shift, .function], [.control, .shift, .function, .capsLock]] {
         check(KeyMapping.simplifiedHotkey(code: KeyMapping.f11Code, modifiers: flags), "simplified hotkey \(flags.rawValue)")
@@ -600,6 +608,10 @@ func vocabKeyChecks(directory: URL, session: EngineSession, key: (String) throws
     check(session.vocabKeys, "open reply carries vocab_keys=true even with the retired preview_0_2=false")
     // #168：設定檔沒有 ctrl_punctuation 時預設開；Ctrl+, 沒在組字也插進組字區，Esc 清掉。
     check(session.ctrlPunct, "open reply carries ctrl_punctuation=true by default")
+    check(session.ctrlPunct(key: "Ctrl+("), "open reply carries ctrl_punctuation_keys with Ctrl+( (#231)")
+    let paren = try key("Ctrl+(")
+    check(paren.handled && paren.text == "（", "Ctrl+( types a full-width parenthesis: \(paren.text)")
+    _ = try key("Escape")
     let comma = try key("Ctrl+,")
     check(comma.handled && comma.text == "，", "Ctrl+, types a full-width comma: \(comma.text)")
     check(try key("Escape").text.isEmpty, "Escape clears the comma")

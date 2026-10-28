@@ -47,8 +47,9 @@ func main() {
 	emojiEqualsFirst := flag.Bool("emoji-equals-first", true, "將 = 放在 Emoji 第一項；關閉仍可按 == 輸入等號")
 	escClear := flag.Bool("esc-clear", true, "按 Esc 清除整段組字；關閉時只清未打完的注音")
 	capsLockEnglish := flag.Bool("caps-lock-english", false, "Caps Lock 開著時直接打英文（用 :caps on 送）；關閉時 caps_lock 不起作用。重播需使用相同開關")
-	ctrlPunct := flag.Bool("ctrl-punctuation", true, "注音模式的 Ctrl＋, . ' ; ? ! 打全形標點（用 :k Ctrl+, 送）；關閉時交給應用程式")
+	ctrlPunct := flag.Bool("ctrl-punctuation", true, "注音模式的 Ctrl＋, . ' ; ? ! : ( ) 打全形標點（用 :k Ctrl+, 送）；關閉時交給應用程式")
 	advanceAfterSelect := flag.Bool("advance-after-select", false, "選字後游標移到所選詞後面（前方模式往後移一個字）。重播需使用相同開關")
+	candidateCursor := flag.String("candidate-cursor", "after", "修改字詞的位置：after（游標後方）或 before（游標前方）。重播需使用相同設定")
 	outputSimplified := flag.Bool("output-simplified", false, "送出時轉成簡體字（組字與候選仍是繁體）")
 	spaceSelects := flag.Bool("space-selects", true, "注音打完按空白選字；關閉時空白輸入空格、↓ 選字。重播需使用相同開關")
 	selectionKeys := flag.String("selection-keys", "1234567890", "選字鍵：1234567890、1234qweras 或 asdfghjkl;（數字仍照位置選字）。重播需使用相同選字鍵")
@@ -73,6 +74,10 @@ func main() {
 	eng.EscKeepComposition = !*escClear
 	eng.SpaceInsertsSpace = !*spaceSelects
 	eng.AdvanceAfterSelect = *advanceAfterSelect
+	if *candidateCursor != "after" && *candidateCursor != "before" {
+		check(fmt.Errorf("未知的修改字詞位置 %q（before、after）", *candidateCursor))
+	}
+	eng.CandidateBeforeCursor = *candidateCursor == "before"
 	eng.CtrlPunct = *ctrlPunct
 	eng.CapsLockEnglish = *capsLockEnglish
 	if *outputSimplified {
@@ -137,6 +142,9 @@ func main() {
 		}
 		if *advanceAfterSelect {
 			fmt.Fprintln(rec, "# 重播需要相同的選字後游標設定：0c-cli -advance-after-select")
+		}
+		if eng.CandidateBeforeCursor {
+			fmt.Fprintln(rec, "# 重播需要相同的修改字詞位置：0c-cli -candidate-cursor before")
 		}
 		if *outputSimplified {
 			fmt.Fprintln(rec, "# 重播需要相同的簡體輸出設定：0c-cli -output-simplified")

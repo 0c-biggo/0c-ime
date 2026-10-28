@@ -214,6 +214,23 @@ fn island_field(class: &str, static_flags: u32) -> Option<Field> {
     })
 }
 
+/// 英文模式沒在組字時，按鍵要不要整個交給程式、不開始英文補字（#210）。
+/// IMM32 程式經系統相容層（CUAS）接 TSF，每個視窗都有一個暫時 context（TS_SS_TRANSITORY），焦點不在文字框時
+/// 也一樣：Photoshop 的畫布按 B、V 是換工具，英文補字卻把字母收進組字區、跳出候選窗，快捷鍵就沒了（遊戲的 WASD 同理）。
+/// IMM32 的文字框（EDIT、RichEdit、Scintilla、PuTTY 的終端機畫面）有焦點時都有系統插入點；沒有插入點就不是在打字。
+/// 只看暫時 context 不夠：Windows Terminal 自己接 TSF，也標 TS_SS_TRANSITORY（讓 TSF 當成 IMM 式的程式）、沒有系統插入點；
+/// 它自己呼叫 ActivateEx，啟用本輸入法的旗標不是 0，系統相容層替 IMM32 程式啟用時是 0（`activate_flags`）。
+/// 其他自己實作 TSF 文字儲存的程式（瀏覽器、Word、UE 的聊天框）不是暫時 context，只在文字框有焦點時才給 context，不受影響。
+/// 注音模式照舊組字（同其他注音輸入法，要用快捷鍵先切英文）。
+pub fn english_passthrough(ctx: &ITfContext, activate_flags: u32) -> bool {
+    let flags = unsafe { ctx.GetStatus() }.map(|s| s.dwStaticFlags).unwrap_or(0);
+    imm32_without_caret(flags, activate_flags, crate::caret::thread_has_caret())
+}
+
+fn imm32_without_caret(static_flags: u32, activate_flags: u32, caret: bool) -> bool {
+    static_flags & TS_SS_TRANSITORY != 0 && activate_flags == 0 && !caret
+}
+
 /// 除錯紀錄用：缺 InputScope 時記下 context 狀態旗標與焦點／檢視視窗類別（不含文字）。
 fn missing_scope_context(ctx: &ITfContext) -> String {
     unsafe {
@@ -499,6 +516,19 @@ mod tests {
             focused,
             false
         ));
+    }
+
+    #[test]
+    fn english_passthrough_only_for_imm32_contexts_without_caret() {
+        // #210：IMM32 程式沒有插入點（Photoshop 的畫布）時英文模式按鍵整個交給程式；有插入點（EDIT、PuTTY）照常補字。
+        assert!(imm32_without_caret(TS_SS_TRANSITORY, 0, false));
+        assert!(imm32_without_caret(TS_SS_TRANSITORY | TS_SS_NOHIDDENTEXT, 0, false));
+        assert!(!imm32_without_caret(TS_SS_TRANSITORY, 0, true));
+        // Windows Terminal：自己接 TSF、也標暫時 context、沒有系統插入點，但啟用旗標不是 0（.14 實測 0x40000040）。
+        assert!(!imm32_without_caret(TS_SS_TRANSITORY | TS_SS_NOHIDDENTEXT, 0x4000_0040, false));
+        // 自己實作文字儲存的程式（Chromium 沒有系統插入點）不受影響。
+        assert!(!imm32_without_caret(TS_SS_NOHIDDENTEXT, 0, false));
+        assert!(!imm32_without_caret(0, 0, false));
     }
 
     #[test]

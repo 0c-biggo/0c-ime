@@ -1622,6 +1622,32 @@ class ReleaseTests(unittest.TestCase):
                     self.assertFalse((self.home / relative).exists(), relative)
                 self.assertEqual(user.exists(), bool(mine), "使用者自己的設定檔不動")
 
+    def test_ibus_unregister_cleans_cinnamon_and_xsessionrc(self):
+        # #237：Cinnamon 等 X11 桌面的登錄另有 Cinnamon 輸入來源與 ~/.xsessionrc 的一段。
+        rc = self.home / installer.IBUS_SESSION_RC
+        block = f"{installer.IBUS_SESSION_BEGIN}說明\ncase x in *) ;; esac\n{installer.IBUS_SESSION_END}\n"
+        for label, before, after in (("只有我們那一段", block, None),
+                                     ("使用者自己的內容", "export A=1\n" + block + "export B=2\n", "export A=1\nexport B=2\n"),
+                                     ("沒有結尾標記", "export A=1\n" + installer.IBUS_SESSION_BEGIN + "\n", "export A=1\n" + installer.IBUS_SESSION_BEGIN + "\n")):
+            with self.subTest(label):
+                self.register_ibus()
+                rc.write_text(before)
+                calls = []
+                def run(args, **kwargs):
+                    calls.append(args)
+                    out = "[('xkb', 'tw'), ('ibus', '0c')]\n" if args[:2] == ["gsettings", "get"] else ""
+                    return subprocess.CompletedProcess(args, 0, out, "")
+                with patch.object(installer.Path, "home", lambda: self.home), \
+                        patch.object(installer, "ETC", self.home / "etc"):
+                    self.assertTrue(installer.ibus_unregister(self.home, run=run))
+                for schema in installer.IBUS_SOURCE_SCHEMAS:
+                    self.assertIn(["gsettings", "set", schema, "sources", "[('xkb', 'tw')]"], calls)
+                if after is None:
+                    self.assertFalse(rc.exists())
+                else:
+                    self.assertEqual(rc.read_text(), after)
+                rc.unlink(missing_ok=True)
+
     def test_ibus_source_is_removed_without_touching_other_sources(self):
         for before, after in (("[('xkb', 'us'), ('ibus', '0c')]", "[('xkb', 'us')]"),
                               ("[('ibus', '0c'), ('xkb', 'tw')]", "[('xkb', 'tw')]"),

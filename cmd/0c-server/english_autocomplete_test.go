@@ -93,7 +93,7 @@ func testSavedEnglishAutocomplete(t *testing.T, full bool) {
 				call(ipc.Envelope{Op: ipc.OpHandle, Session: id, Req: &proto.Request{Type: proto.Key, Key: string(k)}})
 			}
 			out := call(ipc.Envelope{Op: ipc.OpHandle, Session: id, Req: &proto.Request{Type: proto.Key, Key: proto.KeyEnter}})
-			if out.Snapshot == nil || out.Snapshot.Handled || (out.Snapshot.Commit == "hel") != enabled {
+			if out.Snapshot == nil || out.Snapshot.Handled != enabled || (out.Snapshot.Commit == "hel") != enabled {
 				t.Fatalf("autocomplete=%v: %+v", enabled, out.Snapshot)
 			}
 		}()
