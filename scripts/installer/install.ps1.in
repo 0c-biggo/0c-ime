@@ -20,7 +20,7 @@
         Write-Host '靈犀注音需要系統管理員權限註冊輸入法，請在接下來的視窗確認。'
         $p = Start-Process $exe -ArgumentList @('install', '-online', '-feed', $feed, '-channel', $channel) -Verb RunAs -Wait -PassThru
         if ($p.ExitCode -ne 0) { throw "安裝沒有完成（結束碼 $($p.ExitCode)）。" }
-        Write-Host '安裝完成。請登出再登入，然後在輸入法清單選擇「靈犀注音」。'
+        Write-Host '安裝完成。請用 Win＋空白切換到「靈犀注音」；已經開著的應用程式，重新開啟後才能使用，不必登出。'
     } finally {
         Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue
     }

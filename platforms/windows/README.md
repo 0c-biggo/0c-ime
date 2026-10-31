@@ -38,7 +38,7 @@ go build -o platforms\windows\target\0c-server.exe .\cmd\0c-server
 
 `install.ps1` 現在委派給套件內的 `0c-update.exe`，不再接受原本的 `-DataDir`／`-Profile` 散檔安裝方式。開發包也使用 `python scripts/package_windows.py --preview --data <資料目錄> --version <版本>` 建立完整套件。
 
-每版 DLL、server、UI 與字典放到 `%LOCALAPPDATA%\Zuin\versions\`，個人詞庫維持 `%LOCALAPPDATA%\Zuin\user.json`。0.1.0-dev.62 起 TSF 註冊固定指向 `%LOCALAPPDATA%\Zuin\tsf\0c_tsf.dll`（32 位元 `tsf\x86\`），是目前版本目錄的複本，防毒軟體的例外只要加一次（#121，換檔流程見下方「固定路徑」）。先驗證新包與字典，再切換 TSF 註冊；既有固定目錄開發版可保留原檔案遷移。安裝／更新不強制結束舊引擎，**完成後須登出再登入**。
+每版 DLL、server、UI 與字典放到 `%LOCALAPPDATA%\Zuin\versions\`，個人詞庫維持 `%LOCALAPPDATA%\Zuin\user.json`。0.1.0-dev.62 起 TSF 註冊固定指向 `%LOCALAPPDATA%\Zuin\tsf\0c_tsf.dll`（32 位元 `tsf\x86\`），是目前版本目錄的複本，防毒軟體的例外只要加一次（#121，換檔流程見下方「固定路徑」）。先驗證新包與字典，再切換 TSF 註冊；既有固定目錄開發版可保留原檔案遷移。安裝／更新不強制結束舊引擎，也不必登出：安裝後立即經登入排程啟動引擎，候選窗程式閒置時換新；已經開著的應用程式仍載入舊 DLL，重新開啟後才換成新版。只有引擎或候選窗正在組字、沒有交接時，才提示登出再登入。
 
 註冊只在 `HKLM\SOFTWARE\Microsoft\CTF\TIP` 登記 TSF profile，Windows 不會自動把新輸入法加進使用者的語言清單：沒有加入的話 Win＋空白切換不到，「進階鍵盤設定 → 覆寫預設輸入法」也只列清單裡的輸入法（加上目前的覆寫值）。所以安裝後（`afterInstall`）`0c-update` 以 `input.dll` 的 `InstallLayoutOrTip("0404:{CLSID}{profile}", 0)` 把靈犀注音加入這個帳號的清單（#191）：排在「中文（台灣）」原有的鍵盤後面，清單沒有中文（台灣）時一併加入這個語言；不帶 `ILOT_DEFPROFILE`，不改預設輸入法與覆寫。每個帳號只加一次，成功後留下 `Zuin\update\input-list`，之後自己從清單移除的，更新不會再放回去；失敗只提示、下次再試。從 0.2.3 以前背景更新上來時，執行安裝的是舊版的穩定更新器（沒有這一步），由新版的登入工作 `0c-update engine` 與 `0c-ui` 每天的 `schedule repair` 補做。測試安裝（`ZC_NO_SCHEDULE`）不改清單。小狼毫的安裝程式同樣呼叫 `InstallLayoutOrTip`。
 

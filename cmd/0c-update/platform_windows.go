@@ -282,7 +282,7 @@ func deployTSF() error {
 
 func reportLeftovers(left []string) {
 	if len(left) > 0 {
-		fmt.Printf("舊版 zuin-* 程式仍被執行中的應用程式載入，暫時保留；登出再登入後，下次更新會再清除：\n  %s\n", strings.Join(left, "\n  "))
+		fmt.Printf("舊版 zuin-* 程式仍被執行中的應用程式載入，暫時保留；關閉這些應用程式後，下次更新會再清除：\n  %s\n", strings.Join(left, "\n  "))
 	}
 }
 
@@ -316,7 +316,7 @@ func install(bundle string, release *update.Release) error {
 	handOverAfterInstall(release.Version, nil) // 新引擎由 afterInstall 的 ensureEngineService 經登入工作叫起
 	// 舊版的候選窗程式不會自己換新（#159 的全螢幕檢查在 0c-ui）：閒置時請它結束，DLL 下一次需要時啟動新版。
 	handOverUI(uiWaitInstall)
-	fmt.Printf("已安裝靈犀注音至 %s\n個人詞庫保留，舊版程序不會被強制停止。請登出再登入，讓所有應用程式載入新版。\n", directory)
+	fmt.Printf("已安裝靈犀注音至 %s\n個人詞庫保留，舊版程序不會被強制停止。之後開啟的應用程式直接使用新版；已經開著的應用程式，重新開啟後才會載入新版，不必登出。\n", directory)
 	reportLeftovers(left)
 	return nil
 }
