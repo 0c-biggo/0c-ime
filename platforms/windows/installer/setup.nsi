@@ -27,13 +27,13 @@ ShowUninstDetails hide
 
 !define MUI_ABORTWARNING
 !define MUI_WELCOMEPAGE_TITLE "安裝靈犀注音（0c）"
-!define MUI_WELCOMEPAGE_TEXT "專心把話打完，少為選字停下來。$\r$\n$\r$\n此精靈會安裝或升級靈犀注音 ${VERSION}（${CHANNEL_LABEL}）。個人詞庫會保留。$\r$\n$\r$\n請先完成正在輸入的文字，並以目前桌面使用者的同一個帳號允許系統管理員權限。完成後請登出再登入。"
+!define MUI_WELCOMEPAGE_TEXT "專心把話打完，少為選字停下來。$\r$\n$\r$\n此精靈會安裝或升級靈犀注音 ${VERSION}（${CHANNEL_LABEL}）。個人詞庫會保留。$\r$\n$\r$\n請先完成正在輸入的文字，並以目前桌面使用者的同一個帳號允許系統管理員權限。"
 !insertmacro MUI_PAGE_WELCOME
 !define MUI_LICENSEPAGE_TEXT_TOP "請閱讀靈犀注音使用條款。安裝後可在安裝目錄的 TERMS.md 再次查看。"
 !insertmacro MUI_PAGE_LICENSE "terms.txt"
 !insertmacro MUI_PAGE_INSTFILES
 !define MUI_FINISHPAGE_TITLE "靈犀注音已安裝"
-!define MUI_FINISHPAGE_TEXT "請登出再登入，讓所有應用程式載入新版。$\r$\n$\r$\n「靈犀注音」已加入 Windows 語言設定「中文（台灣）」的鍵盤，使用 Win＋空白切換；清單裡沒有時，在「中文（台灣）」新增「靈犀注音」鍵盤。個人詞庫已保留。"
+!define MUI_FINISHPAGE_TEXT "已經開著的應用程式，重新開啟後才會載入新版，不必登出。$\r$\n$\r$\n「靈犀注音」已加入 Windows 語言設定「中文（台灣）」的鍵盤，使用 Win＋空白切換；清單裡沒有時，在「中文（台灣）」新增「靈犀注音」鍵盤。個人詞庫已保留。"
 !insertmacro MUI_PAGE_FINISH
 !define MUI_UNCONFIRMPAGE_TEXT_TOP "解除安裝會停用靈犀注音，保留個人詞庫及版本備份。請先完成正在輸入的文字，完成後登出再登入。"
 !insertmacro MUI_UNPAGE_CONFIRM
