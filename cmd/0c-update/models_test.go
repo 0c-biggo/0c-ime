@@ -111,7 +111,7 @@ func newModelsFixture(t *testing.T) *modelsFixture {
 	f := &modelsFixture{hits: &hits, noticeOK: true}
 	f.env = modelsEnv{base: base, data: data, goos: "linux", lock: raw, dial: noEngine,
 		runtimeCheck:         func(string) []string { return []string{"python3-onnxruntime"} },
-		distributionDisabled: func(string) bool { return false }, now: time.Now}
+		distributionDisabled: func(string) bool { return false }, settingsMissing: func() bool { return false }, now: time.Now}
 	f.writePairing(t)
 	oldReload, oldSend, oldOpen := reloadEngineForModels, sendModelsNotice, openSettingsPage
 	reloadEngineForModels = func() { f.reloads++ }
@@ -429,6 +429,29 @@ func TestModelsReminderSchedule(t *testing.T) {
 	}
 }
 
+// 找不到設定程式時（發行版套件沒附 0c-settings），「下載模型」按鈕開不了模型頁：不發提醒，也不永久停止。
+func TestModelsReminderWaitsForSettingsProgram(t *testing.T) {
+	f := newModelsFixture(t)
+	f.env.settingsMissing = func() bool { return true }
+	t0 := time.Date(2026, 10, 21, 8, 0, 0, 0, time.UTC)
+	now := t0
+	f.env.now = func() time.Time { return now }
+	for _, d := range []time.Duration{0, 2 * time.Hour, 30 * time.Hour} {
+		now = t0.Add(d)
+		if err := f.env.remind(d > 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if r := f.env.store().LoadRemind(); f.notices != 0 || r.Stopped != "" {
+		t.Fatalf("notices %d %+v", f.notices, r)
+	}
+	f.env.settingsMissing = func() bool { return false }
+	now = t0.Add(60 * time.Hour)
+	if err := f.env.remind(true); err != nil || f.notices != 1 {
+		t.Fatalf("裝上設定程式後照常提醒：%v %d", err, f.notices)
+	}
+}
+
 func TestModelsReminderStops(t *testing.T) {
 	t.Run("statistical", func(t *testing.T) {
 		f := newModelsFixture(t)
@@ -444,6 +467,7 @@ func TestModelsReminderStops(t *testing.T) {
 			t.Fatal(err)
 		}
 		f.env.now = func() time.Time { return time.Now().Add(100 * time.Hour) }
+		f.env.settingsMissing = func() bool { t.Error("已停止提醒時不必核對設定程式"); return false }
 		f.env.remind(true)
 		if r := f.env.store().LoadRemind(); r.Stopped != models.StopDismissed || f.notices != 0 {
 			t.Fatalf("%+v", r)

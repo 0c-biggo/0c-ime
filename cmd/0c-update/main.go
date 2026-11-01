@@ -1,3 +1,5 @@
+//go:debug default=go1.26
+
 // 0c-update checks, downloads, verifies and installs complete release bundles.
 package main
 

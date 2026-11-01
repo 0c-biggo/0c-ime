@@ -22,6 +22,7 @@ type rerankEntry struct {
 	gen      int
 	time     int64
 	vetoed   []bool
+	habit    []bool
 	decision rerankDecision
 }
 
@@ -120,7 +121,8 @@ func (s *Session) rerankSegment(lat input.Lattice, start, end int) {
 	entry, cached := s.rerankCache[key]
 	if !cached || entry.gen != s.model.Gen || entry.time != s.model.Store.Time {
 		vetoed := s.vetoRepeats(rows, s.overturnsUser(rows, start, end))
-		if !cached || !slices.Equal(vetoed, entry.vetoed) {
+		habit := s.overturnsHabit(rows, start, end)
+		if !cached || !slices.Equal(vetoed, entry.vetoed) || !slices.Equal(habit, entry.habit) {
 			// 宿主只能取得複本；即使有錯誤，也不能就地修改候選／手選狀態。
 			copied := req
 			copied.Candidates = slices.Clone(rows)
@@ -131,9 +133,9 @@ func (s *Session) rerankSegment(lat input.Lattice, start, end int) {
 			if err != nil {
 				return // 不快取失敗；下次按鍵可再試
 			}
-			entry.decision = decide(rows, scores, weight, margin, vetoed)
+			entry.decision = decide(rows, scores, weight, margin, keepHabit(vetoed, habit, scores, weight))
 		}
-		entry.gen, entry.time, entry.vetoed = s.model.Gen, s.model.Store.Time, vetoed
+		entry.gen, entry.time, entry.vetoed, entry.habit = s.model.Gen, s.model.Store.Time, vetoed, habit
 		if s.rerankCache == nil || len(s.rerankCache) >= rerankCacheLimit {
 			s.rerankCache = map[string]rerankEntry{}
 		}
@@ -331,6 +333,11 @@ func (s *Session) overturnsUser(rows []decode.Hypothesis, start, end int) []bool
 		}
 		shownCost = cost(shown, shownLoose)
 	}
+	// 習慣是弱偏好，靠它當上首選的詞由 overturnsHabit 處理，不走下面的手選保護。
+	habit := make([]bool, len(confirmed))
+	for i, c := range confirmed {
+		habit[i] = s.reliesOnHabit(rows, shown, start, syls, c.from, c.to)
+	}
 	var vetoed []bool
 	for i := 1; i < len(rows); i++ {
 		text, loose := alignSyllables(rows[i], n)
@@ -342,9 +349,12 @@ func (s *Session) overturnsUser(rows []decode.Hypothesis, start, end int) []bool
 			}
 		}
 		overturn = overturn || penalty != nil && cost(text, loose) > shownCost+1e-9
-		for _, c := range confirmed {
+		for j, c := range confirmed {
 			if overturn {
 				break
+			}
+			if habit[j] {
+				continue
 			}
 			alt := string(text[c.from:c.to])
 			overturn = alt != string(shown[c.from:c.to]) && !s.model.ChoseReading(alt, syls[c.from:c.to])
@@ -364,6 +374,79 @@ func (s *Session) overturnsUser(rows []decode.Hypothesis, start, end int) []bool
 		}
 	}
 	return vetoed
+}
+
+// habitNeuralMargin 是讀音習慣擋得住的融合分差。評分器只差這麼多時（「的城市」對「的程式」約 8.5），
+// 代表兩個寫法在這個前文都說得通，照使用者的習慣；超過就是前文清楚指向另一個詞（「城市交通壅塞」、
+// 「香港等城市」都在 10 以上），聽評分器。習慣是弱偏好，不是 CorrectionPenalty 那樣的硬否決（#218）。
+const habitNeuralMargin = 10.0
+
+// reliesOnHabit 回報統計首選在 [from,to) 的詞是不是靠讀音習慣才當上首選：有候選在這段換了寫法，
+// 而且分數差在解碼器實際加的習慣分數以內（Decoder.HabitLift：前綴保護下是 0，打過的切法是兩份）。
+// 沒有習慣分數也贏的話，它就是一般的首選，照 overturnsUser 的規則（#96）。這段不是首選的一個詞時解碼器也沒有加分。
+func (s *Session) reliesOnHabit(rows []decode.Hypothesis, shown []rune, start int, syls []zhuyin.Syllable, from, to int) bool {
+	word := string(shown[from:to])
+	lift := 0.0
+	for _, g := range rows[0].Segments {
+		if g.Start == from && g.End == to && g.Word == word {
+			lift = s.dec.HabitLift(s.lattice()[start:start+len(syls)], rows[0], g, syls[from:to])
+			break
+		}
+	}
+	if lift <= 0 {
+		return false
+	}
+	for i := 1; i < len(rows); i++ {
+		if text, _ := alignSyllables(rows[i], len(shown)); string(text[from:to]) != word && rows[0].LogScore-rows[i].LogScore <= lift {
+			return true
+		}
+	}
+	return false
+}
+
+// overturnsHabit 標出把靠讀音習慣當上首選的詞換掉的候選。這裡不看另一個寫法有沒有選過：
+// 選過一次「城市」不該讓評分器把「程式」都換回去，習慣還在就照習慣，退掉之後才回到 overturnsUser 的規則。
+// 沒有這種候選時回傳 nil。
+func (s *Session) overturnsHabit(rows []decode.Hypothesis, start, end int) []bool {
+	if len(s.model.Store.Confirmed) == 0 {
+		return nil
+	}
+	n := end - start
+	syls := s.syls[start:end]
+	shown, shownLoose := alignSyllables(rows[0], n)
+	var habit []bool
+	for _, g := range rows[0].Segments {
+		if g.Start < 0 || g.End > n || g.End-g.Start < 2 || g.Partial || shownLoose != nil && slices.Contains(shownLoose[g.Start:g.End], true) {
+			continue
+		}
+		if !s.reliesOnHabit(rows, shown, start, syls, g.Start, g.End) {
+			continue
+		}
+		word := string(shown[g.Start:g.End])
+		for i := 1; i < len(rows); i++ {
+			text, _ := alignSyllables(rows[i], n)
+			if string(text[g.Start:g.End]) != word {
+				if habit == nil {
+					habit = make([]bool, len(rows))
+				}
+				habit[i] = true
+			}
+		}
+	}
+	return habit
+}
+
+// keepHabit 把評分器沒有壓倒性把握的 overturnsHabit 候選併入排除名單（habitNeuralMargin）。
+func keepHabit(vetoed, habit []bool, scores []float64, weight float64) []bool {
+	if habit == nil || len(scores) != len(habit) {
+		return vetoed
+	}
+	out := make([]bool, len(habit))
+	copy(out, vetoed)
+	for i := range habit {
+		out[i] = out[i] || habit[i] && weight*(scores[i]-scores[0]) <= habitNeuralMargin
+	}
+	return out
 }
 
 // vetoRepeats 另外排除受非詞疊字上限約束的候選（decode.Hypothesis.NonWordRepeat：兩個相同單字

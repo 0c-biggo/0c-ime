@@ -1,6 +1,8 @@
 package decode
 
 import (
+	"unicode/utf8"
+
 	"github.com/0c-biggo/0c-ime/core/input"
 	"github.com/0c-biggo/0c-ime/core/lexicon"
 	"github.com/0c-biggo/0c-ime/core/zhuyin"
@@ -29,6 +31,55 @@ func (d *Decoder) prepareMass(lat input.Lattice) {
 			}
 		})
 	}
+}
+
+// ReadingPreference 是使用者反覆選用的詞在同讀音裡的有上限加分（personal 的讀音習慣，#218）。
+type ReadingPreference interface {
+	ReadingLift(word string, reading []zhuyin.Syllable) float64
+	// SplitConfirmed 回報 left 後面接 word 是否真的提交過。
+	SplitConfirmed(left, word string) bool
+}
+
+// readingLift 是弧的讀音習慣加分。前綴保護不動，也不讓加分繞過它（#218）：
+//   - 這個詞本身是更長完整詞的前綴時（程式 對 程式碼）不加分，否則「程式碼」會被拆成「程式｜嗎」。
+//   - left 是某個完整詞的前綴時（改｜程式 對 改成），這一刀可能拆壞完整詞：沒打過這個配對就不加分；
+//     打過的話多給一份，抵銷前綴保護壓在 left 上的量，否則使用者打過的切法還是贏不了。
+func (d *Decoder) readingLift(start, end int, left string, e lexicon.Entry) float64 {
+	r, ok := d.Score.(ReadingPreference)
+	if !ok {
+		return 0
+	}
+	lift := r.ReadingLift(e.Surface, e.Reading)
+	if lift <= 0 {
+		return 0
+	}
+	if start >= 0 && start < len(d.longerEnd) && d.longerEnd[start] > end {
+		return 0
+	}
+	if from := start - utf8.RuneCountInString(left); from >= 0 && from < len(d.longerEnd) && d.longerEnd[from] > start {
+		if !r.SplitConfirmed(left, e.Surface) {
+			return 0
+		}
+		return 2 * lift
+	}
+	return lift
+}
+
+// HabitLift 是解碼器在 h 裡替 seg 實際加的讀音習慣分數，跟 arcLog 走同一段 readingLift（前綴保護下是 0、打過的切法是兩份）。
+// lat 是產生 h 的音節格，h 的位置相對於它；d.Left 也要和當時相同。補全的尾端、經近音到達的詞不加分。
+func (d *Decoder) HabitLift(lat input.Lattice, h Hypothesis, seg Seg, reading []zhuyin.Syllable) float64 {
+	r, ok := d.Score.(ReadingPreference)
+	if !ok || seg.Partial || seg.Matched != "" || r.ReadingLift(seg.Word, reading) <= 0 {
+		return 0
+	}
+	left := d.InitialLeft()
+	for _, g := range h.Segments {
+		if g.End == seg.Start {
+			left = g.Word
+		}
+	}
+	d.prepareMass(lat)
+	return d.readingLift(seg.Start, seg.End, left, lexicon.Entry{Surface: seg.Word, Reading: reading})
 }
 
 func (d *Decoder) arcProbability(start, end int, left string, e lexicon.Entry) float64 {

@@ -1,3 +1,5 @@
+//go:debug default=go1.26
+
 // 0c-server 是行程外的輸入法引擎（docs/19）：在 unix socket（Linux／macOS）或 named pipe（Windows）上
 // 為平台薄殼（Fcitx 5 addon、TSF DLL 等）提供服務。每位使用者一個實例；它是個人化資料唯一的寫入者。
 package main

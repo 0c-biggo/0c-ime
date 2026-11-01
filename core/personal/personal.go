@@ -36,12 +36,15 @@ type Params struct {
 	PhraseMaxLen     int // 片語晉升的長度上限（字）
 	PhrasePromoteAt  int // 暫定片語出現幾次後晉升
 	RejectsToDisable int // 同一項自動修正被拒絕幾次後對此使用者停用
+	// HabitLift 是讀音習慣的分數上限（自然對數，見 preference.go）：贏得過的語境只有統計分差在這以內的，
+	// 「這座城市」「大城市」這類系統差距大的語境不受影響。0 停用。
+	HabitLift float64
 }
 
 func DefaultParams() Params {
 	return Params{
 		KappaBi: 1, TypePrior: 1, KappaUni: 10000, WManual: 1, WPassive: 0.25, WCompletion: 0.5, Mu: 0.7,
-		PhraseMaxLen: 4, PhrasePromoteAt: 2, RejectsToDisable: 2,
+		PhraseMaxLen: 4, PhrasePromoteAt: 2, RejectsToDisable: 2, HabitLift: 3.5,
 	}
 }
 
@@ -49,8 +52,9 @@ func DefaultParams() Params {
 // 舊版讀檔會略過不認得的欄位、存檔時丟掉它們，只有版本號能讓舊版知道不該寫回。
 // 0（未記錄）是加入版本號以前的格式，與 1 相同；2 加入 Pronouns；3 加入 English；
 // 4 加入有上限且獨立於詞彙學習的 EmojiRecent；5 加入表情的常用分數 EmojiStats 與上次選用的
-// = 選單分頁 PaletteTab，EmojiRecent 改為保存（含遲滯的）顯示順序，舊版照樣讀得懂（#124）。
-const StoreFormat = 5
+// = 選單分頁 PaletteTab，EmojiRecent 改為保存（含遲滯的）顯示順序，舊版照樣讀得懂（#124）；
+// 6 加入多字詞的手選紀錄 Confirmed（#218，舊檔由留下的更正推回）與中英混打選過的注音文 ZhuyinKeys（#208，舊檔沒有這份紀錄）。
+const StoreFormat = 6
 
 // NewerFormatError 表示個人資料由較新版本寫成；呼叫端不得以目前的結構寫回。
 type NewerFormatError struct{ Format int }
@@ -83,6 +87,10 @@ type Store struct {
 	Tombstones  map[string]bool
 	Readings    map[string]bool // "詞\t讀音鍵"：使用者親手用這個讀音選過這個詞
 	Rejects     map[string]int  // "詞\t讀音鍵"：自動修正被推翻的次數
+	// Confirmed 是多字詞的手選紀錄（"詞\t讀音鍵"，只用 Long）：讀音習慣的證據，被動提交不會建立（#218）。
+	Confirmed map[string]UsageEvidence
+	// ZhuyinKeys：中英混打時選過的注音文（"前字\t注音符號"，句首的前字是空字串）：這個前字後面單打這個注音符號的鍵再按空白，直接出注音（#208）。
+	ZhuyinKeys map[string]UsageEvidence
 
 	Pronouns    map[string]PronounHabit    // 中性代名詞（他、你）→ 使用者寫成「她」「妳」的習慣
 	English     map[string]EnglishEvidence // 正規化英文詞 → 有界確認／使用證據；不存句子或按鍵
@@ -97,9 +105,10 @@ func NewStore() *Store {
 		Bi:          map[string]float64{}, Ctx: map[string]float64{}, Uni: map[string]float64{}, Uses: map[string]float64{},
 		EvidenceByContext: map[string]UsageEvidence{}, EvidenceByWord: map[string]UsageEvidence{},
 		Picked: map[string][]string{}, PhraseSeen: map[string]int{}, Phrases: map[string]string{},
-		Tombstones: map[string]bool{}, Readings: map[string]bool{}, Rejects: map[string]int{},
-		Pronouns: map[string]PronounHabit{},
-		English:  map[string]EnglishEvidence{},
+		Tombstones: map[string]bool{}, Readings: map[string]bool{}, Rejects: map[string]int{}, Confirmed: map[string]UsageEvidence{},
+		ZhuyinKeys: map[string]UsageEvidence{},
+		Pronouns:   map[string]PronounHabit{},
+		English:    map[string]EnglishEvidence{},
 	}
 }
 
@@ -115,6 +124,8 @@ func (s *Store) Clone() *Store {
 	}
 	c.PhraseSeen, c.Phrases, c.PhraseOrder = maps.Clone(s.PhraseSeen), maps.Clone(s.Phrases), slices.Clone(s.PhraseOrder)
 	c.Tombstones, c.Readings, c.Rejects = maps.Clone(s.Tombstones), maps.Clone(s.Readings), maps.Clone(s.Rejects)
+	c.Confirmed = maps.Clone(s.Confirmed)
+	c.ZhuyinKeys = maps.Clone(s.ZhuyinKeys)
 	c.Pronouns = make(map[string]PronounHabit, len(s.Pronouns))
 	for k, v := range s.Pronouns {
 		v.Cues = maps.Clone(v.Cues)
@@ -140,6 +151,15 @@ func LoadStore(r io.Reader) (*Store, error) {
 	if s.Format > StoreFormat {
 		return nil, &NewerFormatError{Format: s.Format}
 	}
+	if s.Confirmed == nil {
+		s.Confirmed = map[string]UsageEvidence{}
+	}
+	if s.ZhuyinKeys == nil {
+		s.ZhuyinKeys = map[string]UsageEvidence{}
+	}
+	if s.Format < 6 { // 格式 5 以前沒有手選紀錄：由留下的更正推回
+		s.seedConfirmed()
+	}
 	s.cleanEnglish()
 	s.EmojiRecent = emoji.CleanRecent(s.EmojiRecent)
 	if s.EmojiStats == nil && len(s.EmojiRecent) > 0 { // 格式 4 以前：最近清單轉成初始分數，順序不變
@@ -159,6 +179,7 @@ type Model struct {
 	englishIndexGen   int
 	correctionIndex   correctionIndex
 	diversityIndex    diversityIndex
+	habitIndex        habitIndex
 	Store             *Store
 	// Vocab 是使用者親手加入的自訂詞（#122）；nil 表示沒有。由宿主載入，修改走 VocabAdd 等方法。
 	Vocab *vocab.Set
@@ -677,6 +698,21 @@ func (m *Model) UnlearnAll(ws []string) {
 		if x, _, _ := strings.Cut(k, "\t"); has(x) {
 			note(r.readings, s.Readings, k)
 			delete(s.Readings, k)
+		}
+	}
+	for k := range s.Confirmed {
+		if !has(k) {
+			continue
+		}
+		if x, _, _ := strings.Cut(k, "\t"); has(x) {
+			note(r.confirmed, s.Confirmed, k)
+			delete(s.Confirmed, k)
+		}
+	}
+	for k := range s.ZhuyinKeys { // 鍵是「前字\t符號」，使用者看到的是「我ㄉ」
+		if l, x, _ := strings.Cut(k, "\t"); has(l + x) {
+			note(r.zhuyinKeys, s.ZhuyinKeys, k)
+			delete(s.ZhuyinKeys, k)
 		}
 	}
 	for ph := range s.Phrases {

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Build a local macOS (Apple Silicon) bundle: 0c.app with engine, paired dictionary and neural models.
+"""Build a local macOS bundle (Apple Silicon or Intel): 0c.app with engine, paired dictionary and neural models.
 
-Runs on macOS with Xcode command line tools and Go. Never installs or uploads. Without an Apple Developer ID
+Runs on macOS with Xcode command line tools and Go. An Apple Silicon Mac builds both (--arch amd64 cross-compiles
+and runs the Intel tools under Rosetta); an Intel Mac builds only amd64. Never installs or uploads. Without an Apple Developer ID
 the app is ad-hoc signed; 0c-update verifies every file before installing it.
 """
 
@@ -32,15 +33,18 @@ PLATFORM = ROOT / "platforms/macos"
 SETTINGS_BUNDLE = "0c-settings.app"
 SETTINGS_EXECUTABLE = "0c-settings"
 SETTINGS_LAUNCHER = "Contents/Helpers/0c-settings-launcher.app"
-# 64 位元 Mach-O（魔術數字 0xfeedfacf，小端序）與 arm64 的 CPU 類型（0x0100000c）。
+# 64 位元 Mach-O（魔術數字 0xfeedfacf，小端序）與 CPU 類型（arm64 0x0100000c、x86_64 0x01000007）。
 MACHO_ARM64 = bytes.fromhex("cffaedfe") + bytes.fromhex("0c000001")
+MACHO = {"arm64": MACHO_ARM64, "amd64": bytes.fromhex("cffaedfe") + bytes.fromhex("07000001")}
+# Go 的 GOARCH 對 clang／swiftc 的架構名稱。
+MACHINE = {"arm64": "arm64", "amd64": "x86_64"}
 
 
-def check_settings(directory):
+def check_settings(directory, arch="arm64"):
     """檢查 scripts/build_settings_macos.py 的輸出（0c-settings.app 與 NOTICES.txt），回傳 (App 路徑, 授權文字)。
 
     不在打包流程裡建置：Tauri 需要 Rust 工具鏈，改由事先建好再交給打包。App 內只接受一般檔案，執行檔必須是
-    arm64 的 Mach-O，避免把錯的二進位打進套件。
+    套件架構（arch）的 Mach-O，避免把錯的二進位打進套件。
     """
     directory = Path(directory)
     app = directory / SETTINGS_BUNDLE
@@ -52,8 +56,8 @@ def check_settings(directory):
     if not regular(app / "Contents/Info.plist").stat().st_size:
         raise ValueError("設定程式缺少 Info.plist")
     program = regular(app / "Contents/MacOS" / SETTINGS_EXECUTABLE)
-    if program.read_bytes()[:8] != MACHO_ARM64:
-        raise ValueError(f"設定程式不是 arm64 的 macOS 執行檔：{program}")
+    if program.read_bytes()[:8] != MACHO[arch]:
+        raise ValueError(f"設定程式不是 {arch} 的 macOS 執行檔：{program}")
     notices = regular(directory / "NOTICES.txt").read_text(encoding="utf-8")
     if not notices.strip():
         raise ValueError("設定程式缺少第三方授權聲明")
@@ -61,8 +65,8 @@ def check_settings(directory):
 
 
 def build(args):
-    if sys.platform != "darwin" or platform.machine() != "arm64":
-        raise ValueError("macOS 套件需在 Apple Silicon 的 macOS 原生建置")
+    if sys.platform != "darwin" or platform.machine() not in ("arm64", MACHINE[args.arch]):
+        raise ValueError("macOS 套件需在 macOS 建置；Intel 版可在 Apple Silicon 或 Intel 的 Mac 建置，Apple Silicon 版只能在 Apple Silicon")
     if not valid_version(args.version):
         raise ValueError("版本請用 0.1.0-beta.1 形式")
     bundle_version(args.version)  # macOS 的 CFBundleVersion 要能由版本推出，建置前先檢查
@@ -70,19 +74,21 @@ def build(args):
     data = args.data.resolve()
     manifest = check_data(data, not args.preview)
     release_docs = check_release_docs(getattr(args, "release_docs", None))
-    settings_app, settings_notices = check_settings(args.settings) if args.settings else (None, "")
+    settings_app, settings_notices = check_settings(args.settings, args.arch) if args.settings else (None, "")
     if args.neural:
         select = json.loads(regular(args.neural / "select/manifest.json").read_text(encoding="utf-8"))
         if select.get("dictionary_sha256") != digest(data / "manifest.json"):
             raise ValueError("神經選字模型與本套件字典不配對")
         if any(p.is_symlink() for p in args.neural.rglob("*")):
             raise ValueError("神經套件不接受符號連結")
+        if regular(args.neural / "python/bin/python3").read_bytes()[:8] != MACHO[args.arch]:
+            raise ValueError(f"神經套件的 Python 不是 {args.arch} 版；請以 prepare_neural.py --platform macos-{args.arch} 重建")
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     dirty = bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True).strip())
     if dirty and not args.preview:
         raise ValueError("公開包需要乾淨且已提交的程式碼；未提交版本請用 --preview")
     args.out.mkdir(parents=True, exist_ok=True)
-    name = f"0c-{args.version}-macos-arm64" + ("-preview" if args.preview else "")
+    name = f"0c-{args.version}-macos-{args.arch}" + ("-preview" if args.preview else "")
     archive = args.out / (name + ".tar.gz")
     if archive.exists():
         raise ValueError(f"輸出已存在，請使用新版本或新目錄：{archive}")
@@ -90,12 +96,14 @@ def build(args):
         stage = Path(temp) / name
         stage.mkdir()
         tags = ["-tags", "e2etest"] if args.e2etest else []
+        # 出貨的 Go 程式照套件架構交叉編譯（不用 cgo）；0c-compile、0c-english 等建置工具照本機架構 go run。
+        target = dict(os.environ, GOOS="darwin", GOARCH=args.arch)
         subprocess.run([args.go, "build", "-trimpath", *tags, "-ldflags", f"-X main.buildVersion={args.version}",
-                        "-o", str(stage / "0c-update"), "./cmd/0c-update"], cwd=ROOT, check=True)
+                        "-o", str(stage / "0c-update"), "./cmd/0c-update"], cwd=ROOT, check=True, env=target)
         # 只支援 stdio 的 AI 工具用的轉接（#126），放進 App 的 Contents/MacOS/0c-mcp：App 原地更新，路徑不隨版本變動，
         # 設定程式把它填進範例。簽章（developer_id_sign 逐一簽 App 內的 Mach-O）與公證跟著 App。
         mcp = Path(temp) / "0c-mcp"
-        subprocess.run([args.go, "build", "-trimpath", "-o", str(mcp), "./cmd/0c-mcp"], cwd=ROOT, check=True)
+        subprocess.run([args.go, "build", "-trimpath", "-o", str(mcp), "./cmd/0c-mcp"], cwd=ROOT, check=True, env=target)
         # 字典在簽章前混淆：app 的 ad-hoc 簽章涵蓋 Resources，之後不能再改內容。
         sealed = Path(temp) / "sealed-data"
         shutil.copytree(data, sealed)
@@ -113,12 +121,12 @@ def build(args):
         make = ["make", "-C", str(PLATFORM), "-B", "app", f"DATA_DIR={sealed}", f"UPDATER={stage / '0c-update'}",
                 f"AGENT_INTERVAL={60 if args.e2etest and not args.production_timing else 900}",
                 f"BUNDLE_VERSION={bundle_version(args.version)}", f"SHORT_VERSION={short_version(args.version)}",
-                f"BUILD_VERSION={args.version}", f"MCP={mcp}"]
+                f"BUILD_VERSION={args.version}", f"MCP={mcp}", f"ARCH={MACHINE[args.arch]}"]
         if args.neural:
             make.append(f"NEURAL_DIR={neural}")
         if settings_app:
             make.append(f"SETTINGS_APP={settings_app.resolve()}")
-        env = dict(os.environ, GOFLAGS=f"-ldflags=-X=main.buildVersion={args.version}")
+        env = dict(target, GOFLAGS=f"-ldflags=-X=main.buildVersion={args.version}")
         if os.sep in args.go:
             # The Makefile builds 0c-server with the go found on PATH.
             env["PATH"] = str(Path(args.go).resolve().parent) + os.pathsep + env.get("PATH", "")
@@ -137,7 +145,7 @@ def build(args):
         shutil.copy2(PLATFORM / "README.md", stage / "README-macOS.md")
         copy_licenses(stage)
         (stage / "THIRD_PARTY_NOTICES.txt").write_text(
-            collect("macos-arm64", neural, go=args.go)
+            collect(f"macos-{args.arch}", neural, go=args.go)
             + ("\n" + settings_notices if settings_notices else ""), encoding="utf-8")
         if args.preview:
             signing = ("App 以 Developer ID 簽章並經 Apple 公證。" if args.notary_profile else
@@ -150,7 +158,7 @@ def build(args):
             if p.is_file():
                 files[p.relative_to(stage).as_posix()] = digest(p)
         release = {"schema": 1, "product": "0c", "name": "靈犀注音", "version": args.version,
-                   "channel": "internal-preview" if args.preview else "public-beta", "os": "darwin", "arch": "arm64",
+                   "channel": "internal-preview" if args.preview else "public-beta", "os": "darwin", "arch": args.arch,
                    "revision": revision, "dirty": dirty, "build_platform": platform.platform(),
                    "data_format": manifest["format"], "data_manifest_sha256": shipped_manifest,
                    "files": files}
@@ -239,11 +247,12 @@ def notarize(stage, temp, profile, keychain=None):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="建立靈犀注音 macOS（Apple Silicon）套件；不安裝、不上傳")
+    parser = argparse.ArgumentParser(description="建立靈犀注音 macOS 套件；不安裝、不上傳")
     parser.add_argument("--release-docs", required=True, type=Path, help="外部文件目錄，須含 INSTALL.md、PRIVACY.md、UPDATING.md")
     parser.add_argument("--data", required=True, type=Path, help="配對的系統字典目錄（" + "、".join(DATA_FILES) + "）")
-    parser.add_argument("--neural", type=Path, help="prepare_neural.py --platform macos-arm64 產生的 neural/ 目錄")
-    parser.add_argument("--settings", type=Path, help="scripts/build_settings_macos.py 產生的目錄（0c-settings.app 與 NOTICES.txt）；省略則不內附設定程式")
+    parser.add_argument("--arch", choices=sorted(MACHO), default="arm64", help="arm64（Apple Silicon）或 amd64（Intel）")
+    parser.add_argument("--neural", type=Path, help="prepare_neural.py --platform macos-<arch> 產生的 neural/ 目錄")
+    parser.add_argument("--settings", type=Path, help="scripts/build_settings_macos.py --arch 同架構產生的目錄（0c-settings.app 與 NOTICES.txt）；省略則不內附設定程式")
     parser.add_argument("--version", required=True)
     parser.add_argument("--preview", action="store_true", help="產生明確標示為內部驗證的套件")
     parser.add_argument("--e2etest", action="store_true", help="E2E 測試版：0c-update 以 -tags e2etest 建置（信任測試金鑰與測試 CA）；須搭配 --preview")

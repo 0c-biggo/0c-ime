@@ -2,7 +2,7 @@ ROOT := ../..
 BUILD := build
 APP := $(BUILD)/0c.app
 DATA_DIR ?= $(abspath $(ROOT)/build/data)
-# scripts/prepare_neural.py --platform macos-arm64 的輸出；空值則不內附神經模型（退回統計引擎）。
+# scripts/prepare_neural.py --platform macos-<arm64|amd64> 的輸出；空值則不內附神經模型（退回統計引擎）。
 NEURAL_DIR ?=
 # App 內附的 0c-update（自動更新排程以 SMAppService 執行它，見 Sources/UpdateAgent.swift）；空值則不內附排程。
 UPDATER ?=
@@ -13,7 +13,9 @@ SETTINGS_APP ?=
 # 排程喚起間隔（秒）；查詢頻率由協調器決定。E2E 建置用 60。
 AGENT_INTERVAL ?= 900
 SWIFTC ?= xcrun swiftc
-SWIFTFLAGS := -swift-version 5 -O -target $(shell uname -m)-apple-macosx13.0
+# 目標架構：arm64 或 x86_64（Apple Silicon 交叉編譯 Intel 版）；0c-server 照 GOARCH 編，由 scripts/package_macos.py 一起設定。
+ARCH ?= $(shell uname -m)
+SWIFTFLAGS := -swift-version 5 -O -target $(ARCH)-apple-macosx13.0
 SHARED := Sources/Protocol.swift Sources/MarkedText.swift Sources/EngineClient.swift Sources/KeyMapping.swift Sources/ModelStatus.swift Sources/CaretGeometry.swift Sources/RequestQueue.swift Sources/SecureInputPolicy.swift Sources/RightShift.swift
 
 .PHONY: all app server test test-controller-recovery test-request-queue test-input-source test-retire test-ui test-update-ui test-update-notification test-settings-launcher data-basic install clean icon

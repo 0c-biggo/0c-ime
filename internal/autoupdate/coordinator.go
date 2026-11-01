@@ -48,20 +48,29 @@ var ErrTargetChanged = errors.New("待辦版本已變更，請從更新選單確
 // LiveShellPlatform 支援在登入中的桌面安全重載外殼。
 type LiveShellPlatform interface{ ReloadsShell() bool }
 
-// ShellActivationChecker 核對需要重新登入的平台是否已跨過外殼安裝邊界。
-// 新引擎開始服務不代表同一工作階段的舊 DLL 已卸載。
+// ShellActivationChecker 核對外殼是否已生效。需要重新登入的平台（macOS）核對是否已跨過外殼安裝邊界；
+// 不等重新登入的平台（ShellWithoutRelogin）只核對收據是這一版，讀得到而版本不同時回 (false, nil)。
 type ShellActivationChecker interface {
 	ShellReady(context.Context, string) (bool, error)
 }
 
 // ShellLoadProver 表示平台的 ShellReady 已核對沒有舊外殼在執行（macOS：輸入法程序都對應新版執行檔），
-// 不只是跨過登入邊界（Windows 只比登入時間）。只有這種平台，引擎閒置結束時也可以算生效。
+// 不只是跨過登入邊界。只有這種平台，引擎閒置結束時也可以算生效。
 type ShellLoadProver interface{ ShellLoadProven() bool }
 
-// PendingShellEngineHandover：外殼要重新登入才全面生效，引擎卻可以先換（Windows：舊 DLL 留在執行中的
-// 應用程式裡，但它們和核心更新一樣能連新引擎）。0.2.0 起引擎常駐不閒置結束（#120），不換的話舊引擎
-// 會跑到登出，介面已是新版、引擎卻不支援新功能。macOS（#77／#98 自己的路徑）與 Linux（登入中重載外殼）不實作。
-type PendingShellEngineHandover interface{ HandsOverEngineBeforeRelogin() bool }
+// ShellWithoutRelogin：外殼裝好就算數、不等重新登入的平台（Windows，#253）。之後開啟的應用程式載入新版 DLL，
+// 已經開著的留在舊 DLL 照常打字（舊 DLL 和核心更新一樣能連新引擎），重新開啟才換成新版；檔案總管這類關不掉的宿主
+// 留到登出也不影響打字。所以要核對的只有兩件事：收據是這一版（ShellReady）、新引擎接手了。0.2.0 起引擎常駐不閒置
+// 結束（#120），舊引擎不換的話介面已是新版、引擎卻不支援新功能，這時不能報完成。macOS（#77／#98 自己的路徑）與
+// Linux（登入中重載外殼）不實作。
+type ShellWithoutRelogin interface{ ShellActiveWithoutRelogin() bool }
+
+// 外殼已裝好、新引擎還沒接手時的受阻說明（Windows）。設定程式與工作列選單直接顯示這幾段文字。
+const (
+	ShellEngineBusyDetail   = "已安裝，完成組字後換成新版引擎，不必登出"
+	ShellEngineIdleDetail   = "已安裝，閒置時換成新版引擎，不必登出"
+	ShellEngineFailedDetail = "已安裝，但新版引擎還沒接手，稍後會再試"
+)
 
 // ShellRecoverer 在模式／閒置判斷之前收尾已開始的外殼交易。
 type ShellRecoverer interface {
@@ -71,6 +80,11 @@ type ShellRecoverer interface {
 func (c *Coordinator) liveShell() bool {
 	p, ok := c.Platform.(LiveShellPlatform)
 	return ok && p.ReloadsShell()
+}
+
+func (c *Coordinator) shellWithoutRelogin() bool {
+	p, ok := c.Platform.(ShellWithoutRelogin)
+	return ok && p.ShellActiveWithoutRelogin() && !c.liveShell()
 }
 
 // Conditions 是切換前觀察到的使用狀態；Known 為 false 表示平台無法判斷。
@@ -224,6 +238,27 @@ func (c *Coordinator) Check(ctx context.Context) (*State, error) {
 	return s, c.save(s)
 }
 
+// ConfirmShell 只核對已裝好的外殼（不查詢、不安裝、不交接引擎）：登入工作與每日修復由新版更新器執行時順手清掉舊版
+// 更新器留下的待生效（Windows，#253：0.2.7 按「立即安裝」時，寫狀態的是舊的穩定更新器）。協調器忙碌時回
+// ErrUpdateInProgress，由呼叫端決定要不要再等。
+func (c *Coordinator) ConfirmShell(ctx context.Context) (*State, error) {
+	c.defaults()
+	unlock, err := waitLock(ctx, c.Base, "coordinator.lock")
+	if err != nil {
+		if errors.Is(err, ErrLocked) {
+			return nil, ErrUpdateInProgress
+		}
+		return nil, err
+	}
+	defer unlock()
+	s, err := Load(c.Base)
+	if err != nil {
+		return nil, err
+	}
+	c.confirmPendingShell(ctx, s, c.Now())
+	return s, c.save(s)
+}
+
 func (c *Coordinator) consentMatches(s *State) bool {
 	if c.ConsentVersion == "" && c.ConsentSHA256 == "" {
 		return true
@@ -258,8 +293,11 @@ func (c *Coordinator) step(ctx context.Context, s *State) error {
 	// 手動模式與暫停中也照做：已經裝好的外殼重新登入後就該顯示生效（#98）。
 	activatedShell := c.confirmPendingShell(ctx, s, now)
 	if !activatedShell {
-		// 外殼還在等重新登入：引擎先換成新版（Windows），手動模式與暫停中也做——這是完成已裝好的更新，不是新安裝。
-		c.handOverPendingShellEngine(ctx, s, now)
+		// 外殼裝好了、新引擎還沒接手（Windows）：現在換，手動模式與暫停中也做——這是完成已裝好的更新，不是新安裝。
+		activatedShell = c.handOverPendingShellEngine(ctx, s, now, true)
+	}
+	if !activatedShell {
+		c.handOverStaleEngine(ctx, s, now)
 	}
 	if !c.Consent && !c.Force && (s.Mode == ModeManual || now.Before(s.PausedUntil)) {
 		return nil
@@ -374,8 +412,9 @@ func (c *Coordinator) discover(ctx context.Context, s *State, now time.Time) {
 	if s.Target != nil && s.Target.Version == feed.Version && s.Target.SHA256 == asset.SHA256 {
 		return
 	}
-	if s.Target != nil && s.Target.Kind == "shell" && s.Stage == StagePending && asset.Kind == "core" {
+	if s.Target != nil && s.Target.Kind == "shell" && s.Stage == StagePending && asset.Kind == "core" && !c.shellWithoutRelogin() {
 		// 外殼尚未完成重登時，核心更新不能抹掉這項待辦；較新的完整外殼仍可取代它。
+		// 不等重新登入的平台不擋：待辦只剩新引擎接手，核心更新自己會交接並核對引擎。
 		if p, ok := c.Platform.(ShellActivationChecker); ok {
 			_, err := p.ShellReady(ctx, s.Target.Version)
 			c.awaitShell(s, now, err)
@@ -385,6 +424,9 @@ func (c *Coordinator) discover(ctx context.Context, s *State, now time.Time) {
 	// 新版本（或同版本不同資產）取代舊目標；受阻起算時間保留。
 	if s.Target != nil {
 		s.record(now, "superseded", s.Target.Version, feed.Version)
+		if s.Stage == StagePending && s.Target.Kind == "shell" && c.shellWithoutRelogin() {
+			s.unblock() // 「已安裝，閒置時換成新版引擎」說的是被取代的那一版
+		}
 		// 舊目標可能已切換但未確認（中途被中止）：先撤銷，新目標的原指標才會是確認過的版本。
 		if s.Switched {
 			if err := c.Platform.RevertCore(s.Prepared); err != nil {
@@ -531,9 +573,17 @@ func (c *Coordinator) apply(ctx context.Context, s *State, now time.Time) {
 			s.record(now, "installed", s.Target.Version, "pending")
 		default:
 			s.Stage = StagePending
-			if c.liveShell() {
+			switch {
+			case c.liveShell():
 				c.activate(s, now)
-			} else {
+			case c.shellWithoutRelogin():
+				s.record(now, "installed", s.Target.Version, "")
+				c.confirm(ctx, s, now)
+				// 安裝程式剛請舊引擎交接過，還是舊引擎就是還在組字，不再等一輪；登入工作還沒叫起新引擎時在這裡核對。
+				if s.Target != nil {
+					c.handOverPendingShellEngine(ctx, s, now, false)
+				}
+			default:
 				c.confirm(ctx, s, now)
 			}
 		}
@@ -595,6 +645,10 @@ func (c *Coordinator) confirm(ctx context.Context, s *State, now time.Time) {
 		c.apply(ctx, s, now)
 		return
 	}
+	if s.Target.Kind == "shell" && c.shellWithoutRelogin() {
+		c.confirmInstalledShell(ctx, s, now)
+		return
+	}
 	shellConfirmed := false
 	if s.Target.Kind == "shell" {
 		if p, ok := c.Platform.(ShellActivationChecker); ok {
@@ -652,51 +706,135 @@ func (c *Coordinator) confirmPendingShell(ctx context.Context, s *State, now tim
 	return s.Target == nil && s.Stage == StageActive
 }
 
-// handOverPendingShellEngine：外殼已安裝、等重新登入（StagePending），執行中的引擎還不是目標版本時，
-// 比照核心更新在安全時機請它交接（Drain），再啟動指標所指的新版並以 health 核對。典型情境是 dev.64 的
-// 舊穩定更新器背景裝好 0.2.0：安裝由舊程式執行、不會交接，新的穩定更新器下一次喚起時在這裡補上。
-// 外殼本身仍要重新登入才生效：狀態維持 needs_relogin、不 activate，引擎版本對了也不算外殼生效。
-// 仍在組字（Drain 失敗）或不是安全時機就照舊等登出，下一次喚起再試；新引擎版本不符只記錄，不回復外殼。
-func (c *Coordinator) handOverPendingShellEngine(ctx context.Context, s *State, now time.Time) {
-	if s.Target == nil || s.Target.Kind != "shell" || s.Stage != StagePending || c.liveShell() {
-		return
-	}
-	if p, ok := c.Platform.(PendingShellEngineHandover); !ok || !p.HandsOverEngineBeforeRelogin() {
-		return
+// confirmInstalledShell（不等重新登入的平台）：收據是這一版、執行中的引擎也是這一版就算完成。只核對，不交接；
+// 舊引擎還在跑時不能報完成，留在待完成（可能是 needs_relogin：舊版更新器寫的，在這裡換掉）。
+// 收據已不是這一版（裝好後又回復、解除安裝）時這個待辦不會再完成，清掉；下一次查詢照常再提供新版。
+func (c *Coordinator) confirmInstalledShell(ctx context.Context, s *State, now time.Time) {
+	if p, ok := c.Platform.(ShellActivationChecker); ok {
+		installed, err := p.ShellReady(ctx, s.Target.Version)
+		if err != nil {
+			s.block(now, "install_unknown", err.Error())
+			return
+		}
+		if !installed {
+			s.record(now, "superseded", s.Target.Version, "收據已不是這一版")
+			if err := c.drop(s); err != nil {
+				s.block(now, "revert_failed", err.Error())
+			}
+			return
+		}
 	}
 	version, running, err := c.Platform.Running(ctx)
-	if err != nil || !running || version == s.Target.Version {
+	if err == nil && running && version == s.Target.Version {
+		c.activate(s, now)
 		return
 	}
-	var relogin *Blocked
-	if s.Blocked != nil && s.Blocked.Reason == "needs_relogin" {
-		b := *s.Blocked
-		relogin = &b
-	}
-	defer func() { // safe 會改成 waiting_idle 等原因；外殼仍是等重新登入
-		if relogin != nil {
-			s.Blocked = relogin
-		} else {
-			c.awaitShell(s, now, nil)
+	if s.Blocked != nil {
+		switch s.Blocked.Reason {
+		case "engine_busy", "engine_handover_failed", "waiting_idle":
+			return // 上一次交接留下的原因還是對的
 		}
-	}()
-	if !c.safe(ctx, s, now) {
-		return
 	}
-	if err := c.Platform.Drain(ctx); err != nil {
-		recordOnce(s, now, "engine_handover_waiting", s.Target.Version, err.Error())
-		return
+	s.block(now, "waiting_idle", ShellEngineIdleDetail)
+}
+
+// quietForHandover：現在適合請引擎交接嗎（電量足夠、使用者閒置或親自要求）。不留受阻原因，呼叫端自己決定怎麼說。
+func (c *Coordinator) quietForHandover() bool {
+	cond := c.Platform.Conditions()
+	if cond.BatteryKnown && !cond.Charging && cond.Battery < c.SwitchBatt {
+		return false
+	}
+	return c.Consent || (cond.IdleKnown && cond.Idle >= c.IdleNeeded)
+}
+
+// handOverPendingShellEngine（不等重新登入的平台）：外殼已裝好（StagePending）、執行中的引擎還不是目標版本時，比照
+// 核心更新在安全時機請它交接（Drain），再啟動新版並以 health 核對，核對到才算完成，回傳是否因此完成。典型情境是舊的
+// 穩定更新器裝好新版：安裝由舊程式執行、不會交接，新的穩定更新器下一次喚起時在這裡補上；組字中安裝時也是。
+// drain 為 false 表示呼叫端剛等過交接（安裝程式），還是舊引擎就留給下一次喚起。
+// 仍在組字或不是安全時機就照實等，下一次喚起再試；新引擎起不來或版本不符只記錄，不回復外殼。
+func (c *Coordinator) handOverPendingShellEngine(ctx context.Context, s *State, now time.Time, drain bool) bool {
+	if s.Target == nil || s.Target.Kind != "shell" || s.Stage != StagePending || !c.shellWithoutRelogin() {
+		return false
+	}
+	if s.Blocked != nil && s.Blocked.Reason == "install_unknown" {
+		return false // 收據讀不到：不知道裝了什麼，不動引擎
+	}
+	version, running, err := c.Platform.Running(ctx)
+	if err != nil || (running && version == s.Target.Version) {
+		return false
+	}
+	if running {
+		if !drain {
+			s.block(now, "engine_busy", ShellEngineBusyDetail)
+			return false
+		}
+		if !c.quietForHandover() {
+			if s.Blocked == nil || s.Blocked.Reason != "engine_busy" {
+				s.block(now, "waiting_idle", ShellEngineIdleDetail)
+			}
+			return false
+		}
+		if err := c.Platform.Drain(ctx); err != nil {
+			recordOnce(s, now, "engine_handover_waiting", s.Target.Version, err.Error())
+			s.block(now, "engine_busy", ShellEngineBusyDetail)
+			return false
+		}
 	}
 	if err := c.Platform.StartEngine(ctx); err != nil {
 		recordOnce(s, now, "engine_handover_failed", s.Target.Version, err.Error())
-		return
+		s.block(now, "engine_handover_failed", ShellEngineFailedDetail)
+		return false
 	}
 	got, running, err := c.Platform.Running(ctx)
 	if err != nil || !running || got != s.Target.Version {
 		recordOnce(s, now, "engine_handover_failed", s.Target.Version, fmt.Sprintf("運作版本 %q：%v", got, err))
+		s.block(now, "engine_handover_failed", ShellEngineFailedDetail)
+		return false
+	}
+	s.record(now, "engine_handed_over", got, "")
+	c.activate(s, now)
+	return true
+}
+
+// handOverStaleEngine（不等重新登入的平台）：沒有裝好待完成的外殼，執行中的引擎卻不是已安裝的版本。安裝精靈、一行
+// 安裝或回復時正在組字就會這樣：沒有協調器的待辦，舊引擎沒人換就會留到登出。閒置時換掉。等確認的新版、切換中的核心
+// 更新與待重新啟動的引擎都不受影響，受阻原因也不動。這次沒換成時把原因留在 StaleEngine，通知照實說。
+func (c *Coordinator) handOverStaleEngine(ctx context.Context, s *State, now time.Time) {
+	if !c.shellWithoutRelogin() || s.Switched || s.RestartPending || (s.Target != nil && s.Stage == StagePending) {
 		return
 	}
-	s.record(now, "engine_handed_over", got, "外殼重新登入後生效")
+	installed, err := c.Platform.Installed()
+	if err != nil || installed == "" {
+		return
+	}
+	version, running, err := c.Platform.Running(ctx)
+	if err != nil || !running || version == "" || version == installed {
+		return
+	}
+	if !c.quietForHandover() {
+		s.StaleEngine = ShellEngineIdleDetail
+		if c.Consent {
+			s.StaleEngine = ShellEngineFailedDetail // 使用者要現在換，擋住的只會是電量：不是閒置就換得了的事
+		}
+		return
+	}
+	if err := c.Platform.Drain(ctx); err != nil {
+		recordOnce(s, now, "engine_handover_waiting", installed, err.Error())
+		s.StaleEngine = ShellEngineBusyDetail
+		return
+	}
+	if err := c.Platform.StartEngine(ctx); err != nil {
+		recordOnce(s, now, "engine_handover_failed", installed, err.Error())
+		s.StaleEngine = ShellEngineFailedDetail
+		return
+	}
+	got, running, err := c.Platform.Running(ctx)
+	if err != nil || !running || got != installed {
+		recordOnce(s, now, "engine_handover_failed", installed, fmt.Sprintf("運作版本 %q：%v", got, err))
+		s.StaleEngine = ShellEngineFailedDetail
+		return
+	}
+	s.record(now, "engine_handed_over", got, "")
 }
 
 // recordOnce：每次喚起都可能重試的交接，同一版本、同一種結果連續發生時只記一次，不把歷程裡的安裝與生效紀錄擠掉。

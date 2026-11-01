@@ -127,6 +127,11 @@ try {
     Run $Setup '/S'
     $receipt = Get-Content "$base\install-receipt.json" -Raw | ConvertFrom-Json
     $report.version = $receipt.version
+    # 2) 登入工作帶起候選窗程式（#243）：選單只能經 0c-ui 執行命令，不必先打字。不從提權的安裝程式直接啟動。
+    $uiExe = [IO.Path]::GetFullPath("$base\$($receipt.directory)\0c-ui.exe")
+    $deadline = (Get-Date).AddSeconds(30); $ui = $null
+    while (-not $ui -and (Get-Date) -lt $deadline) { $ui = Get-Process 0c-ui -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $uiExe } | Select-Object -First 1; if (-not $ui) { Start-Sleep -Milliseconds 300 } }
+    Check ([bool]$ui) 'the login task starts the candidate UI after installing' $uiExe
     $program = [IO.Path]::GetFullPath("$base\$($receipt.directory)\0c-settings.exe")
     $stable = "$base\bin\0c-update.exe"
     Check ($receipt.files.'0c-settings.exe' -match '^[0-9a-f]{64}$') 'receipt records the settings program hash'
@@ -162,7 +167,7 @@ try {
     $toggleResult = Get-Content $toggleOut -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
     Check ($toggleResult -match 'toggled=true') 'the switch in the settings window can be pressed' $toggleResult
     $changed = Get-Content $settingsFile -Raw -Encoding UTF8 | ConvertFrom-Json
-    Check ($changed.document_context -eq $false -and $changed.schema -eq 1) 'pressing the switch wrote settings.json through the contract' ($changed | ConvertTo-Json -Compress)
+    Check ($changed.document_context -eq $false -and $changed.schema -ge 1) 'pressing the switch wrote settings.json through the contract' ($changed | ConvertTo-Json -Compress)
     Shot 'windows-after-toggle.png' | Out-Null
     $toggleOut = Join-Path $ResultDir 'toggle-2.txt'
     Interactive ("& '$PSScriptRoot\settings-ui-toggle.ps1' -Page '選字' -Switch '依前文選字' -Out '$toggleOut'") 120

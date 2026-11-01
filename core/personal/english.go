@@ -190,6 +190,11 @@ func (m *Model) EnglishKnown(text string) bool {
 	return ok && !m.Store.Tombstones[key] && e.at(m.Store.Time).eligible()
 }
 
+// EnglishKnownAs 是 EnglishKnown，而且最後學到的拼法（含大小寫）就是 text。
+func (m *Model) EnglishKnownAs(text string) bool {
+	return m.EnglishKnown(text) && m.Store.English[strings.ToLower(text)].Text == text
+}
+
 func englishRank(cs []english.Candidate, limit int) []english.Candidate {
 	slices.SortFunc(cs, func(a, b english.Candidate) int {
 		if a.Distance < b.Distance {

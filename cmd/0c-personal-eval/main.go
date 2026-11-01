@@ -289,7 +289,7 @@ func printStats(s *personal.Store) {
 	}{
 		{"Bi", len(s.Bi), s.Bi}, {"Ctx", len(s.Ctx), s.Ctx}, {"Uni", len(s.Uni), s.Uni}, {"Uses", len(s.Uses), s.Uses},
 		{"EvidenceByContext", len(s.EvidenceByContext), s.EvidenceByContext}, {"EvidenceByWord", len(s.EvidenceByWord), s.EvidenceByWord},
-		{"Corrections", len(s.Corrections), s.Corrections}, {"PhraseSeen", len(s.PhraseSeen), s.PhraseSeen}, {"Phrases", len(s.Phrases), s.Phrases},
+		{"Confirmed", len(s.Confirmed), s.Confirmed}, {"ZhuyinKeys", len(s.ZhuyinKeys), s.ZhuyinKeys}, {"Corrections", len(s.Corrections), s.Corrections}, {"PhraseSeen", len(s.PhraseSeen), s.PhraseSeen}, {"Phrases", len(s.Phrases), s.Phrases},
 		{"Readings", len(s.Readings), s.Readings}, {"Picked", len(s.Picked), s.Picked}, {"Tombstones", len(s.Tombstones), s.Tombstones},
 		{"Rejects", len(s.Rejects), s.Rejects},
 	}

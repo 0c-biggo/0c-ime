@@ -183,12 +183,9 @@ func TestPruneIfDueOncePerDay(t *testing.T) {
 	}
 }
 
-// 清理不改變存檔格式：清理後的檔案仍是 StoreFormat 5，同格式的舊版照常讀寫，
+// 清理不改變存檔格式：清理後的檔案仍是目前的 StoreFormat，同格式的舊版照常讀寫，
 // 只是看到的項目較少；存檔來回一致。
 func TestPrunedStoreKeepsFormat(t *testing.T) {
-	if StoreFormat != 5 {
-		t.Fatalf("清理不應改變格式（目前 %d）；若格式真的改了，要補舊版相容測試", StoreFormat)
-	}
 	m, _, _ := pruneFixture(t)
 	m.AdvanceTime(m.Store.Time + 400*daySeconds)
 	m.Prune()

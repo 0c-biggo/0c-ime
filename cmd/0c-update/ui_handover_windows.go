@@ -5,7 +5,9 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 	"unsafe"
 
@@ -30,26 +32,98 @@ const (
 )
 
 // handOverUI：安裝、回復之後，以及登入工作、自動更新排程每次喚起時，請本工作階段裡不是目前版本的 0c-ui 在閒置時結束；
-// 新版由 DLL 下一次需要時啟動。沒有啟用中的安裝、或目前版本的 0c-ui.exe 不在（DLL 啟動不了新的）時不動。
+// 新版由登入工作馬上帶起（restartUI），否則由 DLL 下一次需要時啟動。沒有啟用中的安裝、或目前版本的 0c-ui.exe 不在
+// （DLL 啟動不了新的）時不動。
 func handOverUI(wait time.Duration) {
+	if retireOutdatedUI(wait) > 0 {
+		restartUI()
+	}
+}
+
+// retireOutdatedUI 回傳請走了幾個舊版 0c-ui。
+func retireOutdatedUI(wait time.Duration) int {
 	current, _ := installedFromReceipt(receiptPath(), basePath(), "0c-ui.exe")
 	if current == "" {
-		return
+		return 0
 	}
 	if _, err := os.Stat(current); err != nil {
-		return
+		return 0
 	}
-	retireAndReport(current, wait)
+	return retireAndReport(current, wait)
+}
+
+// uiRetiredByInstall：install 請走了舊版 0c-ui，等 afterInstall 換好穩定副本再帶起新版。
+var uiRetiredByInstall bool
+
+// retireUIForInstall（install）：只請舊版 0c-ui 結束。這時登入工作跑的還是舊的穩定副本：0.2.7 的 engine 不會啟動 0c-ui，
+// 只會先把引擎帶起來，之後 afterInstall 看到引擎在跑就不再叫工作，0c-ui 就一直起不來（#243）。
+func retireUIForInstall(wait time.Duration) {
+	if retireOutdatedUI(wait) > 0 {
+		uiRetiredByInstall = true
+	}
+}
+
+// restartRetiredUI（afterInstall 的最後）：穩定副本換新之後，請登入工作帶起 install 請走的 0c-ui。引擎還在組字、沒有交接時
+// 只有這裡會叫工作。ensureEngineService 剛叫過時工作不重複執行（IgnoreNew），它自己就會啟動 0c-ui。
+func restartRetiredUI() {
+	if uiRetiredByInstall {
+		uiRetiredByInstall = false
+		restartUI()
+	}
 }
 
 // stopUI（解除安裝）：這個安裝的 0c-ui 全部在閒置時結束。仍載入著 DLL 的應用程式在登出前還用得到時會再啟動它。
 func stopUI(wait time.Duration) { retireAndReport("", wait) }
 
-func retireAndReport(current string, wait time.Duration) {
-	_, left := retireUI(uiControlFor(), basePath(), current, wait)
+func retireAndReport(current string, wait time.Duration) int {
+	retired, left := retireUI(uiControlFor(), basePath(), current, wait)
 	if len(left) > 0 {
-		fmt.Println("候選窗程式（0c-ui.exe）正在使用中，沒有換成新版；閒置時會自動換新，或登出再登入即生效。")
+		fmt.Println("候選窗程式（0c-ui.exe）正在使用中，沒有換成新版；閒置時會自動換新，不必登出。")
 	}
+	return retired
+}
+
+// restartUI：舊版 0c-ui 結束後請登入工作帶起新版（#243）。工作列選單只能經 0c-ui 執行命令，新裝的 DLL 會自己啟動它，
+// 但還在執行中的應用程式載入的是舊 DLL，舊 DLL 連不上就什麼都不做，使用者要打一個字才恢復；沙箱宿主也啟動不了。
+// 這裡可能是提權的安裝程式或低優先順序的自動更新工作，不直接啟動（理由同 startResidentEngine），一律交給登入工作。
+// 測試替換用：go test 不執行這台機器上的登入工作。
+var restartUI = func() {
+	if taskExists(engineTaskName()) {
+		_ = runEngineTask()
+	}
+}
+
+// ensureUI（登入工作，一般權限、一般優先順序）：這個工作階段沒有 0c-ui 時啟動目前版本。
+// 已經有一個就不動，還在忙的舊版由 handOverUI 下次處理；同時啟動時第二個會因單一實例自己退出。
+func ensureUI() {
+	current, _ := installedFromReceipt(receiptPath(), basePath(), "0c-ui.exe")
+	if current == "" || elevatedOK() {
+		return
+	}
+	if _, err := os.Stat(current); err != nil {
+		return
+	}
+	if len(uiControlFor().list()) > 0 {
+		return
+	}
+	if err := startUI(current); err != nil {
+		fmt.Fprintln(os.Stderr, "0c-update: 候選窗程式沒有啟動：", err)
+	}
+}
+
+// startUI 脫離工作排程器的 job 啟動 0c-ui，工作結束時不帶走它（同 spawnEngine）。測試替換用。
+var startUI = func(exe string) error {
+	const flagsBase = windows.CREATE_NO_WINDOW | windows.NORMAL_PRIORITY_CLASS
+	var err error
+	for _, flags := range []uint32{flagsBase | createBreakawayFromJob, flagsBase} {
+		cmd := exec.Command(exe)
+		cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: flags, HideWindow: true}
+		if err = cmd.Start(); err == nil {
+			go cmd.Wait()
+			return nil
+		}
+	}
+	return err
 }
 
 // uiControlFor 測試替換用：go test 不關這台機器上真的候選窗程式（isolate_windows_test.go）。
@@ -159,5 +233,6 @@ func waitProcessExit(p uiProcess, wait time.Duration) bool {
 	return err == nil && ev == windows.WAIT_OBJECT_0
 }
 
-// shellPendingAfterInstall：TSF DLL 留在執行中的應用程式裡，外殼要重新登入才全面載入。
-func shellPendingAfterInstall() bool { return true }
+// shellPendingAfterInstall：外殼裝好不等重新登入（#253）。TSF DLL 留在已經開著的應用程式裡照常打字，重新開啟才換成
+// 新版；協調器接著核對收據與新引擎（ShellActiveWithoutRelogin）。
+func shellPendingAfterInstall() bool { return false }

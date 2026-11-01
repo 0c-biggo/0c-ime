@@ -18,6 +18,15 @@ use crate::displayattr::{style_ranges, StyledRange, KINDS};
 use crate::log::{zdebug, zlog};
 use crate::session::Snapshot;
 
+static NUL: [u16; 1] = [0];
+
+/// 傳給 TSF 的「沒有文字」：長度 0、但指標真的指向一個 NUL。Rust 的 `&[]` 是非空的懸空指標（u16 是 0x2），windows-rs 會
+/// 原樣傳下去，msctf 再原樣交給宿主的文字儲存；宿主照 C++ 的習慣先讀 *pchText 就當掉。《二之國：交錯世界》（UE4）第一個
+/// 組字鍵的 InsertTextAtSelection 就這樣崩潰：畫面凍結、CrashSight 上傳後遊戲被關掉（#210）。
+fn no_text() -> &'static [u16] {
+    &NUL[..0]
+}
+
 #[implement(ITfEditSession)]
 pub struct Apply {
     ctx: ITfContext,
@@ -321,7 +330,7 @@ impl Apply {
             return Ok(c);
         }
         let insert: ITfInsertAtSelection = self.ctx.cast()?;
-        let range = insert.InsertTextAtSelection(ec, TF_IAS_QUERYONLY, &[])?;
+        let range = insert.InsertTextAtSelection(ec, TF_IAS_QUERYONLY, no_text())?;
         let contexts: ITfContextComposition = self.ctx.cast()?;
         let comp = contexts.StartComposition(ec, &range, &self.sink)?;
         *self.composition.borrow_mut() = Some(comp.clone());
@@ -475,7 +484,7 @@ impl Apply {
             let existing = self.composition.borrow().clone();
             if let Some(comp) = existing {
                 let range = comp.GetRange()?;
-                range.SetText(ec, 0, &[])?;
+                range.SetText(ec, 0, no_text())?;
                 self.end(ec, &comp)?;
             }
             // 空組字也能開 Emoji 選單、提交後也可能有提示：沒有組字範圍，從目前選取的插入點取得位置。
@@ -559,6 +568,8 @@ mod tests {
         selections: Cell<u32>,
         /// GetStatus 的 dwDynamicFlags（欄位政策看 TF_SD_READONLY）。
         dynamic: Cell<u32>,
+        /// 外殼交給宿主的文字指標（InsertTextAtSelection、SetText）；宿主可能真的去讀（#210）。
+        text_args: RefCell<Vec<(usize, i32)>>,
     }
 
     struct Span {
@@ -593,6 +604,7 @@ mod tests {
             Ok(())
         }
         fn SetText(&self, _: u32, _: u32, text: &PCWSTR, cch: i32) -> windows_core::Result<()> {
+            self.doc.text_args.borrow_mut().push((text.0 as usize, cch));
             let failure = self.doc.fail_set_text.take();
             if let Some(SetTextFailure::Dropped) = failure {
                 return Err(E_FAIL.into());
@@ -804,9 +816,10 @@ mod tests {
             &self,
             _: u32,
             _: INSERT_TEXT_AT_SELECTION_FLAGS,
-            _: &PCWSTR,
-            _: i32,
+            text: &PCWSTR,
+            cch: i32,
         ) -> windows_core::Result<ITfRange> {
+            self.doc.text_args.borrow_mut().push((text.0 as usize, cch));
             let at = self.doc.caret.get();
             Ok(range(&self.doc, span(at, at)))
         }
@@ -905,6 +918,7 @@ mod tests {
             extents: Cell::new(0),
             selections: Cell::new(0),
             dynamic: Cell::new(0),
+            text_args: RefCell::new(Vec::new()),
         });
         let ctx = ComObject::new(FakeContext { doc: doc.clone() }).into_interface();
         (doc, ctx)
@@ -938,6 +952,36 @@ mod tests {
 
     fn text(doc: &Doc) -> String {
         String::from_utf16(&doc.text.borrow()).unwrap()
+    }
+
+    #[test]
+    fn empty_text_is_never_a_dangling_pointer_to_the_host() {
+        // #210：《二之國：交錯世界》（UE4）讀 InsertTextAtSelection 的 pchText，傳 `&[]` 的 0x2 當場當掉。
+        // 開始組字（查詢插入點）與清掉組字（SetText 空字串）都是長度 0，指標都要讀得到 NUL。
+        let (doc, ctx) = host(Sync::Run);
+        let started = preedit(&ctx, 2);
+        let sink: ITfCompositionSink = ComObject::new(NullSink).into_interface();
+        let cleared = Snapshot { ok: true, handled: true, ..Default::default() };
+        let applied = apply(
+            &ctx,
+            1,
+            started.composition,
+            sink,
+            &cleared,
+            [0; KINDS.len()],
+            None,
+            Rc::new(Cell::new(false)),
+            false,
+        );
+        assert!(applied.composition.is_none());
+        assert_eq!(text(&doc), "前");
+        let args = doc.text_args.borrow();
+        let empty: Vec<usize> = args.iter().filter(|(_, cch)| *cch == 0).map(|(ptr, _)| *ptr).collect();
+        assert_eq!(empty.len(), 2, "{args:?}");
+        for ptr in empty {
+            assert!(ptr >= 0x10000, "懸空指標 {ptr:#x}");
+            assert_eq!(unsafe { *(ptr as *const u16) }, 0);
+        }
     }
 
     #[test]

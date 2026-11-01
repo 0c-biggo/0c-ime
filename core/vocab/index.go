@@ -27,6 +27,7 @@ func (s *Set) reindex() {
 	s.index = node{}
 	s.byText = map[string]int{}
 	s.english = nil
+	s.englishWords = nil
 	s.problems = nil
 	s.longest = 0
 	for i, w := range s.f.Words {
@@ -53,6 +54,7 @@ func (s *Set) reindex() {
 				s.english = map[string]bool{}
 			}
 			s.english[w.Text] = true
+			s.englishWords = append(s.englishWords, w.Text)
 			continue
 		}
 		for _, key := range norm.Readings {
@@ -162,6 +164,25 @@ func (s *Set) HasEnglishPrefix(raw string) bool {
 		}
 	}
 	return false
+}
+
+// EnglishPrefix 列出以 raw 開頭的英文詞（含恰好相等），給英文模式補字用（#247）：前綴不分大小寫，
+// 回傳照詞條字面（pc → pCloud）。短的在前，同長度照檔案順序。limit 大於 0 時至多回傳 limit 筆。
+func (s *Set) EnglishPrefix(raw string, limit int) []string {
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for _, w := range s.englishWords {
+		if len(w) >= len(raw) && strings.EqualFold(w[:len(raw)], raw) {
+			out = append(out, w)
+		}
+	}
+	slices.SortStableFunc(out, func(a, b string) int { return len(a) - len(b) })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
 }
 
 // EnglishLen 回報有效的英文詞數。

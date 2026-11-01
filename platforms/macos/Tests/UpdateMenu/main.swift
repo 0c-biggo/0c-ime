@@ -39,7 +39,7 @@ do {
     precondition(throttledCalls == 2, "the menu refreshes again once the cached status is old enough")
 }
 receive(#"{"installed":"0.1.0-dev.40","mode":"ask","stage":"prepared","target":{"version":"0.1.0-dev.41","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","kind":"shell"},"blocked":{"reason":"needs_consent"},"action":"finish"}"#)
-precondition(item("下載後詢問").state == .on && item("自動更新").state == .off, "show actual persisted mode")
+precondition(item("更新方式：下載後詢問").state == .on && item("更新方式：自動（建議）").state == .off, "show actual persisted mode")
 let install = item("立即安裝 0.1.0-dev.41")
 precondition(app.sendAction(install.action!, to: install.target, from: install), "NSMenu action must reach its target")
 precondition(calls.last == UpdateMenuMonitor.finishCommand(version: "0.1.0-dev.41", sha256: String(repeating: "a", count: 64)) && monitor.busy, "finish must invoke updater and mark busy")
@@ -74,7 +74,7 @@ app.sendAction(resume.action!, to: resume.target, from: resume)
 precondition(calls.last == ["resume"], "resume invokes only resume")
 completion?(.success(Data())); pump()
 receive(#"{"installed":"0.1.0-dev.41","mode":"manual","stage":"idle"}"#)
-precondition(item("手動更新").state == .on && item("暫停更新 7 天").representedObject as? [String] == ["pause", "7"], "manual mode and pause remain accessible")
+precondition(item("更新方式：手動檢查").state == .on && item("暫停更新 7 天").representedObject as? [String] == ["pause", "7"], "manual mode and pause remain accessible")
 // IMKit 把選取的項目包在 infoDictionary 裡傳給動作，直接當 NSMenuItem 用會什麼都不做。
 let picked = item("檢查更新")
 precondition(UpdateMenuMonitor.selectedItem(from: ["IMKCommandMenuItem": picked, "IMKMenuTitle": "x"] as [String: Any]) === picked, "unwrap IMKit's infoDictionary")

@@ -94,7 +94,7 @@
   const MODEL_REASON = {
     missing_runtime: '（缺少系統元件：Visual C++ 執行階段）', timeout: '（模型載入逾時）', failed: '（模型程式無法啟動）',
   };
-  const MODE = { auto: '自動保持最新', ask: '下載後詢問', manual: '手動' };
+  const updateMode = () => window.ZcUpdateMode(state.status?.mode, state.info?.platform);
   // 由系統套件管理員更新（#181，Linux 發行版的套件）：0c-update 不檢查、不下載、不安裝，這裡也不提供這些按鈕。
   const packageManaged = () => state.status?.updates === 'package-manager';
   const PACKAGE_MANAGED = '由系統套件管理員更新';
@@ -104,14 +104,14 @@
     withdrawn: '該版本已撤回', failed: '該版本在這台電腦上檢查失敗過，已暫停',
   };
   const STAGE = {
-    found: '可立即下載，也可等候自動更新', downloaded: '已下載，等待準備', prepared: '已下載並核對完成，可立即安裝',
-    pending: '已安裝，重新登入後生效', failed: '該版本檢查失敗，已暫停',
+    found: '可立即下載，也可等候背景下載', downloaded: '已下載，等待準備', prepared: '已下載並核對完成，可立即安裝',
+    failed: '該版本檢查失敗，已暫停',
   };
   const BLOCKED = {
     needs_consent: '等待你確認安裝', engine_busy: '正在組字，閒置時才會更新', needs_relogin: '重新登入後生效',
     install_failed: '安裝沒有完成', health_failed: '新版檢查失敗，已回復原版',
   };
-  // 與 internal/autoupdate 的 OldShellDetail 相同：重新登入後系統仍開著更新前留下的舊版輸入法（#98）。
+  // 與 internal/autoupdate 的 OldShellDetail 相同：重新登入後系統仍開著更新前留下的舊版輸入法（#98）。只有 macOS 會出現。
   const OLD_SHELL = '已安裝，但系統仍開著更新前留下的舊版輸入法；登出再登入後改用新版';
   // 與 internal/autoupdate 的 ShellRetiringDetail 相同：macOS 新版已裝好，舊的輸入法程式等使用者離開電腦時才換（#170、#178）。
   // 第二個是 0.2.1／0.2.2 寫進狀態檔的舊說明。
@@ -143,11 +143,16 @@
     }
   }
 
+  // Windows 外殼裝好不等重新登入（#253）：待完成只會是新引擎還沒接手，說明由 0c-update 照實給（ShellEngine*Detail）。
+  const isWindows = () => /^windows\//.test(state.info?.platform || '');
+  const WINDOWS_REOPEN_NOTE = '之後開啟的應用程式直接使用新版；已經開著的要重新開啟才會換成新版。';
+
   function updateSummary(update) {
     if (!update) return { text: '尚無更新資訊。', tone: 'muted' };
     if (update.operation) return { text: operationText(update.operation), tone: 'warn' };
     if (update.stage === 'pending' && update.target) {
       if (update.target.kind !== 'shell') return { text: '正在確認新版引擎是否可用。', tone: 'warn' };
+      if (isWindows()) return { text: update.target.version + '：' + (update.blocked?.detail || '已安裝，正在確認新版引擎') + '。', tone: 'warn' };
       if (update.blocked?.detail === OLD_SHELL) return { text: update.target.version + ' 已安裝，仍在使用舊版輸入法。', tone: 'warn' };
       if (retiringDetail(update.blocked?.detail)) return { text: update.target.version + ' 已安裝，鎖定螢幕或離開電腦時換上。', tone: 'warn' };
       return { text: update.target.version + ' 等待重新登入後生效。', tone: 'warn' };
@@ -345,6 +350,11 @@
       root.append(h('div', { class: 'notice' }, h('p', {}, OLD_SHELL_HELP)));
     } else if (engine.retiring) {
       root.append(h('div', { class: 'notice' }, h('p', {}, SHELL_RETIRING_HELP)));
+    } else if (engine.engineWaiting) {
+      root.append(h('div', { class: 'notice' },
+        h('p', {}, engine.runningOld ? '已安裝 ' + engine.expected + '，目前輸入引擎使用 ' + engine.running + '。' : '已安裝 ' + engine.expected + '，正在確認輸入引擎。'),
+        engine.runningOld ? h('p', {}, '完成組字後，閒置時會自動換上這一版的引擎，不必登出；這段時間照常可以打字。') : null,
+        h('p', {}, '已經開著的應用程式要重新開啟才會換成這一版。')));
     } else if (engine.shellPending || engine.runningOld) {
       root.append(h('div', { class: 'notice' },
         h('p', {}, deferredInstall ? '套件已下載，等待重新登入時安裝。' : '新版已安裝；目前執行的輸入法仍未全部切換。'),
@@ -366,7 +376,7 @@
       row(labelBlock('更新'), h('div', { class: 'value' },
         h('span', { class: summary.tone === 'ok' ? 'status-ok' : summary.tone === 'warn' ? 'status-warn' : 'muted' }, summary.text), ' ',
         h('button', { type: 'button', class: 'secondary', onclick: () => show('update') }, '查看'))),
-      row(labelBlock('更新方式'), h('div', { class: 'value' }, managed ? '系統套件管理員' : MODE[status.mode] || status.mode || '未知')));
+      row(labelBlock('更新方式'), h('div', { class: 'value' }, managed ? '系統套件管理員' : updateMode().label)));
     root.append(h('div', { class: 'card' }, ...rows));
     if (vocabEnabled()) {
       const text = vocab.overviewText();
@@ -532,10 +542,10 @@
     root.append(h('div', { class: 'notice' + (summary.tone === 'warn' ? '' : ' info') },
       h('p', {}, summary.text),
       view.target && !op ? h('p', {}, view.stage === 'pending' && view.target.kind === 'shell'
-        ? (blocked?.detail === '登出再登入時自動完成安裝' ? '套件已下載，儲存工作後登出再登入，會完成安裝。'
+        ? (isWindows() ? WINDOWS_REOPEN_NOTE : blocked?.detail === '登出再登入時自動完成安裝' ? '套件已下載，儲存工作後登出再登入，會完成安裝。'
           : blocked?.detail === OLD_SHELL ? OLD_SHELL_HELP : retiringDetail(blocked?.detail) ? SHELL_RETIRING_NOTE
           : '新版已安裝；請儲存工作後登出再登入，讓應用程式載入新版輸入法。')
-        : view.stage === 'pending' ? '正在確認新版引擎是否可用。' : (STAGE[view.stage] || ('進度：' + view.stage)) + '。') : null,
+        : view.stage === 'pending' ? '正在確認新版引擎是否可用。' : (view.stage === 'found' && !updateMode().background(status.paused_until) ? '可立即下載' : STAGE[view.stage] || ('進度：' + view.stage)) + '。') : null,
       blocked && !op && view.stage !== 'pending' && !(view.stage === 'found' && ['needs_relogin', 'needs_consent'].includes(blocked.reason))
         ? h('p', {}, blocked.detail || BLOCKED[blocked.reason] || '更新暫時受阻。') : null));
     if (op) {
@@ -555,14 +565,18 @@
     const facts = [
       ['上次檢查', fmtTime(view.last_check)],
       ['上次成功', fmtTime(view.last_success)],
-      ['下次排定檢查', fmtTime(view.next_check)],
     ];
+    // 手動檢查時排程不查詢（狀態檔留著的時間不算數）。
+    if (updateMode().scheduled) facts.push(['下次排定檢查', fmtTime(view.next_check)]);
     if (view.check_failures) facts.push(['連續失敗', view.check_failures + ' 次（' + (view.error || '原因不明') + '）']);
     if (view.latest) facts.push(['索引最新版本', view.latest.version]);
     if (status.paused_until) facts.push(['暫停到', fmtTime(status.paused_until)]);
-    facts.push(['更新方式', MODE[status.mode] || status.mode || '未知']);
+    const mode = updateMode();
+    facts.push(['更新方式', mode.label]);
     root.append(h('h2', {}, '詳細資訊'), h('div', { class: 'card' }, h('dl', { class: 'facts' }, ...facts.flatMap(([k, v]) => [h('dt', {}, k), h('dd', {}, v)]))));
-    const elevation = /^windows\//.test(state.info?.platform || '') ? '，可能要求系統管理員確認' : '';
+    if (mode.note) root.append(h('p', { class: 'muted', id: 'update-mode-note' }, mode.note));
+    // Windows「自動」的說明已經寫了裝好不必登出，其他方式才在這裡補。
+    const elevation = isWindows() ? '，可能要求系統管理員確認' + (/重新開啟/.test(mode.note) ? '' : '；裝好不必登出，已經開著的應用程式要重新開啟才會換成新版') : '';
     root.append(h('p', { class: 'muted' }, '「檢查更新」查詢新版；「立即下載」現在下載並核對套件。完成後可按「立即安裝」' + elevation + '。'));
   }
 

@@ -45,16 +45,26 @@ test('核心已切換、舊引擎還在組字：提示等引擎重新啟動，�
   }
 });
 
-test('外殼更新等重新登入：提示登出再登入', () => {
+test('macOS 外殼更新等重新登入：提示登出再登入', () => {
   const update = { stage: 'pending', state: 'update_available', target: { version: '0.2.1', kind: 'shell' },
     blocked: { reason: 'needs_relogin', detail: '已安裝，重新登入後生效' } };
-  for (const platform of ['windows/x86_64', 'macos/aarch64']) {
-    let got = state(status({ installed: '0.2.1', running: '0.2.0', update }), platform);
-    assert.deepStrictEqual([got.runningOld, got.shellPending, got.relogin], [true, true, true], platform);
-    assert.strictEqual(got.pendingDetail, '已安裝，重新登入後生效');
-    // Windows 等重新登入時常駐引擎先交接成新版：引擎版本對了，外殼仍要重新登入。
-    got = state(status({ installed: '0.2.1', running: '0.2.1', update }), platform);
-    assert.deepStrictEqual([got.runningOld, got.shellPending, got.relogin], [false, true, true], platform);
+  let got = state(status({ installed: '0.2.1', running: '0.2.0', update }), 'macos/aarch64');
+  assert.deepStrictEqual([got.runningOld, got.shellPending, got.relogin, got.engineWaiting], [true, true, true, false]);
+  assert.strictEqual(got.pendingDetail, '已安裝，重新登入後生效');
+  got = state(status({ installed: '0.2.1', running: '0.2.1', update }), 'macos/aarch64');
+  assert.deepStrictEqual([got.runningOld, got.shellPending, got.relogin], [false, true, true]);
+});
+
+test('Windows 外殼裝好不等重新登入（#253）：舊引擎還在時說明閒置時換新，不叫人登出；0.2.7 寫的舊狀態也一樣', () => {
+  for (const blocked of [{ reason: 'engine_busy', detail: '已安裝，完成組字後換成新版引擎，不必登出' },
+    { reason: 'waiting_idle', detail: '已安裝，閒置時換成新版引擎，不必登出' },
+    { reason: 'engine_handover_failed', detail: '已安裝，但新版引擎還沒接手，稍後會再試' },
+    { reason: 'needs_relogin', detail: '已安裝，重新登入後生效' }]) {
+    const update = { stage: 'pending', state: 'update_available', target: { version: '0.2.1', kind: 'shell' }, blocked };
+    let got = state(status({ installed: '0.2.1', running: '0.2.0', update }), 'windows/x86_64');
+    assert.deepStrictEqual([got.runningOld, got.shellPending, got.relogin, got.engineWaiting], [true, true, false, true], blocked.reason);
+    got = state(status({ installed: '0.2.1', running: '0.2.1', update }), 'windows/x86_64');
+    assert.deepStrictEqual([got.runningOld, got.shellPending, got.relogin, got.engineWaiting], [false, true, false, true], blocked.reason);
   }
 });
 
@@ -76,12 +86,24 @@ test('macOS 延後到登入才安裝：保留待辦原因，提示登出再登�
   assert.strictEqual(got.pendingDetail, '登出再登入時自動完成安裝');
 });
 
-test('完整安裝後還在跑舊引擎：Linux 等引擎交接，Windows／macOS 要重新登入', () => {
+test('完整安裝後還在跑舊引擎：Linux 等引擎交接，Windows 閒置時換新，macOS 要重新登入', () => {
   const s = status({ installed: '0.2.1', running: '0.2.0' });
-  assert.deepStrictEqual([state(s, 'linux/x86_64').runningOld, state(s, 'linux/x86_64').relogin], [true, false]);
-  for (const platform of ['windows/x86_64', 'macos/aarch64']) {
-    assert.deepStrictEqual([state(s, platform).runningOld, state(s, platform).relogin], [true, true], platform);
-  }
+  assert.deepStrictEqual([state(s, 'linux/x86_64').runningOld, state(s, 'linux/x86_64').relogin, state(s, 'linux/x86_64').engineWaiting], [true, false, false]);
+  assert.deepStrictEqual([state(s, 'windows/x86_64').runningOld, state(s, 'windows/x86_64').relogin, state(s, 'windows/x86_64').engineWaiting], [true, false, true]);
+  assert.deepStrictEqual([state(s, 'macos/aarch64').runningOld, state(s, 'macos/aarch64').relogin, state(s, 'macos/aarch64').engineWaiting], [true, true, false]);
+});
+
+test('Windows 的設定程式與工作列選單程式碼不再叫人登出（macOS 的字串分平台）', () => {
+  const ui = path.join(__dirname, '..', 'ui');
+  const mode = fs.readFileSync(path.join(ui, 'update-mode.js'), 'utf8');
+  assert.doesNotMatch(mode, /登出再登入|重新登入/);
+  const menu = fs.readFileSync(path.join(__dirname, '..', '..', 'windows', 'common', 'src', 'menu.rs'), 'utf8');
+  assert.doesNotMatch(menu.split('#[cfg(test)]')[0], /"[^"\n]*(登出再登入|重新登入|needs_relogin)[^"\n]*"/);
+  const app = fs.readFileSync(path.join(ui, 'app.js'), 'utf8');
+  // updateSummary 與更新頁：Windows 的分支排在講重新登入的 macOS 分支前面。
+  assert.ok(app.indexOf('if (isWindows()) return { text: update.target.version') < app.indexOf("等待重新登入後生效"));
+  assert.ok(app.indexOf('isWindows() ? WINDOWS_REOPEN_NOTE') < app.indexOf('新版已安裝；請儲存工作後登出再登入'));
+  assert.ok(app.indexOf('engine.engineWaiting') < app.indexOf('engine.shellPending || engine.runningOld'));
 });
 
 test('全部已切換、引擎沒在執行、舊版 0c-update 沒有 engine 欄位：都不提示', () => {

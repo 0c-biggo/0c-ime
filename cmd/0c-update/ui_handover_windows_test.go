@@ -205,3 +205,162 @@ func TestRetireUIWindowsIgnoresOtherInstalls(t *testing.T) {
 		t.Fatal("關到了別的安裝的 0c-ui")
 	}
 }
+
+// useUIHandover 暫時把基底、收據與替換用的動作指向暫存目錄，回傳 restartUI／startUI 的呼叫紀錄。
+func useUIHandover(t *testing.T, version string) (base string, restarts *int, started *[]string) {
+	t.Helper()
+	root := t.TempDir()
+	t.Setenv("LOCALAPPDATA", root)
+	base = filepath.Join(root, "Zuin")
+	exe := filepath.Join(base, "versions", version, "0c-ui.exe")
+	if err := os.MkdirAll(filepath.Dir(exe), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(exe, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	receipt := `{"version":"` + version + `","directory":"versions/` + version + `","active":true,"files":{"0c-ui.exe":"aa"}}`
+	if err := os.WriteFile(filepath.Join(base, "install-receipt.json"), []byte(receipt), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	restarts, started = new(int), new([]string)
+	savedRestart, savedStart, savedControl := restartUI, startUI, uiControlFor
+	restartUI = func() { *restarts++ }
+	startUI = func(exe string) error { *started = append(*started, exe); return nil }
+	t.Cleanup(func() { restartUI, startUI, uiControlFor = savedRestart, savedStart, savedControl })
+	return base, restarts, started
+}
+
+// #243：舊版 0c-ui 結束之後要馬上帶起新版；執行中的應用程式載入的舊 DLL 不會自己啟動，選單會沒有反應。
+func TestHandOverUIRestartsAfterRetiring(t *testing.T) {
+	base, restarts, _ := useUIHandover(t, "0.2.8")
+	old, _ := startFakeUI(t, base, "0.2.7", "hidden")
+	uiControlFor = idleControl
+	handOverUI(10 * time.Second)
+	if !exitedWithin(old, 5*time.Second) {
+		t.Fatal("舊版 0c-ui 沒有結束")
+	}
+	if *restarts != 1 {
+		t.Fatalf("restarts=%d，要請登入工作帶起新版一次", *restarts)
+	}
+}
+
+// #243（0c-ime#42）：安裝時穩定副本還是舊的，0.2.7 的登入工作不會啟動 0c-ui，還會先帶起引擎，之後就沒有人再叫工作。
+// install 只請舊版結束，afterInstall 做完才叫工作一次。
+func TestInstallRestartsUIOnlyAfterTheStableCopyIsReplaced(t *testing.T) {
+	t.Setenv("ZC_NO_SCHEDULE", "1")
+	base, restarts, _ := useUIHandover(t, "0.2.8")
+	old, _ := startFakeUI(t, base, "0.2.7", "hidden")
+	uiControlFor = idleControl
+	retireUIForInstall(10 * time.Second)
+	if !exitedWithin(old, 5*time.Second) {
+		t.Fatal("舊版 0c-ui 沒有結束")
+	}
+	if *restarts != 0 {
+		t.Fatalf("穩定副本換新之前不能叫工作：restarts=%d", *restarts)
+	}
+	afterInstall()
+	if *restarts != 1 {
+		t.Fatalf("afterInstall 要帶起新版一次：restarts=%d", *restarts)
+	}
+	restartRetiredUI()
+	if *restarts != 1 {
+		t.Fatalf("不重複叫工作：restarts=%d", *restarts)
+	}
+}
+
+// 沒有請走任何 0c-ui 的安裝，afterInstall 不為它多叫一次工作。
+func TestAfterInstallDoesNotRestartWithoutRetiring(t *testing.T) {
+	t.Setenv("ZC_NO_SCHEDULE", "1")
+	_, restarts, _ := useUIHandover(t, "0.2.8")
+	uiControlFor = func() uiControl {
+		c := idleControl()
+		c.list = func() []uiProcess { return nil }
+		return c
+	}
+	retireUIForInstall(time.Second)
+	afterInstall()
+	if *restarts != 0 {
+		t.Fatalf("restarts=%d", *restarts)
+	}
+}
+
+// 沒有舊版要換（目前版本在跑，或根本沒有 0c-ui）時不多跑一次登入工作：登入工作自己每次也會呼叫 handOverUI。
+func TestHandOverUIDoesNotRestartWithoutRetiring(t *testing.T) {
+	_, restarts, _ := useUIHandover(t, "0.2.8")
+	uiControlFor = func() uiControl {
+		c := idleControl()
+		c.list = func() []uiProcess { return nil }
+		return c
+	}
+	handOverUI(time.Second)
+	if *restarts != 0 {
+		t.Fatalf("restarts=%d", *restarts)
+	}
+}
+
+// 解除安裝結束 0c-ui 之後不能再把它帶起來。
+func TestStopUIDoesNotRestart(t *testing.T) {
+	base, restarts, _ := useUIHandover(t, "0.2.8")
+	old, _ := startFakeUI(t, base, "0.2.7", "hidden")
+	uiControlFor = idleControl
+	stopUI(10 * time.Second)
+	if !exitedWithin(old, 5*time.Second) {
+		t.Fatal("0c-ui 沒有結束")
+	}
+	if *restarts != 0 {
+		t.Fatalf("restarts=%d", *restarts)
+	}
+}
+
+func TestEnsureUIStartsCurrentOnlyWhenNoneIsRunning(t *testing.T) {
+	if elevatedOK() {
+		t.Skip("ensureUI 不在提權的行程裡啟動 0c-ui；以一般權限執行（互動工作）才測得到")
+	}
+	base, _, started := useUIHandover(t, "0.2.8")
+	running := []uiProcess{}
+	uiControlFor = func() uiControl {
+		c := idleControl()
+		c.list = func() []uiProcess { return running }
+		return c
+	}
+	ensureUI()
+	want := filepath.Join(base, "versions", "0.2.8", "0c-ui.exe")
+	if len(*started) != 1 || (*started)[0] != want {
+		t.Fatalf("started=%v，要啟動 %s", *started, want)
+	}
+	running = []uiProcess{{PID: 1, Path: filepath.Join(base, "versions", "0.2.7", "0c-ui.exe")}}
+	ensureUI()
+	if len(*started) != 1 {
+		t.Fatalf("已有 0c-ui 不該再啟動：%v", *started)
+	}
+}
+
+// 提權的安裝程式不能啟動 0c-ui：它會以系統管理員權限常駐（同 startResidentEngine）。
+func TestEnsureUIDoesNotStartElevated(t *testing.T) {
+	if !elevatedOK() {
+		t.Skip("要在提權的行程裡測")
+	}
+	_, _, started := useUIHandover(t, "0.2.8")
+	uiControlFor = func() uiControl {
+		c := idleControl()
+		c.list = func() []uiProcess { return nil }
+		return c
+	}
+	ensureUI()
+	if len(*started) != 0 {
+		t.Fatalf("started=%v", *started)
+	}
+}
+
+// 沒有安裝時（解除安裝後的登入工作）什麼都不做。
+func TestEnsureUINeedsAnActiveInstall(t *testing.T) {
+	base, _, started := useUIHandover(t, "0.2.8")
+	if err := os.Remove(filepath.Join(base, "install-receipt.json")); err != nil {
+		t.Fatal(err)
+	}
+	ensureUI()
+	if len(*started) != 0 {
+		t.Fatalf("started=%v", *started)
+	}
+}

@@ -1506,8 +1506,12 @@ func (s *Session) commit() string {
 	if !s.paused && !s.private && len(ev.Path) > 0 {
 		s.model.Learn(ev)
 	}
-	if s.mixedInput() && !s.paused && !s.private && !s.localBlocked {
+	// 英文學習跟著混打或英文模式自動補字走（#247）：許氏、倚天、聲調選填不支援混打，英文模式一樣要學得到。
+	if (s.mixedInput() || s.EnglishAutocomplete) && !s.paused && !s.private && !s.localBlocked {
 		s.model.LearnEnglish(s.mixedEnglishCommits())
+	}
+	if s.mixedInput() && !s.paused && !s.private && !s.localBlocked {
+		s.model.LearnZhuyinKeys(s.zhuyinKeyCommits())
 	}
 	shown := text
 	text = s.punctuate(text)

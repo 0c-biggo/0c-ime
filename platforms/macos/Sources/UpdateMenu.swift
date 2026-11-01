@@ -154,9 +154,9 @@ final class UpdateMenuMonitor {
         }
         add("檢查更新", ["auto", "-now", "-notify"])
         menu.addItem(.separator())
-        add("自動更新", ["mode", "auto"], checked: status?.mode == "auto")
-        add("下載後詢問", ["mode", "ask"], checked: status?.mode == "ask")
-        add("手動更新", ["mode", "manual"], checked: status?.mode == "manual")
+        add("更新方式：自動（建議）", ["mode", "auto"], checked: status?.mode == "auto")
+        add("更新方式：下載後詢問", ["mode", "ask"], checked: status?.mode == "ask")
+        add("更新方式：手動檢查", ["mode", "manual"], checked: status?.mode == "manual")
         if status?.paused_until != nil {
             add("恢復更新", ["resume"])
         } else {

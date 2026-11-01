@@ -80,8 +80,12 @@ func TestEnglishAutocompleteBoundariesKeepAppActions(t *testing.T) {
 		if snap.Handled || snap.Commit != "hel" || snap.Text() != "" || snap.Candidates != nil {
 			t.Fatalf("%s: %+v", k, snap)
 		}
-		if len(s.model.Store.Uni) != 0 || len(s.model.Store.English) != 0 {
+		if len(s.model.Store.Uni) != 0 {
 			t.Fatal("English polluted Chinese learning")
+		}
+		// 邊界鍵確認這是完整的單字；. 1 Delete 後面可能還有字，不學前綴（#247 起混打沒開也學）。
+		if _, learned := s.model.Store.English["hel"]; learned != englishBoundary(k) {
+			t.Fatalf("%s: English learning %+v", k, s.model.Store.English)
 		}
 	}
 	s := autocompleteSession()

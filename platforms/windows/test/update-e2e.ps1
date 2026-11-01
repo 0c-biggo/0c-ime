@@ -274,10 +274,10 @@ try {
         Check ($receipt.version -eq $fb.version) 'finish_installed_b'
         $dll = (Get-Item $reg).GetValue('')
         Check ($dll -like "*$($fb.version)*") 'registration_points_to_b' $dll
-        Check ((State).stage -in 'pending', 'active') 'pending_until_relogin_or_confirmed'
-        # 混合期間：已執行的引擎仍是 A；新開的應用程式載入 B 的 DLL。輸入必須照常。
+        Check ((State).stage -in 'pending', 'active') 'active_or_waiting_for_the_new_engine'
+        # 已經開著的應用程式留在 A 的 DLL；新開的應用程式載入 B 的 DLL。輸入必須照常，不必登出（#253）。
         Check (TypeKeys 'su3cl3{ENTER}' '你好') 'typing_in_new_app_during_mixed_period'
-        $report.manual = '真實登出再登入後核對 runtime 為 B（需要人工或另一個互動帳號）'
+        $report.manual = '已經開著的應用程式留在舊 DLL，重新開啟才換成新版'
         $report.state = State
         $report.passed = $true
     } elseif ($Case -eq 'fail') {

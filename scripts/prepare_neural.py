@@ -23,10 +23,10 @@ import zipfile
 import hf_models
 
 ROOT = Path(__file__).resolve().parents[1]
-PYTHON_VERSION = "3.14"
-# CPython 3.14.7 for both platforms; python.org stopped shipping Windows binaries for 3.12.
+# CPython 3.14.7 except on Intel Macs; python.org stopped shipping Windows binaries for 3.12.
 RUNTIMES = {
     "linux-amd64": {
+        "version": "3.14",
         "python": ("https://github.com/astral-sh/python-build-standalone/releases/download/20260924/"
                    "cpython-3.14.7%2B20260924-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
                    "bd0d0568ccded07bbf1c87727230dc5dd0187e706a87da23c4de78388a229b78"),
@@ -40,6 +40,7 @@ RUNTIMES = {
         ],
     },
     "macos-arm64": {
+        "version": "3.14",
         # onnxruntime 1.30.0 ships macOS arm64 wheels for 14.0 and later only; older macOS falls back
         # to the statistical engine because the worker cannot start.
         "python": ("https://github.com/astral-sh/python-build-standalone/releases/download/20260924/"
@@ -54,7 +55,25 @@ RUNTIMES = {
              "8b6169c16a48429890d2f4a0c774ebf54dfe9066a998514aad0518a16d398547"),
         ],
     },
+    "macos-amd64": {
+        # onnxruntime 1.23.2 是最後一版有 Intel Mac wheel 的（最高 cp313，macOS 13.0 以上），因此 Python 用 3.13。
+        # 兩個模型對 1.30.0 的輸出逐請求比對過：選字排序相同、補標點結果相同。
+        "version": "3.13",
+        "python": ("https://github.com/astral-sh/python-build-standalone/releases/download/20260924/"
+                   "cpython-3.13.15%2B20260924-x86_64-apple-darwin-install_only_stripped.tar.gz",
+                   "327814efd865a0b6a99c149b12a261e9d0ad409183515c745d41bda2d07282e9"),
+        "wheels": [
+            # macosx_10_13 而不是 14_0：最低系統跟著 onnxruntime 的 13.0，不讓 numpy 把它提高。
+            ("https://files.pythonhosted.org/packages/79/e5/8fb89cd46d14e35699d13bf943a5f5f441ecee8667120a1f6105ab89e349/"
+             "numpy-2.5.3-cp313-cp313-macosx_10_13_x86_64.whl",
+             "66a78fe4556c60aceda5916f9eacd638b18e9e681016ec302dcb4682d6d4d034"),
+            ("https://files.pythonhosted.org/packages/fe/f9/2d49ca491c6a986acce9f1d1d5fc2099108958cc1710c28e89a032c9cfe9/"
+             "onnxruntime-1.23.2-cp313-cp313-macosx_13_0_x86_64.whl",
+             "162f4ca894ec3de1a6fd53589e511e06ecdc3ff646849b62a9da7489dee9ce95"),
+        ],
+    },
     "windows-amd64": {
+        "version": "3.14",
         "python": ("https://www.python.org/ftp/python/3.14.7/python-3.14.7-embed-amd64.zip",
                    "d297e5ff019966817ad8502465176139f2d3d840fa4ed84b13bed399a6ab1f15"),
         "wheels": [
@@ -76,9 +95,16 @@ RUNTIMES = {
                 ("msvcp140.dll", "msvcp140_1.dll")),
     },
 }
+# Linux 上編譯 bytecode 用的同版本直譯器（bytecode 跨平台、只跟 CPython 版本有關）。
+COMPILERS = {
+    "3.14": RUNTIMES["linux-amd64"]["python"],
+    "3.13": ("https://github.com/astral-sh/python-build-standalone/releases/download/20260924/"
+             "cpython-3.13.15%2B20260924-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+             "d0b640eed27fbdd6f5f2bd33444aee53df2c8863f8b2a96f4094717411e3de9c"),
+}
 # Not needed by the workers; removing them keeps the bundle smaller and reduces attack surface.
-TRIM = ("lib/python3.14/site-packages/pip", "lib/python3.14/ensurepip", "lib/python3.14/idlelib",
-        "lib/python3.14/tkinter", "lib/python3.14/turtledemo", "lib/tcl9", "lib/tcl9.0", "lib/tk9.0",
+TRIM = ("lib/python{v}/site-packages/pip", "lib/python{v}/ensurepip", "lib/python{v}/idlelib",
+        "lib/python{v}/tkinter", "lib/python{v}/turtledemo", "lib/tcl9", "lib/tcl9.0", "lib/tk9.0",
         "lib/libtcl9.0.so", "lib/libtcl9tk9.0.so", "lib/libtcl9.0.dylib", "lib/libtcl9tk9.0.dylib",
         "lib/itcl4.3.8", "lib/thread3.0.6", "lib/pkgconfig", "include", "share")
 
@@ -107,25 +133,26 @@ def fetch(url, sha256, cache, local=None):
     return target
 
 
-def install_python(platform, archive, dest):
-    if platform in ("linux-amd64", "macos-arm64"):
+def install_python(platform, archive, dest, version=None):
+    if not platform.startswith("windows-"):
+        version = version or RUNTIMES[platform]["version"]
         # The archive's top-level directory is python/, which is the destination name.
         with tarfile.open(archive) as tar:
             tar.extractall(dest.parent, filter="data")
         for relative in TRIM:
-            path = dest / relative
+            path = dest / relative.format(v=version)
             shutil.rmtree(path) if path.is_dir() else path.unlink(missing_ok=True)
-        for info in (dest / "lib/python3.14/site-packages").glob("pip-*.dist-info"):
+        for info in (dest / f"lib/python{version}/site-packages").glob("pip-*.dist-info"):
             shutil.rmtree(info)
         # Bundles and installers reject links; keep only the interpreter, named as 0c-server expects.
         for path in sorted(dest.rglob("*"), reverse=True):
             if path.is_symlink():
                 path.unlink()
         for path in (dest / "bin").iterdir():
-            if path.name != "python3.14":
+            if path.name != f"python{version}":
                 path.unlink()
-        (dest / "bin/python3.14").rename(dest / "bin/python3")
-        return dest / "lib/python3.14/site-packages"
+        (dest / f"bin/python{version}").rename(dest / "bin/python3")
+        return dest / f"lib/python{version}/site-packages"
     with zipfile.ZipFile(archive) as z:
         z.extractall(dest)
     site = dest / "Lib/site-packages"
@@ -161,7 +188,7 @@ def precompile(tree, compiler):
     """Bake hash-based bytecode that Python uses without checking source times.
 
     Workers run with -B, so installed files never change after installation (receipts stay valid).
-    Bytecode is platform independent for one CPython version; any 3.14.7 interpreter can build it.
+    Bytecode is platform independent for one CPython version; any interpreter of that release can build it.
     """
     for cache in tree.rglob("__pycache__"):
         shutil.rmtree(cache)
@@ -187,30 +214,32 @@ def build(args):
             url, sha256, names = runtime["crt"]
             local = next((w for w in args.wheel if Path(w).name == url.rsplit("/", 1)[-1]), None)
             install_crt(fetch(url, sha256, args.cache, local), names, stage / "python")
+        version = runtime["version"]
         if args.platform == "linux-amd64":
             precompile(stage / "python", stage / "python/bin/python3")
-        elif args.platform == "macos-arm64":
+        elif args.platform.startswith("macos-"):
             # Bytecode is platform independent; compile the macOS tree with the pinned Linux interpreter
-            # when building on Linux, or with the bundled interpreter itself on macOS.
+            # when building on Linux, or with the bundled interpreter itself on macOS (the Intel one runs
+            # under Rosetta on Apple Silicon).
             if sys.platform == "darwin":
                 precompile(stage / "python", stage / "python/bin/python3")
             else:
                 with tempfile.TemporaryDirectory(prefix=".compiler-", dir=out.parent) as temp:
-                    compiler_archive = fetch(*RUNTIMES["linux-amd64"]["python"], args.cache, args.compiler_archive)
-                    install_python("linux-amd64", compiler_archive, Path(temp) / "python")
+                    compiler_archive = fetch(*COMPILERS[version], args.cache, args.compiler_archive)
+                    install_python("linux-amd64", compiler_archive, Path(temp) / "python", version)
                     precompile(stage / "python", Path(temp) / "python/bin/python3")
         else:
             # The Windows stdlib ships as bytecode inside python314.zip; compile the packages with the
             # pinned Linux interpreter of the same CPython release.
             with tempfile.TemporaryDirectory(prefix=".compiler-", dir=out.parent) as temp:
-                compiler_archive = fetch(*RUNTIMES["linux-amd64"]["python"], args.cache, args.compiler_archive)
-                install_python("linux-amd64", compiler_archive, Path(temp) / "python")
+                compiler_archive = fetch(*COMPILERS[version], args.cache, args.compiler_archive)
+                install_python("linux-amd64", compiler_archive, Path(temp) / "python", version)
                 precompile(site, Path(temp) / "python/bin/python3")
         for name in hf_models.WORKER_NAMES:
             shutil.copy2(hf_models.WORKERS / name, stage / name)
         hf_models.write_packages(weights, dictionary, stage)
         (stage / "README.txt").write_text(
-            "靈犀注音內附的神經選字與提交時補標點：可攜 Python " + PYTHON_VERSION +
+            "靈犀注音內附的神經選字與提交時補標點：可攜 Python " + version +
             "（numpy、onnxruntime）、worker 與模型。只在本機執行，不連網。\n"
             "切換：0c-update set selection statistical|neural、0c-update set punctuation on|off。\n",
             encoding="utf-8")
@@ -232,7 +261,7 @@ def main():
     parser.add_argument("--cache", type=Path, default=ROOT / "build/cache/neural", help="下載快取")
     parser.add_argument("--python-archive", help="已下載的 Python 壓縮檔（仍核對雜湊）")
     parser.add_argument("--wheel", action="append", default=[], help="已下載的 wheel（仍核對雜湊）")
-    parser.add_argument("--compiler-archive", help="Windows 建置時編譯 bytecode 用的 Linux Python 壓縮檔（仍核對雜湊）")
+    parser.add_argument("--compiler-archive", help="非原生建置時編譯 bytecode 用的同版本 Linux Python 壓縮檔（仍核對雜湊）")
     args = parser.parse_args()
     try:
         print(build(args))

@@ -31,13 +31,13 @@ exec "$BUNDLE/0c-update" install -bundle "$BUNDLE" -channel {channel} </dev/null
 DISTRIBUTION = """<?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
     <title>靈犀注音 {version}</title>
-    <options customize="never" require-scripts="false" hostArchitectures="arm64"/>
+    <options customize="never" require-scripts="false" hostArchitectures="{host}"/>
     <domains enable_anywhere="false" enable_currentUserHome="true" enable_localSystem="false"/>
     <volume-check>
         <allowed-os-versions><os-version min="13.0"/></allowed-os-versions>
     </volume-check>
-    <installation-check script="checkInstalledVersion()"/>
-    <script><![CDATA[
+    <installation-check script="{check}"/>
+    <script><![CDATA[{intel}
 // 已安裝較新的版本時，在開始安裝前說明原因。postinstall 的 0c-update 照樣會拒絕降級，但安裝程式對
 // postinstall 失敗只顯示通用的「安裝失敗」，原因只寫在 install.log。CFBundleVersion 由 macos_version.py
 // 從版本推出、隨版本嚴格遞增（正式版排在同版號的預發行之後），可以直接比大小。讀不到時不擋，交給 0c-update。
@@ -83,8 +83,24 @@ CONCLUSION = """<h2>安裝完成</h2>
 <p>移除：在終端機執行 <code>~/Library/Application\\ Support/0c/bin/0c-update uninstall</code>。</p>"""
 
 
-def distribution(version):
-    return DISTRIBUTION.format(version=html.escape(version), identifier=IDENTIFIER, bundle_version=bundle_version(version))
+# Intel 版也讓 Apple Silicon 原生跑安裝程式（否則系統先要求裝 Rosetta），才能說明要改下載 Apple Silicon 版。
+INTEL_CHECK = """
+function checkIntelMac() {
+    if (system.sysctl("hw.optional.arm64") != 1) { return true; }
+    my.result.type = "Fatal";
+    my.result.title = "這是 Intel Mac 版";
+    my.result.message = "這台 Mac 使用 Apple 晶片，請改下載 Apple 晶片（Apple Silicon）版的靈犀注音。";
+    return false;
+}
+"""
+
+
+def distribution(version, arch="arm64"):
+    intel = arch == "amd64"
+    return DISTRIBUTION.format(version=html.escape(version), identifier=IDENTIFIER, bundle_version=bundle_version(version),
+                               host="x86_64,arm64" if intel else "arm64",
+                               check="checkIntelMac() &amp;&amp; checkInstalledVersion()" if intel else "checkInstalledVersion()",
+                               intel=INTEL_CHECK if intel else "")
 
 
 def build(archive, out, identity=None, keychain=None, notary=None):
@@ -115,7 +131,7 @@ def build(archive, out, identity=None, keychain=None, notary=None):
         v = html.escape(version)
         for file, body in (("welcome.html", WELCOME.format(version=v)), ("conclusion.html", CONCLUSION)):
             (resources / file).write_text(PAGE.format(body=body), encoding="utf-8")
-        (temp / "distribution.xml").write_text(distribution(version), encoding="utf-8")
+        (temp / "distribution.xml").write_text(distribution(version, release["arch"]), encoding="utf-8")
         cmd = ["productbuild", "--distribution", str(temp / "distribution.xml"), "--resources", str(resources),
                "--package-path", str(temp)]
         if identity:
@@ -156,7 +172,7 @@ def notarize(pkg, profile, keychain=None):
 
 def main():
     parser = argparse.ArgumentParser(description="把 macOS 套件 tar.gz 包成 .pkg；不安裝、不上傳")
-    parser.add_argument("archive", type=Path, help="package_macos.py 的輸出 0c-<版本>-macos-arm64.tar.gz")
+    parser.add_argument("archive", type=Path, help="package_macos.py 的輸出 0c-<版本>-macos-<arm64|amd64>.tar.gz")
     parser.add_argument("--out", type=Path, help="輸出目錄（預設與壓縮包相同）")
     parser.add_argument("--installer-identity", help="Developer ID Installer 憑證（SHA-1 或名稱）；未指定時不簽章")
     parser.add_argument("--keychain", type=Path, help="存放簽章憑證與公證帳密的鑰匙圈（需事先解鎖）")

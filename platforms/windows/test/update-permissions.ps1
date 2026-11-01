@@ -111,8 +111,15 @@ try {
         if (-not $ExpectedVersion) { throw 'ExpectedVersion required' }
         Check ($s.session -eq $before.session -and $s.explorer_pid -eq $before.explorer_pid) 'same_desktop_login'
         Check ($s.receipt.version -eq $ExpectedVersion) 'shell_installed'
-        Check ($s.state.stage -eq 'pending' -and $s.state.target.version -eq $ExpectedVersion -and $s.state.blocked.reason -eq 'needs_relogin') 'relogin_pending_preserved'
-        Check (@($s.state.history | Where-Object { $_.kind -eq 'active' -and $_.version -eq $ExpectedVersion }).Count -eq 0) 'no_premature_activation'
+        # #253：裝好不等重新登入。新引擎接手就算完成；還沒接手時照實留在待完成，不能報完成。
+        Check ($s.state.blocked.reason -ne 'needs_relogin') 'no_relogin_required'
+        $activated=@($s.state.history | Where-Object { $_.kind -eq 'active' -and $_.version -eq $ExpectedVersion }).Count -gt 0
+        if ($s.state.stage -eq 'pending') {
+            Check ($s.state.target.version -eq $ExpectedVersion -and $s.state.blocked.reason -in 'engine_busy','waiting_idle','engine_handover_failed') 'waiting_for_engine_honestly'
+            Check (-not $activated -and $s.health.version -ne $ExpectedVersion) 'no_premature_activation'
+        } else {
+            Check ($activated -and $s.health.version -eq $ExpectedVersion) 'new_engine_took_over'
+        }
     } else {
         if (-not $ExpectedVersion) { throw 'ExpectedVersion required' }
         Check ($s.health.version -eq $ExpectedVersion) 'expected_runtime_version'

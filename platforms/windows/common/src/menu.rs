@@ -19,6 +19,8 @@ pub struct UpdateStatus {
     pub engine: String,
     pub mode: String,
     pub target: String,
+    /// 待辦的外殼更新已經裝好，只差新引擎接手（`stage` 是 pending、`target.kind` 是 shell，#253）。
+    pub shell_installed: bool,
     pub blocked: String,
     pub detail: String,
     pub action: String,
@@ -27,6 +29,8 @@ pub struct UpdateStatus {
     pub updater: String,
     pub selection: String,
     pub runtime: String,
+    /// 執行中引擎的版本（`runtime.version`）；組字中安裝或回復時可能還不是已安裝的版本（#253）。
+    pub running: String,
     pub selection_state: String,
     pub punctuation_state: String,
     pub punctuation: bool,
@@ -46,6 +50,7 @@ impl Default for UpdateStatus {
             engine: String::new(),
             mode: "auto".into(),
             target: String::new(),
+            shell_installed: false,
             blocked: String::new(),
             detail: String::new(),
             action: String::new(),
@@ -53,6 +58,7 @@ impl Default for UpdateStatus {
             updater: String::new(),
             selection: "neural".into(),
             runtime: String::new(),
+            running: String::new(),
             selection_state: String::new(),
             punctuation_state: String::new(),
             punctuation: false,
@@ -84,6 +90,7 @@ pub fn parse_status(json: &str) -> UpdateStatus {
     }
     if let Some(t) = v.get("target") {
         s.target = text(t, "version");
+        s.shell_installed = text(&v, "stage") == "pending" && text(t, "kind") == "shell";
     }
     if let Some(b) = v.get("blocked") {
         s.blocked = text(b, "reason");
@@ -106,6 +113,7 @@ pub fn parse_status(json: &str) -> UpdateStatus {
     }
     if let Some(r) = v.get("runtime") {
         s.runtime = text(r, "state");
+        s.running = text(r, "version");
         s.selection_state = text(r, "selection_state");
         s.punctuation_state = text(r, "punctuation_state");
         if r.get("output_simplified_live").and_then(Value::as_bool) == Some(true) {
@@ -163,9 +171,12 @@ pub fn status_label(s: &UpdateStatus) -> String {
     }
     if !s.target.is_empty() {
         let t = &s.target;
+        // 外殼裝好不等重新登入（#253）：這裡只會是新引擎還沒接手，說明由 0c-update 照實給。
+        if s.shell_installed {
+            return format!("{t}：{}", if s.detail.is_empty() { "已安裝，正在確認新版引擎" } else { &s.detail });
+        }
         return match s.blocked.as_str() {
             "needs_consent" => format!("有新版本 {t} — 立即安裝"),
-            "needs_relogin" => format!("{t}：{}", if s.detail.is_empty() { "登出再登入後生效" } else { &s.detail }),
             "health_failed" => format!("{t} 更新未完成，已保留原版本"),
             _ if s.action == "finish" => format!("{t} 已準備好 — 現在完成更新"),
             "metered_network" => format!("{t} 等待非計量網路下載"),
@@ -176,12 +187,25 @@ pub fn status_label(s: &UpdateStatus) -> String {
     if s.paused_until.len() >= 10 {
         return format!("自動更新暫停至 {}", &s.paused_until[..10]);
     }
-    let v = if s.engine.is_empty() { &s.installed } else { &s.engine };
+    let v = current_version(s);
+    if engine_behind(s) {
+        return format!("{v}：已安裝，閒置時換上這一版的引擎，不必登出");
+    }
     format!("靈犀注音 {} · 已是最新", if v.is_empty() { "（未知版本）" } else { v })
 }
 
+fn current_version(s: &UpdateStatus) -> &str {
+    if s.engine.is_empty() { &s.installed } else { &s.engine }
+}
+
+/// 安裝或回復時正在組字，常駐引擎沒交接：還不是已安裝的版本（#253）。沒有待辦，閒置時由排程換掉；不能說成已是最新。
+fn engine_behind(s: &UpdateStatus) -> bool {
+    s.target.is_empty() && !s.running.is_empty() && !current_version(s).is_empty() && s.running != current_version(s)
+}
+
 pub fn needs_attention(s: &UpdateStatus) -> bool {
-    model_fallback(s) || !s.updater.is_empty() || !s.target.is_empty() && (s.action == "finish" || s.blocked == "needs_relogin" || s.blocked == "health_failed")
+    // 已裝好、等新引擎接手不用使用者處理，不亮提示。
+    model_fallback(s) || !s.updater.is_empty() || !s.target.is_empty() && !s.shell_installed && (s.action == "finish" || s.blocked == "health_failed")
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -201,7 +225,7 @@ fn args(a: &[&str]) -> Vec<String> {
 pub fn menu_items(s: &UpdateStatus) -> Vec<MenuItem> {
     let first = if !s.updater.is_empty() {
         args(&["schedule", "repair", "-notify"])
-    } else if s.action == "finish" {
+    } else if s.action == "finish" || engine_behind(s) {
         args(&["finish", "-notify"])
     } else {
         args(&["auto", "-now", "-notify"])
@@ -220,9 +244,9 @@ pub fn menu_items(s: &UpdateStatus) -> Vec<MenuItem> {
         (status_label(s), false, false, first),
         ("檢查更新".into(), false, false, args(&["auto", "-now", "-notify"])),
         (String::new(), false, true, vec![]),
-        ("自動更新：自動保持最新（建議）".into(), s.mode == "auto", false, args(&["mode", "auto"])),
-        ("自動更新：下載後詢問".into(), s.mode == "ask", false, args(&["mode", "ask"])),
-        ("自動更新：手動".into(), s.mode == "manual", false, args(&["mode", "manual"])),
+        ("更新方式：自動（建議）".into(), s.mode == "auto", false, args(&["mode", "auto"])),
+        ("更新方式：下載後詢問".into(), s.mode == "ask", false, args(&["mode", "ask"])),
+        ("更新方式：手動檢查".into(), s.mode == "manual", false, args(&["mode", "manual"])),
         if s.paused_until.is_empty() {
             ("暫停自動更新 7 天".into(), false, false, args(&["pause", "7"]))
         } else {
@@ -242,6 +266,12 @@ pub fn menu_items(s: &UpdateStatus) -> Vec<MenuItem> {
         .enumerate()
         .map(|(i, (label, checked, separator, args))| MenuItem { id: i as u32 + 1, label, checked, separator, args })
         .collect()
+}
+
+/// 這個選單命令會開視窗給使用者操作，所以按下時要把前景權限傳下去（#251）。
+/// 其他命令在背景執行，不開放這個權限，免得別的程式趁機蓋到使用者正在打字的視窗上面。
+pub fn opens_window(a: &[String]) -> bool {
+    a.first().is_some_and(|c| c == "open-settings")
 }
 
 /// 0c-ui 只替 DLL 執行這些命令；沙箱內的宿主不能藉此執行任意 0c-update 動作（例如解除安裝）。
@@ -291,6 +321,23 @@ mod tests {
         assert_eq!(model_label("runtime_missing", "running", "統計引擎"), "缺少推論元件，使用統計引擎");
     }
 
+    // #244：「自動更新：手動」語意矛盾；這三列是更新方式，勾選跟著實際設定、選了送的值不變。
+    #[test]
+    fn update_method_items() {
+        for (mode, checked) in [("auto", 0), ("ask", 1), ("manual", 2)] {
+            let s = parse_status(&format!(r#"{{"mode":"{mode}"}}"#));
+            let items = menu_items(&s);
+            let at = items.iter().position(|i| i.label == "更新方式：自動（建議）").unwrap();
+            for (n, (label, value)) in [("更新方式：自動（建議）", "auto"), ("更新方式：下載後詢問", "ask"), ("更新方式：手動檢查", "manual")].iter().enumerate() {
+                let item = &items[at + n];
+                assert_eq!(item.label, *label);
+                assert_eq!(item.checked, n == checked, "{mode}：{label}");
+                assert_eq!(item.args, vec!["mode".to_string(), value.to_string()]);
+            }
+            assert!(items.iter().all(|i| !i.label.starts_with("自動更新：")), "{mode}");
+        }
+    }
+
     #[test]
     fn labels_follow_status() {
         let idle = parse_status(r#"{"installed":"0.1.0-dev.18","engine":"0.1.0-dev.19","mode":"auto","settings":{"selection":"statistical","punctuation":false}}"#);
@@ -304,6 +351,44 @@ mod tests {
         let paused = parse_status(r#"{"paused_until":"2026-10-06T10:00:00Z"}"#);
         assert_eq!(status_label(&paused), "自動更新暫停至 2026-10-06");
         assert_eq!(menu_items(&paused)[8].label, "恢復自動更新");
+    }
+
+    // #253：外殼裝好就不再叫人登出；新引擎還沒接手時照實顯示說明，不當成要處理的事。
+    #[test]
+    fn installed_shell_waiting_for_the_engine() {
+        let busy = parse_status(r#"{"stage":"pending","target":{"version":"0.2.8","kind":"shell"},"blocked":{"reason":"engine_busy","detail":"已安裝，完成組字後換成新版引擎，不必登出"},"action":"finish"}"#);
+        assert_eq!(status_label(&busy), "0.2.8：已安裝，完成組字後換成新版引擎，不必登出");
+        assert!(!needs_attention(&busy));
+        // 按下去是立刻交接（0c-update finish 不用再要系統管理員權限）。
+        assert_eq!(menu_items(&busy)[2].args, vec!["finish", "-notify"]);
+        let no_detail = parse_status(r#"{"stage":"pending","target":{"version":"0.2.8","kind":"shell"}}"#);
+        assert_eq!(status_label(&no_detail), "0.2.8：已安裝，正在確認新版引擎");
+        for label in [status_label(&busy), status_label(&no_detail)] {
+            assert!(!label.contains("登出再登入") && !label.contains("重新登入"), "{label}");
+        }
+        // 核心更新的 engine_busy、還沒裝好的外殼：維持原本的提示。
+        let core = parse_status(r#"{"stage":"pending","target":{"version":"0.2.8","kind":"core"},"blocked":{"reason":"engine_busy"},"action":"finish"}"#);
+        assert_eq!(status_label(&core), "0.2.8 已準備好 — 現在完成更新");
+        assert!(needs_attention(&core));
+        let consent = parse_status(r#"{"stage":"prepared","target":{"version":"0.2.8","kind":"shell"},"blocked":{"reason":"needs_consent"},"action":"finish"}"#);
+        assert_eq!(status_label(&consent), "有新版本 0.2.8 — 立即安裝");
+    }
+
+    // #253：安裝精靈或回復時正在組字，沒有待辦但引擎還是別的版本：照實說，按一下立刻交接。
+    #[test]
+    fn engine_behind_the_installed_version_is_not_up_to_date() {
+        let behind = parse_status(r#"{"installed":"0.2.8","engine":"","runtime":{"state":"running","version":"0.2.7"}}"#);
+        assert_eq!(status_label(&behind), "0.2.8：已安裝，閒置時換上這一版的引擎，不必登出");
+        assert_eq!(menu_items(&behind)[2].args, vec!["finish", "-notify"]);
+        assert!(!needs_attention(&behind));
+        let same = parse_status(r#"{"installed":"0.2.8","engine":"","runtime":{"state":"running","version":"0.2.8"}}"#);
+        assert_eq!(status_label(&same), "靈犀注音 0.2.8 · 已是最新");
+        assert_eq!(menu_items(&same)[2].args, vec!["auto", "-now", "-notify"]);
+        // 核心更新後以指標版本為準；引擎沒在跑不算落後。
+        let core = parse_status(r#"{"installed":"0.2.7","engine":"0.2.8","runtime":{"state":"running","version":"0.2.8"}}"#);
+        assert_eq!(status_label(&core), "靈犀注音 0.2.8 · 已是最新");
+        let stopped = parse_status(r#"{"installed":"0.2.8","engine":"","runtime":{"state":"not_running"}}"#);
+        assert_eq!(status_label(&stopped), "靈犀注音 0.2.8 · 已是最新");
     }
 
     #[test]
@@ -355,6 +440,15 @@ mod tests {
         // 更新進行中照樣能開。
         let busy = parse_status(r#"{"action":"finish","target":{"version":"y"},"features":{"vocab":true}}"#);
         assert_eq!(menu_items(&busy)[1].args, vec!["open-settings", "vocab"]);
+    }
+
+    #[test]
+    fn only_the_settings_entries_receive_the_foreground_right() {
+        // #251：選單裡會開視窗的就是「設定…」「我的詞彙…」；其餘項目都在背景執行，不轉交前景權限。
+        let items = menu_items(&parse_status(r#"{"features":{"vocab":true},"settings":{"output_simplified":false}}"#));
+        let opening: Vec<&str> = items.iter().filter(|i| !i.separator && opens_window(&i.args)).map(|i| i.label.as_str()).collect();
+        assert_eq!(opening, ["設定…", "我的詞彙…"]);
+        assert!(!opens_window(&[]));
     }
 
     #[test]

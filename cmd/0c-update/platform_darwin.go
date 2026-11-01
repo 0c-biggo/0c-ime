@@ -79,9 +79,6 @@ func activateInputSource(tool, app string, force ...bool) error {
 }
 
 func install(bundle string, release *update.Release) error {
-	if runtime.GOARCH != "arm64" {
-		return fmt.Errorf("目前 macOS 套件只支援 Apple Silicon（arm64）")
-	}
 	// The matched engine must load its dictionary before the installed app changes.
 	app := filepath.Join(bundle, update.MacApp)
 	probe := exec.Command(filepath.Join(app, "Contents/MacOS/0c-server"), "-check-data", "-data", filepath.Join(app, "Contents/Resources/data"))

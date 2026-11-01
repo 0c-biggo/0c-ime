@@ -9,8 +9,9 @@ SHELL_VERSION ?= development
 # 系統安裝的位置（src/locate.h）：外殼先找家目錄的官網安裝，再找這裡。根目錄的 make install 依 PREFIX 傳入。
 ZC_SYSTEM_LIBEXECDIR ?= /usr/libexec/0c
 ZC_SYSTEM_DATADIR    ?= /usr/share/0c
-CXXFLAGS += -DZC_SHELL_VERSION=\"$(SHELL_VERSION)\" -DZC_SYSTEM_LIBEXECDIR=\"$(ZC_SYSTEM_LIBEXECDIR)\" -DZC_SYSTEM_DATADIR=\"$(ZC_SYSTEM_DATADIR)\"
-CXXFLAGS += -std=c++20 -fPIC -pthread -Wall -Wextra -Ithird_party
+# 建置必需的旗標另放，命令列給的 CXXFLAGS／CPPFLAGS／LDFLAGS（例如發行版的強化旗標）只會加在後面，蓋不掉它們。
+ZC_CPPFLAGS := -DZC_SHELL_VERSION=\"$(SHELL_VERSION)\" -DZC_SYSTEM_LIBEXECDIR=\"$(ZC_SYSTEM_LIBEXECDIR)\" -DZC_SYSTEM_DATADIR=\"$(ZC_SYSTEM_DATADIR)\"
+ZC_CXXFLAGS := -std=c++20 -fPIC -pthread -Wall -Wextra -Ithird_party
 FCITX    := Fcitx5Core Fcitx5Utils Fcitx5Config
 BUILD    := build
 PREFIX   ?= $(HOME)/.local
@@ -31,47 +32,47 @@ all: $(BUILD)/lib0c.so
 
 $(BUILD)/lib0c.so: $(CLIENT_SRC) $(ENGINE_SRC) src/*.h
 	@mkdir -p $(BUILD)
-	$(CXX) $(CXXFLAGS) $$(pkg-config --cflags $(FCITX)) -shared -o $@ $(CLIENT_SRC) $(ENGINE_SRC) $$(pkg-config --libs $(FCITX))
+	$(CXX) $(ZC_CPPFLAGS) $(CPPFLAGS) $(ZC_CXXFLAGS) $(CXXFLAGS) $$(pkg-config --cflags $(FCITX)) -shared $(LDFLAGS) -o $@ $(CLIENT_SRC) $(ENGINE_SRC) $$(pkg-config --libs $(FCITX))
 
 $(BUILD)/session_test: $(CLIENT_SRC) test/session_test.cpp src/*.h
 	@mkdir -p $(BUILD)
-	$(CXX) $(CXXFLAGS) -o $@ $(CLIENT_SRC) test/session_test.cpp
+	$(CXX) $(ZC_CPPFLAGS) $(CPPFLAGS) $(ZC_CXXFLAGS) $(CXXFLAGS) $(LDFLAGS) -o $@ $(CLIENT_SRC) test/session_test.cpp
 
 $(BUILD)/trace_test: src/trace.cpp src/trace.h test/trace_test.cpp
 	@mkdir -p $(BUILD)
-	$(CXX) $(CXXFLAGS) -o $@ src/trace.cpp test/trace_test.cpp
+	$(CXX) $(ZC_CPPFLAGS) $(CPPFLAGS) $(ZC_CXXFLAGS) $(CXXFLAGS) $(LDFLAGS) -o $@ src/trace.cpp test/trace_test.cpp
 
 $(BUILD)/0c-server: $(shell find $(ROOT)/core $(ROOT)/bridge $(ROOT)/internal $(ROOT)/cmd/0c-server -name '*.go')
 	@mkdir -p $(BUILD)
-	cd $(ROOT) && go build -o platforms/linux-fcitx5/$(BUILD)/0c-server ./cmd/0c-server
+	cd $(ROOT) && go build -o $(abspath $(BUILD))/0c-server ./cmd/0c-server
 
 $(BUILD)/0c-trace: $(shell find $(ROOT)/cmd/0c-trace $(ROOT)/core/proto -name '*.go')
 	@mkdir -p $(BUILD)
-	cd $(ROOT) && go build -o platforms/linux-fcitx5/$(BUILD)/0c-trace ./cmd/0c-trace
+	cd $(ROOT) && go build -o $(abspath $(BUILD))/0c-trace ./cmd/0c-trace
 
 $(BUILD)/legacy_socket_test: $(CLIENT_SRC) test/legacy_socket_test.cpp src/*.h
 	@mkdir -p $(BUILD)
-	$(CXX) $(CXXFLAGS) -o $@ $(CLIENT_SRC) test/legacy_socket_test.cpp
+	$(CXX) $(ZC_CPPFLAGS) $(CPPFLAGS) $(ZC_CXXFLAGS) $(CXXFLAGS) $(LDFLAGS) -o $@ $(CLIENT_SRC) test/legacy_socket_test.cpp
 
 $(BUILD)/menu_test: src/menu.cpp src/menu.h src/locate.cpp src/locate.h test/menu_test.cpp
 	@mkdir -p $(BUILD)
-	$(CXX) $(CXXFLAGS) -o $@ src/menu.cpp src/locate.cpp test/menu_test.cpp
+	$(CXX) $(ZC_CPPFLAGS) $(CPPFLAGS) $(ZC_CXXFLAGS) $(CXXFLAGS) $(LDFLAGS) -o $@ src/menu.cpp src/locate.cpp test/menu_test.cpp
 
 $(BUILD)/locate_test: src/locate.cpp src/locate.h test/locate_test.cpp
 	@mkdir -p $(BUILD)
-	$(CXX) $(CXXFLAGS) -o $@ src/locate.cpp test/locate_test.cpp
+	$(CXX) $(ZC_CPPFLAGS) $(CPPFLAGS) $(ZC_CXXFLAGS) $(CXXFLAGS) $(LDFLAGS) -o $@ src/locate.cpp test/locate_test.cpp
 
 $(BUILD)/panel_test: test/panel_test.cpp src/panel.h src/session.h
 	@mkdir -p $(BUILD)
-	$(CXX) $(CXXFLAGS) -o $@ test/panel_test.cpp
+	$(CXX) $(ZC_CPPFLAGS) $(CPPFLAGS) $(ZC_CXXFLAGS) $(CXXFLAGS) $(LDFLAGS) -o $@ test/panel_test.cpp
 
 $(BUILD)/keys_test: test/keys_test.cpp src/keys.h
 	@mkdir -p $(BUILD)
-	$(CXX) $(CXXFLAGS) -o $@ test/keys_test.cpp
+	$(CXX) $(ZC_CPPFLAGS) $(CPPFLAGS) $(ZC_CXXFLAGS) $(CXXFLAGS) $(LDFLAGS) -o $@ test/keys_test.cpp
 
 $(BUILD)/replay_guard_test: $(CLIENT_SRC) test/replay_guard_test.cpp src/*.h
 	@mkdir -p $(BUILD)
-	$(CXX) $(CXXFLAGS) -o $@ $(CLIENT_SRC) test/replay_guard_test.cpp
+	$(CXX) $(ZC_CPPFLAGS) $(CPPFLAGS) $(ZC_CXXFLAGS) $(CXXFLAGS) $(LDFLAGS) -o $@ $(CLIENT_SRC) test/replay_guard_test.cpp
 
 test: $(BUILD)/session_test $(BUILD)/0c-server $(BUILD)/trace_test $(BUILD)/replay_guard_test $(BUILD)/legacy_socket_test $(BUILD)/menu_test $(BUILD)/locate_test $(BUILD)/panel_test $(BUILD)/keys_test
 	$(BUILD)/menu_test
@@ -105,7 +106,7 @@ install: $(BUILD)/lib0c.so $(BUILD)/0c-server $(BUILD)/0c-trace
 
 # 編譯限制 bigram 筆數的資料包。
 install-data:
-	cd $(ROOT) && go run ./cmd/0c-compile -bigram-max 12000000 -out $(PREFIX)/share/zuin/data
+	cd $(ROOT) && go run ./cmd/0c-compile -bigram-max 12000000 -out $(abspath $(PREFIX))/share/zuin/data
 
 uninstall:
 	rm -f $(PREFIX)/bin/0c-server $(PREFIX)/bin/0c-trace $(PREFIX)/lib/fcitx5/lib0c.so $(PREFIX)/share/fcitx5/addon/0c.conf \

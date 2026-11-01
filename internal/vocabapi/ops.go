@@ -35,7 +35,7 @@ type Op struct {
 
 // WordInput 是要加入的一個詞。
 type WordInput struct {
-	Word     string   `json:"word" desc:"詞：1～32 個漢字；或英文詞（1～32 個英文字母、數字與 - _ .，至少一個字母，大小寫照字面），例如終端機指令 ls、kubectl，中英混打時照英文送出、不變成注音"`
+	Word     string   `json:"word" desc:"詞：1～32 個漢字；或英文詞（1～32 個英文字母、數字與 - _ .，至少一個字母，大小寫照字面），例如終端機指令 ls、kubectl，中英混打時照英文送出、不變成注音，英文模式自動補字也會建議"`
 	Readings []string `json:"readings,omitempty" desc:"漢字詞的讀音，每個讀音的注音音節以空白分隔，例如「ㄔㄣˊ ㄧˊ ㄐㄩㄣ」；破音字有幾種讀法就給幾個，最多 4 個。英文詞不給讀音"`
 }
 
@@ -164,7 +164,7 @@ var Ops = []Op{
 		}},
 	{Name: "add_words", Summary: "加入自訂詞", Method: "POST", Path: "/v1/words", Write: true,
 		Description: "加入一批自訂詞，加入後立刻打得出來。整批有任何一筆不合格就全部不加，錯誤會說明是哪一筆、為什麼。已經在系統詞庫的詞會當成使用者偏好。" +
-			"也可以加英文詞（終端機指令、工具名，例如 ls、rm、kubectl）：不給讀音，中英混打時打出完全相同的字母（大小寫照字面）就照英文送出，不變成注音。",
+			"也可以加英文詞（終端機指令、工具名，例如 ls、rm、kubectl）：不給讀音，中英混打時打出完全相同的字母（大小寫照字面）就照英文送出，不變成注音；開了英文模式自動補字，打前幾個字母（不分大小寫）也會建議。",
 		Input: addInput{}, Output: changeOutput{},
 		call: func(d Doer, in json.RawMessage) (any, *vocab.Error) {
 			q, err := decode[addInput](in)

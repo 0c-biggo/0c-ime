@@ -215,12 +215,19 @@ fn island_field(class: &str, static_flags: u32) -> Option<Field> {
 }
 
 /// 英文模式沒在組字時，按鍵要不要整個交給程式、不開始英文補字（#210）。
-/// IMM32 程式經系統相容層（CUAS）接 TSF，每個視窗都有一個暫時 context（TS_SS_TRANSITORY），焦點不在文字框時
-/// 也一樣：Photoshop 的畫布按 B、V 是換工具，英文補字卻把字母收進組字區、跳出候選窗，快捷鍵就沒了（遊戲的 WASD 同理）。
+/// IMM32 程式經系統相容層（CUAS）接 TSF，每個視窗都有一個暫時 context，焦點不在文字框時也一樣：
+/// Photoshop 的畫布按 B、V 是換工具，英文補字卻把字母收進組字區、跳出候選窗，快捷鍵就沒了（遊戲的 WASD 同理）。
 /// IMM32 的文字框（EDIT、RichEdit、Scintilla、PuTTY 的終端機畫面）有焦點時都有系統插入點；沒有插入點就不是在打字。
-/// 只看暫時 context 不夠：Windows Terminal 自己接 TSF，也標 TS_SS_TRANSITORY（讓 TSF 當成 IMM 式的程式）、沒有系統插入點；
-/// 它自己呼叫 ActivateEx，啟用本輸入法的旗標不是 0，系統相容層替 IMM32 程式啟用時是 0（`activate_flags`）。
-/// 其他自己實作 TSF 文字儲存的程式（瀏覽器、Word、UE 的聊天框）不是暫時 context，只在文字框有焦點時才給 context，不受影響。
+///
+/// 自己實作文字儲存的程式不算，它們給 context 就表示焦點在文字欄位上（非文字焦點是停用或唯讀的 context，由欄位政策處理），
+/// 而且常常沒有系統插入點。.14 實測（靜態旗標／啟用旗標）：
+/// - 系統相容層（immhost 的畫布與文字框）：0x4（只有 TS_SS_TRANSITORY）／0
+/// - Chromium（Edge、Chrome、Electron）：0xc（TS_SS_TRANSITORY＋TS_SS_NOHIDDENTEXT）／0，ui/base/ime/win/tsf_text_store.cc
+///   明寫這兩個旗標、tsf_bridge.cc 以沒有旗標的 Activate 啟用；只看暫時 context 會把這些程式的文字框全部當成畫布，
+///   英文補字整個消失、Enter 直接送出訊息（#242）。
+/// - Windows Terminal：自己呼叫 ActivateEx，啟用旗標不是 0（0x40000040）
+///
+/// 所以要暫時 context、沒有宣告 TS_SS_NOHIDDENTEXT、由相容層啟用，三者都成立才算 IMM32 程式。
 /// 注音模式照舊組字（同其他注音輸入法，要用快捷鍵先切英文）。
 pub fn english_passthrough(ctx: &ITfContext, activate_flags: u32) -> bool {
     let flags = unsafe { ctx.GetStatus() }.map(|s| s.dwStaticFlags).unwrap_or(0);
@@ -228,7 +235,7 @@ pub fn english_passthrough(ctx: &ITfContext, activate_flags: u32) -> bool {
 }
 
 fn imm32_without_caret(static_flags: u32, activate_flags: u32, caret: bool) -> bool {
-    static_flags & TS_SS_TRANSITORY != 0 && activate_flags == 0 && !caret
+    static_flags & (TS_SS_TRANSITORY | TS_SS_NOHIDDENTEXT) == TS_SS_TRANSITORY && activate_flags == 0 && !caret
 }
 
 /// 除錯紀錄用：缺 InputScope 時記下 context 狀態旗標與焦點／檢視視窗類別（不含文字）。
@@ -521,12 +528,16 @@ mod tests {
     #[test]
     fn english_passthrough_only_for_imm32_contexts_without_caret() {
         // #210：IMM32 程式沒有插入點（Photoshop 的畫布）時英文模式按鍵整個交給程式；有插入點（EDIT、PuTTY）照常補字。
+        // 系統相容層的 context 實測只有 TS_SS_TRANSITORY。
         assert!(imm32_without_caret(TS_SS_TRANSITORY, 0, false));
-        assert!(imm32_without_caret(TS_SS_TRANSITORY | TS_SS_NOHIDDENTEXT, 0, false));
         assert!(!imm32_without_caret(TS_SS_TRANSITORY, 0, true));
-        // Windows Terminal：自己接 TSF、也標暫時 context、沒有系統插入點，但啟用旗標不是 0（.14 實測 0x40000040）。
-        assert!(!imm32_without_caret(TS_SS_TRANSITORY | TS_SS_NOHIDDENTEXT, 0x4000_0040, false));
-        // 自己實作文字儲存的程式（Chromium 沒有系統插入點）不受影響。
+        // #242：Chromium（Edge、Chrome、Electron）實測 0xc、啟用旗標 0、沒有系統插入點，文字框要照常補字。
+        assert_eq!(TS_SS_TRANSITORY | TS_SS_NOHIDDENTEXT, 0xc);
+        assert!(!imm32_without_caret(0xc, 0, false));
+        // Windows Terminal：自己接 TSF、沒有系統插入點，但啟用旗標不是 0（.14 實測 0x40000040）。
+        assert!(!imm32_without_caret(TS_SS_TRANSITORY, 0x4000_0040, false));
+        assert!(!imm32_without_caret(0xc, 0x4000_0040, false));
+        // 其他自己實作文字儲存的程式不是暫時 context。
         assert!(!imm32_without_caret(TS_SS_NOHIDDENTEXT, 0, false));
         assert!(!imm32_without_caret(0, 0, false));
     }

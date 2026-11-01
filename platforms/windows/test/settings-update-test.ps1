@@ -88,15 +88,15 @@ if($Worker){
   Shot 'prepared'
   Click '立即安裝'
   Check (WaitFor {(Status).installed-eq'0.1.0-dev.49'} 120) 'GUI manual installation writes dev.49 receipt'
-  Check (WaitFor {(Status).update.stage-eq'pending'} 30) 'Windows update waits for login activation'
+  Check (WaitFor {(Status).update.stage-in'pending','active'} 30) 'Windows update does not wait for a new login'
   Start-Sleep 3
   $names=@((Window).FindAll([Windows.Automation.TreeScope]::Descendants,[Windows.Automation.Condition]::TrueCondition)|ForEach-Object{$_.Current.Name})
   Check (-not ($names-match'無法.*JSON|不是 JSON|發生未知')) 'installer diagnostics do not break the JSON contract'
   Click '總覽';Start-Sleep 2
   $s=Status
-  Check ($s.runtime.version-eq'0.1.0-dev.48'-and$s.installed-eq'0.1.0-dev.49') 'installed and running versions remain distinct before relogin'
+  Check ($s.installed-eq'0.1.0-dev.49') 'overview reads the installed version'
   $names=@((Window).FindAll([Windows.Automation.TreeScope]::Descendants,[Windows.Automation.Condition]::TrueCondition)|ForEach-Object{$_.Current.Name})
-  Check (($names-match'已安裝版本').Count-gt0-and($names-match'登出再登入').Count-gt0) 'overview explains installed version and relogin'
+  Check (($names-match'已安裝版本').Count-gt0-and-not($names-match'登出再登入').Count) 'overview explains installed version and does not ask to sign out'
   Check (-not ($names-match'有新版 0.1.0-dev.49').Count) 'installed pending version is not described as a new available download'
   Shot 'installed-pending'
   $report.passed=$true

@@ -9,7 +9,9 @@ import os
 from pathlib import Path
 import platform
 import re
+import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -18,6 +20,9 @@ import time
 
 # 排程（systemd）與外殼選單執行的 0c-update；由更新器管理，不在收據裡（見 refresh_stable_updater）。
 STABLE_UPDATER = ".local/share/zuin/bin/0c-update"
+# 安裝工具自己的目錄。整個目錄連到別處可以（#250），裡面的項目不行：更新與回復靠同一個檔案系統上的改名
+# （神經模型、核心版本目錄），清理舊備份會刪內容（#179），連到別處就不成立。
+MANAGED_DIR = Path(".local/share/zuin")
 
 PAYLOAD = {
     "bin/0c-update": ".local/bin/0c-update",
@@ -747,7 +752,8 @@ def report_fcitx_addon(home, run=subprocess.run, wait=3.0, show=print):
     procs = [proc for _, proc in user_processes(("fcitx5",))]
     if not procs:
         return None
-    library = home.resolve() / (ADDON_LIBRARY + ".so")
+    # maps 記的是解開連結後的路徑（家目錄 /home → /var/home、~/.local 連到別的磁碟，#250）。
+    library = os.path.realpath(home / (ADDON_LIBRARY + ".so"))
     if any(shell_mapped(proc, library) for proc in procs):
         show("Fcitx5 已載入靈犀注音外殼。")
         return True
@@ -770,13 +776,103 @@ def report_fcitx_addon(home, run=subprocess.run, wait=3.0, show=print):
     return False
 
 
-def destination(home, relative):
-    path = home / relative
-    for part in (path, *path.parents):
+def link_steps(link):
+    """逐層解開目錄連結 link，依序回傳經過的每一層 (路徑, lstat)，含中途的連結；最後一層是實際的目錄。"""
+    current, pending, steps, hops = Path(os.path.realpath(link.parent)), [link.name], [], 0
+    while pending:
+        part = pending.pop()
+        if part == "..":
+            current = current.parent
+            continue
+        step = current / part
+        try:
+            info = os.lstat(step)
+        except OSError as error:
+            raise ValueError(f"{link} 指向的 {step} 不存在或讀不到（{error.strerror}）；磁碟沒掛上時請先掛上") from None
+        steps.append((step, info))
+        if not stat.S_ISLNK(info.st_mode):
+            current = step
+            continue
+        hops += 1
+        if hops > 40:
+            raise ValueError(f"{link} 經過的連結太多層")
+        target = Path(os.readlink(step))
+        if target.is_absolute():
+            current = Path("/")
+        pending.extend(reversed(target.relative_to("/").parts if target.is_absolute() else target.parts))
+    return steps
+
+
+def private_group(gid, uid):
+    """這個群組只有 uid 一個人。Debian、Ubuntu 預設的使用者私人群組：登入後 umask 是 002，新目錄都是 775，
+    群組可寫不代表別人可寫（Debian 的 OpenSSH 對 ~/.ssh 也是這樣認定，user-group-modes.patch）。"""
+    import grp
+    import pwd
+    try:
+        me = pwd.getpwuid(uid).pw_name
+        members = set(grp.getgrgid(gid).gr_mem) | {user.pw_name for user in pwd.getpwall() if user.pw_gid == gid}
+    except KeyError:
+        return False
+    return members == {me}
+
+
+def check_directory_link(home, link):
+    """家目錄底下的目錄連結（例如 ~/.local → /mnt/md0/me/.local，#250）只接受別人動不了的：
+
+    - 連結本身與它指向的目錄都屬於目前使用者，指向的目錄別人不可寫；
+    - 從根目錄走到那裡經過的每一層都屬於目前使用者或 root；別人可寫的上層只接受有黏著位的（/tmp），
+      否則對方可以把整個目錄換掉，下一次更新就把程式裝到對方準備的地方、Fcitx5 也會載入那裡的外殼。
+
+    「別人可寫」是其他人可寫，或群組可寫而群組裡還有別人（private_group）。
+    家目錄與它的上層不檢查：安裝本來就信任它們，要檢查的是連結多帶進來的路徑。
+    root 一律不接受（main 與 upgrade.py 本來就拒絕 root，這裡不留後路）。
+    """
+    uid = os.getuid()
+    if uid == 0:
+        raise ValueError(f"以 root 執行時不跟隨連結：{link}")
+    steps = link_steps(link)
+    real_home = Path(os.path.realpath(home))
+    trusted = {real_home, *real_home.parents}
+    last = len(steps) - 1
+    for index, (path, info) in enumerate(steps):
+        if path in trusted and index != last:
+            continue
+        own = index == 0 or index == last  # 連結本身與實際的目錄不接受 root 擁有：/usr/share 不是使用者的目錄
+        if info.st_uid != uid and (own or info.st_uid != 0):
+            raise ValueError(f"{link} 經過的 {path} 屬於其他使用者")
+        if stat.S_ISLNK(info.st_mode):
+            continue
+        if not stat.S_ISDIR(info.st_mode):
+            raise ValueError(f"{link} 指向的 {path} 不是目錄")
+        writable = info.st_mode & 0o002 or (info.st_mode & 0o020 and not private_group(info.st_gid, uid))
+        if writable and (index == last or not info.st_mode & stat.S_ISVTX):
+            raise ValueError(f"{link} 經過的 {path} 群組或其他人可寫；請執行 chmod go-w {shlex.quote(str(path))} 後重試")
+
+
+def check_target_links(home, path, follow):
+    """path 本身不能是連結（連結的檔案或目錄換新時會變成一般檔案，或寫到連結指向的別處）；
+
+    上層的目錄連結照 check_directory_link 判斷。follow=False（備份裡的檔案）一律拒絕。
+    """
+    if path.is_symlink():
+        raise ValueError(f"安裝目標不接受符號連結：{path}")
+    for part in path.parents:
         if part == home:
             break
-        if part.is_symlink():
-            raise ValueError(f"安裝目標不接受符號連結：{part}")
+        if not part.is_symlink():
+            continue
+        relative = part.relative_to(home)
+        if not follow or MANAGED_DIR in relative.parents:
+            raise ValueError(f"安裝目標不接受符號連結：{part}（安裝工具自己的目錄）")
+        try:
+            check_directory_link(home, part)
+        except ValueError as error:
+            raise ValueError(f"安裝目標不接受這個符號連結：{error}") from None
+
+
+def destination(home, relative, follow=True):
+    path = home / relative
+    check_target_links(home, path, follow)
     if path.exists() and not path.is_file():
         raise ValueError(f"安裝目標不是一般檔案：{path}")
     return path
@@ -784,14 +880,15 @@ def destination(home, relative):
 
 def tree_destination(home, relative):
     path = home / relative
-    for part in (path, *path.parents):
-        if part == home:
-            break
-        if part.is_symlink():
-            raise ValueError(f"安裝目標不接受符號連結：{part}")
+    check_target_links(home, path, True)
     if path.exists() and not path.is_dir():
         raise ValueError(f"安裝目標不是目錄：{path}")
     return path
+
+
+def backups_dir(home):
+    """這個使用者的套件備份目錄（解開上層連結後的實際路徑）；它本身或個人資料目錄裡的連結一律拒絕。"""
+    return tree_destination(home, ".local/share/zuin/backups").resolve()
 
 
 def tree_digest(root):
@@ -944,6 +1041,9 @@ def install(bundle, home, release):
         config_changes.append(env_change)
     neural_src = bundle / "neural"
     neural_dst = tree_destination(home, NEURAL) if neural_src.is_dir() else None
+    for target in (*targets.values(), *([neural_dst] if neural_dst else [])):
+        if Path(os.path.realpath(target)).is_relative_to(os.path.realpath(bundle)):
+            raise ValueError(f"安裝目標不接受符號連結：{target} 指到套件目錄 {bundle}")
     moved_neural, placed_neural, staged = None, False, None
     backups = home / ".local/share/zuin/backups"
     destination(home, ".local/share/zuin/backups/placeholder")
@@ -1142,7 +1242,7 @@ def rollback(home, backup, restore_user=False):
     home = home.resolve()
     # Only restore installer-owned paths, after validating both current and saved bytes.
     backup = backup.resolve()
-    if backup.parent != home / ".local/share/zuin/backups":
+    if backup.parent != backups_dir(home):
         raise ValueError("回復目錄必須位於此使用者的套件備份目錄")
     if restore_user:
         regular(backup / SAVED_USER)
@@ -1165,7 +1265,7 @@ def rollback(home, backup, restore_user=False):
         if relative == KIMPANEL_INDICATOR:
             if entry.get("kimpanel_spacing") is not True or entry["before"] is None:
                 raise ValueError("備份含不支援的 Kimpanel 修改")
-            saved = destination(backup, relative)
+            saved = destination(backup, relative, follow=False)
             if digest(regular(saved)) != entry["before"]:
                 raise ValueError(f"備份雜湊不符：{relative}")
             replacement = regular(backup / "new-indicator.js")
@@ -1183,7 +1283,7 @@ def rollback(home, backup, restore_user=False):
         if relative in UI_CONFIGS:
             if entry.get("preference") != "PreferTextIcon":
                 raise ValueError("備份含不支援的介面設定")
-            saved = destination(backup, relative)
+            saved = destination(backup, relative, follow=False)
             before = regular(saved).read_bytes() if entry["before"] is not None else None
             if before is not None and digest(saved) != entry["before"]:
                 raise ValueError(f"備份雜湊不符：{relative}")
@@ -1208,7 +1308,7 @@ def rollback(home, backup, restore_user=False):
                 raise ValueError(f"安裝後已移除的舊檔又出現，拒絕覆蓋：{relative}")
         elif digest(regular(dst)) != entry["after"]:
             raise ValueError(f"安裝後檔案已變更，拒絕覆蓋：{relative}")
-        saved = destination(backup, relative)
+        saved = destination(backup, relative, follow=False)
         if entry["before"] is not None and digest(regular(saved)) != entry["before"]:
             raise ValueError(f"備份雜湊不符：{relative}")
         targets[relative] = (dst, saved)
@@ -1264,7 +1364,7 @@ def restore_user_store(home, backup):
     # Keep the dictionary being replaced, so the restore itself can be undone.
     home = home.resolve()
     backup = backup.resolve()
-    if backup.parent != home / ".local/share/zuin/backups":
+    if backup.parent != backups_dir(home):
         raise ValueError("還原來源必須位於此使用者的套件備份目錄")
     regular(backup / SAVED_USER)
     restore_vocab = (backup / SAVED_VOCAB).exists()

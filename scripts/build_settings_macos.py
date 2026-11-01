@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""在 Apple Silicon 的 macOS 上建置「靈犀注音設定」（Tauri），輸出 0c-settings.app 與第三方授權聲明。
+"""在 macOS 上建置「靈犀注音設定」（Tauri），輸出 0c-settings.app 與第三方授權聲明。
+
+Apple Silicon 可建 arm64 與 amd64（Intel，交叉編譯；--test 的測試在 Rosetta 下跑），Intel Mac 只建 amd64。
 
 scripts/package_macos.py --settings 只收這裡的輸出，所以打包機不必自己裝 Rust。Rust 工具鏈裝在輸出目錄旁的
 快取（--out/cache），不改任何 shell 設定檔（rustup 一律 --no-modify-path），不寫進家目錄。
 
   python3 scripts/build_settings_macos.py --version 0.1.0-dev.43
   python3 scripts/build_settings_macos.py --version 0.1.0-dev.43 --test   # 另外跑 Rust 單元測試
+  python3 scripts/build_settings_macos.py --version 0.1.0-dev.43 --arch amd64   # Intel 版
 
 App 在這裡只做 ad-hoc 簽章（讓本機可以跑）；正式簽章與公證由 package_macos.py 在整個 0c.app 完成後做，
 巢狀的 0c-settings.app 會先被簽成 bundle。需與 Python 3.9（macOS 內建）相容。
@@ -27,8 +30,9 @@ from macos_version import bundle_version  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "platforms/settings"
 ICON = ROOT / "platforms/macos/Icon/AppIcon.icns"
-TARGET = "aarch64-apple-darwin"
-RUSTUP_URL = "https://static.rust-lang.org/rustup/dist/" + TARGET + "/rustup-init"
+# 套件架構（Go 的 GOARCH）對 Rust target；rustup 本身裝本機架構的版本。
+TARGETS = {"arm64": "aarch64-apple-darwin", "amd64": "x86_64-apple-darwin"}
+HOST = {"arm64": "arm64", "x86_64": "amd64"}
 BUNDLE_ID = "com.biggo.0c.settings"
 NAME = "靈犀注音設定"
 EXECUTABLE = "0c-settings"
@@ -83,49 +87,57 @@ def assemble(app, binary, version):
     run(["codesign", "--verify", "--strict", app], capture_output=True)
 
 
-def toolchain(cache, rust):
+def toolchain(cache, rust, target):
     """安裝（或沿用）快取裡指定版本的 Rust，回傳 (環境變數, cargo 路徑)。rustup-init 直接下載並核對官方公布的雜湊。"""
     cargo_home, rustup_home = cache / "cargo", cache / "rustup"
     env = dict(os.environ, CARGO_HOME=str(cargo_home), RUSTUP_HOME=str(rustup_home))
     cargo = cargo_home / "bin/cargo"
     env["PATH"] = str(cargo_home / "bin") + os.pathsep + env.get("PATH", "")
-    if cargo.exists() and subprocess.run([str(cargo), "--version"], env=env, capture_output=True, text=True).stdout.split()[1:2] == [rust]:
-        return env, cargo
+    if not (cargo.exists() and subprocess.run([str(cargo), "--version"], env=env, capture_output=True, text=True).stdout.split()[1:2] == [rust]):
+        install_rustup(cache, rust, env)
+    if target != TARGETS[HOST[platform.machine()]]:
+        run([cargo_home / "bin/rustup", "target", "add", target], env=env, capture_output=True)
+    return env, cargo
+
+
+def install_rustup(cache, rust, env):
+    base = "https://static.rust-lang.org/rustup/dist/" + TARGETS[HOST[platform.machine()]] + "/rustup-init"
     download = cache / "download"
     download.mkdir(parents=True, exist_ok=True)
     init = download / "rustup-init"
-    for url, name in ((RUSTUP_URL, "rustup-init"), (RUSTUP_URL + ".sha256", "rustup-init.sha256")):
+    for url, name in ((base, "rustup-init"), (base + ".sha256", "rustup-init.sha256")):
         run(["curl", "--proto", "=https", "--tlsv1.2", "-fsSL", "-o", download / name, url])
     expected = (download / "rustup-init.sha256").read_text().split()[0]
     if hashlib.sha256(init.read_bytes()).hexdigest() != expected:
         raise ValueError("rustup-init 的雜湊與官方公布的不符")
     init.chmod(0o755)
     run([init, "-y", "--no-modify-path", "--profile", "minimal", "--default-toolchain", rust], env=env, capture_output=True)
-    return env, cargo
 
 
 def build(args):
-    if sys.platform != "darwin" or platform.machine() != "arm64":
-        raise ValueError("macOS 設定程式需在 Apple Silicon 的 macOS 原生建置")
+    if sys.platform != "darwin" or platform.machine() not in HOST or (HOST[platform.machine()] == "amd64" and args.arch == "arm64"):
+        raise ValueError("macOS 設定程式需在 macOS 建置；Apple Silicon 版只能在 Apple Silicon 建置")
     info_plist(args.version)  # 版本格式
+    target = TARGETS[args.arch]
     out = args.out.resolve()
     cache = out / "cache"
     cache.mkdir(parents=True, exist_ok=True)
-    env, cargo = toolchain(cache, args.rust)
+    env, cargo = toolchain(cache, args.rust, target)
     work = cache / "work/settings"
     if work.exists():
         shutil.rmtree(work)
     shutil.copytree(APP, work, ignore=shutil.ignore_patterns("target", "gen"))
     env.update(ZC_BUILD_VERSION=args.version, CARGO_TARGET_DIR=str(cache / "target"), MACOSX_DEPLOYMENT_TARGET=MINIMUM_SYSTEM)
     # --locked：建置結果由 Cargo.lock 決定，鎖定檔需更新時直接失敗。
-    run([cargo, "build", "--release", "--locked", "--features", "tauri/custom-protocol"], cwd=work, env=env)
+    # 一律指定 --target（輸出在 target/<triple>/release），兩種架構的建置不互相覆蓋。
+    run([cargo, "build", "--release", "--locked", "--target", target, "--features", "tauri/custom-protocol"], cwd=work, env=env)
     if args.test:
-        run([cargo, "test", "--release", "--locked"], cwd=work, env=env)
-    target_dir = out / "macos-arm64"
+        run([cargo, "test", "--release", "--locked", "--target", target], cwd=work, env=env)
+    target_dir = out / f"macos-{args.arch}"
     target_dir.mkdir(parents=True, exist_ok=True)
-    assemble(target_dir / APP_NAME, cache / "target/release" / EXECUTABLE, args.version)
+    assemble(target_dir / APP_NAME, cache / "target" / target / "release" / EXECUTABLE, args.version)
     notices = subprocess.run([sys.executable, str(ROOT / "scripts/collect_notices.py"), "rust", "--workspace", str(work),
-                              "--target", TARGET, "--cargo", str(cargo)],
+                              "--target", target, "--cargo", str(cargo)],
                              check=True, env=env, capture_output=True, text=True, encoding="utf-8").stdout
     (target_dir / "NOTICES.txt").write_text(notices, encoding="utf-8")
     if (work / "Cargo.lock").read_bytes() != (APP / "Cargo.lock").read_bytes():
@@ -138,6 +150,7 @@ def main():
     parser.add_argument("--version", required=True, help="顯示在「關於」的設定程式版本，通常與套件版本相同")
     parser.add_argument("--out", type=Path, default=ROOT / "build/settings")
     parser.add_argument("--rust", default="1.99.0", help="Rust 工具鏈版本（Tauri 2.12 需要 1.90 以上）")
+    parser.add_argument("--arch", choices=sorted(TARGETS), default="arm64", help="arm64（Apple Silicon）或 amd64（Intel）")
     parser.add_argument("--test", action="store_true", help="另外執行 Rust 單元測試")
     args = parser.parse_args()
     try:

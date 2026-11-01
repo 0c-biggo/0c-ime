@@ -47,6 +47,7 @@ BINDIR       ?= $(PREFIX)/bin
 LIBDIR       ?= $(PREFIX)/lib
 LIBEXECDIR   ?= $(PREFIX)/libexec
 DATAROOTDIR  ?= $(PREFIX)/share
+MANDIR       ?= $(DATAROOTDIR)/man
 DESTDIR      ?=
 GO           ?= go
 CARGO        ?= cargo
@@ -83,6 +84,17 @@ FCITX5_LIBRARY  := $(if $(filter $(FCITX5_SYSTEM_ADDONDIR),$(FCITX5_ADDONDIR)),l
 IBUS_DATADIR      := $(or $(shell pkg-config --variable=datadir ibus-1.0 2>/dev/null),/usr/share)
 IBUS_COMPONENTDIR ?= $(IBUS_DATADIR)/ibus/component
 SETTINGS_OUT := $(if $(SETTINGS_BIN),$(SETTINGS_BIN),$(SYSBUILD)/settings/release/0c-settings)
+# man page 的日期：SOURCE_DATE_EPOCH（發行版建置會設，可重現）、HEAD 的 commit 時間，都沒有時用今天。
+MAN_DATE ?= $(shell date -u -d @$(or $(SOURCE_DATE_EPOCH),$(shell git log -1 --format=%ct 2>/dev/null),$(shell date +%s)) +%Y-%m-%d)
+# 0c-update 的命令列入口 $(BINDIR)/0c-update 是指向 libexec 的相對連結（同在 PREFIX 底下，DESTDIR 暫存樹裡也解得開）。
+# PREFIX=~/.local 時那裡是官網安裝的 0c-update：不是指向我們的就不蓋掉、uninstall 也不刪。
+ZC_UPDATE_LINK := $(DESTDIR)$(BINDIR)/0c-update
+ours_link = [ -L $(ZC_UPDATE_LINK) ] && [ "$$(readlink -m $(ZC_UPDATE_LINK))" = "$$(readlink -m $(DESTDIR)$(ZC_LIBEXEC)/0c-update)" ]
+
+# 從 .in 範本換掉路徑、版本後裝成 644，直接寫到安裝位置：install 不寫建置目錄，sudo make install 才不會留下 root 擁有的檔案。$(1) 範本、$(2) 安裝位置、$(3) sed 參數。
+define install_template
+install -d $(dir $(DESTDIR)$(2)) && sed $(3) $(1) > $(DESTDIR)$(2) && chmod 644 $(DESTDIR)$(2)
+endef
 
 .PHONY: build build-go build-fcitx5 build-settings install uninstall check-version
 
@@ -111,6 +123,11 @@ install: check-version
 	install -Dm755 $(SYSBUILD)/0c-server $(DESTDIR)$(ZC_LIBEXEC)/0c-server
 	install -Dm755 $(SYSBUILD)/0c-update $(DESTDIR)$(ZC_LIBEXEC)/0c-update
 	install -Dm755 $(SYSBUILD)/0c-mcp $(DESTDIR)$(BINDIR)/0c-mcp
+	@# 設定、詞彙、模型的命令列入口要打得到；程式本身留在 libexec，判斷系統安裝時會解開連結
+	@if [ -e $(ZC_UPDATE_LINK) -o -L $(ZC_UPDATE_LINK) ] && ! { $(ours_link); }; then \
+		echo '$(ZC_UPDATE_LINK) 已是別的 0c-update（例如官網安裝），不覆蓋；系統安裝的在 $(ZC_LIBEXEC)/0c-update' >&2; \
+	else install -d $(DESTDIR)$(BINDIR) && ln -sfr $(DESTDIR)$(ZC_LIBEXEC)/0c-update $(ZC_UPDATE_LINK); fi
+	$(foreach m,0c-update 0c-mcp,$(call install_template,platforms/linux-system/man/$(m).1.in,$(MANDIR)/man1/$(m).1,-e 's|@VERSION@|$(VERSION)|g' -e 's|@DATE@|$(MAN_DATE)|g') &&) true
 	install -d $(DESTDIR)$(ZC_SHARE)/data
 	cp -R --no-preserve=mode,ownership '$(DATA)/.' $(DESTDIR)$(ZC_SHARE)/data/
 	chmod -R u=rwX,go=rX $(DESTDIR)$(ZC_SHARE)/data
@@ -127,28 +144,24 @@ endif
 	$(foreach i,0c-zhuyin 0c-english,install -Dm644 platforms/linux-fcitx5/icons/$(i).svg $(DESTDIR)$(DATAROOTDIR)/icons/hicolor/scalable/status/$(i).svg &&) true
 ifeq ($(FCITX5),1)
 	install -Dm644 $(SYSBUILD)/fcitx5/lib0c.so $(DESTDIR)$(FCITX5_ADDONDIR)/lib0c.so
-	install -d $(DESTDIR)$(DATAROOTDIR)/fcitx5/addon
-	sed 's|^Library=lib0c$$|Library=$(FCITX5_LIBRARY)|' platforms/linux-fcitx5/0c-addon.conf > $(DESTDIR)$(DATAROOTDIR)/fcitx5/addon/0c.conf
-	chmod 644 $(DESTDIR)$(DATAROOTDIR)/fcitx5/addon/0c.conf
+	$(call install_template,platforms/linux-fcitx5/0c-addon.conf,$(DATAROOTDIR)/fcitx5/addon/0c.conf,'s|^Library=lib0c$$|Library=$(FCITX5_LIBRARY)|')
 	install -Dm644 platforms/linux-fcitx5/0c-im.conf $(DESTDIR)$(DATAROOTDIR)/fcitx5/inputmethod/zuin.conf
 endif
 ifeq ($(IBUS),1)
 	install -Dm755 $(SYSBUILD)/0c-ibus $(DESTDIR)$(ZC_LIBEXEC)/0c-ibus
-	install -d $(DESTDIR)$(IBUS_COMPONENTDIR)
-	sed -e 's|@LIBEXECDIR@|$(ZC_LIBEXEC)|g' -e 's|@DATAROOTDIR@|$(DATAROOTDIR)|g' platforms/linux-ibus/0c.xml.in > $(DESTDIR)$(IBUS_COMPONENTDIR)/0c.xml
-	chmod 644 $(DESTDIR)$(IBUS_COMPONENTDIR)/0c.xml
+	$(call install_template,platforms/linux-ibus/0c.xml.in,$(IBUS_COMPONENTDIR)/0c.xml,-e 's|@LIBEXECDIR@|$(ZC_LIBEXEC)|g' -e 's|@DATAROOTDIR@|$(DATAROOTDIR)|g')
 endif
 ifeq ($(SETTINGS),1)
 	install -Dm755 $(SETTINGS_OUT) $(DESTDIR)$(BINDIR)/0c-settings
 	install -Dm644 platforms/settings/icons/128x128.png $(DESTDIR)$(DATAROOTDIR)/icons/hicolor/128x128/apps/0c-settings.png
-	install -d $(DESTDIR)$(DATAROOTDIR)/applications
-	sed 's|@BINDIR@|$(BINDIR)|g' platforms/settings/0c-settings.desktop.in > $(DESTDIR)$(DATAROOTDIR)/applications/0c-settings.desktop
-	chmod 644 $(DESTDIR)$(DATAROOTDIR)/applications/0c-settings.desktop
+	$(call install_template,platforms/settings/0c-settings.desktop.in,$(DATAROOTDIR)/applications/0c-settings.desktop,'s|@BINDIR@|$(BINDIR)|g')
 endif
 
 uninstall:
+	if $(ours_link); then rm -f $(ZC_UPDATE_LINK); fi
 	rm -f $(DESTDIR)$(ZC_LIBEXEC)/0c-server $(DESTDIR)$(ZC_LIBEXEC)/0c-update $(DESTDIR)$(ZC_LIBEXEC)/0c-ibus \
 	      $(DESTDIR)$(BINDIR)/0c-mcp $(DESTDIR)$(BINDIR)/0c-settings $(DESTDIR)$(ZC_SHARE)/distribution.json \
+	      $(DESTDIR)$(MANDIR)/man1/0c-update.1 $(DESTDIR)$(MANDIR)/man1/0c-mcp.1 \
 	      $(DESTDIR)$(ZC_SHARE)/neural/sequence_runtime.py $(DESTDIR)$(ZC_SHARE)/neural/punct_runtime.py $(DESTDIR)$(ZC_SHARE)/neural/pairing.lock.json \
 	      $(DESTDIR)$(FCITX5_ADDONDIR)/lib0c.so $(DESTDIR)$(DATAROOTDIR)/fcitx5/addon/0c.conf \
 	      $(DESTDIR)$(DATAROOTDIR)/fcitx5/inputmethod/zuin.conf $(DESTDIR)$(IBUS_COMPONENTDIR)/0c.xml \

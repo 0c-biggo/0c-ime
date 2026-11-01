@@ -12,11 +12,12 @@ dropped for withdrawn versions. changelog[0] never carries platforms; the top le
 """
 import re
 
-PLATFORMS = {("windows", "amd64"): "windows-amd64", ("linux", "amd64"): "linux-amd64", ("darwin", "arm64"): "macos-arm64"}  # 官網顯示順序
+PLATFORMS = {("windows", "amd64"): "windows-amd64", ("linux", "amd64"): "linux-amd64", ("darwin", "arm64"): "macos-arm64",
+             ("darwin", "amd64"): "macos-amd64"}  # 官網顯示順序
 RELEASED_STAGES = ("public-beta", "stable")
 SUMMARY = "### 公開摘要"
 HEADING = re.compile(r"^## (\S+)（(\d{4}-\d{2}-\d{2})，([a-z-]+)）$")
-FILE = re.compile(r"^0c-(?P<version>.+)-(?P<platform>linux-amd64|windows-amd64|macos-arm64)(?P<setup>-setup)?\.(?P<ext>tar\.gz|zip|exe|pkg)$")
+FILE = re.compile(r"^0c-(?P<version>.+)-(?P<platform>linux-amd64|windows-amd64|macos-arm64|macos-amd64)(?P<setup>-setup)?\.(?P<ext>tar\.gz|zip|exe|pkg)$")
 LINK = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 ROLES = ("installer", "archive")
@@ -83,9 +84,9 @@ def classify(name, version):
         return platform, "installer"
     if platform == "windows-amd64" and ext == "zip" and not m["setup"]:
         return platform, "archive"
-    if platform == "macos-arm64" and ext == "pkg" and not m["setup"]:
+    if platform.startswith("macos-") and ext == "pkg" and not m["setup"]:
         return platform, "installer"
-    if platform == "macos-arm64" and ext == "tar.gz" and not m["setup"]:
+    if platform.startswith("macos-") and ext == "tar.gz" and not m["setup"]:
         return platform, "archive"
     return None
 

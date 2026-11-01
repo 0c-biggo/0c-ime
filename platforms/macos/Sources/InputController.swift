@@ -191,11 +191,11 @@ final class LingxiInputController: IMKInputController {
         case .requiresApproval:
             menu.addItem(NSMenuItem(title: "自動更新已關閉 — 開啟背景執行…", action: #selector(openLoginItems(_:)), keyEquivalent: ""))
         case .enabled:
-            let item = NSMenuItem(title: "自動更新：已開啟", action: nil, keyEquivalent: "")
+            let item = NSMenuItem(title: "背景排程：已開啟", action: nil, keyEquivalent: "")
             item.isEnabled = false
             menu.addItem(item)
         default:
-            let item = NSMenuItem(title: "自動更新：未設定", action: nil, keyEquivalent: "")
+            let item = NSMenuItem(title: "背景排程：未設定", action: nil, keyEquivalent: "")
             item.isEnabled = false
             menu.addItem(item)
         }

@@ -250,7 +250,7 @@ try:
         report['checks'].append('tray_update_row_visible')
         labels=[i['label'] for i in menu_items()]
         if sum(l.startswith(settings_label) for l in labels)!=1: raise RuntimeError('Settings entry is not unique: '+str(labels))
-        for gone in ('自動更新：','暫停自動更新','神經選字（','提交時補標點（','依前文選字（','操作結果：','檢查並準備更新','目前神經選字：'):
+        for gone in ('自動更新：','更新方式：','暫停自動更新','神經選字（','提交時補標點（','依前文選字（','操作結果：','檢查並準備更新','目前神經選字：'):
             if any(gone in l for l in labels): raise RuntimeError('Old submenu item is still there: '+gone)
         report['checks'].append('tray_old_submenu_items_are_gone')
         # #125：0.2.0 起「我的詞彙…」一律出現在設定列與更新列中間；舊版更新器（status 沒有 features）時藏起來。

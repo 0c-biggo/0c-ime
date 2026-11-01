@@ -50,6 +50,9 @@ func handOverUI(wait time.Duration) {
 // stopUI（解除安裝）：結束這個帳號執行中的靈犀注音輸入法程式。
 func stopUI(wait time.Duration) { retireMacShells("", wait, false) }
 
+// restartRetiredUI：只有 Windows 要等穩定副本換新才帶起候選窗程式。
+func restartRetiredUI() {}
+
 // retireMacShells 請過期的輸入法程式在沒有組字、使用者停手之後結束；whenAway 時只在使用者離開時（背景交接）。
 // current 不為空時，全部結束後以不搶前景的方式啟動 current 所在的 App。回傳結束了幾個，以及到期時仍在執行的。
 func retireMacShells(current string, wait time.Duration, whenAway bool) (int, []uiProcess) {

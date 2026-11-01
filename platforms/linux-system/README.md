@@ -57,6 +57,8 @@ make install PREFIX=/usr VERSION=0.2.3 DESTDIR=$PWD/debian/tmp
 | `/usr/bin/0c-mcp` | AI 工具用的 MCP 伺服器（stdio） |
 | `/usr/libexec/0c/0c-server` | 引擎，由外殼在第一個按鍵帶起：`0c-server -data /usr/share/0c/data` |
 | `/usr/libexec/0c/0c-update` | 設定、詞彙與本機 API 的命令列入口（這個模式下不更新） |
+| `/usr/bin/0c-update` | 指向 `../libexec/0c/0c-update` 的相對符號連結，讓指令打得到；判斷是不是系統安裝時會解開連結。`BINDIR` 已有別的 `0c-update`（例如 `PREFIX=~/.local` 碰上官網安裝）時不覆蓋，`uninstall` 也只刪指向自己的連結 |
+| `/usr/share/man/man1/0c-update.1`、`0c-mcp.1` | man page，由 `platforms/linux-system/man/*.1.in` 帶入版號與日期（`SOURCE_DATE_EPOCH`，沒有時用 HEAD 的 commit 日期）產生 |
 | `/usr/libexec/0c/0c-ibus` | IBus 外殼，由 ibus-daemon 依元件檔啟動 |
 | `/usr/lib/x86_64-linux-gnu/fcitx5/lib0c.so` | Fcitx5 外殼 |
 | `/usr/share/fcitx5/addon/0c.conf`、`/usr/share/fcitx5/inputmethod/zuin.conf` | Fcitx5 addon 與輸入法（ID `zuin`） |

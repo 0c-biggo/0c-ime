@@ -10,9 +10,15 @@ CHANNEL='@CHANNEL@'
 fail() { printf '靈犀注音安裝失敗：%s\n' "$1" >&2; exit 1; }
 
 [ "$(id -u)" != 0 ] || fail '請以一般使用者執行，不要使用 sudo。'
-case "$(uname -s)-$(uname -m)" in
+MACHINE=$(uname -m)
+# Apple Silicon 上以 Rosetta 執行的終端機也回報 x86_64；照實際的晶片選 arm64 版。
+if [ "$(uname -s)-$MACHINE" = Darwin-x86_64 ] && [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = 1 ]; then
+    MACHINE=arm64
+fi
+case "$(uname -s)-$MACHINE" in
     Linux-x86_64) URL='@URL_LINUX_AMD64@'; SUM='@SHA_LINUX_AMD64@' ;;
     Darwin-arm64) URL='@URL_DARWIN_ARM64@'; SUM='@SHA_DARWIN_ARM64@' ;;
+    Darwin-x86_64) URL='@URL_DARWIN_AMD64@'; SUM='@SHA_DARWIN_AMD64@' ;;
     *) fail "目前不支援 $(uname -s) $(uname -m)。" ;;
 esac
 [ -n "$URL" ] || fail "這一版尚未提供 $(uname -s) $(uname -m) 套件。"
