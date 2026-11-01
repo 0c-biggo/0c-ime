@@ -1,0 +1,31 @@
+.TH 0C-MCP 1 "@DATE@" "0c-ime @VERSION@" "User Commands"
+.SH NAME
+0c-mcp \- connect stdio MCP clients to the 0c Zhuyin input method
+.SH SYNOPSIS
+.B 0c-mcp
+.RB [ \-dir
+.IR directory ]
+.SH DESCRIPTION
+.B 0c-mcp
+lets AI assistants that only speak the Model Context Protocol over standard
+input and output manage the personal vocabulary of the 0c
+(\[u9748]\[u7280]\[u6CE8]\[u97F3]) Zhuyin input method.
+It reads JSON-RPC messages line by line from standard input, forwards each one
+to the local API at
+.I http://127.0.0.1:<port>/mcp
+and writes the responses to standard output.
+.PP
+The local API is off by default; enable it with
+.BR "0c-update api enable" .
+The access token is read from the user's data directory for every request,
+so the client configuration does not need to contain it and keeps working
+after the token is regenerated.
+.SH OPTIONS
+.TP
+.BI \-dir " directory"
+The user's data directory that holds
+.IR api.json " and " api-token.json .
+The default is
+.IR ~/.local/share/zuin .
+.SH SEE ALSO
+.BR 0c-update (1)

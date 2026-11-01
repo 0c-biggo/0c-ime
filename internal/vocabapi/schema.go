@@ -130,7 +130,7 @@ func OpenAPI(baseURL string) map[string]any {
 			"version": "1",
 			"description": "在這台電腦上管理靈犀注音的自訂詞與「我的片語」。資料端點要加標頭 Authorization: Bearer <token>（在靈犀注音設定「我的詞彙」頁取得）。" +
 				"只能動使用者親手加入的詞與片語，看不到自動學到的詞與輸入紀錄。每次修改是一個批次，可以用 undo_batch 撤回。" +
-				"破音字請先用 suggest_readings 查，依語境挑不出讀音時問使用者。英文詞（ls、kubectl 這類指令）不需要讀音，中英混打時照英文送出。同樣的操作也有 MCP 工具（/mcp）。",
+				"破音字請先用 suggest_readings 查，依語境挑不出讀音時問使用者。英文詞（ls、kubectl 這類指令）不需要讀音，中英混打時照英文送出，英文模式自動補字也會建議。同樣的操作也有 MCP 工具（/mcp）。",
 		},
 		"servers":    []any{map[string]any{"url": baseURL}},
 		"paths":      paths,

@@ -126,6 +126,8 @@ type Undo struct {
 	phrases     patch[string]
 	tombstones  patch[bool]
 	readings    patch[bool]
+	confirmed   patch[UsageEvidence]
+	zhuyinKeys  patch[UsageEvidence]
 	rejects     patch[int]
 	pronouns    patch[PronounHabit]
 	english     patch[EnglishEvidence]
@@ -146,7 +148,7 @@ func (m *Model) Undoable(f func()) *Undo {
 		total:       floatChange{before: s.Total, had: true, has: true},
 		corrections: patch[Correction]{}, byContext: patch[UsageEvidence]{}, byWord: patch[UsageEvidence]{},
 		picked: patch[[]string]{}, phraseSeen: patch[int]{}, phrases: patch[string]{}, tombstones: patch[bool]{},
-		readings: patch[bool]{}, rejects: patch[int]{}, pronouns: patch[PronounHabit]{}, english: patch[EnglishEvidence]{},
+		readings: patch[bool]{}, confirmed: patch[UsageEvidence]{}, zhuyinKeys: patch[UsageEvidence]{}, rejects: patch[int]{}, pronouns: patch[PronounHabit]{}, english: patch[EnglishEvidence]{},
 		order: slices.Clone(s.PhraseOrder),
 	}
 	m.undo = u
@@ -168,6 +170,8 @@ func (m *Model) Undoable(f func()) *Undo {
 	u.phrases.settle(s.Phrases, same[string])
 	u.tombstones.settle(s.Tombstones, same[bool])
 	u.readings.settle(s.Readings, same[bool])
+	u.confirmed.settle(s.Confirmed, same[UsageEvidence])
+	u.zhuyinKeys.settle(s.ZhuyinKeys, same[UsageEvidence])
 	u.rejects.settle(s.Rejects, same[int])
 	u.pronouns.settle(s.Pronouns, func(a, b PronounHabit) bool { return reflect.DeepEqual(a, b) })
 	u.english.settle(s.English, same[EnglishEvidence])
@@ -236,7 +240,7 @@ func (p floatPatch) settle(m map[string]float64) {
 
 func (u *Undo) empty() bool {
 	return len(u.bi)+len(u.ctx)+len(u.uni)+len(u.uses)+len(u.corrections)+len(u.byContext)+len(u.byWord)+len(u.picked)+
-		len(u.phraseSeen)+len(u.phrases)+len(u.tombstones)+len(u.readings)+len(u.rejects)+len(u.pronouns)+len(u.english) == 0
+		len(u.phraseSeen)+len(u.phrases)+len(u.tombstones)+len(u.readings)+len(u.confirmed)+len(u.zhuyinKeys)+len(u.rejects)+len(u.pronouns)+len(u.english) == 0
 }
 
 // Restore 把 u 記下的項目放回去。操作之後沒再變過的項目回到操作前的值；之後又學到的（例如被移除的詞又打了幾次）
@@ -268,6 +272,8 @@ func (m *Model) Restore(u *Undo) bool {
 	u.phrases.apply(s.Phrases, same[string], nil)
 	u.tombstones.apply(s.Tombstones, same[bool], nil)
 	u.readings.apply(s.Readings, same[bool], nil)
+	u.confirmed.apply(s.Confirmed, same[UsageEvidence], nil)
+	u.zhuyinKeys.apply(s.ZhuyinKeys, same[UsageEvidence], nil)
 	u.rejects.apply(s.Rejects, same[int], nil)
 	u.pronouns.apply(s.Pronouns, func(a, b PronounHabit) bool { return reflect.DeepEqual(a, b) }, nil)
 	u.english.apply(s.English, same[EnglishEvidence], nil)

@@ -22,6 +22,7 @@ import (
 	"github.com/0c-biggo/0c-ime/internal/models"
 	"github.com/0c-biggo/0c-ime/internal/neural"
 	"github.com/0c-biggo/0c-ime/internal/settings"
+	"github.com/0c-biggo/0c-ime/internal/settingsapp"
 	"github.com/0c-biggo/0c-ime/internal/update"
 	upstream "github.com/0c-biggo/0c-ime/models"
 )
@@ -112,13 +113,15 @@ type modelsEnv struct {
 	runtimeCheck func(python string) []string
 	// distributionDisabled：發行版關掉了模型下載與提醒。
 	distributionDisabled func(data string) bool
-	now                  func() time.Time
+	// settingsMissing：找不到設定程式（例如發行版套件沒附 0c-settings），提醒的「下載模型」開不了模型頁。
+	settingsMissing func() bool
+	now             func() time.Time
 }
 
 func defaultModelsEnv() modelsEnv {
 	base := basePath()
 	return modelsEnv{base: base, data: dataPackDir(base), goos: runtime.GOOS, lock: upstream.Lock, equivalent: upstream.Equivalent, dial: dialEngine,
-		runtimeCheck: checkModelRuntime(base), distributionDisabled: modelDownloadDisabled, now: time.Now}
+		runtimeCheck: checkModelRuntime(base), distributionDisabled: modelDownloadDisabled, settingsMissing: settingsProgramMissing, now: time.Now}
 }
 
 // newModelsEnv 測試替換用。
@@ -596,9 +599,12 @@ func (e modelsEnv) remind(committed bool) error {
 			r.Checked = e.store().EngineState(snap.dictionary)
 		}
 		now := e.now()
+		disabled := e.distributionDisabled(e.data) || !snap.pairingOK
+		if !disabled && r.Stopped == "" {
+			disabled = e.settingsMissing() // 會核對設定程式的雜湊，只在可能要提醒時才查
+		}
 		send := r.Decide(models.RemindInput{Now: now, Committed: committed, HasModel: snap.source == neural.SourceBundled,
-			Downloaded: snap.inspect.AnyUser, Neural: neuralSelection,
-			Disabled: e.distributionDisabled(e.data) || !snap.pairingOK})
+			Downloaded: snap.inspect.AnyUser, Neural: neuralSelection, Disabled: disabled})
 		if !send {
 			return
 		}
@@ -660,6 +666,14 @@ func (e modelsEnv) noticeAction(action string) error {
 
 // openSettingsPage 測試替換用。
 var openSettingsPage = func(page string) error { return openSettings([]string{page}) }
+
+// settingsProgramMissing 回報這個安裝找不到設定程式（例如發行版套件沒附 0c-settings）。這時通知的「下載模型」
+// 開不了模型頁，所以不發提醒；不算永久停止，之後裝上設定程式就照常提醒。設定程式在但核對不過（被改動、權限不對）
+// 照常提醒：按下去會說明要重新安裝。
+func settingsProgramMissing() bool {
+	_, err := newSettingsOpener().locate()
+	return errors.Is(err, settingsapp.ErrNotFound)
+}
 
 func printModels(w io.Writer, st modelsStatus) {
 	switch st.Source {

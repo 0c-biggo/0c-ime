@@ -23,7 +23,7 @@ const vocabUsage = `用法：0c-update vocab <指令> [參數] [-json] [-source 
   status                         版本與數量
   list [-query 文字或注音] [-offset N] [-limit N]
   add 詞 讀音 [詞 讀音 ...]       讀音的音節以空白分隔（一個讀音一個參數，例如 "ㄔㄣˊ ㄧˊ ㄐㄩㄣ"）
-                                 英文詞（ls、kubectl：英文字母、數字與 - _ .）不給讀音，混打時照英文送出
+                                 英文詞（ls、kubectl：英文字母、數字與 - _ .）不給讀音，混打時照英文送出，英文模式自動補字也會建議
   add -                          從標準輸入讀 JSON：[{"word":"陳怡君","readings":["ㄔㄣˊ ㄧˊ ㄐㄩㄣ"]},{"word":"ls"}]
   remove 詞 [詞 ...]
   readings 詞 讀音 [讀音 ...]      改寫這個詞的全部讀音

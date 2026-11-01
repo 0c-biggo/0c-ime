@@ -146,7 +146,8 @@ func TestMixedLiteralPhoneticKeyDownOffersSymbol(t *testing.T) {
 	if len(items) < 2 || items[0] != "2" || items[1] != "ㄉ" {
 		t.Fatalf("我2␣ 的 2 按 ↓ 應為 2、ㄉ：%q", items)
 	}
-	if snap := s.Handle(proto.Request{Type: proto.Select, Index: 1}); snap.Text() != "我ㄉ " {
+	// 後面那個空白一併拿掉，細節見 mixed_zhuyin_habit_test.go。
+	if snap := s.Handle(proto.Request{Type: proto.Select, Index: 1}); snap.Text() != "我ㄉ" {
 		t.Fatalf("選 ㄉ：%q", snap.Text())
 	}
 

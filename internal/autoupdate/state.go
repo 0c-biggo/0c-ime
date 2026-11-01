@@ -17,7 +17,7 @@ import (
 	"github.com/0c-biggo/0c-ime/internal/filelock"
 )
 
-// 模式：自動保持最新（推薦）、下載後詢問、手動。
+// 更新方式：自動（建議）、下載後詢問、手動檢查。值寫在 update/state.json，不跟著顯示名稱改。
 const (
 	ModeAuto   = "auto"
 	ModeAsk    = "ask"
@@ -127,6 +127,9 @@ type State struct {
 	NoticeFor   string        `json:"notice_for,omitempty"` // 目前提醒對應的「版本／原因」
 	Snooze      *NoticeSnooze `json:"notice_snooze,omitempty"`
 	History     []Event       `json:"history,omitempty"`
+	// StaleEngine（不寫入狀態檔）：這次喚起時舊引擎還沒換成已安裝的版本，內容是給使用者看的原因。這時沒有待辦、Stage 是
+	// idle，只看狀態會說成已是最新（Windows，#253）。
+	StaleEngine string `json:"-"`
 }
 
 type TestTiming struct {

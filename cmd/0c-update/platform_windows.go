@@ -282,7 +282,7 @@ func deployTSF() error {
 
 func reportLeftovers(left []string) {
 	if len(left) > 0 {
-		fmt.Printf("舊版 zuin-* 程式仍被執行中的應用程式載入，暫時保留；關閉這些應用程式後，下次更新會再清除：\n  %s\n", strings.Join(left, "\n  "))
+		fmt.Printf("舊版 zuin-* 程式仍被執行中的應用程式載入，暫時保留；關閉載入它們的應用程式（或登出）後，下次更新會再清除：\n  %s\n", strings.Join(left, "\n  "))
 	}
 }
 
@@ -314,9 +314,9 @@ func install(bundle string, release *update.Release) error {
 	refreshStableMCP(basePath())
 	syncUninstallEntry()
 	handOverAfterInstall(release.Version, nil) // 新引擎由 afterInstall 的 ensureEngineService 經登入工作叫起
-	// 舊版的候選窗程式不會自己換新（#159 的全螢幕檢查在 0c-ui）：閒置時請它結束，DLL 下一次需要時啟動新版。
-	handOverUI(uiWaitInstall)
-	fmt.Printf("已安裝靈犀注音至 %s\n個人詞庫保留，舊版程序不會被強制停止。之後開啟的應用程式直接使用新版；已經開著的應用程式，重新開啟後才會載入新版，不必登出。\n", directory)
+	// 舊版的候選窗程式不會自己換新（#159 的全螢幕檢查在 0c-ui）：閒置時請它結束，新版由 afterInstall 帶起（#243）。
+	retireUIForInstall(uiWaitInstall)
+	fmt.Printf("已安裝靈犀注音至 %s\n個人詞庫保留，不必登出。更新時舊版程序不會被強制停止：之後開啟的應用程式直接使用新版，已經開著的要重新開啟才會換成新版。\n", directory)
 	reportLeftovers(left)
 	return nil
 }
@@ -365,9 +365,9 @@ func rollback(_ string, restoreUser bool) error {
 		handOverUI(uiWaitInstall) // 回到的版本的 0c-ui 由 DLL 下一次需要時啟動
 	}
 	if restoreUser {
-		fmt.Println("已回復上一版註冊，並還原升級前的個人詞庫；回復前的詞庫另存於新備份。要撤回，請用本版套件的 0c-update.exe 再執行 rollback -restore-user（0.1.0-dev.15 以前的工具不支援）。請登出再登入。")
+		fmt.Println("已回復上一版註冊，並還原升級前的個人詞庫；回復前的詞庫另存於新備份。要撤回，請用本版套件的 0c-update.exe 再執行 rollback -restore-user（0.1.0-dev.15 以前的工具不支援）。不必登出；已經開著的應用程式要重新開啟才會換成回復的版本。")
 	} else {
-		fmt.Println("已回復上一版註冊；請登出再登入。個人詞庫保留；若舊版無法讀取新版格式，會照常輸入但不存檔，可改用 rollback -restore-user。")
+		fmt.Println("已回復上一版註冊，不必登出：之後開啟的應用程式使用回復的版本，已經開著的要重新開啟才會換。個人詞庫保留；若舊版無法讀取新版格式，會照常輸入但不存檔，可改用 rollback -restore-user。")
 	}
 	reportLeftovers(left)
 	return nil
@@ -393,7 +393,7 @@ func uninstall() error {
 		fmt.Printf("注意：%v。仍照常取消註冊；若是防毒軟體隔離了檔案，重新安裝前請先確認。\n", changed)
 	}
 	removeSettingsEntry()
-	fmt.Println("已取消靈犀注音註冊；請登出再登入。版本檔案、備份及個人詞庫保留，可用 rollback 恢復。")
+	fmt.Println("已取消靈犀注音註冊，之後開啟的應用程式不會再載入；已經開著的要重新開啟才會停用，要一次清乾淨可以登出再登入。版本檔案、備份及個人詞庫保留，可用 rollback 恢復。")
 	return nil
 }
 

@@ -50,7 +50,7 @@ impl Drop for UiClient {
 const LOCAL_CLASS: windows_core::PCWSTR = w!("0cCandidateInProcess");
 
 /// 本行程是否在 AppContainer 沙箱裡（不會變，只查一次）。
-fn sandboxed() -> bool {
+pub(crate) fn sandboxed() -> bool {
     static SANDBOXED: OnceLock<bool> = OnceLock::new();
     *SANDBOXED.get_or_init(|| unsafe {
         let mut token = HANDLE::default();

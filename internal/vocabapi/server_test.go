@@ -1,3 +1,5 @@
+//go:debug default=go1.26
+
 package vocabapi
 
 import (

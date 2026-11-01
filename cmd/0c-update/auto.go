@@ -157,8 +157,8 @@ func (p *system) InstallShell(ctx context.Context, archive string) (bool, error)
 		return false, err
 	}
 	afterInstall()
-	// Windows 的外殼在重新登入後才全面載入；macOS 安裝時已請舊的輸入法程式結束（#170），只有要重新登入的情況才回 pending，
-	// 其餘由協調器接著以 ShellReady 核對。
+	// Windows 不等重新登入（#253）；macOS 安裝時已請舊的輸入法程式結束（#170），只有要重新登入的情況才回 pending。
+	// 其餘由協調器接著以 ShellReady 與執行中的引擎核對。
 	return shellPendingAfterInstall(), nil
 }
 
@@ -425,6 +425,7 @@ func autoCommand(action string, args []string) (resultErr error) {
 			// 由 0c-ui 定期以版本目錄內的 0c-update 執行（穩定副本可能已被防毒軟體移除）。
 			ensureEngineTask(base)
 			ensureEngineService(base)
+			settleInstalledShell(base) // 舊版更新器按「立即安裝」留下的待生效：新版 0c-ui 開起來 2 分鐘就清掉（#253）
 			repairFixedDLL(base)
 			refreshStableMCP(base) // 外殼更新由舊的穩定更新器執行，它不認得 0c-mcp；由新版在這裡補上（Windows）
 			listInputMethod(base)  // 同上，舊的更新器不會把靈犀注音加入輸入法清單（Windows，#191）
@@ -590,35 +591,96 @@ var retryLoginInputMethod = retryInputMethod
 
 // notifyOutcome 回報使用者親自要求（選單、通知按鈕）的結果；背景排程不發這類通知。
 func notifyOutcome(s *autoupdate.State, err error) {
-	n := autoupdate.Notice{Title: "靈犀注音"}
-	switch {
-	case err != nil:
-		n.Body = "更新沒有完成：" + err.Error()
-	case s.Target == nil && s.CheckFailures > 0:
-		n.Body = "目前無法連線更新伺服器，稍後會自動再試。"
-	case s.Stage == autoupdate.StageActive || s.Stage == autoupdate.StageIdle:
-		v, _ := (&system{base: basePath()}).Installed()
-		n.Body = "已是最新版本 " + v + "。"
-	case s.Blocked != nil && s.Blocked.Reason == "needs_relogin":
-		n.Body = s.Target.Version + " " + s.Blocked.Detail + "。"
-	case s.Blocked != nil && s.Blocked.Reason == "engine_busy":
-		if s.Mode == autoupdate.ModeAuto {
-			n.Body = "請先完成組字，閒置時會再嘗試更新至 " + s.Target.Version + "。"
-		} else {
-			n.Body = "請先完成組字，再按「完成更新」以更新至 " + s.Target.Version + "。"
-		}
-	case s.Blocked != nil:
-		n.Body = "更新暫時無法完成：" + s.Blocked.Detail
-	default:
-		n.Body = "更新進行中（" + s.Stage + "）。"
+	var installed string
+	if s != nil {
+		installed, _ = (&system{base: basePath()}).Installed()
 	}
-	_ = notify(n)
+	_ = notify(autoupdate.Notice{Title: "靈犀注音", Body: outcomeBody(s, err, installed, time.Now())})
 }
 
-// pendingShell 回報待完成的是否為外殼更新（Windows 需要系統管理員；核心更新不需要）。
+func outcomeBody(s *autoupdate.State, err error, installed string, now time.Time) string {
+	switch {
+	case err != nil:
+		return "更新沒有完成：" + err.Error()
+	case s.Target == nil && s.CheckFailures > 0:
+		return "目前無法連線更新伺服器，稍後會自動再試。"
+	case s.Stage == autoupdate.StageActive || s.Stage == autoupdate.StageIdle:
+		if s.StaleEngine != "" {
+			return installed + " " + s.StaleEngine + "。"
+		}
+		if shellWithoutRelogin && justInstalledShell(s, installed, now) {
+			return "已更新至 " + installed + "，不必登出。之後開啟的應用程式直接使用新版；已經開著的要重新開啟才會換成新版。"
+		}
+		return "已是最新版本 " + installed + "。"
+	case shellWithoutRelogin && s.Stage == autoupdate.StagePending && s.Target != nil && s.Target.Kind == "shell" && s.Blocked != nil:
+		return s.Target.Version + " " + s.Blocked.Detail + "。"
+	case s.Blocked != nil && s.Blocked.Reason == "needs_relogin":
+		return s.Target.Version + " " + s.Blocked.Detail + "。"
+	case s.Blocked != nil && s.Blocked.Reason == "engine_busy":
+		if s.Mode == autoupdate.ModeAuto {
+			return "請先完成組字，閒置時會再嘗試更新至 " + s.Target.Version + "。"
+		}
+		return "請先完成組字，再按「完成更新」以更新至 " + s.Target.Version + "。"
+	case s.Blocked != nil:
+		return "更新暫時無法完成：" + s.Blocked.Detail
+	}
+	return "更新進行中（" + s.Stage + "）。"
+}
+
+// justInstalledShell：這個版本是剛才這一次完整安裝完成的（不是核心更新，也不是之後才按的「檢查更新」）。
+func justInstalledShell(s *autoupdate.State, installed string, now time.Time) bool {
+	for i := len(s.History) - 1; i >= 0; i-- {
+		e := s.History[i]
+		if e.Version == installed && e.Kind == "installed" {
+			return now.Sub(e.At) < 10*time.Minute
+		}
+	}
+	return false
+}
+
+// shellWithoutRelogin：這個平台的外殼裝好不等重新登入（Windows，#253；協調器看 ShellActiveWithoutRelogin）。測試可替換。
+var shellWithoutRelogin = runtime.GOOS == "windows"
+
+// settleWait 是 settleInstalledShell 等協調器的上限：0.2.7 按「立即安裝」時，提權的舊更新器還在收尾。登入工作只有 2 分鐘。
+const settleWait = 45 * time.Second
+
+// settleInstalledShell（登入工作、每日修復）：這一版已裝好、狀態還沒收尾時核對一次，不必等 15 分鐘後的排程。
+// 舊的穩定更新器裝完會把狀態寫成 pending／needs_relogin；它還拿著協調器的鎖時等它寫完。其他情況都是一次讀檔就結束。
+func settleInstalledShell(base string) {
+	if !shellWithoutRelogin {
+		return
+	}
+	s, err := autoupdate.Load(base)
+	if err != nil || s.Target == nil || s.Target.Kind != "shell" {
+		return
+	}
+	if v, err := installedVersion(); err != nil || v != s.Target.Version {
+		return
+	}
+	co := &autoupdate.Coordinator{Base: base, Platform: &system{base: base}}
+	ctx, cancel := context.WithTimeout(context.Background(), settleWait)
+	defer cancel()
+	for {
+		_, err := co.ConfirmShell(ctx)
+		if !errors.Is(err, autoupdate.ErrUpdateInProgress) {
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "0c-update: 更新狀態未核對：", err)
+			}
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+// pendingShell 回報待完成的是否為還沒裝好的外殼更新（Windows 需要系統管理員；核心更新不需要）。已裝好的只差新引擎接手，
+// 不用再要一次系統管理員權限。
 func pendingShell(base string) bool {
 	s, err := autoupdate.Load(base)
-	return err == nil && s.Target != nil && s.Target.Kind == "shell"
+	return err == nil && s.Target != nil && s.Target.Kind == "shell" && s.Stage != autoupdate.StagePending
 }
 
 func durationFlag(d *autoupdate.Duration) func(string) error {
@@ -660,6 +722,7 @@ func setFeed(base, feed string) error {
 
 // afterInstall：完整安裝成功後建立（或更新）自動更新排程；失敗只提示，不影響安裝結果。
 func afterInstall() {
+	defer restartRetiredUI() // Windows：排程與穩定副本都處理完才帶起新版 0c-ui；排程建不起來時也要帶（#243）
 	if os.Getenv("ZC_NO_SCHEDULE") != "" {
 		return
 	}
@@ -709,8 +772,17 @@ func editState(base string, change func(*autoupdate.State)) error {
 	return nil
 }
 
+// modeLine 是狀態輸出的第一列（#244）：顯示名稱與選單相同，方括號是 0c-update mode 接受的值。
+func modeLine(mode string) string {
+	label := map[string]string{autoupdate.ModeAuto: "自動（建議）", autoupdate.ModeAsk: "下載後詢問", autoupdate.ModeManual: "手動檢查"}[mode]
+	if label == "" {
+		return "更新方式：" + mode
+	}
+	return "更新方式：" + label + " [" + mode + "]"
+}
+
 func printState(s *autoupdate.State) {
-	fmt.Printf("自動更新：%s", s.Mode)
+	fmt.Print(modeLine(s.Mode))
 	if time.Now().Before(s.PausedUntil) {
 		fmt.Printf("（暫停至 %s）", s.PausedUntil.Local().Format("2006-01-02 15:04"))
 	}
@@ -727,7 +799,9 @@ func printState(s *autoupdate.State) {
 		case "needs_consent":
 			fmt.Println("執行 0c-update finish 完成安裝。")
 		case "needs_relogin":
-			fmt.Println("登出再登入後生效。")
+			if !shellWithoutRelogin {
+				fmt.Println("登出再登入後生效。")
+			}
 		}
 	}
 	if !s.LastSuccess.IsZero() {
@@ -764,6 +838,7 @@ func statusMap(base, installed string, dial autoupdate.Dialer) map[string]any {
 		out["engine"] = ""
 	}
 	if s, err := autoupdate.Load(base); err == nil && !managed {
+		hideLegacyRelogin(s)
 		appendUpdateStateStatus(out, s, time.Now())
 		if p := updaterProblem(base, s, platformRepair); p != "" {
 			out["updater"] = p
@@ -821,12 +896,22 @@ func appendUpdateStateStatus(out map[string]any, s *autoupdate.State, now time.T
 	}
 }
 
+// hideLegacyRelogin：舊版更新器寫的 needs_relogin 在 Windows 已經不是真的（#253），協調器下一次核對就會換掉。在那之前
+// 選單與設定程式（可能還是舊版 DLL，直接顯示這段說明）不要再叫人登出。只改讀出來的這一份，狀態檔照舊由協調器收尾。
+func hideLegacyRelogin(s *autoupdate.State) {
+	if shellWithoutRelogin && s.Blocked != nil && s.Blocked.Reason == "needs_relogin" {
+		b := *s.Blocked
+		b.Reason, b.Detail = "waiting_idle", autoupdate.ShellEngineIdleDetail
+		s.Blocked = &b
+	}
+}
+
 // actionFor 回傳選單上「立即完成」要執行的動作；沒有可由使用者完成的待辦時為空字串。
 func actionFor(s *autoupdate.State) string {
 	switch {
 	case s.Target == nil:
 		return ""
-	case reloadableShell() && s.Target.Kind == "shell" && s.Stage == autoupdate.StagePending:
+	case (reloadableShell() || shellWithoutRelogin) && s.Target.Kind == "shell" && s.Stage == autoupdate.StagePending:
 		return "finish"
 	case s.Blocked == nil:
 		return ""

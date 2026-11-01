@@ -56,12 +56,18 @@ def read(path):
     return Path(path).read_text(encoding="utf-8", errors="replace")
 
 
-def go_sections(go, goos, packages):
-    env = dict(os.environ, GOOS=goos, GOARCH="arm64" if goos == "darwin" else "amd64", CGO_ENABLED="0")
+def go_license(goroot):
+    # Homebrew 的 GOROOT 是 Cellar/go/<版本>/libexec，LICENSE 在上一層；Debian 的 golang-go 不放在 GOROOT（在 /usr/share/doc）。
+    return next((p for p in (Path(goroot) / "LICENSE", Path(goroot).parent / "LICENSE") if p.is_file()), None)
+
+
+def go_sections(go, goos, packages, goarch="amd64"):
+    env = dict(os.environ, GOOS=goos, GOARCH=goarch, CGO_ENABLED="0")
     goroot = subprocess.check_output([go, "env", "GOROOT"], text=True, encoding="utf-8", env=env).strip()
     version = subprocess.check_output([go, "env", "GOVERSION"], text=True, encoding="utf-8", env=env).strip()
-    # Homebrew 的 GOROOT 是 Cellar/go/<版本>/libexec，LICENSE 在上一層。
-    license = next(p for p in (Path(goroot) / "LICENSE", Path(goroot).parent / "LICENSE") if p.is_file())
+    license = go_license(goroot)
+    if license is None:
+        raise ValueError(f"找不到 Go 的 LICENSE（GOROOT {goroot}）；發版用官方或 Homebrew 的 Go")
     out = [section(f"Go 工具鏈與標準函式庫（{version}）", [read(license)])]
     listing = subprocess.check_output(
         [go, "list", "-deps", "-f", "{{with .Module}}{{if not .Main}}{{.Path}}\t{{.Version}}\t{{.Dir}}{{end}}{{end}}", *packages],
@@ -82,9 +88,15 @@ def python_sections(neural, platform):
     python = Path(neural) / "python"
     if platform == "windows-amd64":
         cpython, site = python / "LICENSE.txt", python / "Lib/site-packages"
+        version = "3.14"
     else:
-        cpython, site = python / "lib/python3.14/LICENSE.txt", python / "lib/python3.14/site-packages"
-    out = [section("CPython 3.14", [read(cpython)])]
+        # Intel Mac 內附 3.13（prepare_neural.py 的 RUNTIMES）。
+        libs = [p for p in (python / "lib").glob("python3.*") if (p / "site-packages").is_dir()]
+        if len(libs) != 1:
+            raise ValueError(f"內附 Python 的 lib/python3.* 應恰有一個：{python}")
+        lib = libs[0]
+        cpython, site, version = lib / "LICENSE.txt", lib / "site-packages", lib.name.removeprefix("python")
+    out = [section(f"CPython {version}", [read(cpython)])]
     crt = [p.name for p in sorted(python.glob("msvcp140*.dll"))]
     if crt:
         # prepare_neural.py 隨 onnxruntime 附上的 C++ 執行階段（#80）。
@@ -123,8 +135,8 @@ def collect(platform, neural=None, go="go", cargo=None):
     if platform == "windows-amd64":
         parts = go_sections(go, "windows", ["./cmd/0c-server", "./cmd/0c-update"])
         parts += rust_sections(cargo, ROOT / "platforms/windows")
-    elif platform == "macos-arm64":
-        parts = go_sections(go, "darwin", ["./cmd/0c-server", "./cmd/0c-update"])
+    elif platform in ("macos-arm64", "macos-amd64"):
+        parts = go_sections(go, "darwin", ["./cmd/0c-server", "./cmd/0c-update"], platform.removeprefix("macos-"))
     else:
         parts = go_sections(go, "linux", ["./cmd/0c-server", "./cmd/0c-update", "./cmd/0c-trace"])
         parts.append(section("nlohmann/json 3.11.3（Fcitx5 外殼）", [NLOHMANN_MIT]))

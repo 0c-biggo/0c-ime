@@ -11,7 +11,7 @@ from pathlib import Path
 import re
 
 TEMPLATES = Path(__file__).resolve().parent / "installer"
-PLATFORMS = ("linux_amd64", "darwin_arm64", "windows_amd64")
+PLATFORMS = ("linux_amd64", "darwin_arm64", "darwin_amd64", "windows_amd64")
 
 
 def sha256(path):

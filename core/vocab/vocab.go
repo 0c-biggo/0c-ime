@@ -176,6 +176,8 @@ type Set struct {
 	english  map[string]bool // 有效的英文詞（沒有讀音，不進讀音前綴樹）
 	problems []string
 	longest  int // 有效詞的最長音節數
+
+	englishWords []string // 同 english，依檔案順序（EnglishPrefix）
 }
 
 // New 回傳空的詞彙。

@@ -213,6 +213,29 @@ func TestLaunchReportsAnImmediateCrashWithItsOutput(t *testing.T) {
 	}
 }
 
+// #251：從選單開啟時，前景權限要一路傳下去；少傳這一棒，視窗就開在別的程式後面。
+func TestLaunchHandsTheForegroundRightToTheStartedProgram(t *testing.T) {
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "pid")
+	path, _ := program(t, dir, "0c-settings", `echo $$ > `+pidFile+"\nexec sleep 30")
+	var granted []int
+	saved := grantForeground
+	grantForeground = func(pid int) { granted = append(granted, pid) }
+	t.Cleanup(func() { grantForeground = saved })
+	if err := Launch(path, LaunchOptions{Wait: 300 * time.Millisecond}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(raw)))
+	t.Cleanup(func() { syscall.Kill(pid, syscall.SIGKILL) })
+	if len(granted) != 1 || granted[0] != pid {
+		t.Fatalf("授權對象 %v，設定程式 pid=%d", granted, pid)
+	}
+}
+
 func TestParseMissingLibraries(t *testing.T) {
 	ldd := "\tlinux-vdso.so.1 (0x00007ffd)\n\tlibwebkit2gtk-4.1.so.0 => not found\n\tlibgtk-3.so.0 => /lib/x86_64-linux-gnu/libgtk-3.so.0 (0x1)\n\tlibjavascriptcoregtk-4.1.so.0 => not found\n"
 	got := parseMissing(ldd)
@@ -319,7 +342,8 @@ func TestLocateSystemChecksOwnerAndPermissions(t *testing.T) {
 		t.Fatalf("missing: %v", err)
 	}
 	os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755)
-	if _, err := LocateSystem(path); err == nil {
+	// 以 root 建置（發行版的打包環境）時暫存檔的擁有者就是 root，這一項的前提不成立；其餘照常檢查。
+	if _, err := LocateSystem(path); err == nil && os.Geteuid() != 0 {
 		t.Fatal("a file owned by the test user is not a system file")
 	}
 	old := systemOwner

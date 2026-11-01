@@ -36,6 +36,8 @@ func undoableByDiff(m *Model, f func()) *Undo {
 		phrases:     diff(before.Phrases, s.Phrases, same[string]),
 		tombstones:  diff(before.Tombstones, s.Tombstones, same[bool]),
 		readings:    diff(before.Readings, s.Readings, same[bool]),
+		confirmed:   diff(before.Confirmed, s.Confirmed, same[UsageEvidence]),
+		zhuyinKeys:  diff(before.ZhuyinKeys, s.ZhuyinKeys, same[UsageEvidence]),
 		rejects:     diff(before.Rejects, s.Rejects, same[int]),
 		pronouns:    diff(before.Pronouns, s.Pronouns, func(a, b PronounHabit) bool { return reflect.DeepEqual(a, b) }),
 		english:     diff(before.English, s.English, same[EnglishEvidence]),
@@ -134,6 +136,9 @@ func journalStore(n int, seed uint64) (*Model, []string) {
 	s.English["hello"] = EnglishEvidence{Text: "Hello", Confirmed: 2, Days: 1, Usage: 2}
 	s.English["kubectl"] = EnglishEvidence{Text: "kubectl", Confirmed: 1, Days: 1, Usage: 1}
 	s.Tombstones["很好"], s.Tombstones["Git"], s.Tombstones["git"] = true, true, true
+	s.ZhuyinKeys[pair("世界", "ㄉ")] = UsageEvidence{Short: 0.5, Long: 0.75, Updated: 100, Day: 1, DayWeight: 0.75}
+	s.ZhuyinKeys[pair("丼", "ㄅ")] = UsageEvidence{Short: 0.5, Long: 0.75, Updated: 100, Day: 1, DayWeight: 0.75}
+	s.ZhuyinKeys[pair("", "ㄉ")] = UsageEvidence{Short: 0.5, Long: 0.75, Updated: 100, Day: 1, DayWeight: 0.75}
 	// 被刪的詞：一定有的幾個，加上隨機挑的
 	ws := []string{"世界", "她", "Hello", "丼", "Git"}
 	for len(ws) < 40 {

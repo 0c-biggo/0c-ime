@@ -539,9 +539,13 @@ fn imm32_context_without_caret_passes_english_keys_to_the_app() {
         let _ = DestroyCaret();
     }
     assert!(english_passthrough(&ctx, 0));
-    // 自己實作 TSF 的程式（瀏覽器、Windows Terminal）沒有系統插入點也照常補字。
+    // 自己實作 TSF 的程式沒有系統插入點也照常補字。
     let ctx = host(canvas, canvas, Scope::Scopes(vec![IS_DEFAULT]), TS_SS_NOHIDDENTEXT, 0);
     assert!(!english_passthrough(&ctx, 0));
+    // #242：Chromium 的文字框（Edge、Chrome、Electron）也標暫時 context，同時標 TS_SS_NOHIDDENTEXT。
+    let ctx = host(canvas, canvas, Scope::Scopes(vec![IS_DEFAULT]), TS_SS_TRANSITORY | TS_SS_NOHIDDENTEXT, 0);
+    assert_eq!(field(Some(&ctx), 1, false), Field::Open);
+    assert!(!english_passthrough(&ctx, 0), "Chromium 的文字框：照常補字");
     unsafe {
         let _ = DestroyWindow(canvas);
     }

@@ -42,11 +42,11 @@ func DefaultPrunePolicy() PrunePolicy {
 
 // PruneStats 是一次清理刪掉的筆數，不含任何文字。
 type PruneStats struct {
-	Bi, Ctx, Uni, Uses, EvidenceByContext, EvidenceByWord, PhraseSeen int
+	Bi, Ctx, Uni, Uses, EvidenceByContext, EvidenceByWord, Confirmed, ZhuyinKeys, PhraseSeen int
 }
 
 func (p PruneStats) Total() int {
-	return p.Bi + p.Ctx + p.Uni + p.Uses + p.EvidenceByContext + p.EvidenceByWord + p.PhraseSeen
+	return p.Bi + p.Ctx + p.Uni + p.Uses + p.EvidenceByContext + p.EvidenceByWord + p.Confirmed + p.ZhuyinKeys + p.PhraseSeen
 }
 
 // Prune 以預設門檻清理；見 PruneWith。
@@ -204,6 +204,10 @@ func (m *Model) PruneWith(p PrunePolicy) PruneStats {
 		return phrases[w]
 	})
 	st.EvidenceByWord = pruneEvidence(s.EvidenceByWord, s.Time, p.Evidence, p.MaxWord, func(w string) bool { return words[w] })
+	// 讀音習慣的手選紀錄：衰減到這裡早已低於門檻；明確選擇本身還留在 Readings 與 Corrections。
+	st.Confirmed = pruneEvidence(s.Confirmed, s.Time, p.Evidence, p.MaxWord, func(string) bool { return false })
+	// 選過的注音文：很久沒用的跟讀音習慣一樣退掉，門檻與 ZhuyinKeyPicked 相同（zhuyin_keys.go）。
+	st.ZhuyinKeys = pruneEvidence(s.ZhuyinKeys, s.Time, zhuyinKeyFloor, p.MaxWord, func(string) bool { return false })
 
 	// 尚未晉升的暫定片語：它的證據已淡出就不再等第二次出現。已晉升的保留。
 	var keepSeen []weak

@@ -89,7 +89,7 @@ def run(report, entry, pump, key, type_text, expect):
         report['kimpanel_before'] = wait(settings_label); wait('（點此檢查更新）')
         check('kimpanel_settings_and_update_rows_visible')
         if '/Fcitx/zuin-menu' in props: raise RuntimeError('The old submenu is still registered')
-        for gone in ('自動更新：','暫停自動更新','神經選字（','提交時補標點（','依前文選字（','操作結果：','檢查並準備更新'):
+        for gone in ('自動更新：','更新方式：','暫停自動更新','神經選字（','提交時補標點（','依前文選字（','操作結果：','檢查並準備更新'):
             if any(gone in label for label in props.values()): raise RuntimeError('Old submenu item is still there: '+gone)
         check('kimpanel_old_submenu_items_are_gone')
         # #169：「輸出簡體字」在 Kimpanel 的屬性列；點了切換，開著時注音模式的標籤是「注簡」（GNOME Kimpanel 用文字取代

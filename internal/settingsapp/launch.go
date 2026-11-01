@@ -57,6 +57,7 @@ func Launch(path string, o LaunchOptions) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
+	grantForeground(cmd.Process.Pid)
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	select {

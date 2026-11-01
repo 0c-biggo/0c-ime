@@ -1,0 +1,96 @@
+.TH 0C-UPDATE 1 "@DATE@" "0c-ime @VERSION@" "User Commands"
+.SH NAME
+0c-update \- manage settings, vocabulary and models of the 0c Zhuyin input method
+.SH SYNOPSIS
+.B 0c-update
+.I command
+.RI [ options ]
+.SH DESCRIPTION
+.B 0c-update
+is the command-line front end of the 0c (\[u9748]\[u7280]\[u6CE8]\[u97F3])
+Zhuyin input method.  It reads and changes the user's settings and personal
+vocabulary, manages the optional neural models and starts the input engine.
+.PP
+On a system installation that is managed by the package manager, installing,
+updating and removing 0c is done with the distribution's package manager;
+the self-update commands of the upstream packages
+.RB ( check ,
+.BR install ,
+.BR rollback ,
+.BR uninstall ,
+.BR schedule
+and similar) are refused.
+.PP
+Most commands accept
+.B \-json
+to print a machine-readable result.
+.SH COMMANDS
+.TP
+.B status
+Show the installed version, the state of the engine and a summary of the
+current settings.
+.TP
+.B settings
+List all settings with their current values and allowed values.
+.TP
+\fBset\fR \fIkey value\fR [\fIkey value\fR ...] [\fB\-apply\fR] [\fB\-notify\fR]
+Change settings.  With
+.BR \-apply ,
+a running engine is handed over to a new one so that the change takes
+effect immediately.  Run
+.B 0c-update settings
+for the list of keys.  Keys fixed by a built-in input style must be changed
+on a custom copy of that style (see
+.BR profile ).
+.TP
+\fBprofile\fR \fBselect\fR|\fBcopy\fR|\fBrename\fR|\fBdelete\fR \fIid\fR [\fB\-\-name\fR \fIname\fR] [\fB\-apply\fR]
+Choose an input style.  Built-in styles (for example
+.BR 0c ,
+.BR microsoft ,
+.BR macos )
+are fixed;
+.B copy
+creates an editable custom style.
+.TP
+\fBvocab\fR \fIcommand\fR [\fIarguments\fR]
+Manage the personal vocabulary: add, list, remove and undo custom words and
+phrases, and keep or forget learned phrases.  Run
+.B 0c-update vocab
+without arguments for the full list of commands.
+.TP
+\fBmodels\fR \fBstatus\fR|\fBdownload\fR|\fBcancel\fR|\fBremove\fR
+Manage the optional neural selection and punctuation models in the user's
+data directory.
+.B download
+fetches the pinned models from Hugging Face (about 260\ MB), verifies every
+file and pairs them with the installed dictionary.  The models need Python 3 with the
+.B numpy
+and
+.B onnxruntime
+modules.
+Without models the statistical engine is used.
+.TP
+\fBapi\fR \fBstatus\fR|\fBenable\fR [\fB\-port\fR \fIport\fR]|\fBdisable\fR|\fBtoken \-regen\fR|\fBtest\fR
+Control the local HTTP API used by AI assistants; see
+.BR 0c-mcp (1).
+.TP
+.B engine
+Start the input engine if it is not running.
+.TP
+\fBopen-settings\fR [\fIpage\fR]
+Open the settings application.  If the settings application is not
+installed, this command reports that it cannot be found.
+.SH FILES
+.TP
+.I ~/.local/share/0c/settings.json
+User settings.
+.TP
+.I ~/.local/share/zuin/
+Personal vocabulary, learned phrases, downloaded models and API token.
+.TP
+.I /usr/share/0c/data/
+System dictionary.
+.SH SEE ALSO
+.BR 0c-mcp (1)
+.PP
+https://github.com/0c-biggo/0c-ime

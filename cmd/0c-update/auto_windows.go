@@ -47,24 +47,18 @@ func coreLayout() (autoupdate.CoreLayout, bool) {
 func shellUnattended() bool { return windows.GetCurrentProcessToken().IsElevated() }
 func elevatedOK() bool      { return windows.GetCurrentProcessToken().IsElevated() }
 
-// HandsOverEngineBeforeRelogin（autoupdate.PendingShellEngineHandover）：外殼更新等重新登入時，常駐引擎先換新版。
-// 背景完整更新可能是舊的穩定更新器裝的（例如 dev.64 → 0.2.0），它不會交接；新版下一次喚起時由協調器補上。
+// ShellActiveWithoutRelogin（autoupdate.ShellWithoutRelogin）：外殼裝好不等重新登入（#253），新引擎接手就算完成。
+// 完整更新可能是舊的穩定更新器裝的（例如 0.2.7 → 新版），它不會核對也可能留下 needs_relogin；新版下一次喚起時由協調器補上。
 // 新引擎由 StartEngine 經登入工作叫起，不繼承自動更新工作的低優先順序，也不會以系統管理員權限執行。
-func (p *system) HandsOverEngineBeforeRelogin() bool { return true }
+func (p *system) ShellActiveWithoutRelogin() bool { return true }
 
 const createBreakawayFromJob = 0x01000000
 
 // startEngine 啟動常駐引擎（不閒置結束：沙箱應用程式如 Windows 搜尋框裡的 DLL 無法自己啟動引擎）。
 // 有登入排程時交給它啟動：自動更新排程以低優先順序執行，直接啟動的引擎除了 CPU 優先順序，
 // 還會繼承低 I/O 與記憶體優先順序，而且整個登入期間都不會結束。
-func startEngine(base string) error {
-	if taskExists(engineTaskName()) {
-		if err := quietCommand(schtasksPath(), "/Run", "/TN", engineTaskName()).Run(); err == nil {
-			return nil
-		}
-	}
-	return spawnEngine(base)
-}
+// 「立即安裝」的協調器是提權執行的：沒有登入工作時不直接啟動（startResidentEngine），引擎不能以系統管理員權限常駐。
+func startEngine(base string) error { return startResident(base) }
 
 // spawnEngine 直接啟動引擎指標所指的版本（沒有指標時用收據的版本目錄），參數與 TSF DLL 相同。
 // 排程工作結束時不帶走它：優先脫離工作排程器的 job；明確用一般優先順序，不繼承排程的 CPU 優先順序。
@@ -423,8 +417,13 @@ func ensureEngine() error {
 	if err != nil || version == "" {
 		return err
 	}
-	// 登入工作也在安裝、回復交接引擎之後由提權的安裝程式叫起：以使用者權限順便請舊版的候選窗程式換新。
-	defer handOverUI(uiWaitTask)
+	// 登入工作也在安裝、回復交接引擎之後由提權的安裝程式叫起：以使用者權限順便請舊版的候選窗程式換新，
+	// 再確定有候選窗程式在執行：工作列選單靠它執行命令（#243），沙箱應用程式也啟動不了它。
+	defer func() {
+		settleInstalledShell(basePath()) // 引擎起來了：舊版更新器留下的「重新登入後生效」在這裡清掉（#253）
+		handOverUI(uiWaitTask)
+		ensureUI()
+	}()
 	listInputMethod(basePath()) // 舊版更新器在背景裝上這一版時沒有加入輸入法清單（#191）
 
 	if c, err := dialEngine(time.Second); err == nil {

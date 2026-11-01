@@ -11,9 +11,12 @@ import (
 )
 
 var (
-	procInstallLayoutOrTip  = windows.NewLazySystemDLL("input.dll").NewProc("InstallLayoutOrTip")
-	wtsEnumerateProcessesEx = wtsapi32.NewProc("WTSEnumerateProcessesExW")
-	wtsFreeMemoryEx         = wtsapi32.NewProc("WTSFreeMemoryExW")
+	procInstallLayoutOrTip     = windows.NewLazySystemDLL("input.dll").NewProc("InstallLayoutOrTip")
+	wtsapi32                   = windows.NewLazySystemDLL("wtsapi32.dll")
+	wtsQuerySessionInformation = wtsapi32.NewProc("WTSQuerySessionInformationW")
+	wtsFreeMemory              = wtsapi32.NewProc("WTSFreeMemory")
+	wtsEnumerateProcessesEx    = wtsapi32.NewProc("WTSEnumerateProcessesExW")
+	wtsFreeMemoryEx            = wtsapi32.NewProc("WTSFreeMemoryExW")
 )
 
 // listInputMethod 把靈犀注音加入這個帳號的語言清單（#191）。安裝只在 HKLM 註冊 TSF profile，Windows 不會自動把新的

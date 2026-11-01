@@ -53,6 +53,14 @@ func (m *Model) VocabEnglishPrefix(raw string) bool {
 	return m.Vocab != nil && m.Vocab.HasEnglishPrefix(raw)
 }
 
+// VocabEnglishWords 列出前綴不分大小寫相符的英文詞，照詞條字面（英文模式補字，#247）。
+func (m *Model) VocabEnglishWords(raw string, limit int) []string {
+	if m.Vocab == nil {
+		return nil
+	}
+	return m.Vocab.EnglishPrefix(raw, limit)
+}
+
 // IsVocab 回報 w 是否為自訂詞。
 func (m *Model) IsVocab(w string) bool {
 	if m.vocabLen() == 0 {

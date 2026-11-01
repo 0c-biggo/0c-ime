@@ -46,6 +46,9 @@ type Explanation struct {
 func (d *Decoder) contribution(start, end int, left string, e lexicon.Entry, cost, cont float64) Contribution {
 	p := d.Score.Prob(left, e.Surface)
 	adjusted := d.arcProbability(start, end, left, e)
+	if cost <= 0 {
+		adjusted *= math.Exp(d.readingLift(start, end, left, e))
+	}
 	scale := 1.0
 	if p > 0 {
 		scale = adjusted / p

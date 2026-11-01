@@ -15,7 +15,7 @@ window.ZcVocab = function (ctx) {
   const WHO = { manual: '你', compose: '打字時', assistant: 'AI 助手', learned: '學到的' };
   const KIND = { phrase: '常一起用', reading: '你選過的寫法' };
   const HAN = /^\p{Script=Han}+$/u;
-  // 英文詞（#146）：終端機指令、工具名。沒有讀音，中英混打時打出完全相同的字母（大小寫照字面）就照英文送出。
+  // 英文詞（#146）：終端機指令、工具名。沒有讀音，中英混打時打出完全相同的字母（大小寫照字面）就照英文送出；英文模式自動補字打前幾個字母（不分大小寫）就建議（#247）。
   const ENGLISH = /^(?=.*[A-Za-z])[A-Za-z0-9._-]{1,32}$/;
   const ASCII = /^[\x21-\x7e]+$/;
   const isEnglish = (text) => ENGLISH.test(text);
@@ -406,7 +406,7 @@ window.ZcVocab = function (ctx) {
     const english = englishWord(w);
     return h('div', { class: 'vrow' + (english ? ' english' : '') + (v.flash.has(w.word) ? ' flash' : ''), 'data-word': w.word },
       h('div', { class: 'vword' }, w.word),
-      english ? h('span', { class: 'vreading plain', title: '中英混打時打「' + w.word + '」就照英文送出' }, h('span', { class: 'vtag' }, '英文'))
+      english ? h('span', { class: 'vreading plain', title: '中英混打時打「' + w.word + '」就照英文送出；英文模式自動補字會建議這個詞' }, h('span', { class: 'vtag' }, '英文'))
         : h('button', { type: 'button', class: 'vreading', 'data-k': 'read:' + w.word, title: '修改讀音', 'aria-label': '「' + w.word + '」的讀音 ' + readingsText(w.readings) + '，按一下修改', onclick: () => startEdit(w) }, readingsText(w.readings)),
       badge,
       h('span', { class: 'vmeta muted' }, meta),
@@ -522,7 +522,7 @@ window.ZcVocab = function (ctx) {
     if (d.problem) { el.draft.append(h('p', { class: 'status-warn small' }, d.problem)); return; }
     if (d.pending) { el.draft.append(h('p', { class: 'muted small' }, '查讀音中…')); return; }
     if (d.english) {
-      el.draft.append(h('p', { class: 'muted small' }, '英文詞不需要讀音：中英混打時打「' + d.text + '」就照英文送出，不會變成注音（大小寫要相同）。按 Enter 加入。'));
+      el.draft.append(h('p', { class: 'muted small' }, '英文詞不需要讀音：中英混打時打「' + d.text + '」就照英文送出，不會變成注音（大小寫要相同）；開了英文模式自動補字，打前幾個字母就會建議（不分大小寫）。按 Enter 加入。'));
       return;
     }
     const chars = charsOf(d.text, d.ann);

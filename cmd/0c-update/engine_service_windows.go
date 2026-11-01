@@ -58,7 +58,8 @@ func startResidentEngine(base string, elevated, hasTask bool, runTask func() err
 // 0.2.0 起引擎由登入工作常駐、不閒置結束，不交接的話舊引擎會一直跑到登出：介面依新版的 0c-update 顯示「我的詞彙」，
 // 引擎卻還是不支援的舊版。
 // 交接後由登入工作叫起指標所指的版本：安裝在 afterInstall（穩定副本換新之後）、回復在這裡（start）。
-// 仍在組字就不換，照舊登出再登入後生效。執行中應用程式裡的舊 DLL 會連上新引擎，與核心更新相同。
+// 仍在組字就不換，由之後的排程在閒置時換（協調器的 handOverPendingShellEngine、handOverStaleEngine）。
+// 執行中應用程式裡的舊 DLL 會連上新引擎，與核心更新相同。
 func handOverAfterInstall(version string, start func()) {
 	handOverResidentEngine(version, func() (map[string]string, bool) {
 		info, running, _ := autoupdate.Health(dialEngine)
@@ -76,7 +77,7 @@ func handOverResidentEngine(version string, health func() (map[string]string, bo
 		return
 	}
 	if err := drain(); err != nil {
-		fmt.Println("引擎仍在使用中，沒有換成新版；完成組字後登出再登入即生效。")
+		fmt.Println("引擎仍在使用中，還沒換成這一版；完成組字後會在閒置時自動換上，不必登出。")
 		return
 	}
 	if start != nil {

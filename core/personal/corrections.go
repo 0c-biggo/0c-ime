@@ -132,6 +132,7 @@ func (m *Model) learnCorrections(c Commit) {
 	for _, g := range slices.Concat(c.Path, selected) {
 		x, ok := CorrectionFor(c.Syls, g)
 		if !ok {
+			m.keepConfirmed(c.Syls, g)
 			continue
 		}
 		// 故意推翻錯音修正的區間沿用不學習規則。
@@ -153,6 +154,9 @@ func (m *Model) learnCorrections(c Commit) {
 			if neighbor.Start == g.End || neighbor.Start < g.End && g.End < neighbor.End {
 				x.RightWord = neighbor.Word
 			}
+		}
+		if g.End-g.Start >= habitMinSyllables {
+			m.noteConfirmed(x.Word, x.Reading)
 		}
 		if m.contestCorrections(c.Syls, g.Start, g.End, x.Word) {
 			continue

@@ -64,6 +64,10 @@ func (s *Session) mixedText() string {
 	if p.choice == 0 && strings.ContainsFunc(p.raw, unicode.IsDigit) && !s.mixedReachable(p.raw) {
 		return p.raw
 	}
+	// 英數寫法（u2、o1、3x、3nm、4k，#249）：照字面，不顯示成「ㄉㄧ」「3ㄙㄩ」再整串送出注音。
+	if p.choice == 0 && (s.digitThenLetters(p.raw) || s.reversedAlnum(p.raw)) {
+		return p.raw
+	}
 	c, phonetic := s.mixedComposer(p.raw)
 	englishPrior := len(p.raw) >= 2 && len(s.englishPrefix(p.raw, 1)) > 0
 	if len(p.raw) == 1 && s.mixedEnglishWord(p.raw) {
@@ -147,6 +151,7 @@ func (s *Session) flushMixed() {
 	if s.mixed.raw == "" {
 		return
 	}
+	s.settleTokenAn()
 	text := s.mixedText()
 	c, phonetic := s.mixedPending(text)
 	if !phonetic {
@@ -352,7 +357,7 @@ const mixedToneCharLimit = 5
 // mixedToneChars（#146）：待定按鍵以聲調鍵結尾、照字面留下時（#200 的 u1,6、#175 的反序數字、罕用字），
 // 找出聲調前的按鍵組成的完整讀音與它的中文字，供 ↓ 選字。按鍵可以反序（u1, 是 ㄧㄅㄝ，組成 ㄅㄧㄝ）。
 // 前段可以照字面留下（hellou2,6 → hello＋疊）：整串優先，其次是 mixedLiteralPrefix 認得的切法（已知英文字、數字或標點）；
-// 字典不認得的英文前段不切（kevin87 不列 kevi挲）。
+// 字典不認得的英文前段只在後段照順序打、組成常用字時切（#241：gcp187 → gcp吧，nina87 → nin嗎；kevin87 不列 kevi挲）。
 // 字依句首的單字機率排序（含個人選過的字）；讀音只能當詞頭、沒有單字時不列。
 func (s *Session) mixedToneChars() (int, zhuyin.Syllable, []string) {
 	raw := s.mixed.raw
@@ -366,11 +371,14 @@ func (s *Session) mixedToneChars() (int, zhuyin.Syllable, []string) {
 	body, key := raw[:len(raw)-1], raw[len(raw)-1:]
 	for at := 0; at < len(body); at++ {
 		prefix, rest := body[:at], body[at:]
-		if at > 0 && !s.mixedLiteralPrefix(prefix, rest, key) {
+		if at > 0 && !s.mixedLiteralPrefix(prefix, rest, key) && (!asciiLetters(prefix) || len(rest) < 2 || !s.keysInSyllableOrder(rest)) {
 			continue
 		}
 		done, ok := s.mixedReading(rest, sym)
 		if !ok {
+			continue
+		}
+		if at > 0 && !s.mixedLiteralPrefix(prefix, rest, key) && s.mixedSyllableScore(done) < mixedUnknownWordFloor {
 			continue
 		}
 		reading := []zhuyin.Syllable{done}
@@ -457,6 +465,20 @@ func (s *Session) finishMixedTone(key string) bool {
 	if s.mixed.choice != 2 && (key == " " && s.vocabEnglish(raw) || key != " " && s.vocabEnglishPrefix(raw+key)) {
 		return false
 	}
+	// 選過的注音文（我＋2␣ → 我ㄉ，#208）：跟 ↓ 選了注音解釋再按空白同一條路。
+	if key == " " && s.zhuyinKeyHabit(raw) {
+		at := s.cursor
+		s.mixed.choice = 2
+		if s.keepMixedSyllable(sym, raw+key) {
+			s.markZhuyinKey(at, zhuyinKeyApplied)
+			return true
+		}
+		s.mixed.choice = 0
+	}
+	// 已知的英數詞、使用者選回原按鍵學到的英數詞（#249）。
+	if s.mixed.choice == 0 && key != " " && s.literalToken(raw+key) {
+		return false
+	}
 	// Keep the one-letter English word a. Other collisions, including i
 	// (ㄛ 喔, #69), let a reachable Chinese reading win the tone; uppercase I is
 	// not a phonetic key and stays English. Literal selection above opts out.
@@ -471,14 +493,14 @@ func (s *Session) finishMixedTone(key string) bool {
 			s.insertMixedTyped(done, rest+key)
 			return true
 		}
-		if s.mixedSpaceNumber(raw, sym) {
+		if s.mixedSpaceNumber(raw, sym) || s.alnumThenSpace(raw, sym) {
 			s.flushMixed()
 			s.insertMixedLiteral(" ", false, false)
 			return true
 		}
 	}
 	if key != " " && s.mixed.choice == 0 && (s.digitToneNumber(raw, sym) || s.numberAfterLiteral(raw, key) ||
-		s.rareDigitReading(raw, sym)) {
+		s.rareDigitReading(raw, sym) || s.neutralInitial(raw, sym)) {
 		return false
 	}
 	// #119：緊接中文的完整反序音節（摺＋u2,6 → 摺疊）不拆成英文 u＋數字 2,6。
@@ -486,6 +508,20 @@ func (s *Session) finishMixedTone(key string) bool {
 	englishNumber := key != " " && s.mixed.choice == 0 && s.englishThenNumber(raw, key)
 	if englishNumber && !s.mixedAfterChinese() {
 		return false
+	}
+	// 字母與數字鍵混打、順序顛倒的按鍵（#249）：真的在打注音時不會這樣打。數字開頭的是數字接注音（70億 的 70＋u4、30度 的 30＋2j4，不是 7彥、3段）；
+	// 其他的照字面（i16 不是博，比照 #175 的 813）。字母開頭而且緊接中文的（我＋u2,6）照舊組成反序的音節（#119）。
+	if key != " " && s.mixed.choice == 0 && s.reversedAlnum(raw) {
+		if at, done, ok := s.numberThenSyllable(raw, sym); ok {
+			prefix := raw[:at]
+			s.clearMixed()
+			s.insertMixedLiteral(prefix, false, false)
+			s.insertMixedTyped(done, raw[at:]+key)
+			return true
+		}
+		if _, ok := s.mixedReading(raw, sym); ok && !s.mixedAfterChinese() {
+			return false
+		}
 	}
 	if done, ok := s.mixedReading(raw, sym); ok {
 		s.clearMixed()
@@ -512,7 +548,12 @@ func (s *Session) finishMixedTone(key string) bool {
 	// 比照一般注音模式（#109）原樣留下注音，空白當一聲吃掉，不另外插入空白（c␣c␣ 是「ㄏㄏ」，不是「ㄏ ㄏ 」）。
 	// 結尾是聲調鍵、照字面顯示的按鍵（co6）照舊。
 	if key == " " || s.mixed.choice == 2 {
-		return s.keepMixedSyllable(sym, raw+key)
+		at, picked := s.cursor, s.mixed.choice == 2 && key == " " && len(raw) == 1
+		kept := s.keepMixedSyllable(sym, raw+key)
+		if kept && picked {
+			s.markZhuyinKey(at, zhuyinKeyPicked) // 2 ↓ㄉ␣ 跟回頭選 ㄉ 一樣是選過（#208）
+		}
+		return kept
 	}
 	return false
 }
@@ -565,9 +606,10 @@ const (
 // 是已知英文、數字或標點的切法全部列出來，依 mixedPluralRatio／mixedMoveRatio 比較後段音節的解碼機率，
 // 不再固定取最長的英文前段：hellosu3 → hello你（hellos 也是英文字）、api2k7 → api的。都切不開時，字典不認得的
 // 英文前段（ok、gmail、iPhone）在明確的聲調鍵、後段至少兩個照順序打的注音鍵且組成常用字時也切開；
-// 接空白、前段夾數字或標點（網址、識別字）、聲調前一鍵是數字（帳號、編號）都照字面。整串本身是英文字（step3、zoom3）在呼叫前就排除。
+// 接空白、前段夾數字或標點（網址、識別字）、聲調前一鍵是數字（帳號、編號）都照字面，有大寫字母的與兩個字母的前段另見 mixedAfterToken（#241）。
+// 整串本身是英文字（step3、zoom3）在呼叫前就排除。
 func (s *Session) mixedBoundary(raw, key string, tone rune) (int, zhuyin.Syllable, bool) {
-	if key == " " && s.englishThenPunct(raw) {
+	if key == " " && (s.englishThenPunct(raw) || capsThenDigits(raw)) {
 		return 0, "", false
 	}
 	best, bestScore, bestSyl := 0, 0.0, zhuyin.Syllable("")
@@ -600,9 +642,12 @@ func (s *Session) mixedBoundary(raw, key string, tone rune) (int, zhuyin.Syllabl
 		(key != " " || len(raw)-at >= 2 || s.keyIsInitial(rune(raw[at]))) {
 		return at, done, true
 	}
+	if at, done, ok := s.mixedAfterToken(raw, key, tone); ok {
+		return at, done, true
+	}
 	// 聲調前一鍵是數字（lisa03、nina87）像帳號或編號，不切。
 	if unicode.IsDigit(rune(raw[len(raw)-1])) {
-		return 0, "", false
+		return s.mixedAfterLetter(raw, key, tone)
 	}
 	// 字典不認得的前段接空白，照字面。
 	if key == " " {
@@ -621,7 +666,10 @@ func (s *Session) mixedBoundary(raw, key string, tone rune) (int, zhuyin.Syllabl
 			best, bestScore, bestSyl = at, score, done
 		}
 	}
-	return best, bestSyl, best > 0
+	if best == 0 {
+		return s.mixedAfterLetter(raw, key, tone)
+	}
+	return best, bestSyl, true
 }
 
 // mixedAfterTypo：打錯一鍵的注音（qji3：ㄆㄨㄛˇ 組不成音節）在聲調鍵後仍是待定的按鍵，之後的注音會一路接在後面，
@@ -648,6 +696,166 @@ func (s *Session) mixedAfterTypo(raw string, tone rune) (int, zhuyin.Syllable, b
 		return 0, "", false
 	}
 	return at, done, true
+}
+
+// mixedCut 是英→中切法的候選：從最長的音節開始，短的音節常用得多時才換（mixedUnknownRatio），跟 mixedBoundary 字典不認得的前段一樣。
+type mixedCut struct {
+	at    int
+	score float64
+	syl   zhuyin.Syllable
+}
+
+// tryMixedCut：raw[at:] 照順序打、組成不低於 floor 的音節時記下這個切法。輕聲找不到字改讀一聲的不算（kubectl7 不是 kubec超）。
+func (s *Session) tryMixedCut(best *mixedCut, raw string, at int, tone rune, floor float64) {
+	if !s.keysInSyllableOrder(raw[at:]) {
+		return
+	}
+	done, ok := s.mixedReading(raw[at:], tone)
+	if !ok || tone == '˙' && done.ToneOf() != 5 {
+		return
+	}
+	if score := s.mixedSyllableScore(done); score >= floor && (best.at == 0 || score >= mixedUnknownRatio*best.score) {
+		*best = mixedCut{at, score, done}
+	}
+}
+
+// mixedAfterToken（#241）：字典不認得的英數接注音。大寫字母不是注音鍵，所以最後一個大寫字母的後面就是英文可能的邊界，
+// 比「聲調前一鍵是數字像帳號」的猜測可靠：GCP187 是 GCP吧、OKa87 是 OK嗎、GCPg4 是 GCP是、GCPwu0␣ 是 GCP天。
+// 後段的按鍵要照聲母、介音、韻母的順序，組成的不是罕用字（mixedRareFloor）。
+//   - 接聲調鍵：後段至少兩鍵。前段全是字母時後段可以由數字鍵開始（CoWoS 接 2u/4 是 訂），前段的大寫後面夾數字時（Q2、H20、RTX4090）
+//     後段要由字母開始。全大寫的後段也可以只有一個字母鍵（OKg4 是），只有一個數字或標點鍵的是型號（MA87、AE86、GPT-4）。
+//   - 接空白：只有全大寫、後段緊接在大寫後面、至少兩鍵，只有數字的（MA20␣、RX100␣、ABC1,␣）照字面。大小寫混合的不切（PayPal␣ 不是 PayP貓）。
+//   - 全小寫或只有字首大寫的英文沒有這個證據，帳號、人名（nina87、Lisa84、kevin87）照字面。例外是前段只有兩個字母（ok嗎、Ok吧）：
+//     後段以數字鍵結尾也切；字母鍵結尾的本來就由 mixedBoundary 切。
+func (s *Session) mixedAfterToken(raw, key string, tone rune) (int, zhuyin.Syllable, bool) {
+	isUpper := func(r rune) bool { return r >= 'A' && r <= 'Z' }
+	isDigit := func(r rune) bool { return r >= '0' && r <= '9' }
+	isLetter := func(r rune) bool { return r <= unicode.MaxASCII && unicode.IsLetter(r) }
+	isAlnum := func(r rune) bool { return isLetter(r) || isDigit(r) }
+	all := func(t string, f func(rune) bool) bool {
+		return !strings.ContainsFunc(t, func(r rune) bool { return !f(r) })
+	}
+	var best mixedCut
+	space := key == " "
+	upper := strings.LastIndexFunc(raw, isUpper) + 1
+	switch {
+	case len(raw) < 2:
+	case upper == 0 || upper == 1 && !isDigit(rune(raw[1])):
+		if !space && len(raw) >= 4 && asciiLetters(raw[:2]) && !isUpper(rune(raw[1])) && isDigit(rune(raw[len(raw)-1])) {
+			s.tryMixedCut(&best, raw, 2, tone, mixedUnknownWordFloor)
+		}
+	case !all(raw[:upper], isAlnum):
+	case space:
+		rest := raw[upper:]
+		if upper >= 2 && all(raw[:upper], isUpper) && len(rest) >= 2 && (strings.ContainsFunc(rest, isLetter) || s.digitsReadAsChinese(rest, tone)) {
+			s.tryMixedCut(&best, raw, upper, tone, mixedRareFloor)
+		}
+	default:
+		for at := len(raw) - 2; at >= max(upper, 2); at-- {
+			if asciiLetters(raw[:at]) {
+				s.tryMixedCut(&best, raw, at, tone, mixedRareFloor)
+			}
+		}
+		if best.at > 0 {
+			break
+		}
+		end := upper
+		for end < len(raw) && isDigit(rune(raw[end])) {
+			end++
+		}
+		for at := len(raw) - 2; at >= end; at-- {
+			if isLetter(rune(raw[at])) && all(raw[end:at], isLetter) {
+				s.tryMixedCut(&best, raw, at, tone, mixedRareFloor)
+			}
+		}
+		if best.at == 0 && len(raw)-upper == 1 && upper >= 2 && all(raw[:upper], isUpper) && isLetter(rune(raw[upper])) {
+			s.tryMixedCut(&best, raw, upper, tone, mixedRareFloor)
+		}
+	}
+	return best.at, best.syl, best.at > 0
+}
+
+// mixedAfterLetter（#241）：單一個大寫字母接注音（V了、G盤、A爛、Q了），在其他切法都沒有時才看：後段是其餘全部的按鍵，
+// 至少兩鍵、由字母開始（F104、T184、A87 是型號），只接聲調鍵。Nv也 是 Nv＋也，不是 N＋寫。
+func (s *Session) mixedAfterLetter(raw, key string, tone rune) (int, zhuyin.Syllable, bool) {
+	var best mixedCut
+	if key != " " && len(raw) >= 3 && raw[0] >= 'A' && raw[0] <= 'Z' && raw[1] >= 'a' && raw[1] <= 'z' {
+		s.tryMixedCut(&best, raw, 1, tone, mixedRareFloor)
+	}
+	return best.at, best.syl, best.at > 0
+}
+
+// literalTokens（#249）：常見、打注音時幾乎不會這樣打的英數詞：不論前面是什麼都照字面，接著打的注音也從詞的後面切開，↓ 仍有中文。
+// ps 的 p 是韻母 ㄣ、s 是聲母 ㄋ，順序顛倒（嫩是 sp4）；x86 的 ㄌㄚˊ 是罕用字（語料 7 次，x86 354 次）。
+// mp3、mp4 是照順序打的允、運，不放在這裡。
+var literalTokens = map[string]bool{"ps2": true, "ps3": true, "ps4": true, "ps5": true, "x86": true}
+
+// keysSecondTokens（#249）：照順序打、中文比英數詞常用幾百倍的英數詞（允、運）：照舊出字，↓ 第二項是原按鍵。
+var keysSecondTokens = map[string]bool{"mp3": true, "mp4": true}
+
+// literalToken（#249）：t 是已知的英數詞，或個人英文已經認得（選回原按鍵幾次學到的 mp3）。個人英文要大小寫也相同：
+// 大寫不是注音鍵，學到 A87 不代表打注音的 a87（嗎）也要照字面。
+func (s *Session) literalToken(t string) bool {
+	return literalTokens[t] || s.personalEnglishAllowed() && s.model.EnglishKnownAs(t)
+}
+
+// digitThenLetters（#249）：緊接在字面數字（3 4 6 7 是聲調鍵，先照字面送出）後面的待定字母，只有一鍵（4k、6j）或
+// 任何聲調都組不成音節（3nm、3x、3c），跟不是聲調鍵的 5g、5pm 一樣照字面。接著打完音節（3個、3天）照常出字。
+func (s *Session) digitThenLetters(raw string) bool {
+	return s.literalDigitBefore() && strings.ContainsFunc(raw, unicode.IsLetter) && (len(raw) == 1 || !s.mixedReachable(raw))
+}
+
+// reversedAlnum（#249）：字母與數字鍵混打、組得成音節但按鍵順序顛倒（u2 的 ㄧㄉ、o1 的 ㄟㄅ、8x 的 ㄚㄌ、i1 的 ㄛㄅ、70 億的 0u）。
+// 真的在打注音時照順序打（2u、1o、x8、1i），比照 #175 只有數字的 813、017。
+func (s *Session) reversedAlnum(raw string) bool {
+	if !strings.ContainsFunc(raw, unicode.IsLetter) || !strings.ContainsFunc(raw, unicode.IsDigit) || s.keysInSyllableOrder(raw) {
+		return false
+	}
+	_, ok := s.mixedComposer(raw)
+	return ok
+}
+
+// alnumThenSpace（#249）：英數寫法接空白照字面，不組成一聲。緊接在字面數字後面的一個字母，組成的不是常用字時（4k␣、3m␣ 不是 4阿、3淤；
+// 4一、3吃、6烏照舊）；順序顛倒的（u2␣、o1␣ 不是低、杯），緊接中文的照常是中文（#119：我＋u2␣ 是我低）。字面數字後面兩鍵以上的（3天）照常。
+func (s *Session) alnumThenSpace(raw string, tone rune) bool {
+	if s.literalDigitBefore() && len(raw) == 1 && unicode.IsLetter(rune(raw[0])) {
+		done, ok := s.mixedReading(raw, tone)
+		return ok && s.mixedSyllableScore(done) < mixedUnknownWordFloor
+	}
+	return s.reversedAlnum(raw) && !s.mixedAfterChinese()
+}
+
+// neutralInitial（#249）：單一個聲母鍵接輕聲（n7 ㄙ˙、g7 ㄕ˙）只會是詞的後段（意思、鑰匙），不跟前面的中文成詞時是型號，照字面，
+// 比照 #175 的 57；語料裡這些讀音單獨成字 0 次。門檻把 y7 的 ㄗ˙ 留給中文：「子」接在詞庫沒有的字後面也常見。語氣詞的 i7 喔不是聲母，不受影響。
+const mixedNeutralFloor = 5e-6
+
+func (s *Session) neutralInitial(raw string, tone rune) bool {
+	if len(raw) != 1 || !s.keyIsInitial(rune(raw[0])) || tone != '˙' {
+		return false
+	}
+	c, ok := s.mixedComposer(raw)
+	if !ok {
+		return false
+	}
+	done, ok := c.Add(tone)
+	return ok && !s.readingContinues(done) && s.mixedSyllableScore(done) < mixedNeutralFloor
+}
+
+// numberThenSyllable（#249）：數字或數字寫法開頭的按鍵切成數字＋音節（70億、3.5億 的 .5＋u4）。後段由數字鍵最後幾鍵開始都可以
+// （30度 的 2j，比 3 0 2＋j 的「物」常用），比照字典不認得的前段（mixedCut）：差不到一半時取較長的音節。
+func (s *Session) numberThenSyllable(raw string, tone rune) (int, zhuyin.Syllable, bool) {
+	number := len(raw) - len(strings.TrimLeft(raw, "0123456789.,:/-"))
+	var best mixedCut
+	for at := number; at >= 1; at-- {
+		s.tryMixedCut(&best, raw, at, tone, mixedRareFloor)
+	}
+	return best.at, best.syl, best.at > 0
+}
+
+// capsThenDigits（#249）：單一個大寫字母接兩個以上數字（A20、A50、A10）是型號，接空白照字面；字典認得 A、I 才會切開，
+// 其他字母本來就照字面（#241 的 MA20、F104）。一個數字鍵的（A8 阿、A5 之）中文跟型號差不多多，照舊；字典認得的大寫字（APP般、TOUR巴士）照舊。
+func capsThenDigits(raw string) bool {
+	return len(raw) >= 3 && raw[0] >= 'A' && raw[0] <= 'Z' && strings.Trim(raw[1:], "0123456789") == ""
 }
 
 // keyIsInitial：這個鍵在目前的鍵盤排列是聲母。
@@ -722,13 +930,26 @@ func (s *Session) keysInSyllableOrder(keys string) bool {
 // 否則 5pm、5g、1080p 會變成「5暈」「5詩」「1080恩」（#78 後續）。
 func (s *Session) mixedLiteralPrefix(prefix, rest, key string) bool {
 	word := strings.TrimRightFunc(prefix, func(r rune) bool { return !unicode.IsLetter(r) })
+	if mixedCapsThenLower(word) {
+		return false
+	}
 	if word == prefix {
 		return s.mixedEnglishWord(prefix)
 	}
 	if key == " " || !strings.ContainsFunc(rest, unicode.IsLetter) {
 		return false
 	}
-	return word == "" && !strings.ContainsFunc(prefix, unicode.IsLetter) || s.mixedEnglishWord(word)
+	return word == "" && !strings.ContainsFunc(prefix, unicode.IsLetter) || s.mixedEnglishWord(word) || s.literalToken(prefix)
+}
+
+// mixedCapsThenLower（#241）：兩個以上大寫接一個小寫（AIr）不是英文字：字典不分大小寫，AI 後面打的 ru/4 不能切成 air＋應。
+// 大寫縮寫加複數的 s（JOLTs、IDs）、兩個以上小寫（LLama）不算。
+func mixedCapsThenLower(word string) bool {
+	n := len(word) - 1
+	if n < 2 || word[n] < 'a' || word[n] > 'z' || word[n] == 's' {
+		return false
+	}
+	return !strings.ContainsFunc(word[:n], func(r rune) bool { return r < 'A' || r > 'Z' })
 }
 
 // mixedPunctSplit（#116）：標點後面緊接著讀成中文的數字按鍵（我,2. → 我,都；,2; → ,當）接空白時，標點照字面、
@@ -907,6 +1128,61 @@ func (s *Session) reviseDigitWord(k string) {
 	s.refresh()
 }
 
+// tokenDigitWord（#241）：游標前一個字是英文後面只用數字鍵＋聲調鍵切出來的字（GT 後面的 103 版、GG 後面的 104 辦），回傳它的原按鍵。
+// 使用者選過的字（鎖定）不算。
+func (s *Session) tokenDigitWord() (string, bool) {
+	if s.cursor < 2 {
+		return "", false
+	}
+	at := s.cursor - 1
+	keys := s.mixedKeys[at]
+	if s.literals[at] || len(keys) < 2 || strings.Trim(keys, "0123456789") != "" || !strings.ContainsAny(keys[len(keys)-1:], "3467") {
+		return "", false
+	}
+	if prev := s.syls[at-1]; !s.literals[at-1] || len(prev) != 1 || !unicode.IsLetter(rune(prev[0])) {
+		return "", false
+	}
+	for start, lock := range s.locks {
+		if start <= at && at < start+lock.Len {
+			return "", false
+		}
+	}
+	return keys, true
+}
+
+// restoreTokenDigits 把 tokenDigitWord 的字改回原按鍵，接在待定按鍵前面。
+func (s *Session) restoreTokenDigits(keys string) {
+	s.eraseBeforeCursor()
+	s.mixed.raw = keys + s.mixed.raw
+	s.refresh()
+}
+
+// reviseTokenDigits（#241）：tokenDigitWord 的下一鍵緊接著是聲調鍵或 @ _ 時，是更長的型號、編號（AB1037、ABC103_x）：
+// 把那個字改回原按鍵，比照 #176 的 reviseDigitWord。1 2 5 是聲母（AI大＋2u,6 是「AI大跌」），8 9 自己常是下一個字（A啊啊、OP大啊），都不改。
+// 0 也是 ㄢ，要看再下一鍵，見 settleTokenAn。
+func (s *Session) reviseTokenDigits(k string) {
+	if len(k) != 1 || !strings.Contains("3467@_", k) || s.mixed.raw != "" {
+		return
+	}
+	if keys, ok := s.tokenDigitWord(); ok {
+		s.restoreTokenDigits(keys)
+	}
+}
+
+// settleTokenAn：tokenDigitWord 後面的 0 可能是型號（GT1030、GG1040），也可能是 ㄢ（Mac版安裝、CPI答案、AI大安站）。先照字面留在待定按鍵，
+// 聲調鍵或空白組成中文就由 finishMixedTone 正常出字；其他情況（再接數字、字母、標點、Enter、移動游標，或聲調組不成字）才走到這裡，
+// 是型號：把前面的字改回原按鍵，跟 0 接成一串。↓ 選過 0 的（choice）照選的。
+// 取捨：接空白分不出 PC版安裝 和 GT1030 顯卡，不吃掉組好的字（PTT 全部與新聞兩個月重播：緊接英數的 X＋字＋ㄢ 211 次，一看到 0 就退回時全錯，
+// 現在 146 次對，其餘是本來就不切的前段；型號接空白 24 次有 9 次變成字，↓ 選回原按鍵或打完按 Enter 再打空白）。
+func (s *Session) settleTokenAn() {
+	if s.mixed.raw != "0" || s.mixed.choice != 0 || s.mixed.accepted != "" || s.englishWord {
+		return
+	}
+	if keys, ok := s.tokenDigitWord(); ok {
+		s.restoreTokenDigits(keys)
+	}
+}
+
 // literalDigitBefore：游標前一個字是照字面送出的半形數字。
 func (s *Session) literalDigitBefore() bool {
 	at := s.cursor - 1
@@ -914,12 +1190,15 @@ func (s *Session) literalDigitBefore() bool {
 }
 
 // digitWordKeys：at 是只用數字鍵加空白打出的中文字（#134 的 5 之、#162 的 20 單），或只用數字鍵加聲調鍵打出的字
-// （#175：54 至、53 只），或單獨一個 . , 加空白打出的字（#187：. 歐），↓ 的原按鍵排第二個。
+// （#175：54 至、53 只），或單獨一個 . , 加空白打出的字（#187：. 歐），或 mp3、mp4（#249），↓ 的原按鍵排第二個。
 func (s *Session) digitWordKeys(at int) bool {
 	if at < 0 || at >= len(s.syls) || s.literals[at] {
 		return false
 	}
 	keys := s.mixedKeys[at]
+	if keysSecondTokens[keys] {
+		return true
+	}
 	digits, ok := strings.CutSuffix(keys, " ")
 	if !ok && len(keys) > 1 && strings.ContainsAny(keys[len(keys)-1:], "3467") {
 		digits, ok = keys, true
@@ -994,6 +1273,11 @@ func (s *Session) mixedAfterChinese() bool {
 	return s.cursor > 0 && !s.literals[s.cursor-1]
 }
 
+// asciiLetters：整串都是 ASCII 字母。
+func asciiLetters(t string) bool {
+	return t != "" && !strings.ContainsFunc(t, func(r rune) bool { return r > unicode.MaxASCII || !unicode.IsLetter(r) })
+}
+
 // mixedLetterWord is a one-key English word that keeps its space over a
 // first-tone reading. Lowercase i is ㄛ (喔) far more often than the pronoun,
 // which is normally typed as uppercase I (#69).
@@ -1044,9 +1328,11 @@ func (s *Session) mixedKey(k string) bool {
 		}
 	}
 	s.reviseDigitWord(k)
+	s.reviseTokenDigits(k)
 	if s.mixed.raw != "" && s.finishMixedTone(k) {
 		return true
 	}
+	s.settleTokenAn()
 	if k == " " {
 		s.flushMixed()
 		s.insertMixedLiteral(" ", false, false)
@@ -1100,6 +1386,15 @@ func (s *Session) vocabEnglishPrefix(raw string) bool {
 	return s.Preview02 && s.model.VocabEnglishPrefix(raw)
 }
 
+// vocabEnglishWords：英文模式補字列出的「我的詞」（#247）。刻意不放進 englishPrefix：
+// mixedText 用它判斷 englishPrior，放進去會改變混打的中英取捨。
+func (s *Session) vocabEnglishWords(raw string, limit int) []string {
+	if !s.Preview02 || !s.personalEnglishAllowed() {
+		return nil
+	}
+	return s.model.VocabEnglishWords(raw, limit)
+}
+
 func (s *Session) personalEnglishAllowed() bool { return !s.private && !s.paused && !s.localBlocked }
 
 func (s *Session) englishPrefix(prefix string, limit int) []english.Candidate {
@@ -1116,7 +1411,11 @@ func (s *Session) englishCorrections(text string, limit int) []english.Candidate
 	return s.model.EnglishCorrections(s.English, text, limit)
 }
 
-type mixedOrigin struct{ assisted, explicit bool }
+// zhuyinKey 非零時，這格是單一注音鍵＋空白留下的注音符號，提交時據以更新選過的注音文（zhuyin_keys.go，#208）。
+type mixedOrigin struct {
+	assisted, explicit bool
+	zhuyinKey          zhuyinKeyOrigin
+}
 
 func (s *Session) insertMixedLiteral(text string, assisted, explicit bool) {
 	at := s.cursor
@@ -1125,7 +1424,7 @@ func (s *Session) insertMixedLiteral(text string, assisted, explicit bool) {
 		s.mixedOrigins = map[int]mixedOrigin{}
 	}
 	for pos := at; pos < s.cursor; pos++ {
-		s.mixedOrigins[pos] = mixedOrigin{assisted, explicit}
+		s.mixedOrigins[pos] = mixedOrigin{assisted: assisted, explicit: explicit}
 	}
 }
 

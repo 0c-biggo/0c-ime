@@ -7,7 +7,9 @@ import os
 import shutil
 import plistlib
 from pathlib import Path
+import stat
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -24,6 +26,9 @@ import site_manifest
 import make_installer
 import subprocess
 import upgrade
+
+# 目錄連結只有一般使用者才接受；測試在 root 的容器裡跑時，這些情境要換成拒絕，不必驗。
+skip_as_root = unittest.skipIf(os.getuid() == 0, "root 不接受目錄連結")
 
 
 class ReleaseTests(unittest.TestCase):
@@ -733,6 +738,8 @@ class ReleaseTests(unittest.TestCase):
             sh = out["install.sh"].read_text()
             self.assertIn(make_installer.sha256(boot), sh)
             self.assertIn("Darwin-arm64) URL=''", sh)
+            self.assertIn("Darwin-x86_64) URL=''", sh)
+            self.assertIn("sysctl.proc_translated", sh)  # Rosetta 終端機在 Apple 晶片上也回報 x86_64
             subprocess.run(["sh", "-n", str(out["install.sh"])], check=True)
             self.assertIn(b"\r\n", out["install.cmd"].read_bytes())
             with self.assertRaises(ValueError):
@@ -816,11 +823,273 @@ class ReleaseTests(unittest.TestCase):
         for path, content in before.items():
             self.assertEqual(path.read_bytes(), content)
 
+    @skip_as_root
     def test_target_symlink_is_rejected_before_writes(self):
+        # 連結屬於自己也不行：檔案會「安裝」到解開的套件裡，套件目錄一清掉安裝就沒了。
+        self.bundle.chmod(0o755)
+        (self.bundle / "bin").chmod(0o755)
         (self.home / ".local/bin").symlink_to(self.bundle / "bin")
-        with self.assertRaisesRegex(ValueError, "符號連結"):
+        with self.assertRaisesRegex(ValueError, "符號連結.*套件目錄"):
             installer.install(self.bundle, self.home, self.release)
         self.assertFalse((self.home / ".local/share/zuin/backups").exists())
+        self.assertEqual((self.bundle / "bin/0c-server").read_text(), "new bin/0c-server")
+
+    def link_dotdirs(self, *names):
+        """~/.local、~/.config 是指到另一顆磁碟的目錄連結（#250）；回傳連結指到的磁碟目錄。"""
+        disk = self.root / "disk"
+        disk.mkdir(exist_ok=True)
+        disk.chmod(0o755)
+        for name in names or (".local", ".config"):
+            link = self.home / name
+            real = disk / name
+            if link.exists():
+                link.rename(real)
+            else:
+                real.mkdir()
+            real.chmod(0o755)
+            link.symlink_to(real)
+        return disk
+
+    def assert_link_rejected(self, relative, reason):
+        with self.assertRaisesRegex(ValueError, "符號連結.*" + reason):
+            installer.destination(self.home, relative)
+
+    @skip_as_root
+    def test_install_update_rollback_and_uninstall_through_linked_dotdirs(self):
+        # #250：一行安裝與自動更新都卡在「安裝目標不接受符號連結」。檔案要真的落在連結指向的磁碟上。
+        disk = self.link_dotdirs()
+        (self.bundle / "neural").mkdir()
+        (self.bundle / "neural/model.onnx").write_text("first model")
+        first = installer.install(self.bundle, self.home, self.release)
+        self.assertTrue((self.home / ".local").is_symlink())
+        self.assertEqual((disk / ".local/bin/0c-server").read_text(), "new bin/0c-server")
+        self.assertEqual((disk / ".local/share/zuin/neural/model.onnx").read_text(), "first model")
+        # addon 的 Library 走家目錄的路徑：連結換了掛載點也不必重裝。
+        conf = (disk / ".local/share/fcitx5/addon/0c.conf").read_text()
+        self.assertIn(f"Library={self.home.resolve()}/.local/lib/fcitx5/lib0c\n", conf)
+
+        (self.bundle / "bin/0c-server").write_text("next engine")
+        (self.bundle / "neural/model.onnx").write_text("next model")
+        second = installer.install(self.bundle, self.home, self.release)
+        self.assertEqual((second / ".local/bin/0c-server").read_text(), "new bin/0c-server")
+        self.assertEqual((second / installer.NEURAL / "model.onnx").read_text(), "first model")
+        self.assertEqual(installer.prune_backups(self.home.resolve(), second), [first])
+
+        # 收據記的是家目錄的路徑；回復時兩種寫法都認（以 HOME 指向實際路徑繞過去裝的也會記實際路徑）。
+        real_backup = disk / ".local/share/zuin/backups" / second.name
+        installer.rollback(self.home, real_backup)
+        self.assertEqual((disk / ".local/bin/0c-server").read_text(), "new bin/0c-server")
+        self.assertEqual((disk / ".local/share/zuin/neural/model.onnx").read_text(), "first model")
+        self.assertEqual(self.user.read_text(), "private learning")
+
+        backup = installer.install(self.bundle, self.home, self.release)
+        kept = installer.rollback(self.home, backup, restore_user=True)
+        self.assertEqual((kept / installer.SAVED_USER).read_text(), "private learning")
+        installer.install(self.bundle, self.home, self.release)
+        installer.uninstall(self.home)
+        self.assertFalse((disk / ".local/bin/0c-server").exists())
+        self.assertTrue((self.home / ".local").is_symlink())
+
+    @skip_as_root
+    def test_relative_chained_and_nested_directory_links_are_accepted(self):
+        # dotfiles 常見的寫法：相對連結、連結再接連結、只連 ~/.local/share 或整個個人資料目錄。
+        disk = self.link_dotdirs(".local")
+        (self.home / ".config").symlink_to("../disk/config-chain")
+        (disk / "config-chain").symlink_to("config-real")
+        (disk / "config-real").mkdir(mode=0o755)
+        (disk / "share-real").mkdir(mode=0o755)
+        (disk / ".local/share").rename(disk / "share-real/share")
+        (disk / ".local/share").symlink_to(disk / "share-real/share")
+        (disk / "share-real/share").chmod(0o755)
+        (disk / "share-real/share/zuin").rename(disk / "share-real/moved-zuin")
+        (disk / "share-real/moved-zuin").chmod(0o755)
+        (disk / "share-real/share/zuin").symlink_to(disk / "share-real/moved-zuin")
+        installer.install(self.bundle, self.home, self.release)
+        self.assertTrue((disk / "share-real/moved-zuin/install-receipt.json").is_file())
+        self.assertEqual(installer.destination(self.home, ".config/fcitx5/conf/classicui.conf"),
+                         self.home / ".config/fcitx5/conf/classicui.conf")
+
+    @skip_as_root
+    def test_linked_target_inside_home_and_sticky_parent_are_accepted(self):
+        (self.home / "data").mkdir(mode=0o755)
+        (self.home / "data/config").mkdir(mode=0o755)
+        (self.home / ".config").symlink_to(self.home / "data/config")
+        installer.destination(self.home, ".config/fcitx5/profile")
+        shared = self.root / "tmp-like"
+        shared.mkdir()
+        shared.chmod(0o1777)
+        (shared / "mine").mkdir(mode=0o755)
+        (self.home / ".cache").symlink_to(shared / "mine")
+        installer.destination(self.home, ".cache/x")
+
+    def test_end_file_links_stay_rejected_under_linked_directories(self):
+        disk = self.link_dotdirs()
+        elsewhere = self.root / "elsewhere"
+        elsewhere.write_text("not ours")
+        library = disk / ".local/lib/fcitx5"
+        library.mkdir(parents=True)
+        (library / "lib0c.so").symlink_to(elsewhere)
+        with self.assertRaisesRegex(ValueError, "符號連結"):
+            installer.install(self.bundle, self.home, self.release)
+        self.assertEqual(elsewhere.read_text(), "not ours")
+        self.assertFalse((self.home / ".local/share/zuin/backups").exists())
+        (self.home / installer.NEURAL).symlink_to(self.root)
+        with self.assertRaisesRegex(ValueError, "符號連結"):
+            installer.tree_destination(self.home, installer.NEURAL)
+
+    def test_links_inside_the_installers_own_directory_stay_rejected(self):
+        # 更新與回復靠同一個檔案系統上的改名，清理舊備份會刪內容（#179）；連到別處就不成立。
+        real = self.root / "external"
+        real.mkdir(mode=0o755)
+        zuin = self.home / ".local/share/zuin"
+        for name in ("backups", "neural", "data", "bin", "update"):
+            target = zuin / name
+            target.symlink_to(real)
+            with self.assertRaisesRegex(ValueError, "符號連結.*安裝工具自己的目錄"):
+                installer.destination(self.home, f".local/share/zuin/{name}/file")
+            target.unlink()
+
+    @skip_as_root
+    def test_rollback_refuses_a_linked_backup_directory_under_linked_dotdirs(self):
+        disk = self.link_dotdirs()
+        installer.install(self.bundle, self.home, self.release)
+        backup = installer.install(self.bundle, self.home, self.release)
+        backups = disk / ".local/share/zuin/backups"
+        backups.rename(disk / "moved-backups")
+        backups.symlink_to(disk / "moved-backups")
+        with self.assertRaisesRegex(ValueError, "符號連結"):
+            installer.rollback(self.home, backup)
+        with self.assertRaisesRegex(ValueError, "符號連結"):
+            installer.restore_user_store(self.home, backup)
+
+    @skip_as_root
+    def test_rollback_saved_files_do_not_follow_links_inside_the_backup(self):
+        disk = self.link_dotdirs()
+        installer.install(self.bundle, self.home, self.release)
+        backup = installer.install(self.bundle, self.home, self.release)
+        saved = disk / ".local/share/zuin/backups" / backup.name / ".local/bin"
+        moved = disk / "saved-bin"
+        moved.mkdir(mode=0o755)
+        for entry in saved.iterdir():
+            entry.rename(moved / entry.name)
+        saved.rmdir()
+        saved.symlink_to(moved)
+        with self.assertRaisesRegex(ValueError, "符號連結"):
+            installer.rollback(self.home, backup)
+
+    @skip_as_root
+    def test_directory_links_others_can_redirect_are_rejected(self):
+        disk = self.link_dotdirs(".local")
+        link = self.home / ".config"
+        target = disk / "config"
+        target.mkdir(mode=0o755)
+        link.symlink_to(target)
+        relative = ".config/fcitx5/profile"
+        installer.destination(self.home, relative)
+
+        # 指向的目錄 world／group 可寫
+        with patch.object(installer, "private_group", return_value=False):
+            for mode in (0o777, 0o775, 0o757, 0o1777):
+                target.chmod(mode)
+                self.assert_link_rejected(relative, "chmod go-w")
+        # 群組只有自己一個人（Debian、Ubuntu 預設 umask 002）：群組可寫不算別人可寫，其他人可寫照舊拒絕
+        with patch.object(installer, "private_group", return_value=True):
+            target.chmod(0o775)
+            installer.destination(self.home, relative)
+            target.chmod(0o777)
+            self.assert_link_rejected(relative, "chmod go-w")
+        target.chmod(0o755)
+
+        # 指向的目錄的上層別人可寫：可以把目錄整個換掉。黏著位（/tmp）不能。
+        with patch.object(installer, "private_group", return_value=False):
+            disk.chmod(0o775)
+            self.assert_link_rejected(relative, "chmod go-w")
+        disk.chmod(0o777)
+        self.assert_link_rejected(relative, "chmod go-w")
+        disk.chmod(0o1777)
+        installer.destination(self.home, relative)
+        disk.chmod(0o755)
+
+        # 連結本身不屬於目前使用者
+        real_uid = os.getuid()
+        with patch.object(installer.os, "getuid", return_value=real_uid + 1):
+            self.assert_link_rejected(relative, "其他使用者")
+
+        # 指向別人的目錄（系統目錄屬於 root）
+        link.unlink()
+        link.symlink_to("/usr/share")
+        self.assert_link_rejected(relative, "其他使用者")
+
+        # 中途的連結屬於別人：對方隨時能改指向。
+        hop = disk / "hop"
+        hop.symlink_to(target)
+        link.unlink()
+        link.symlink_to(hop)
+        installer.destination(self.home, relative)
+        real_lstat = os.lstat
+        def foreign_hop(path, *args, **kwargs):
+            info = real_lstat(path, *args, **kwargs)
+            if str(path) != str(hop):
+                return info
+            fields = list(info)
+            fields[stat.ST_UID] = real_uid + 1
+            return os.stat_result(fields)
+        with patch.object(installer.os, "lstat", side_effect=foreign_hop):
+            self.assert_link_rejected(relative, "其他使用者")
+        hop.unlink()
+
+        # 指向的東西不存在（例如磁碟沒掛上）、不是目錄、連結成環
+        link.unlink()
+        link.symlink_to(self.root / "not-mounted")
+        self.assert_link_rejected(relative, "不存在")
+        link.unlink()
+        (disk / "file").write_text("x")
+        link.symlink_to(disk / "file")
+        self.assert_link_rejected(relative, "不是目錄")
+        link.unlink()
+        link.symlink_to(link)
+        self.assert_link_rejected(relative, "太多層")
+
+    def test_private_group_has_only_this_user(self):
+        users = [SimpleNamespace(pw_name="me", pw_uid=1000, pw_gid=1000), SimpleNamespace(pw_name="bob", pw_uid=1001, pw_gid=1001),
+                 SimpleNamespace(pw_name="carol", pw_uid=1002, pw_gid=2000)]
+        groups = {1000: [], 1001: [], 2000: ["me"], 2001: ["me", "bob"], 2002: ["me"], 2003: []}
+        def getgrgid(gid):
+            if gid not in groups:
+                raise KeyError(gid)
+            return SimpleNamespace(gr_mem=groups[gid])
+        def getpwuid(uid):
+            return next(user for user in users if user.pw_uid == uid)
+        with patch("pwd.getpwall", return_value=users), patch("pwd.getpwuid", side_effect=getpwuid), patch("grp.getgrgid", side_effect=getgrgid):
+            self.assertTrue(installer.private_group(1000, 1000))   # 私人群組
+            self.assertTrue(installer.private_group(2002, 1000))   # 只有自己一個成員
+            self.assertFalse(installer.private_group(1001, 1000))  # 別人的私人群組
+            self.assertFalse(installer.private_group(2000, 1000))  # 還有人以它為主要群組
+            self.assertFalse(installer.private_group(2001, 1000))  # 還有別的成員
+            self.assertFalse(installer.private_group(2003, 1000))  # 沒有成員的群組：自己也不在裡面
+            self.assertFalse(installer.private_group(3000, 1000))  # 查不到的群組
+
+    def test_root_never_follows_directory_links(self):
+        # 以 root 執行時不放寬：安裝器本來就拒絕 root，這裡也不留後路。
+        self.link_dotdirs()
+        with patch.object(installer.os, "getuid", return_value=0):
+            with self.assertRaisesRegex(ValueError, "符號連結.*root"):
+                installer.destination(self.home, ".local/bin/0c-server")
+
+    @skip_as_root
+    def test_loaded_shell_is_found_through_linked_dotdirs(self):
+        # /proc/PID/maps 記的是解開連結後的路徑；比對家目錄的路徑會誤報「還沒載入」。
+        disk = self.link_dotdirs()
+        library = disk / ".local/lib/fcitx5/lib0c.so"
+        library.parent.mkdir(parents=True)
+        library.write_text("shell")
+        proc = self.root / "proc/1234"
+        proc.mkdir(parents=True)
+        (proc / "maps").write_text(f"7f0000-7f1000 r-xp 00000000 08:01 42   {library}\n")
+        said = []
+        with patch.object(installer, "user_processes", return_value=[("fcitx5", proc)]):
+            self.assertTrue(installer.report_fcitx_addon(self.home, show=said.append))
+        self.assertEqual(said, ["Fcitx5 已載入靈犀注音外殼。"])
 
     def test_install_keeps_only_the_new_backup(self):
         # #179：每份安裝備份都含整個舊神經模型，以前從不刪。安裝成功後只留收據記錄的這一份，回復照常。
@@ -1384,6 +1653,11 @@ class ReleaseTests(unittest.TestCase):
             package_macos.check_settings(linked)
         with self.assertRaisesRegex(ValueError, "找不到設定程式"):
             package_macos.check_settings(self.root / "does-not-exist")
+        # Intel 版套件只收 x86_64 的設定程式。
+        app, _ = package_macos.check_settings(prebuilt("mac-intel", x86_64), "amd64")
+        self.assertEqual(app.name, "0c-settings.app")
+        with self.assertRaisesRegex(ValueError, "amd64"):
+            package_macos.check_settings(prebuilt("mac-intel-arm", arm64), "amd64")
 
     def test_macos_settings_app_metadata_matches_what_the_packager_and_updater_expect(self):
         plist = build_settings_macos.info_plist("0.1.0-dev.43")
@@ -1396,6 +1670,20 @@ class ReleaseTests(unittest.TestCase):
         self.assertNotIn("LSUIElement", plist)  # 設定程式是一般視窗程式，要出現在 Dock
         with self.assertRaises(ValueError):
             build_settings_macos.info_plist("dev")
+
+    def test_macos_intel_pkg_stops_on_apple_silicon(self):
+        # Intel 版的 pkg 讓 Apple 晶片原生跑安裝程式（不先要求 Rosetta），才能擋下並說明改下載 Apple 晶片版。
+        import xml.dom.minidom
+        doc = xml.dom.minidom.parseString(package_macos_pkg.distribution("0.2.8", "amd64").encode("utf-8"))
+        self.assertEqual(doc.getElementsByTagName("options")[0].getAttribute("hostArchitectures"), "x86_64,arm64")
+        self.assertEqual(doc.getElementsByTagName("installation-check")[0].getAttribute("script"),
+                         "checkIntelMac() && checkInstalledVersion()")
+        script = doc.getElementsByTagName("script")[0].firstChild.data
+        self.assertIn('system.sysctl("hw.optional.arm64") != 1', script)
+        self.assertIn("function checkInstalledVersion()", script)
+        arm = xml.dom.minidom.parseString(package_macos_pkg.distribution("0.2.8").encode("utf-8"))
+        self.assertEqual(arm.getElementsByTagName("options")[0].getAttribute("hostArchitectures"), "arm64")
+        self.assertNotIn("checkIntelMac", arm.toxml())
 
     def test_macos_pkg_refuses_downgrade_before_installing(self):
         # 已安裝較新的版本時，安裝程式在開始前就說明原因（postinstall 失敗只會顯示通用的「安裝失敗」）。
@@ -2140,6 +2428,9 @@ Successfully verified: 0c-update.exe
 
     def test_notices_cover_shipped_go_and_bundled_headers(self):
         import collect_notices
+        goroot = subprocess.run(["go", "env", "GOROOT"], capture_output=True, text=True).stdout.strip()
+        if collect_notices.go_license(goroot) is None:
+            self.skipTest(f"GOROOT {goroot} 沒有 LICENSE（例如 Debian 的 golang-go）")
         text = collect_notices.collect("linux-amd64")
         self.assertIn("Go 工具鏈與標準函式庫", text)
         self.assertIn("nlohmann/json", text)
@@ -2225,6 +2516,19 @@ Successfully verified: 0c-update.exe
             site_manifest.build(feed, self.site_uploads(feed)[:3] + self.site_uploads(feed)[4:], changelog, "t")
         with self.assertRaises(ValueError):  # CHANGELOG 最新的已上架版本不是索引版本
             site_manifest.build(feed, self.site_uploads(feed), changelog[1:], "t")
+
+    def test_site_manifest_lists_intel_mac_after_apple_silicon(self):
+        feed = self.site_feed()
+        feed["assets"].append({"os": "darwin", "arch": "amd64", "url": self.BASE + "0c-0.1.0-dev.39-macos-amd64.tar.gz",
+                               "sha256": "c" * 64, "size": 11})
+        uploads = self.site_uploads(feed) + [("0c-0.1.0-dev.39-macos-amd64.pkg", self.BASE + "0c-0.1.0-dev.39-macos-amd64.pkg", "d" * 64, 12)]
+        site = site_manifest.build(feed, uploads, site_manifest.parse_changelog(self.CHANGELOG), "t")
+        self.assertEqual(list(site["platforms"]), ["windows-amd64", "linux-amd64", "macos-arm64", "macos-amd64"])
+        self.assertEqual(site["platforms"]["macos-amd64"], {
+            "installer": {"url": self.BASE + "0c-0.1.0-dev.39-macos-amd64.pkg", "size": 12, "sha256": "d" * 64},
+            "archive": {"url": self.BASE + "0c-0.1.0-dev.39-macos-amd64.tar.gz", "size": 11, "sha256": "c" * 64}})
+        with self.assertRaisesRegex(ValueError, "macos-amd64"):  # Intel 版沒有 pkg
+            site_manifest.build(feed, uploads[:-1], site_manifest.parse_changelog(self.CHANGELOG), "t")
 
     def test_site_manifest_withdrawn(self):
         feed = self.site_feed(withdrawn=["0.1.0-dev.39"])
@@ -2327,7 +2631,7 @@ Successfully verified: 0c-update.exe
         from types import SimpleNamespace
         data, _, _, _ = self.write_paired_data(self.root / "external-docs-gate", public=True)
         out = self.root / "output"
-        args = SimpleNamespace(version="0.2.0", preview=False, data=data, out=out, release_docs=None)
+        args = SimpleNamespace(version="0.2.0", preview=False, data=data, out=out, release_docs=None, arch="arm64")
         for module, system, machine in ((packager, "linux", "x86_64"),
                                          (package_windows, "win32", "AMD64"),
                                          (package_macos, "darwin", "arm64")):
@@ -2437,7 +2741,7 @@ Successfully verified: 0c-update.exe
         (data / "manifest.json").write_bytes(packager.json_bytes(manifest))
         before = self.data_snapshot(data)
         out = self.root / "output"
-        args = SimpleNamespace(version="0.2.0", preview=False, data=data, out=out)
+        args = SimpleNamespace(version="0.2.0", preview=False, data=data, out=out, arch="arm64")
         for module, system, machine in ((packager, "linux", "x86_64"),
                                          (package_windows, "win32", "AMD64"),
                                          (package_macos, "darwin", "arm64")):
@@ -2479,6 +2783,44 @@ Successfully verified: 0c-update.exe
             with self.assertRaisesRegex(ValueError, "msvcp140.dll"):
                 prepare_neural.install_crt(wheel, names, python)
 
+    def test_intel_mac_neural_runtime_matches_its_python(self):
+        # onnxruntime 1.30.0 沒有 Intel Mac wheel：Intel 版用 1.23.2 與 CPython 3.13，wheel 的 ABI 與架構要一致。
+        import collect_notices
+        import prepare_neural
+        import tarfile
+        runtime = prepare_neural.RUNTIMES["macos-amd64"]
+        self.assertEqual(runtime["version"], "3.13")
+        self.assertIn("cpython-3.13.", runtime["python"][0])
+        self.assertTrue(runtime["python"][0].endswith("-x86_64-apple-darwin-install_only_stripped.tar.gz"))
+        names = [url.rsplit("/", 1)[1] for url, _ in runtime["wheels"]]
+        self.assertEqual([n.split("-")[0] for n in names], ["numpy", "onnxruntime"])
+        for name in names:
+            self.assertTrue(name.endswith("_x86_64.whl") and "-cp313-cp313-" in name, name)
+        self.assertIn("-x86_64-unknown-linux-gnu-", prepare_neural.COMPILERS["3.13"][0])
+        self.assertIn("cpython-3.13.", prepare_neural.COMPILERS["3.13"][0])
+        for platform, entry in prepare_neural.RUNTIMES.items():
+            self.assertIn(entry["version"], prepare_neural.COMPILERS, platform)
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp)
+            archive = temp / "python.tar.gz"
+            with tarfile.open(archive, "w:gz") as tar:
+                for name, body in (("python/bin/python3.13", "interpreter"), ("python/bin/pip3", "pip"),
+                                   ("python/lib/python3.13/LICENSE.txt", "PSF 3.13"), ("python/lib/python3.13/os.py", ""),
+                                   ("python/lib/python3.13/site-packages/pip/__init__.py", ""),
+                                   ("python/lib/python3.13/tkinter/__init__.py", ""), ("python/lib/tcl9.0/init.tcl", "")):
+                    data = body.encode()
+                    info = tarfile.TarInfo(name)
+                    info.size = len(data)
+                    tar.addfile(info, io.BytesIO(data))
+            site = prepare_neural.install_python("macos-amd64", archive, temp / "neural/python")
+            self.assertEqual(site, temp / "neural/python/lib/python3.13/site-packages")
+            self.assertEqual(sorted(p.name for p in (temp / "neural/python/bin").iterdir()), ["python3"])
+            for gone in ("lib/python3.13/site-packages/pip", "lib/python3.13/tkinter", "lib/tcl9.0"):
+                self.assertFalse((temp / "neural/python" / gone).exists(), gone)
+            text = "\n".join(collect_notices.python_sections(temp / "neural", "macos-amd64"))
+            self.assertIn("CPython 3.13", text)
+            self.assertIn("PSF 3.13", text)
+
     def test_bundle_name_is_not_rebound_while_packaging(self):
         # dev.60 前 #80 的迴圈 `for name in NEURAL_CRT` 蓋掉了套件名稱，Windows ZIP 的頂層目錄變成 msvcp140_1.dll/。
         import ast
@@ -2517,11 +2859,20 @@ Successfully verified: 0c-update.exe
         result = subprocess.run([node, "--test", str(test)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_settings_ui_update_mode(self):
+        # #244 更新方式的名稱與說明：Windows 的「自動」要照實說外殼更新會詢問，值 auto／ask／manual 不變。
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("沒有 node")
+        test = Path(__file__).resolve().parents[1] / "platforms/settings/test/update_mode_test.js"
+        result = subprocess.run([node, "--test", str(test)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_system_install_puts_ibus_component_where_ibus_daemon_reads(self):
         # #181：ibus-daemon 只讀它自己的元件目錄（IBus 1.5.34 實測不讀 /usr/local/share/ibus/component），
         # 所以 make install PREFIX=/usr/local 也要把 0c.xml 放到 ibus 的目錄；明確指定 IBUS_COMPONENTDIR 時照指定。
-        if not shutil.which("make"):
-            self.skipTest("沒有 make")
+        if not shutil.which("make") or not shutil.which("pkg-config"):
+            self.skipTest("沒有 make 或 pkg-config")
         root = Path(__file__).resolve().parents[1]
 
         def component_dir(pc_dir, *extra):
@@ -2529,9 +2880,9 @@ Successfully verified: 0c-update.exe
             result = subprocess.run(["make", "-s", "-n", "-C", str(root), "install", "PREFIX=/usr/local", "VERSION=0.0.0",
                                      "DESTDIR=/stage", "FCITX5=0", "SETTINGS=0", *extra], capture_output=True, text=True, env=env)
             self.assertEqual(result.returncode, 0, result.stderr)
-            dirs = [line.split()[-1] for line in result.stdout.splitlines() if line.startswith("install -d") and "ibus" in line]
-            self.assertEqual(len(dirs), 1, result.stdout)
-            return dirs[0]
+            dests = [line.split()[-1] for line in result.stdout.splitlines() if line.split() and line.split()[-1].endswith("/0c.xml")]
+            self.assertEqual(len(dests), 1, result.stdout)
+            return str(Path(dests[0]).parent)
 
         with tempfile.TemporaryDirectory() as empty, tempfile.TemporaryDirectory() as pc:
             self.assertEqual(component_dir(empty), "/stage/usr/share/ibus/component")  # 沒有 libibus-1.0-dev
@@ -2577,6 +2928,65 @@ Successfully verified: 0c-update.exe
         self.assertNotIn("model_download", out)
         self.assertIn('"model_download":false}', dry_run(f"PAIRING_LOCK={lock}", "MODEL_DOWNLOAD=0"))
         self.assertNotIn("neural/pairing.lock.json\n", dry_run("PAIRING_LOCK=/nonexistent/pairing.lock.json"))
+
+    def test_system_install_puts_0c_update_on_path_with_man_pages(self):
+        # #239：系統安裝把 libexec 的 0c-update 以相對連結放到 BINDIR、裝上 0c-update(1)／0c-mcp(1)；uninstall 一併收回。
+        # 真的跑 make install：install -D、cp --no-preserve、ln -r、readlink -m 只有 GNU coreutils 有（macOS 上略過）。
+        if not shutil.which("make"):
+            self.skipTest("沒有 make")
+        if "GNU coreutils" not in subprocess.run(["ln", "--version"], capture_output=True, text=True).stdout:
+            self.skipTest("不是 GNU coreutils")
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            build, data, stage = tmp / "build", tmp / "data", tmp / "stage"
+            for name in ["0c-server", "0c-update", "0c-mcp"]:
+                (build / name).parent.mkdir(parents=True, exist_ok=True)
+                (build / name).write_text("#!/bin/sh\n")
+                (build / name).chmod(0o755)
+            data.mkdir()
+            (data / "manifest.json").write_text("{}\n")
+            common = ["make", "-s", "-C", str(root), "PREFIX=/usr", "VERSION=9.8.7", f"DESTDIR={stage}", f"SYSBUILD={build}",
+                      f"DATA={data}", "PAIRING_LOCK=/nonexistent", "FCITX5=0", "IBUS=0", "SETTINGS=0"]
+            env = {**os.environ, "SOURCE_DATE_EPOCH": "1700000000"}
+            result = subprocess.run([*common, "install"], capture_output=True, text=True, env=env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            link = stage / "usr/bin/0c-update"
+            self.assertTrue(link.is_symlink())
+            self.assertFalse(os.path.isabs(os.readlink(link)))  # Debian Policy 10.5：同一個頂層目錄內用相對連結
+            self.assertEqual(link.resolve(), (stage / "usr/libexec/0c/0c-update").resolve())
+            self.assertFalse((build / "templates").exists())  # install 不寫建置目錄：sudo make install 不留 root 擁有的檔案
+            for name in ["0c-update", "0c-mcp"]:
+                page = stage / "usr/share/man/man1" / f"{name}.1"
+                text = page.read_text()
+                self.assertIn('"2023-11-14" "0c-ime 9.8.7"', text)
+                self.assertNotIn("@", text)
+                self.assertEqual(page.stat().st_mode & 0o777, 0o644)
+            # 重裝：自己的連結照樣換新
+            result = subprocess.run([*common, "install"], capture_output=True, text=True, env=env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(link.resolve(), (stage / "usr/libexec/0c/0c-update").resolve())
+            self.assertNotIn("Debian", (stage / "usr/share/man/man1/0c-update.1").read_text())
+            result = subprocess.run([*common, "uninstall"], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(os.path.lexists(link))
+            self.assertFalse((stage / "usr/share/man/man1/0c-update.1").exists())
+            self.assertFalse((stage / "usr/share/man/man1/0c-mcp.1").exists())
+            # PREFIX=~/.local：BINDIR 已有官網安裝的 0c-update（指向 ~/.local/share/zuin），install 不蓋掉、uninstall 不刪
+            personal = stage / "usr/bin/0c-update"
+            personal.symlink_to("../share/zuin/bin/0c-update")
+            result = subprocess.run([*common, "install"], capture_output=True, text=True, env=env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("不覆蓋", result.stderr)
+            self.assertEqual(os.readlink(personal), "../share/zuin/bin/0c-update")
+            result = subprocess.run([*common, "uninstall"], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(os.readlink(personal), "../share/zuin/bin/0c-update")
+            personal.unlink()
+            personal.write_text("#!/bin/sh\n")  # 一般檔案也一樣
+            subprocess.run([*common, "install"], capture_output=True, text=True, env=env, check=True)
+            subprocess.run([*common, "uninstall"], capture_output=True, text=True, check=True)
+            self.assertEqual(personal.read_text(), "#!/bin/sh\n")
 
 
 class HFModelsTests(unittest.TestCase):

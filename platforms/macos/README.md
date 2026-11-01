@@ -28,7 +28,7 @@ make DATA_DIR="$(pwd)/../../build/macos-basic-data"
 
 ### 完整套件
 
-在 Apple Silicon 的 macOS 上：
+在 Apple Silicon 的 macOS 上（Intel 版把 `macos-arm64` 換成 `macos-amd64`、打包加 `--arch amd64`）：
 
 ```sh
 python3 scripts/prepare_neural.py --platform macos-arm64 --models <Hugging Face 原檔目錄> \

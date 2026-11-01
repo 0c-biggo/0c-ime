@@ -1,5 +1,7 @@
 //go:build linux
 
+//go:debug default=go1.26
+
 // 0c-ibus 是靈犀注音的 IBus 外殼：由 ibus-daemon 依元件描述檔啟動，透過 IBus 的私有 D-Bus
 // 提供 engine，按鍵與畫面交給 0c-server（與 Fcitx5 外殼共用同一個引擎與個人資料）。
 //

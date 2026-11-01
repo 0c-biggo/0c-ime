@@ -18,6 +18,9 @@ func (d *Decoder) evidenceMass(start, end int, left, word string, mass float64) 
 
 func (d *Decoder) arcLog(start, end int, left string, e lexicon.Entry, cost float64) float64 {
 	base := math.Log(d.arcProbability(start, end, left, e)) + math.Log(e.PRW) - cost
+	if cost <= 0 { // 經近音到達的讀音不是使用者打的音，習慣不適用
+		base += d.readingLift(start, end, left, e)
+	}
 	if d.Evidence != nil || d.CorrectionPenalty != nil {
 		base = math.Log(d.evidenceMass(start, end, left, e.Surface, math.Exp(base)))
 	}

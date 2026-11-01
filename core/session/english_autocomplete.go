@@ -126,24 +126,35 @@ func (s *Session) refreshEnglishCandidates() {
 	// Request one extra prefix because an exact match is not a completion.
 	var prefixes, corrections []english.Candidate
 	seen := map[string]bool{}
-	for _, word := range s.englishPrefix(s.mixed.raw, limit+1) {
-		if len(word.Text) > len(s.mixed.raw) {
+	// 「我的詞」排在字典前面，照詞條字面（#247）。只差大小寫也算建議（pcloud → pCloud），
+	// 和打的完全相同才不是；ls 和 LS 是兩個詞，兩個都列。
+	for _, word := range s.vocabEnglishWords(s.mixed.raw, limit+1) {
+		if word != s.mixed.raw && len(prefixes) < limit {
+			prefixes = append(prefixes, english.Candidate{Text: word})
+			seen[strings.ToLower(word)] = true
+		}
+	}
+	for _, word := range s.englishPrefix(s.mixed.raw, limit+1+len(prefixes)) {
+		if len(prefixes) == limit {
+			break
+		}
+		if folded := strings.ToLower(word.Text); len(word.Text) > len(s.mixed.raw) && !seen[folded] {
 			prefixes = append(prefixes, word)
-			seen[strings.ToLower(word.Text)] = true
-			if len(prefixes) == limit {
-				break
-			}
+			seen[folded] = true
 		}
 	}
 	// Corrections can overlap completions. Reserve up to three distinct
 	// corrections while keeping prefix completion first for an unfinished word.
-	for _, word := range s.englishCorrections(s.mixed.raw, limit+3) {
-		folded := strings.ToLower(word.Text)
-		if !seen[folded] {
-			seen[folded] = true
-			corrections = append(corrections, word)
-			if len(corrections) == 3 {
-				break
+	// 親手加進「我的詞」的拼法和字典、學到的拼法一樣不修正。
+	if !s.vocabEnglish(s.mixed.raw) {
+		for _, word := range s.englishCorrections(s.mixed.raw, limit+3) {
+			folded := strings.ToLower(word.Text)
+			if !seen[folded] {
+				seen[folded] = true
+				corrections = append(corrections, word)
+				if len(corrections) == 3 {
+					break
+				}
 			}
 		}
 	}

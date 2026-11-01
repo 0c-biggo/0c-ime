@@ -248,11 +248,22 @@ func (s *Session) selectLiteral(id int) bool {
 	// 先移除被選區間，再逐字插入；游標停在新符號後，可直接繼續輸入。
 	start, length := c.span(id) // 混合清單的原樣注音只替換游標那個字（#161）
 	s.cursor = start + length
+	// 原樣音節按 ↓ 又選回它自己：什麼都沒換，原按鍵（↓ 第二項）與選過的注音文紀錄都留著（#208）。
+	if c.syllable != nil && text == c.syllable.syllable().Text() {
+		s.cand = nil
+		return true
+	}
+	if s.pickKeySymbol(start, length, text) {
+		s.cand = nil
+		return true
+	}
+	shown := s.shownBeforeLiteralEdit(c.syllable != nil && c.keyLiterals[id] != "")
 	for range length {
 		s.eraseBeforeCursor()
 	}
 	if c.keyLiterals[id] != "" {
 		s.insertMixedLiteral(text, false, true)
+		s.keepLiteralEdit(shown, start, start+length)
 	} else if c.syllable != nil {
 		s.insertSyllableLiteral(c.syllable.composer, zhuyin.Syllable(text))
 	} else {
