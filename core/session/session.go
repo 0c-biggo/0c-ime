@@ -987,11 +987,32 @@ func (s *Session) signature() string {
 		cursor = 0
 		generation = 0
 	} // 導覽或其他欄位的學習不換掉已顯示文字；下次修改音節才採用最新模型。
-	fmt.Fprintf(&b, "%s|%d|%v|%d|%d|%g|%v|%v|", zhuyin.Key(s.syls), cursor, s.Opt.PrefixAware, generation, s.Opt.Beam, s.Opt.Continue, s.paused, s.private)
-	fmt.Fprintf(&b, "%v|%s|%q|", s.Opt.SeparateContinuation, s.contextLeft(0), s.neuralContext())
-	fmt.Fprintf(&b, "%g|", s.Opt.DocumentContextWeight)
+	b.WriteString(zhuyin.Key(s.syls))
+	b.WriteByte('|')
+	b.WriteString(strconv.Itoa(cursor))
+	b.WriteByte('|')
+	b.WriteString(strconv.FormatBool(s.Opt.PrefixAware))
+	b.WriteByte('|')
+	b.WriteString(strconv.Itoa(generation))
+	b.WriteByte('|')
+	b.WriteString(strconv.Itoa(s.Opt.Beam))
+	b.WriteByte('|')
+	b.WriteString(strconv.FormatFloat(s.Opt.Continue, 'g', -1, 64))
+	b.WriteByte('|')
+	b.WriteString(strconv.FormatBool(s.paused))
+	b.WriteByte('|')
+	b.WriteString(strconv.FormatBool(s.private))
+	b.WriteByte('|')
+	b.WriteString(strconv.FormatBool(s.Opt.SeparateContinuation))
+	b.WriteByte('|')
+	b.WriteString(strconv.Quote(s.contextLeft(0)))
+	b.WriteByte('|')
+	b.WriteString(strconv.Quote(s.neuralContext()))
+	b.WriteByte('|')
+	b.WriteString(strconv.FormatFloat(s.Opt.DocumentContextWeight, 'g', -1, 64))
+	b.WriteByte('|')
 	if s.Fuzzy.AutoEnabled() { // 自動修正的規則、模式與門檻都決定顯示路徑；關閉時簽章與沒有此功能時相同
-		fmt.Fprintf(&b, "fuzzy:%s:%v|", s.Fuzzy.Key(), s.Opt.FuzzyAuto)
+		b.WriteString("fuzzy:" + s.Fuzzy.Key() + ":" + fmt.Sprintf("%v", s.Opt.FuzzyAuto) + "|")
 	}
 	starts := make([]int, 0, len(s.locks))
 	for st := range s.locks {
@@ -999,14 +1020,28 @@ func (s *Session) signature() string {
 	}
 	sort.Ints(starts)
 	for _, st := range starts {
-		fmt.Fprintf(&b, "%d:%s:%d:%v:%d:%s;", st, s.locks[st].Word, s.locks[st].Len, s.locks[st].Completion, s.locks[st].LiteralBoundary, s.locks[st].Matched)
-		if s.locks[st].Segmentation {
+		l := s.locks[st]
+		b.WriteString(strconv.Itoa(st))
+		b.WriteByte(':')
+		b.WriteString(l.Word)
+		b.WriteByte(':')
+		b.WriteString(strconv.Itoa(l.Len))
+		b.WriteByte(':')
+		b.WriteString(strconv.FormatBool(l.Completion))
+		b.WriteByte(':')
+		b.WriteString(strconv.Itoa(l.LiteralBoundary))
+		b.WriteByte(':')
+		b.WriteString(l.Matched)
+		b.WriteByte(';')
+		if l.Segmentation {
 			b.WriteString("seg;")
 		}
 	}
 	for i := range s.syls {
 		if s.literals[i] {
-			fmt.Fprintf(&b, "literal:%d;", i)
+			b.WriteString("literal:")
+			b.WriteString(strconv.Itoa(i))
+			b.WriteByte(';')
 		}
 	}
 	return b.String()
@@ -1074,7 +1109,7 @@ func (s *Session) sugKey() string {
 	writePath(&b, s.path) // refreshSelection 會在 pathSig 不變時換掉 path
 	b.WriteString(strconv.Itoa(s.model.Gen))
 	b.WriteByte('|')
-	b.WriteString(fmt.Sprint(s.model.Store.Time))
+	b.WriteString(strconv.FormatInt(s.model.Store.Time, 10))
 	if s.previewRewrite {
 		b.WriteString("|pr")
 	}

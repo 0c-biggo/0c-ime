@@ -644,11 +644,27 @@ func vetoInputs(rows []decode.Hypothesis) string {
 // rerankKey 只含決定結果的輸入：前文、讀音與候選（文字、分數、分段）。
 func rerankKey(r rerank.Request) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%q|%s|%v|%s|", r.Context, zhuyin.Key(r.Reading), r.AllowPartial, r.Mode)
+	b.WriteString(strconv.Quote(r.Context))
+	b.WriteByte('|')
+	b.WriteString(zhuyin.Key(r.Reading))
+	b.WriteByte('|')
+	b.WriteString(strconv.FormatBool(r.AllowPartial))
+	b.WriteByte('|')
+	b.WriteString(r.Mode)
+	b.WriteByte('|')
 	for _, c := range r.Candidates {
-		fmt.Fprintf(&b, "%q:%.9g:", c.Text, c.LogScore)
+		b.WriteString(strconv.Quote(c.Text))
+		b.WriteByte(':')
+		// 最短往返表示；%.9g 會截斷。
+		b.WriteString(strconv.FormatFloat(c.LogScore, 'g', -1, 64))
+		b.WriteByte(':')
 		for _, g := range c.Segments {
-			fmt.Fprintf(&b, "%d-%d-%v;", g.Start, g.End, g.Partial)
+			b.WriteString(strconv.Itoa(g.Start))
+			b.WriteByte('-')
+			b.WriteString(strconv.Itoa(g.End))
+			b.WriteByte('-')
+			b.WriteString(strconv.FormatBool(g.Partial))
+			b.WriteByte(';')
 		}
 		b.WriteByte('|')
 	}
