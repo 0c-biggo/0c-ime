@@ -60,8 +60,13 @@ func keep(rows []Hypothesis, h Hypothesis, k int) []Hypothesis {
 }
 
 func extend(h Hypothesis, s Seg, score float64) Hypothesis {
+	return extendText(h, s, score, h.Text+s.Word)
+}
+
+// extendText 沿用 offer 已拼好的文字，不再拼第二次。
+func extendText(h Hypothesis, s Seg, score float64, text string) Hypothesis {
 	path := append(h.Segments[:len(h.Segments):len(h.Segments)], s)
-	return Hypothesis{Text: h.Text + s.Word, LogScore: h.LogScore + score, Segments: path, NonWordRepeat: h.NonWordRepeat, WeakPrefix: h.WeakPrefix}
+	return Hypothesis{Text: text, LogScore: h.LogScore + score, Segments: path, NonWordRepeat: h.NonWordRepeat, WeakPrefix: h.WeakPrefix}
 }
 
 // offer 先用分數界排除不可能進榜的延伸，避免為落選路徑配置整份 Seg slice。
@@ -76,7 +81,7 @@ func offer(rows []Hypothesis, h Hypothesis, seg Seg, delta float64, capped, weak
 			return rows
 		}
 	}
-	next := extend(h, seg, delta)
+	next := extendText(h, seg, delta, text)
 	next.NonWordRepeat = next.NonWordRepeat || capped
 	next.WeakPrefix = next.WeakPrefix || weak
 	return keep(rows, next, k)
