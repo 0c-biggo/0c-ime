@@ -243,6 +243,9 @@ func (m *Model) Prior(w string) float64 { return m.sysUni(w) }
 
 func (m *Model) HasAdaptation() bool { return len(m.Store.Bi) > 0 || len(m.Store.Uni) > 0 }
 
+// MassVersion 實作 decode.MassVersion。
+func (m *Model) MassVersion() (int, int64) { return m.Gen, m.Store.Time }
+
 // PriorMass removes positive learned counts while preserving the same context
 // denominator as Prob. The decoder uses it only to cap proper word prefixes.
 func (m *Model) PriorMass(left, word string) float64 {

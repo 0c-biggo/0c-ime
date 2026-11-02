@@ -118,6 +118,10 @@ type Decoder struct {
 	cache     map[string][]lexicon.Entry // 尾端讀音 → 依先驗排序的前 M 個系統詞條
 	massScale map[string]float64
 	longerEnd []int
+	// massScale 的失效條件：評分源與個人資料版本（MassVersion）。
+	massScorer any
+	massGen    int
+	massTime   int64
 	// capRepeat 的列舉結果，只在同一次搜尋內有效（見 resetRepeats）
 	repeats     map[repeatKey]*repeatWords
 	repeatSpans map[[2]int][]spanEntry
