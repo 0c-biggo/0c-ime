@@ -233,44 +233,8 @@ func (m *Model) CorrectionPenalty(syls []zhuyin.Syllable, overrides []Seg) func(
 		// 聲調選填（#150）：紀錄存的是詞庫讀音，沒打聲調的音節與同基底的任何聲調相容。只有這種輸入才走這裡，
 		// 全部打了聲調時照下面原本的精確比對。
 		m.untonedCorrections(syls, pick)
-	}
-	for i := 0; i < len(syls) && !untoned; i++ {
-		if !syls[i].Legal() {
-			continue
-		}
-		var left zhuyin.Syllable
-		if i > 0 && syls[i-1].Legal() {
-			left = syls[i-1]
-		}
-		for j := i + 1; j <= len(syls) && j-i <= maxCorrectionLength; j++ {
-			if !syls[j-1].Legal() {
-				break
-			}
-			var right zhuyin.Syllable
-			if j < len(syls) && syls[j].Legal() {
-				right = syls[j]
-			}
-			k := correctionKey(zhuyin.Key(syls[i:j]), left, right)
-			c, ok := local[k]
-			if !ok {
-				c, ok = m.Store.Corrections[k]
-			}
-			if !ok || m.Store.Tombstones[c.Word] {
-				continue
-			}
-			chars := []rune(c.Word)
-			if len(chars) != j-i {
-				continue
-			}
-			cost := correctionCost * decay(1, m.Store.Time-c.Updated, 30*daySeconds) / float64(len(chars))
-			for at, ch := range chars {
-				p := &chosen[i+at]
-				if p.cost == 0 || c.Serial > p.serial || c.Serial == p.serial && k > p.key {
-					*p = choice{ch, cost, c.Serial, k}
-					have = true
-				}
-			}
-		}
+	} else {
+		m.exactCorrections(syls, local, pick)
 	}
 	if !have {
 		return nil
@@ -351,6 +315,57 @@ func (m *Model) CorrectionUsage(syls []zhuyin.Syllable) func(int, string) float6
 	}
 
 	return func(start int, word string) float64 { return byStart[start][word] }
+}
+
+// exactCorrections 列出與全帶聲調輸入精確相符的更正：依左鄰與首音節查索引，讀音逐音節核對，
+// 結果同逐 span 組鍵查表，但不必為每個 span 組字串。fn 收到起點、鍵與紀錄。
+func (m *Model) exactCorrections(syls []zhuyin.Syllable, local map[string]Correction, fn func(i int, key string, c Correction)) {
+	m.indexCorrections()
+	var locals []usageRecord
+	if len(local) > 0 { // 固定順序，不靠 map 迭代
+		keys := make([]string, 0, len(local))
+		for k := range local {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			locals = append(locals, usageRecord{local[k], zhuyin.ParseReading(local[k].Reading)})
+		}
+	}
+	match := func(i int, c Correction, reading []zhuyin.Syllable) bool {
+		j := i + len(reading)
+		if j > len(syls) || len(reading) == 0 || len(reading) > maxCorrectionLength || len([]rune(c.Word)) != len(reading) {
+			return false
+		}
+		for k, y := range reading {
+			if syls[i+k] != y {
+				return false
+			}
+		}
+		if j < len(syls) && syls[j].Legal() {
+			return syls[j] == c.Right
+		}
+		return c.Right == ""
+	}
+	for i := range syls {
+		if !syls[i].Legal() {
+			continue
+		}
+		var left zhuyin.Syllable
+		if i > 0 && syls[i-1].Legal() {
+			left = syls[i-1]
+		}
+		for _, record := range m.correctionIndex.byPrefix[string(left)+"\t"+string(syls[i])] {
+			if match(i, record.c, record.reading) {
+				fn(i, correctionKey(record.c.Reading, record.c.Left, record.c.Right), record.c)
+			}
+		}
+		for _, record := range locals {
+			if len(record.reading) > 0 && record.c.Left == left && record.reading[0] == syls[i] && match(i, record.c, record.reading) {
+				fn(i, correctionKey(record.c.Reading, record.c.Left, record.c.Right), record.c)
+			}
+		}
+	}
 }
 
 // forgetCorrections 清掉詞本身或左右鄰接詞符合 has 的更正（UnlearnAll）。
