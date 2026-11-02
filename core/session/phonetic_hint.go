@@ -1,10 +1,10 @@
 package session
 
 import (
-	"fmt"
 	"maps"
 	"math"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -40,7 +40,13 @@ func (s *Session) refreshPhoneticHint() {
 	if s.english || s.private || s.paused || s.mixed.raw != "" || s.cursor != len(s.syls) || !s.comp.Empty() || s.cand != nil || len(s.syls) < 4 || len(s.path) == 0 {
 		return
 	}
-	key := fmt.Sprintf("%d|%s|%v", s.model.Gen, s.pathSig, s.path)
+	var b strings.Builder
+	b.WriteString(strconv.Itoa(s.model.Gen))
+	b.WriteByte('|')
+	b.WriteString(s.pathSig)
+	b.WriteByte('|')
+	writePath(&b, s.path)
+	key := b.String()
 	if key != s.phoneticCache.key {
 		s.phoneticCache = phoneticHintCache{key: key, hint: s.findPhoneticHint()}
 	}
