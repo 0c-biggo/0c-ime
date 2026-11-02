@@ -168,6 +168,7 @@ type Session struct {
 	neuralLeft         string // 外殼確認後的自身提交文字（最多 rerank.MaxContextRunes 字），只給宣告需要前文的評分器
 	pendingNeural      string
 	rerankCache        map[string]rerankEntry // 分段神經決策快取；提交／取消時清空
+	rerankMemo         map[int]segMemo        // 段級輸入摘要：輸入全同的段整段跳過（含 N-best）；提交／取消時清空
 	phonetic           *phoneticHint
 	phoneticCache      phoneticHintCache
 	phoneticUndo       *phoneticUndo
@@ -1622,6 +1623,7 @@ func (s *Session) reset() {
 	s.pendingToneKey, s.literalKeys = nil, nil
 	s.clearDocumentContext()
 	s.rerankCache = nil
+	s.rerankMemo = nil
 	s.hint = nil
 	s.shownPath, s.shownSyls = nil, nil
 	s.previewRewrite = false
