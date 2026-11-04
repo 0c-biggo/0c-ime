@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf16"
@@ -168,6 +169,9 @@ type Session struct {
 	neuralLeft         string // 外殼確認後的自身提交文字（最多 rerank.MaxContextRunes 字），只給宣告需要前文的評分器
 	pendingNeural      string
 	rerankCache        map[string]rerankEntry // 分段神經決策快取；提交／取消時清空
+	rerankMemo         map[int]segMemo        // 段級輸入摘要：輸入全同的段整段跳過（含 N-best）；提交／取消時清空
+	sugPrev            *suggest.Suggestion    // 補全建議與其輸入摘要；refresh 每鍵跑好幾次，同輸入不重算
+	sugPrevKey         string
 	phonetic           *phoneticHint
 	phoneticCache      phoneticHintCache
 	phoneticUndo       *phoneticUndo
@@ -983,11 +987,32 @@ func (s *Session) signature() string {
 		cursor = 0
 		generation = 0
 	} // 導覽或其他欄位的學習不換掉已顯示文字；下次修改音節才採用最新模型。
-	fmt.Fprintf(&b, "%s|%d|%v|%d|%d|%g|%v|%v|", zhuyin.Key(s.syls), cursor, s.Opt.PrefixAware, generation, s.Opt.Beam, s.Opt.Continue, s.paused, s.private)
-	fmt.Fprintf(&b, "%v|%s|%q|", s.Opt.SeparateContinuation, s.contextLeft(0), s.neuralContext())
-	fmt.Fprintf(&b, "%g|", s.Opt.DocumentContextWeight)
+	b.WriteString(zhuyin.Key(s.syls))
+	b.WriteByte('|')
+	b.WriteString(strconv.Itoa(cursor))
+	b.WriteByte('|')
+	b.WriteString(strconv.FormatBool(s.Opt.PrefixAware))
+	b.WriteByte('|')
+	b.WriteString(strconv.Itoa(generation))
+	b.WriteByte('|')
+	b.WriteString(strconv.Itoa(s.Opt.Beam))
+	b.WriteByte('|')
+	b.WriteString(strconv.FormatFloat(s.Opt.Continue, 'g', -1, 64))
+	b.WriteByte('|')
+	b.WriteString(strconv.FormatBool(s.paused))
+	b.WriteByte('|')
+	b.WriteString(strconv.FormatBool(s.private))
+	b.WriteByte('|')
+	b.WriteString(strconv.FormatBool(s.Opt.SeparateContinuation))
+	b.WriteByte('|')
+	b.WriteString(strconv.Quote(s.contextLeft(0)))
+	b.WriteByte('|')
+	b.WriteString(strconv.Quote(s.neuralContext()))
+	b.WriteByte('|')
+	b.WriteString(strconv.FormatFloat(s.Opt.DocumentContextWeight, 'g', -1, 64))
+	b.WriteByte('|')
 	if s.Fuzzy.AutoEnabled() { // 自動修正的規則、模式與門檻都決定顯示路徑；關閉時簽章與沒有此功能時相同
-		fmt.Fprintf(&b, "fuzzy:%s:%v|", s.Fuzzy.Key(), s.Opt.FuzzyAuto)
+		b.WriteString("fuzzy:" + s.Fuzzy.Key() + ":" + fmt.Sprintf("%v", s.Opt.FuzzyAuto) + "|")
 	}
 	starts := make([]int, 0, len(s.locks))
 	for st := range s.locks {
@@ -995,14 +1020,28 @@ func (s *Session) signature() string {
 	}
 	sort.Ints(starts)
 	for _, st := range starts {
-		fmt.Fprintf(&b, "%d:%s:%d:%v:%d:%s;", st, s.locks[st].Word, s.locks[st].Len, s.locks[st].Completion, s.locks[st].LiteralBoundary, s.locks[st].Matched)
-		if s.locks[st].Segmentation {
+		l := s.locks[st]
+		b.WriteString(strconv.Itoa(st))
+		b.WriteByte(':')
+		b.WriteString(l.Word)
+		b.WriteByte(':')
+		b.WriteString(strconv.Itoa(l.Len))
+		b.WriteByte(':')
+		b.WriteString(strconv.FormatBool(l.Completion))
+		b.WriteByte(':')
+		b.WriteString(strconv.Itoa(l.LiteralBoundary))
+		b.WriteByte(':')
+		b.WriteString(l.Matched)
+		b.WriteByte(';')
+		if l.Segmentation {
 			b.WriteString("seg;")
 		}
 	}
 	for i := range s.syls {
 		if s.literals[i] {
-			fmt.Fprintf(&b, "literal:%d;", i)
+			b.WriteString("literal:")
+			b.WriteString(strconv.Itoa(i))
+			b.WriteByte(';')
 		}
 	}
 	return b.String()
@@ -1050,9 +1089,56 @@ func (s *Session) refresh() {
 	}
 	s.sug = nil
 	if !s.english && s.mixed.raw == "" && s.cursor == len(s.syls) && s.comp.Empty() && s.cand == nil && !s.autoFuzzed() {
-		s.sug = s.suggestAfterLiteral()
+		// refresh 每鍵最多跑三次；輸入沒變就沿用上次的建議。
+		key := s.sugKey()
+		if key == s.sugPrevKey {
+			s.sug = s.sugPrev
+		} else {
+			s.sug = s.suggestAfterLiteral()
+			s.sugPrev, s.sugPrevKey = s.sug, key
+		}
 	}
 	s.refreshPhoneticHint()
+}
+
+// sugKey 是補全搜尋的輸入摘要。pathSig 在神經模式不含個人版本（#101），所以 Gen 與 Store.Time 另列。
+func (s *Session) sugKey() string {
+	var b strings.Builder
+	b.WriteString(s.pathSig)
+	b.WriteByte('|')
+	writePath(&b, s.path) // refreshSelection 會在 pathSig 不變時換掉 path
+	b.WriteString(strconv.Itoa(s.model.Gen))
+	b.WriteByte('|')
+	b.WriteString(strconv.FormatInt(s.model.Store.Time, 10))
+	if s.previewRewrite {
+		b.WriteString("|pr")
+	}
+	b.WriteByte('|')
+	b.WriteString(strconv.Itoa(s.cursor))
+	return b.String()
+}
+
+// writePath 寫入 path 的全部欄位。
+func writePath(b *strings.Builder, path []decode.Seg) {
+	for _, g := range path {
+		b.WriteString(strconv.Itoa(g.Start))
+		b.WriteByte(',')
+		b.WriteString(strconv.Itoa(g.End))
+		b.WriteByte(',')
+		b.WriteString(g.Word)
+		if g.Partial {
+			b.WriteByte('p')
+		}
+		if g.Correction {
+			b.WriteByte('c')
+		}
+		if g.Matched != "" {
+			b.WriteByte('#')
+			b.WriteString(g.Matched)
+		}
+		b.WriteByte(' ')
+	}
+	b.WriteByte('|')
 }
 
 func (s *Session) openCandidates(length int) {
@@ -1622,6 +1708,8 @@ func (s *Session) reset() {
 	s.pendingToneKey, s.literalKeys = nil, nil
 	s.clearDocumentContext()
 	s.rerankCache = nil
+	s.rerankMemo = nil
+	s.sugPrev, s.sugPrevKey = nil, ""
 	s.hint = nil
 	s.shownPath, s.shownSyls = nil, nil
 	s.previewRewrite = false

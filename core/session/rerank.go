@@ -75,38 +75,127 @@ func (s *Session) rerankable(start, end int) bool {
 	return (n >= 2 && n <= 32 || n == 1 && s.Rerank.TextWeight > 0) && !zhuyin.HasUntoned(s.syls[start:end])
 }
 
+// segMemo 記下某段上次跑完時的輸入摘要、提示與套用的 winner 段。摘要相同就重放，不重跑 N-best。
+// hint 存複本：代名詞習慣會在 rerankSegment 之後原地改 s.hint。
+type segMemo struct {
+	digest string
+	hint   *neuralHint
+	chosen []decode.Seg // 上次套用的 winner 段（絕對位置）；decode 每鍵重建 path，decision 每鍵由快取重放
+}
+
 // rerankSegment 以與 decodeWithLiterals 相同的段落設定取 N-best；段內顯示必須等於 N-best 首選，
-// 否則不得偷換。沒有變動的段落以快取重用決策，避免每鍵重新評分整句。
+// 否則不得偷換。沒有變動的段落以快取重用決策，避免每鍵重新評分整句；摘要與上次相同時
+// 連 N-best 都不重跑（segMemo）。
 func (s *Session) rerankSegment(lat input.Lattice, start, end int) {
-	opt := s.Rerank
-	s.configureDocumentContext(start)
-	s.dec.Evidence = nil
-	s.configureCorrections(start, end, true)
-	rows, _ := s.dec.NBest(lat[start:end], nil, s.Opt.PrefixAware, 8)
-	var shown, before strings.Builder
-	first, last := -1, -1
+	shown, before, first, last, cross := s.segPathWords(start, end)
+	digest := s.segRerankDigest(start, end, shown, before)
+	if m, ok := s.rerankMemo[start]; ok && m.digest == digest {
+		// decodeWithLiterals 每鍵重建整條 path，所以 winner 與提示仍要重放。
+		if m.hint != nil {
+			h := *m.hint
+			h.segs = slices.Clone(m.hint.segs)
+			s.hint = &h
+		}
+		if first < 0 || m.chosen == nil {
+			return
+		}
+		chosen := slices.Clone(m.chosen)
+		s.path = slices.Concat(s.path[:first], chosen, s.path[last+1:])
+		return
+	}
+	chosen, ok := s.rerankSegmentBody(lat, start, end, shown, before, first, last, cross)
+	if !ok {
+		return // 評分器暫時失敗：下次按鍵要重試，不記摘要
+	}
+	if s.rerankMemo == nil {
+		s.rerankMemo = map[int]segMemo{}
+	}
+	var hint *neuralHint
+	if s.hint != nil { // 只有最後一段會設提示；body 內已檢查 end
+		h := *s.hint
+		h.segs = slices.Clone(s.hint.segs)
+		hint = &h
+	}
+	s.rerankMemo[start] = segMemo{digest: digest, hint: hint, chosen: chosen}
+}
+
+// segPathWords 依目前顯示路徑切出段內顯示與段前文字；cross 表示顯示段跨越段邊界。
+func (s *Session) segPathWords(start, end int) (shown, before string, first, last int, cross bool) {
+	var shownB, beforeB strings.Builder
+	first, last = -1, -1
 	for i, g := range s.path {
 		switch {
 		case g.Start >= start && g.End <= end:
-			shown.WriteString(g.Word)
+			shownB.WriteString(g.Word)
 			if first < 0 {
 				first = i
 			}
 			last = i
 		case g.End <= start:
-			before.WriteString(g.Word)
+			beforeB.WriteString(g.Word)
 		case g.Start < end:
-			return // 顯示段跨越邊界：契約不一致，不偷換
+			return shownB.String(), beforeB.String(), first, last, true
 		}
 	}
-	if first < 0 || len(rows) == 0 || rows[0].Text != shown.String() {
-		return
+	return shownB.String(), beforeB.String(), first, last, false
+}
+
+// segRerankDigest 串出決定這一段結果的全部輸入：段讀音、解碼器設定、個人資料版本與時鐘、
+// 段內顯示與上次顯示（extendShown 用）、前文、是否末段（提示只看末段）。
+func (s *Session) segRerankDigest(start, end int, shown, before string) string {
+	var b strings.Builder
+	b.WriteString(zhuyin.Key(s.syls[start:end]))
+	b.WriteByte('|')
+	// extendShown 只看段內的 shownPath 與 shownSyls，段外不收。
+	if s.shownSyls == nil {
+		b.WriteString("nil")
+	} else {
+		fmt.Fprintf(&b, "%d:", len(s.shownSyls))
+		if start < len(s.shownSyls) {
+			b.WriteString(zhuyin.Key(s.shownSyls[start:min(end, len(s.shownSyls))]))
+		}
+	}
+	b.WriteByte('|')
+	for _, g := range s.shownPath {
+		if g.Start >= start && g.End <= end {
+			fmt.Fprintf(&b, "%d,%d,%s,%v,%v,%s ", g.Start, g.End, g.Word, g.Partial, g.Correction, g.Matched)
+		}
+	}
+	b.WriteByte('|')
+	b.WriteString(shown)
+	b.WriteByte('|')
+	b.WriteString(before)
+	b.WriteByte('|')
+	b.WriteString(s.neuralContext())
+	b.WriteByte('|')
+	b.WriteString(s.contextLeft(start))
+	fmt.Fprintf(&b, "|%d|%v|%d|%v|%v|%v|%v|%v|%d|%g|%g|%g|%g|%g|%g|%g|%s|%v|%d|%d",
+		s.model.Gen, s.model.Store.Time, s.Rerank.ContextRunes, s.Opt.SeparateContinuation, s.Opt.PrefixAware, s.Opt.FuzzyAuto, s.documentEnabled,
+		end == len(s.syls), s.Opt.Beam, s.Opt.Continue, s.Opt.DocumentContextWeight,
+		s.Rerank.Weight, s.Rerank.Margin, s.Rerank.HintGap, s.Rerank.TextWeight, s.Rerank.TextMargin,
+		s.Fuzzy.Key(), s.Rerank.AllowPartial, start, end)
+	return b.String()
+}
+
+// rerankSegmentBody 跑一段的完整流程，回傳套用的 winner 段（nil 表示沒有改寫）。
+// ok 為 false 表示評分器暫時失敗，不記摘要、下次重試。
+func (s *Session) rerankSegmentBody(lat input.Lattice, start, end int, shown, before string, first, last int, cross bool) ([]decode.Seg, bool) {
+	opt := s.Rerank
+	if cross {
+		return nil, true // 顯示段跨越邊界：契約不一致，不偷換
+	}
+	s.configureDocumentContext(start)
+	s.dec.Evidence = nil
+	s.configureCorrections(start, end, true)
+	rows, _ := s.dec.NBest(lat[start:end], nil, s.Opt.PrefixAware, 8)
+	if first < 0 || len(rows) == 0 || rows[0].Text != shown {
+		return nil, true
 	} // 搜尋契約不一致時不得偷換首選。
 	rows = s.extendShown(lat, start, end, rows)
 	rows = s.expandNeutral(lat, start, end, rows)
 	context := ""
 	if opt.ContextRunes > 0 {
-		context = lastRunes(s.neuralContext()+before.String(), min(opt.ContextRunes, rerank.MaxContextRunes))
+		context = lastRunes(s.neuralContext()+before, min(opt.ContextRunes, rerank.MaxContextRunes))
 	}
 	req := rerank.Request{AllowPartial: opt.AllowPartial, Revision: s.rev + 1, Context: context, Reading: slices.Clone(s.syls[start:end]), Candidates: rows}
 	weight, margin := opt.Weight, opt.Margin
@@ -114,7 +203,7 @@ func (s *Session) rerankSegment(lat input.Lattice, start, end int) {
 		req.Mode, weight, margin = rerank.ModeText, opt.TextWeight, opt.TextMargin
 	}
 	if !rerank.Supported(req) {
-		return
+		return nil, true
 	}
 	// 排除哪些候選（vetoed）只取決於候選與個人資料，個人資料沒變時沿用快取，不必每鍵重算（#101）。
 	key := rerankKey(req) + vetoInputs(rows)
@@ -131,7 +220,7 @@ func (s *Session) rerankSegment(lat input.Lattice, start, end int) {
 			}
 			scores, err := opt.Scorer.Score(copied)
 			if err != nil {
-				return // 不快取失敗；下次按鍵可再試
+				return nil, false // 不快取失敗；下次按鍵可再試
 			}
 			entry.decision = decide(rows, scores, weight, margin, keepHabit(vetoed, habit, scores, weight))
 		}
@@ -153,7 +242,7 @@ func (s *Session) rerankSegment(lat input.Lattice, start, end int) {
 	}
 	winner := decision.winner
 	if winner <= 0 {
-		return
+		return nil, true
 	}
 	chosen := slices.Clone(rows[winner].Segments)
 	for i := range chosen {
@@ -161,6 +250,7 @@ func (s *Session) rerankSegment(lat input.Lattice, start, end int) {
 		chosen[i].End += start
 	}
 	s.path = slices.Concat(s.path[:first], chosen, s.path[last+1:])
+	return chosen, true
 }
 
 // extendShownK 是每組鎖定另取的候選數：延伸部分的首選與一個替代。
@@ -554,11 +644,27 @@ func vetoInputs(rows []decode.Hypothesis) string {
 // rerankKey 只含決定結果的輸入：前文、讀音與候選（文字、分數、分段）。
 func rerankKey(r rerank.Request) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%q|%s|%v|%s|", r.Context, zhuyin.Key(r.Reading), r.AllowPartial, r.Mode)
+	b.WriteString(strconv.Quote(r.Context))
+	b.WriteByte('|')
+	b.WriteString(zhuyin.Key(r.Reading))
+	b.WriteByte('|')
+	b.WriteString(strconv.FormatBool(r.AllowPartial))
+	b.WriteByte('|')
+	b.WriteString(r.Mode)
+	b.WriteByte('|')
 	for _, c := range r.Candidates {
-		fmt.Fprintf(&b, "%q:%.9g:", c.Text, c.LogScore)
+		b.WriteString(strconv.Quote(c.Text))
+		b.WriteByte(':')
+		// 最短往返表示；%.9g 會截斷。
+		b.WriteString(strconv.FormatFloat(c.LogScore, 'g', -1, 64))
+		b.WriteByte(':')
 		for _, g := range c.Segments {
-			fmt.Fprintf(&b, "%d-%d-%v;", g.Start, g.End, g.Partial)
+			b.WriteString(strconv.Itoa(g.Start))
+			b.WriteByte('-')
+			b.WriteString(strconv.Itoa(g.End))
+			b.WriteByte('-')
+			b.WriteString(strconv.FormatBool(g.Partial))
+			b.WriteByte(';')
 		}
 		b.WriteByte('|')
 	}

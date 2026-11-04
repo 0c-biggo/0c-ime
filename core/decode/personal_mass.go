@@ -1,6 +1,7 @@
 package decode
 
 import (
+	"reflect"
 	"unicode/utf8"
 
 	"github.com/0c-biggo/0c-ime/core/input"
@@ -8,14 +9,39 @@ import (
 	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
+// MassVersion 是選配介面（比照 ReadingPreference）：評分源回報個人資料版本，
+// 版本不變時 massScale 跨搜尋保留。沒有實作的來源維持每次重建。
+type MassVersion interface {
+	MassVersion() (gen int, time int64)
+}
+
 // Only a proper prefix of an already reachable complete word needs this guard.
 // Ordinary evidence for complete words and learned adjacent word pairs remains
 // available. Unfinished future words do not create a protected boundary.
 func (d *Decoder) prepareMass(lat input.Lattice) {
-	d.massScale, d.longerEnd = nil, nil
+	d.longerEnd = nil
 	a, ok := d.Score.(Adaptive)
 	if !ok || !a.HasAdaptation() {
+		d.massScale = nil
 		return
+	}
+	v, ok := d.Score.(MassVersion)
+	if ok && !reflect.ValueOf(d.Score).Comparable() {
+		ok = false // 身分無法比較（!= 會 panic）：不保留
+	}
+	if !ok {
+		d.massScale = nil // 來源不報版本：保守起見照舊重建
+	} else if d.massScale != nil {
+		gen, at := v.MassVersion()
+		if d.massScorer != d.Score || d.massGen != gen || d.massTime != at {
+			d.massScale = nil
+		}
+	}
+	if d.massScale == nil {
+		d.massScorer, d.massGen, d.massTime = d.Score, 0, 0
+		if ok {
+			d.massGen, d.massTime = v.MassVersion()
+		}
 	}
 	d.longerEnd = make([]int, len(lat))
 	for at := range lat {
