@@ -191,7 +191,7 @@ func TestOrdererServesInArrivalOrder(t *testing.T) {
 	o.wait(&dbus.Message{})()
 }
 
-func TestTypeCommitsWithPreeditClearedFirst(t *testing.T) {
+func TestEnterCommitsWhilePreeditStillShownButNotCommittable(t *testing.T) {
 	e, rec, sock := newTestEngine(t)
 	defer startServer(t, sock, toyEngine(t))()
 	typeKeys(e, "ji3")
@@ -203,14 +203,44 @@ func TestTypeCommitsWithPreeditClearedFirst(t *testing.T) {
 		t.Fatal("Enter 應由輸入法處理")
 	}
 	sig := rec.take()
-	// 先清掉 preeditCommit 模式的組字，再提交；否則用戶端可能再提交一次組字。
-	if len(sig) < 2 || sig[0].name != "UpdatePreeditText" || variantText(t, sig[0].args[0]) != "" ||
-		sig[1].name != "CommitText" || variantText(t, sig[1].args[0]) != "我" {
+	// 1. 組字文字不變、仍可見，但模式降成 CLEAR：Chromium 還在組字中，提交算「組字完成」（xterm.js 才不會送兩次）；
+	//    失焦或重設落在提交與清組字之間時，ibus-daemon／GTK／Qt 也只清掉、不會代為提交（原本先清組字要避免的重複）。
+	// 2. 提交。 3. 清組字，模式回到 COMMIT。
+	if len(sig) < 3 {
 		t.Fatalf("signals = %+v", sig)
 	}
+	if sig[0].name != "UpdatePreeditText" || variantText(t, sig[0].args[0]) != "我" ||
+		!sig[0].args[2].(bool) || sig[0].args[3].(uint32) != preeditClear {
+		t.Fatalf("提交前應先把組字降成 CLEAR：%+v", sig[0])
+	}
+	if sig[1].name != "CommitText" || variantText(t, sig[1].args[0]) != "我" {
+		t.Fatalf("第二個訊號應是提交：%+v", sig[1])
+	}
+	if sig[2].name != "UpdatePreeditText" || variantText(t, sig[2].args[0]) != "" ||
+		sig[2].args[2].(bool) || sig[2].args[3].(uint32) != preeditCommit {
+		t.Fatalf("提交後應清組字並回到 COMMIT：%+v", sig[2])
+	}
+	commits := 0
 	for _, s := range sig {
+		if s.name == "CommitText" {
+			commits++
+		}
+	}
+	if commits != 1 {
+		t.Fatalf("提交了 %d 次：%+v", commits, sig)
+	}
+}
+
+func TestNextPreeditAfterCommitUsesCommitMode(t *testing.T) {
+	e, rec, sock := newTestEngine(t)
+	defer startServer(t, sock, toyEngine(t))()
+	typeKeys(e, "ji3")
+	e.processKey(keyReturn, 0, 0)
+	rec.take()
+	typeKeys(e, "ji3")
+	for _, s := range rec.take() {
 		if s.name == "UpdatePreeditText" && s.args[3].(uint32) != preeditCommit {
-			t.Fatalf("組字模式 = %v", s.args[3])
+			t.Fatalf("提交之後的新組字模式 = %v，應回到 COMMIT", s.args[3])
 		}
 	}
 }

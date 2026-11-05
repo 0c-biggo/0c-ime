@@ -18,7 +18,7 @@ Linux 完整套件內附 `bin/0c-ibus`（靜態連結），安裝到 `~/.local/b
 
 IBus 特有的部分：
 
-- **組字用 `IBUS_ENGINE_PREEDIT_COMMIT` 模式**：失焦、重設、切換輸入法時由 ibus-daemon 或用戶端把畫面上的組字提交出去；engine 在這些時候只讓核心完成同一段組字（學習並清除），自己不再送出提交，避免重複。提交新文字前先清掉畫面上的組字。
+- **組字用 `IBUS_ENGINE_PREEDIT_COMMIT` 模式**：失焦、重設、切換輸入法時由 ibus-daemon 或用戶端把畫面上的組字提交出去；engine 在這些時候只讓核心完成同一段組字（學習並清除），自己不再送出提交，避免重複。提交時先把畫面上的組字降成 CLEAR 模式（文字不變），再送 `CommitText`，最後才清組字並回到 COMMIT。不能先清組字：Chromium 系的終端機（原生 Wayland 的 VS Code）會把同一段字送兩次；也不能讓組字在 COMMIT 模式下等提交：提交與清組字之間剛好失焦，GTK、Qt 或 ibus-daemon 會再提交一次。
 - **候選表只放目前一頁**，翻頁與反白由核心決定；頁碼、候選標題、Tab 補全與提示放在提示列（auxiliary text）。模糊音附註接在候選文字後面。
 - **組字樣式用 IBus 屬性**：一般底線、選過的字雙底線、自動修正用錯誤底線、加詞標示範圍加上前景／背景色。GTK 與 Qt 的 IBus 輸入模組會畫出顏色；組字畫面沒變（文字、游標與各段樣式都相同）時不重送，避免閃爍，只改樣式（例如 Esc 取消標示）也會重送。
 - **選單用 IBus 屬性**：`InputMode`（GNOME 頂列顯示「注／英」，點了切換）、「⚙ 靈犀注音設定」、更新狀態列。文字與點擊後的動作和 Fcitx5 選單相同（`0c-update open-settings`、`auto -now -notify`／`finish -notify`）。`features.vocab` 為 true（0.2.0 起一律為 true）時，設定下面多一個「我的詞彙…」屬性（`vocab`），執行 `open-settings vocab`（#125）。這個屬性一律登錄，`features.vocab` 只改它的 `visible`（以 `UpdateProperty` 送出）：GNOME Shell 每次換 engine 只收第一個 `RegisterProperties`（`ibusManager.js` 的 `_engineChanged`），之後重新登錄會被丟掉，而外殼第一次登錄時狀態通常還沒讀回來。狀態在取得焦點且上次讀取超過一分鐘時重讀。

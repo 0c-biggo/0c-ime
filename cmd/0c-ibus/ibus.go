@@ -54,6 +54,8 @@ const (
 
 	// 失焦、重設或切換輸入法時由 ibus-daemon／用戶端把組字提交出去，引擎不另外提交。
 	preeditCommit = 1
+	// 提交前把仍在畫面上的組字降成 CLEAR：失焦時只清掉，不代為提交（見 engine.go 的 render）。
+	preeditClear = 0
 
 	orientationVertical = 1
 
