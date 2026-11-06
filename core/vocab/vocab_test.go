@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -414,5 +415,60 @@ func TestEnglishWordsReadableByFormat1Readers(t *testing.T) {
 	}
 	if w, _ := back.Lookup("rm"); w.Readings == nil {
 		t.Fatal("列出時 readings 是 []，不是 null")
+	}
+}
+
+// 換電腦（#255）：設定程式把 list 拿到的詞匯出成文字檔，另一台讀回後以 MaxBatchItems 一批送 add。
+// 讀音照檔案送出（不重查），破音字的自訂讀音、多個讀音的順序、輕聲、英文詞都要原樣回來；
+// 另一台原本就有的詞不會被刪掉，已有的讀音不重複。
+func TestImportInBatchesReproducesWords(t *testing.T) {
+	src := New()
+	var entries []Entry
+	for i := 0; i < 1200; i++ {
+		entries = append(entries, Entry{Text: fmt.Sprintf("w%d", i)})
+	}
+	entries = append(entries,
+		Entry{"曾國城", []string{"ㄗㄥ ㄍㄨㄛˊ ㄔㄥˊ"}},
+		Entry{"銀行", []string{"ㄧㄣˊ ㄒㄧㄥˊ", "ㄧㄣˊ ㄏㄤˊ"}},
+		Entry{"朋友們", []string{"ㄆㄥˊ ㄧㄡˇ ㄇㄣ˙"}})
+	for start := 0; start < len(entries); start += MaxBatchItems {
+		if _, err := src.Add(entries[start:min(len(entries), start+MaxBatchItems)], SourceManual, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dst := New()
+	if _, err := dst.Add([]Entry{{"銀行", []string{"ㄧㄣˊ ㄏㄤˊ"}}, {"只在這台", []string{"ㄓˇ ㄗㄞˋ ㄓㄜˋ ㄊㄞˊ"}}}, SourceManual, 1); err != nil {
+		t.Fatal(err)
+	}
+	var send []Entry // 檔案讀回的樣子：詞與 list 回傳的讀音
+	for _, w := range src.Words() {
+		send = append(send, Entry{Text: w.Text, Readings: w.Readings})
+	}
+	if _, err := dst.Add(send, SourceManual, 2); code(t, err) != CodeLimitBatch {
+		t.Fatal("超過 MaxBatchItems 的一批要整批拒絕；設定程式因此分批送出")
+	}
+	for start := 0; start < len(send); start += MaxBatchItems {
+		if _, err := dst.Add(send[start:min(len(send), start+MaxBatchItems)], SourceManual, 2); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if dst.Len() != src.Len()+1 {
+		t.Fatalf("另一台原本的詞要留著：%d", dst.Len())
+	}
+	for _, w := range src.Words() {
+		got, ok := dst.Lookup(w.Text)
+		if !ok {
+			t.Fatalf("少了 %s", w.Text)
+		}
+		want := w.Readings
+		if w.Text == "銀行" {
+			want = []string{"ㄧㄣˊ ㄏㄤˊ", "ㄧㄣˊ ㄒㄧㄥˊ"} // 原有的讀音在前，新的接在後面，不重複
+		}
+		if !slices.Equal(got.Readings, want) {
+			t.Fatalf("%s 的讀音 %q，要 %q", w.Text, got.Readings, want)
+		}
+	}
+	if _, ok := dst.Lookup("只在這台"); !ok {
+		t.Fatal("匯入不刪除檔案裡沒有的詞")
 	}
 }

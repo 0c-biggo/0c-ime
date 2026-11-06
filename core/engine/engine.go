@@ -39,6 +39,7 @@ type Engine struct {
 	Simplified            *zhconv.Converter // 使用者開啟「輸出簡體字」時由宿主設定（#118）；nil 送出繁體。
 	SelectionKeys         string            // 使用者選的選字鍵（#112）；空字串為 1234567890。
 	CtrlPunct             bool              // 「Ctrl＋標點打全形」開著時由宿主設定（#168）；零值時 Ctrl＋標點交給應用程式。
+	ShiftSymbolHalfwidth  bool              // 「Shift＋符號打半形」開著時由宿主設定（#258）；零值時 Shift＋符號照舊打全形標點。
 	CapsLockEnglish       bool              // 「Caps Lock 開著時直接打英文」開著時由宿主設定（#173）；零值時 caps_lock 請求不起作用。
 	Fuzzy                 fuzzy.Config      // 使用者逐對啟用的模糊音；零值全部關閉。
 	Toneless              bool              // 「不打聲調也能選字」開著時由宿主設定（#150）；開啟時停用中英混打的自動判斷。
@@ -93,8 +94,22 @@ func (e *Engine) ToneMarkKeys() bool {
 func (e *Engine) IdleKeys() string {
 	keys := session.IdleKeys(e.Layout, e.MixedInput && !e.Toneless, e.EmojiShortcut)
 	if e.InputStyle.Punctuation == "microsoft" {
+		raw := "\\'\"<>?"
+		if e.ShiftSymbolHalfwidth {
+			raw = "\\'?" // #258：" < > 照設定打 ; , .，由核心送出；? 的半形就是 ?，下面照樣拿掉
+		}
 		keys = strings.Map(func(r rune) rune {
-			if strings.ContainsRune("\\'\"<>?", r) {
+			if strings.ContainsRune(raw, r) {
+				return -1
+			}
+			return r
+		}, keys)
+	}
+	if e.ShiftSymbolHalfwidth {
+		// Shift＋符號打半形（#258）：沒在組字時這些鍵交還應用程式，TestKeyDown 不能吃。
+		drop := session.HalfwidthShiftKeys(e.Layout)
+		keys = strings.Map(func(r rune) rune {
+			if strings.ContainsRune(drop, r) {
 				return -1
 			}
 			return r
@@ -120,6 +135,7 @@ func (e *Engine) OpenSession() uint64 {
 	e.sessions[e.next].Simplified = e.Simplified
 	e.sessions[e.next].SelectionKeys = e.SelectionKeys
 	e.sessions[e.next].CtrlPunct = e.CtrlPunct
+	e.sessions[e.next].ShiftSymbolHalfwidth = e.ShiftSymbolHalfwidth
 	e.sessions[e.next].CapsLockEnglish = e.CapsLockEnglish
 	e.sessions[e.next].InputStyle = e.InputStyle
 	e.sessions[e.next].Fuzzy = e.Fuzzy

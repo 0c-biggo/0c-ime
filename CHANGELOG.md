@@ -2,6 +2,31 @@
 
 每個版本的「公開摘要」與 [官網更新紀錄](https://0c.biggo.com/updates/) 相同；「原始碼套件」記錄 Release 完整 tarball 的內容變化。
 
+## 0.2.9（2026-11-05，public-beta）
+
+### 公開摘要
+
+- 我的詞彙可以匯出成文字檔，到另一台電腦的設定程式匯入，讀音和片語一起帶過去；匯入只會新增，不會刪掉或蓋掉原本的詞。
+- 新設定「Shift＋符號打半形」（鍵盤與符號頁，預設關閉）：打開後注音模式的 Shift＋符號打半形，Shift＋, 是 ,、Shift＋. 是 .，? : ; ! ( ) 也都是半形；要全形時按 ↓，或用 Ctrl＋標點。沒有半形的『』……——改打按鍵上的 { } ^ 與底線。
+- 中英混打：介音晚一鍵打的也照位置組字，20u4 是電、0u3 是演、9j4 是外、u2/4 是定；句首的 u1,6、u2,6 是別、跌。少數數字後面接英文的寫法可能先變成中文，在字上按 ↓ 就能換回原本的按鍵。
+- 選字更快：開著神經選字時，每打一鍵的處理時間少了將近一半，長句子打起來更順。
+- Windows：沒有安裝 Visual C++ 可轉散發套件的電腦也能安裝，不再在註冊那一步失敗。
+- Windows：舊版的檔案被防毒軟體或其他程式改過時，更新不再一直失敗。這個問題在 0.2.8 以前的更新程式裡，所以這次如果自動更新仍失敗，請下載新版安裝程式重新安裝，個人資料會保留。
+- Windows：電腦上只有靈犀注音一個中文輸入法時，部分較舊的程式新開視窗也能直接打中文。
+- Windows：在較舊的程式的文字框裡，組字中按 Ctrl＋S、Ctrl＋A、Ctrl＋Home 等快捷鍵，會先送出組字再作用，存檔不會漏掉最後打的字；英文模式自動補字的空白和標點也不再跑到單字前面。
+- Windows：「Caps Lock 英文字母：預設小寫」在沒有文字游標的程式視窗裡也照設定打小寫。
+- Windows：設定程式匯出的狀態檔會列出最近在哪些程式裡用過輸入法（只有程式名稱），回報問題時比較好查。
+
+### 原始碼套件
+
+- 新設定 `shift-symbol-halfwidth`（`settings.json` 的 `shift_symbol_halfwidth`，預設關閉，#50）：注音模式的 Shift＋符號鍵打原本全形標點的半形版本，`idle_keys` 跟著調整；設定檔 schema 仍為 2，個人詞庫格式仍為 6。
+- 設定程式「我的詞彙」新增匯出／匯入：`platforms/settings/ui/vocab-text.js` 處理文字檔格式（`[我加的詞]`、`[我的片語]`），Rust 的 `export_vocab` 寫到下載資料夾；匯入只新增，每 500 筆一批。
+- 按鍵熱路徑效能（PR #51，Oliver Yu）：段級重排快取、`correctionIndex`、`massScale` 跨搜尋保留（上限 16,384 筆）、補全建議沿用。合併後補了段級快取的命中修正與同鍵手選蓋掉已存更正；`rerank_golden_test.go` 與 `testdata/transcripts/rerank-fuzz.golden.txt` 改成 `rerank_caches_test.go`，每個 seed 開關快取各跑一次比對。
+- Windows：x64 的 `0c_tsf.dll` 與 `0c-ui.exe` 也以 `+crt-static` 建置（新增 `platforms/windows/.cargo/config.toml`，x64 與 i686 都是），`scripts/package_windows.py` 檢查 PE 匯入表，有可轉散發套件 DLL 就中止。
+- Windows：TSF 啟用時把 `GUID_COMPARTMENT_KEYBOARD_OPENCLOSE` 設成開；IMM32 context 裡英文補字與空白、標點的先後，以及組字中 Ctrl 組合鍵先送出組字；`service::imm32_order_tests` 以假的相容層宿主測試。安裝時被取代的舊版有檔案不符收據不再擋安裝。
+- `0c-update status -json -diagnostics` 新增 `shell.tsf_log`（`cmd/0c-update/tsf_apps.go`）：從 tsf.log 整理最近 7 天、最多 30 個程式的執行檔名稱與欄位判定次數。
+- 字典與配對模型沿用 0.2.5。
+
 ## 0.2.8（2026-11-01，public-beta）
 
 ### 公開摘要

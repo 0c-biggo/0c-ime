@@ -498,10 +498,11 @@ impl Apply {
 
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     //! 以假的 ITfContext／ITfRange／ITfComposition 模擬宿主，注入「同步 edit session 被拒」
     //! 「結束組字失敗」「跑完卻回報失敗」等情況，檢查提交文字只寫進文件一次（#88）；
     //! 假的 ITfContextView 模擬 Chromium 版面還沒回來（TS_E_NOLAYOUT）與空矩形（#144）。
+    //! service 的宿主測試也用這份假文件（#260：IMM32 程式的提交順序），所以 host、Doc 是 pub(crate)。
     use super::*;
     use std::collections::VecDeque;
 
@@ -519,7 +520,7 @@ mod tests {
 
     /// 宿主怎麼處理同步（TF_ES_SYNC）的 edit session。
     #[derive(Clone, Copy)]
-    enum Sync {
+    pub(crate) enum Sync {
         /// 照常執行，回傳 DoEditSession 的結果。
         Run,
         /// 不在按鍵回呼內：不執行，回 TF_E_SYNCHRONOUS。
@@ -551,7 +552,7 @@ mod tests {
     }
 
     /// 假文件：UTF-16 文字與插入點，以及可注入的失敗。非同步 edit session 先排隊，由測試決定何時執行。
-    struct Doc {
+    pub(crate) struct Doc {
         text: RefCell<Vec<u16>>,
         caret: Cell<usize>,
         sync: Cell<Sync>,
@@ -570,6 +571,22 @@ mod tests {
         dynamic: Cell<u32>,
         /// 外殼交給宿主的文字指標（InsertTextAtSelection、SetText）；宿主可能真的去讀（#210）。
         text_args: RefCell<Vec<(usize, i32)>>,
+        /// GetStatus 的 dwStaticFlags（#260：IMM32 程式經系統相容層的暫時 context 是 TS_SS_TRANSITORY）。
+        pub(crate) static_flags: Cell<u32>,
+        /// 進行中的組字範圍（StartComposition 到 EndComposition）。
+        live: RefCell<Option<Rc<Span>>>,
+    }
+
+    impl Doc {
+        /// 已提交的文字：整份文件扣掉進行中的組字。IMM32 程式只看得到這部分（系統相容層的結果字串）。
+        pub(crate) fn committed(&self) -> String {
+            let text = self.text.borrow();
+            let (s, e) = match self.live.borrow().as_ref() {
+                Some(span) => (span.start.get(), span.end.get()),
+                None => (text.len(), text.len()),
+            };
+            String::from_utf16(&text[..s]).unwrap() + &String::from_utf16(&text[e..]).unwrap()
+        }
     }
 
     struct Span {
@@ -715,6 +732,10 @@ mod tests {
                 return Err(E_FAIL.into());
             }
             self.doc.ended.set(self.doc.ended.get() + 1);
+            let mut live = self.doc.live.borrow_mut();
+            if live.as_ref().is_some_and(|l| Rc::ptr_eq(l, &self.span)) {
+                *live = None;
+            }
             Ok(())
         }
     }
@@ -782,7 +803,7 @@ mod tests {
         fn GetStatus(&self) -> windows_core::Result<TS_STATUS> {
             Ok(TS_STATUS {
                 dwDynamicFlags: self.doc.dynamic.get(),
-                dwStaticFlags: 0,
+                dwStaticFlags: self.doc.static_flags.get(),
             })
         }
         fn GetProperty(&self, _: *const GUID) -> windows_core::Result<ITfProperty> {
@@ -836,11 +857,9 @@ mod tests {
             _: Ref<'_, ITfCompositionSink>,
         ) -> windows_core::Result<ITfComposition> {
             let at: &FakeRange = unsafe { at.ok()?.as_impl() };
-            Ok(ComObject::new(FakeComposition {
-                doc: self.doc.clone(),
-                span: span(at.span.start.get(), at.span.end.get()),
-            })
-            .into_interface())
+            let live = span(at.span.start.get(), at.span.end.get());
+            *self.doc.live.borrow_mut() = Some(live.clone());
+            Ok(ComObject::new(FakeComposition { doc: self.doc.clone(), span: live }).into_interface())
         }
         fn EnumCompositions(&self) -> windows_core::Result<IEnumITfCompositionView> {
             Err(E_NOTIMPL.into())
@@ -903,7 +922,7 @@ mod tests {
     }
 
     /// 文件原本是「前」、插入點在它後面。
-    fn host(sync: Sync) -> (Rc<Doc>, ITfContext) {
+    pub(crate) fn host(sync: Sync) -> (Rc<Doc>, ITfContext) {
         let doc = Rc::new(Doc {
             text: RefCell::new("前".encode_utf16().collect()),
             caret: Cell::new(1),
@@ -919,6 +938,8 @@ mod tests {
             selections: Cell::new(0),
             dynamic: Cell::new(0),
             text_args: RefCell::new(Vec::new()),
+            static_flags: Cell::new(0),
+            live: RefCell::new(None),
         });
         let ctx = ComObject::new(FakeContext { doc: doc.clone() }).into_interface();
         (doc, ctx)

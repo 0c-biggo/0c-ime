@@ -113,7 +113,7 @@ try {
         Check ($s.receipt.version -eq $ExpectedVersion) 'shell_installed'
         # #253：裝好不等重新登入。新引擎接手就算完成；還沒接手時照實留在待完成，不能報完成。
         Check ($s.state.blocked.reason -ne 'needs_relogin') 'no_relogin_required'
-        $activated=@($s.state.history | Where-Object { $_.kind -eq 'active' -and $_.version -eq $ExpectedVersion }).Count -gt 0
+        $activated=@($s.state.history | Where-Object { $_.kind -in 'active','engine_handed_over' -and $_.version -eq $ExpectedVersion }).Count -gt 0
         if ($s.state.stage -eq 'pending') {
             Check ($s.state.target.version -eq $ExpectedVersion -and $s.state.blocked.reason -in 'engine_busy','waiting_idle','engine_handover_failed') 'waiting_for_engine_honestly'
             Check (-not $activated -and $s.health.version -ne $ExpectedVersion) 'no_premature_activation'
@@ -123,7 +123,7 @@ try {
     } else {
         if (-not $ExpectedVersion) { throw 'ExpectedVersion required' }
         Check ($s.health.version -eq $ExpectedVersion) 'expected_runtime_version'
-        Check (@($s.state.history | Where-Object { $_.kind -eq 'active' -and $_.version -eq $ExpectedVersion }).Count -gt 0 -and ($s.state.stage -in 'active','idle' -or ($s.state.target -and $s.state.target.version -ne $ExpectedVersion))) 'activation_confirmed_in_history'
+        Check (@($s.state.history | Where-Object { $_.kind -in 'active','engine_handed_over' -and $_.version -eq $ExpectedVersion }).Count -gt 0 -and ($s.state.stage -in 'active','idle' -or ($s.state.target -and $s.state.target.version -ne $ExpectedVersion))) 'activation_confirmed_in_history'
         if ($Phase -eq 'core') {
             Check (-not $s.administrator_member -and -not $s.elevated) 'true_standard_user'
             Check ($s.health.version -ne $before.health.version -and $s.health.pid -ne $before.health.pid) 'new_engine_version_and_writer'

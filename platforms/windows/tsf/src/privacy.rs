@@ -35,7 +35,10 @@ pub enum Field {
 pub fn field(ctx: Option<&ITfContext>, client: u32, ui_less: bool) -> Field {
     match ctx {
         Some(ctx) => probe(ctx, client, ui_less).unwrap_or(Field::Blocked),
-        None => Field::Blocked,
+        None => {
+            crate::log::once(&format!("欄位政策：沒有焦點文件，按鍵放行給程式 exe={}", crate::log::exe_name()));
+            Field::Blocked
+        }
     }
 }
 
@@ -53,7 +56,13 @@ fn toggle_allowed(probed: Option<Field>) -> bool {
 /// 欄位政策；宿主拒絕同步唯讀 edit session（讀不到）時回 None。停用或唯讀的 context 直接是 Blocked。
 fn probe(ctx: &ITfContext, client: u32, ui_less: bool) -> Option<Field> {
     unsafe {
-        if context_disabled(ctx) {
+        if let Some(reason) = disabled_reason(ctx) {
+            // 程式自己停用了輸入法（例如 ImmAssociateContext(NULL)、唯讀文件）：同其他輸入法不組字。每個行程每種原因記一次（#257）。
+            crate::log::once(&format!(
+                "欄位政策：程式停用了這個欄位的輸入法（{}），按鍵放行給程式 exe={}",
+                reason,
+                crate::log::exe_name()
+            ));
             return Some(Field::Blocked);
         }
         crate::object_created();
@@ -89,18 +98,21 @@ fn unreadable(hr: windows_core::HRESULT) {
 }
 
 fn context_disabled(ctx: &ITfContext) -> bool {
+    disabled_reason(ctx).is_some()
+}
+
+/// context 停用或唯讀的原因（給 tsf.log）；可以組字時回 None。
+fn disabled_reason(ctx: &ITfContext) -> Option<&'static str> {
     unsafe {
-        if ctx
-            .GetStatus()
-            .map(|s| s.dwDynamicFlags & TF_SD_READONLY != 0)
-            .unwrap_or(true)
-        {
-            return true;
+        match ctx.GetStatus() {
+            Ok(s) if s.dwDynamicFlags & TF_SD_READONLY != 0 => return Some("唯讀"),
+            Ok(_) => {}
+            Err(_) => return Some("讀不到狀態"),
         }
         if let Ok(mgr) = ctx.cast::<ITfCompartmentMgr>() {
-            for guid in [
-                GUID_COMPARTMENT_KEYBOARD_DISABLED,
-                GUID_COMPARTMENT_EMPTYCONTEXT,
+            for (guid, reason) in [
+                (GUID_COMPARTMENT_KEYBOARD_DISABLED, "鍵盤停用"),
+                (GUID_COMPARTMENT_EMPTYCONTEXT, "空的 context"),
             ] {
                 if let Ok(compartment) = mgr.GetCompartment(&guid) {
                     if let Ok(mut value) = compartment.GetValue() {
@@ -108,13 +120,13 @@ fn context_disabled(ctx: &ITfContext) -> bool {
                             && value.Anonymous.Anonymous.Anonymous.lVal != 0;
                         let _ = VariantClear(&mut value);
                         if disabled {
-                            return true;
+                            return Some(reason);
                         }
                     }
                 }
             }
         }
-        false
+        None
     }
 }
 
@@ -230,12 +242,59 @@ fn island_field(class: &str, static_flags: u32) -> Option<Field> {
 /// 所以要暫時 context、沒有宣告 TS_SS_NOHIDDENTEXT、由相容層啟用，三者都成立才算 IMM32 程式。
 /// 注音模式照舊組字（同其他注音輸入法，要用快捷鍵先切英文）。
 pub fn english_passthrough(ctx: &ITfContext, activate_flags: u32) -> bool {
-    let flags = unsafe { ctx.GetStatus() }.map(|s| s.dwStaticFlags).unwrap_or(0);
-    imm32_without_caret(flags, activate_flags, crate::caret::thread_has_caret())
+    imm32_without_caret(static_flags(ctx), activate_flags, crate::caret::thread_has_caret())
+}
+
+/// 這個 context 是不是 IMM32 程式經系統相容層（CUAS）建立的（判斷同 [`english_passthrough`]，不看插入點）。
+/// 這類程式收到的提交是 WM_IME_COMPOSITION 的結果字串，排在程式自己的按鍵訊息之後處理（#260）。
+pub fn imm32_context(ctx: &ITfContext, activate_flags: u32) -> bool {
+    imm32_flags(static_flags(ctx), activate_flags)
+}
+
+/// 這個程式的文字欄位是哪一種、欄位政策的結果是什麼：每個行程對每種組合（靜態旗標、焦點視窗類別、結果）在 tsf.log
+/// 記一次，最多 [`CONTEXT_NOTES`] 種（#257）。只有旗標與視窗類別，不含文字與鍵碼；客服從匯出的狀態摘要就看得出
+/// AutoCAD 這類程式是經系統相容層（IMM32）還是自己的 TSF 文字儲存、焦點在哪種視窗、輸入法有沒有被擋下。
+pub fn note_context(ctx: Option<&ITfContext>, activate_flags: u32, field: Field) {
+    use std::sync::Mutex;
+    static SEEN: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let Some(ctx) = ctx else {
+        return;
+    };
+    let flags = static_flags(ctx);
+    let class = window_class(unsafe { GetFocus() }).unwrap_or_default();
+    if !first_context(&mut SEEN.lock().unwrap_or_else(|e| e.into_inner()), format!("{flags:#x} {class} {field:?}")) {
+        return;
+    }
+    crate::log::log(&format!(
+        "文件：{} status={:#x} focus={} field={:?} exe={}",
+        if imm32_flags(flags, activate_flags) { "IMM32 程式經系統相容層" } else { "TSF 文字儲存" },
+        flags,
+        class,
+        field,
+        crate::log::exe_name()
+    ));
+}
+
+const CONTEXT_NOTES: usize = 8;
+
+fn first_context(seen: &mut Vec<String>, key: String) -> bool {
+    if seen.len() >= CONTEXT_NOTES || seen.contains(&key) {
+        return false;
+    }
+    seen.push(key);
+    true
+}
+
+fn static_flags(ctx: &ITfContext) -> u32 {
+    unsafe { ctx.GetStatus() }.map(|s| s.dwStaticFlags).unwrap_or(0)
+}
+
+fn imm32_flags(static_flags: u32, activate_flags: u32) -> bool {
+    static_flags & (TS_SS_TRANSITORY | TS_SS_NOHIDDENTEXT) == TS_SS_TRANSITORY && activate_flags == 0
 }
 
 fn imm32_without_caret(static_flags: u32, activate_flags: u32, caret: bool) -> bool {
-    static_flags & (TS_SS_TRANSITORY | TS_SS_NOHIDDENTEXT) == TS_SS_TRANSITORY && activate_flags == 0 && !caret
+    imm32_flags(static_flags, activate_flags) && !caret
 }
 
 /// 除錯紀錄用：缺 InputScope 時記下 context 狀態旗標與焦點／檢視視窗類別（不含文字）。
@@ -470,6 +529,9 @@ impl ITfEditSession_Impl for ScopeProbe_Impl {
                     scope_field(std::slice::from_raw_parts(scopes, count as usize))
                 };
                 CoTaskMemFree(Some(scopes.cast()));
+                if field == Field::Blocked {
+                    crate::log::once(&format!("欄位政策：密碼或 PIN 欄位，按鍵直接交給程式 exe={}", crate::log::exe_name()));
+                }
                 Ok(field)
             })();
             let _ = VariantClear(&mut value);
@@ -486,6 +548,19 @@ pub(crate) mod host_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn context_notes_once_per_kind_up_to_the_limit() {
+        let mut seen = Vec::new();
+        assert!(first_context(&mut seen, "0x4 Edit Private".into()));
+        assert!(!first_context(&mut seen, "0x4 Edit Private".into()));
+        assert!(first_context(&mut seen, "0x4 Edit Open".into()));
+        for i in 0..CONTEXT_NOTES {
+            first_context(&mut seen, i.to_string());
+        }
+        assert_eq!(seen.len(), CONTEXT_NOTES);
+        assert!(!first_context(&mut seen, "0xc Chrome_RenderWidgetHostHWND Open".into()));
+    }
+
     #[test]
     fn missing_scope_document_fallback_requires_editable_focused_nonprivate_content() {
         let focused = STATE_SYSTEM_FOCUSED | STATE_SYSTEM_FOCUSABLE;
@@ -540,6 +615,11 @@ mod tests {
         // 其他自己實作文字儲存的程式不是暫時 context。
         assert!(!imm32_without_caret(TS_SS_NOHIDDENTEXT, 0, false));
         assert!(!imm32_without_caret(0, 0, false));
+        // #260：有插入點的 IMM32 文字框（EDIT）也是系統相容層，英文補字照常但單字的送出方式不同。
+        assert!(imm32_flags(TS_SS_TRANSITORY, 0));
+        assert!(!imm32_flags(0xc, 0));
+        assert!(!imm32_flags(TS_SS_TRANSITORY, 0x4000_0040));
+        assert!(!imm32_flags(TS_SS_NOHIDDENTEXT, 0));
     }
 
     #[test]

@@ -191,6 +191,24 @@ fn settle_step<T: PartialEq, C>(current: Option<&T>, owner: Option<&T>) -> Focus
     }
 }
 
+/// 英文模式這一鍵怎麼處理（english_key_policy）。TestKeyDown 與 OnKeyDown 得到同一個答案。
+#[derive(Debug, PartialEq)]
+enum EnglishKey {
+    /// true：吃下，OnKeyDown 交給引擎；false：交給程式。
+    Eat(bool),
+    /// 吃下，OnKeyDown 不經引擎、直接把這段字送進文件（#112 的 Caps Lock 小寫字母）。
+    Literal(String),
+    /// IMM32 程式裡英文單字中的空白、標點或方向鍵（#260）：吃下，OnKeyDown 由引擎送出單字，同一次接著送出
+    /// `typed`（這一鍵在程式裡會打出的字；方向鍵等是空字串，只送出單字）。
+    WordEnd { key: String, typed: String },
+}
+
+impl EnglishKey {
+    fn eats(&self) -> bool {
+        !matches!(self, EnglishKey::Eat(false))
+    }
+}
+
 /// 同一個畫面版本最多因 OnLayoutChange 重查幾次。
 const MAX_REQUERIES: u32 = 8;
 
@@ -862,6 +880,11 @@ impl TextService_Impl {
         };
         zlog!("TestKeyDown 已吃下的鍵引擎沒有處理，以原字元送進文件"); // 不記鍵碼（隱私）
         zdebug!("type_literal vk={}", vk);
+        self.type_text(ctx, vk, text)
+    }
+
+    /// 不經引擎、直接把文字送進文件，吃下這個鍵（放開時一併吃下）。
+    fn type_text(&self, ctx: Option<&ITfContext>, vk: u32, text: String) -> bool {
         let literal = Snapshot {
             ok: true,
             handled: true,
@@ -869,6 +892,27 @@ impl TextService_Impl {
             ..Default::default()
         };
         let eaten = self.present(ctx, &literal);
+        if eaten {
+            self.state.borrow_mut().eaten.insert(vk);
+        }
+        eaten
+    }
+
+    /// IMM32 程式裡單字中的空白、標點、方向鍵（#260，english_key_policy 的 WordEnd）：按鍵照常交給引擎
+    /// （引擎送出單字、知道單字在哪裡結束），單字與這一鍵會打出的字在同一個 edit session 送出，程式收到一個結果字串，
+    /// 順序就對了；吃下這個鍵（放開時一併吃下）。引擎自己處理了這一鍵（例如全形）就照引擎的快照。
+    /// 引擎沒有回應時送出畫面上的單字加上這個字，按鍵與單字都不遺失。
+    fn end_word_with(&self, ctx: Option<&ITfContext>, vk: u32, key: &str, typed: String) -> bool {
+        let shown = self.state.borrow().session.english_state.text();
+        let mut snapshot = self.state.borrow_mut().session.key(key);
+        if !snapshot.ok {
+            return self.type_text(ctx, vk, shown + &typed);
+        }
+        if !snapshot.handled {
+            snapshot.commit.push_str(&typed);
+            snapshot.handled = true;
+        }
+        let eaten = self.present(ctx, &snapshot);
         if eaten {
             self.state.borrow_mut().eaten.insert(vk);
         }
@@ -974,14 +1018,16 @@ impl TextService_Impl {
 
     /// 每次按鍵重新確認欄位；阻擋路徑不記錄鍵碼、不連線／重播引擎。
     fn allowed(&self, ctx: Option<&ITfContext>) -> bool {
-        let (secure, client, ui_less) = {
+        let (secure, client, ui_less, flags) = {
             let st = self.state.borrow();
-            (st.secure, st.client_id, st.ui_less)
+            (st.secure, st.client_id, st.ui_less, st.activate_flags)
         };
         let field = if secure {
             privacy::Field::Blocked
         } else {
-            privacy::field(ctx, client, ui_less)
+            let field = privacy::field(ctx, client, ui_less);
+            privacy::note_context(ctx, flags, field);
+            field
         };
         if field != privacy::Field::Blocked {
             self.state
@@ -1016,7 +1062,7 @@ impl TextService_Impl {
 
     /// Commit before declining TestKeyDown: hosts such as WPF rely on this
     /// answer and cannot recover a key declined only in OnKeyDown.
-    fn english_key_policy(&self, ctx: Option<&ITfContext>, vk: u32, lparam: isize) -> Option<bool> {
+    fn english_key_policy(&self, ctx: Option<&ITfContext>, vk: u32, lparam: isize) -> Option<EnglishKey> {
         if keys::is_modifier(vk) && !keys::modifier_down() {
             return None;
         }
@@ -1039,21 +1085,37 @@ impl TextService_Impl {
             if snap.english_pending {
                 self.finish(ctx, "commit");
             }
-            return Some(false);
+            return Some(EnglishKey::Eat(false));
         }
         let key = self.state.borrow_mut().styled_key(vk, lparam, false, true);
-        if key.as_deref() == Some("ShiftSpace") { return Some(true); }
+        if key.as_deref() == Some("ShiftSpace") { return Some(EnglishKey::Eat(true)); }
         // IMM32 程式的焦點不是文字框（Photoshop 的畫布）：英文模式的按鍵是快捷鍵，整個交給程式，不開始補字（#210）。
         let flags = self.state.borrow().activate_flags;
         if !snap.english_pending && ctx.is_some_and(|c| privacy::english_passthrough(c, flags)) {
+            // 「Caps Lock 英文字母：預設小寫」的字母例外（#112）：交給程式的話系統照 Caps Lock 打成大寫（Shift 反而小寫），
+            // 自己繪製插入點的編輯器（沒有系統插入點）裡跟其他程式大小寫不同。照風格的大小寫直接送出，仍不開始補字；
+            // 數字、標點與具名鍵不受 Caps Lock 影響，照舊交給程式。Caps Lock 沒開或「依平台大小寫」時字母也照舊交給程式。
+            if let Some(text) = keys::caps_lower_literal(caps_lower, key.as_deref()) {
+                return Some(EnglishKey::Literal(text));
+            }
             crate::log::once(&format!(
                 "英文模式：IMM32 程式的焦點沒有插入點，不開始英文補字，按鍵直接交給程式 exe={}",
                 crate::log::exe_name()
             ));
-            return Some(false);
+            return Some(EnglishKey::Eat(false));
         }
         if key.as_ref().is_some_and(|k| snap.english_wants_key(k) || caps_lower && k.len() == 1 && k.as_bytes()[0].is_ascii_alphabetic()) {
-            return Some(true);
+            return Some(EnglishKey::Eat(true));
+        }
+        // IMM32 程式（EDIT、IMM32 模式的 RichEdit、自繪文字框）經系統相容層收到的提交是 WM_IME_COMPOSITION，
+        // 排在程式自己的按鍵訊息之後：先送出單字再把空白交給程式，空白比單字先進文件；方向鍵先移動插入點，
+        // 單字插到別處（#260）。這些鍵在這類程式吃下，由輸入法連同單字一起送出。
+        if snap.english_pending && ctx.is_some_and(|c| privacy::imm32_context(c, flags)) {
+            if let Some(key) = key.as_deref() {
+                if let Some(typed) = keys::imm32_word_end(key) {
+                    return Some(EnglishKey::WordEnd { key: key.to_string(), typed });
+                }
+            }
         }
         if let Some(key) = key {
             let next = self.state.borrow_mut().session.key(&key);
@@ -1062,12 +1124,12 @@ impl TextService_Impl {
             if next.ok && (!next.commit.is_empty() || snap.english_pending) {
                 self.present(ctx, &next);
             }
-            return Some(next.handled);
+            return Some(EnglishKey::Eat(next.handled));
         }
         if snap.english_pending {
             self.finish(ctx, "commit");
         }
-        Some(false)
+        Some(EnglishKey::Eat(false))
     }
 
     /// 組字中交給宿主的按鍵（Ctrl／Alt／Win 組合鍵、F 鍵、Insert 等核心轉換不了的鍵）先送出組字（#106）。
@@ -1075,6 +1137,18 @@ impl TextService_Impl {
     /// 先送出組字也讓 Ctrl+Enter、Ctrl+V 這類快捷鍵在組字之後才執行。OnKeyDown 再呼叫一次時已沒有組字，不會重複。
     fn commit_before_host_key(&self, ctx: Option<&ITfContext>, vk: u32, lparam: isize) {
         if !self.state.borrow().composing {
+            return;
+        }
+        // IMM32 程式（EDIT、IMM32 模式的 RichEdit、自繪文字框）經系統相容層收到的提交是 WM_IME_COMPOSITION，
+        // 排在程式自己處理這一鍵之後：等到 Ctrl+A、Ctrl+S 的 A、S 才送出，程式先全選、存檔，組字之後才進文件（#262）。
+        // 這類程式在 Ctrl 按下時就送出組字（同微軟注音），結果字串在下一鍵之前到。Ctrl 本身照舊交給程式；
+        // Ctrl＋標點（#168）因此在沒在組字時打出，文字相同。自己接 TSF 的程式照舊，組字留到下一鍵再決定。
+        if keys::ctrl_press(vk, lparam) {
+            let flags = self.state.borrow().activate_flags;
+            if ctx.is_some_and(|c| privacy::imm32_context(c, flags)) {
+                zdebug!("IMM32 程式：Ctrl 按下，先送出組字");
+                self.finish(ctx, "commit");
+            }
             return;
         }
         // 要交給引擎的 Ctrl＋標點插進組字區，不先送出組字（#168）。
@@ -1174,6 +1248,7 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
             zlog!("activate 開始 exe={} tid={}{}", crate::log::exe_name(), tid, if crate::layout::IS_32BIT { " x86" } else { "" });
             let tm = ptim.ok()?.clone();
             let callback = CandidateWindow::new(self).ok();
+            let mut opened = None;
             unsafe {
                 let keystrokes: ITfKeystrokeMgr = tm.cast()?;
                 let key_sink: ITfKeyEventSink = self.to_interface();
@@ -1183,12 +1258,14 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
                 let cookie = source
                     .AdviseSink(&ITfThreadMgrEventSink::IID, &tm_sink)
                     .unwrap_or(TF_INVALID_COOKIE);
-                // 鍵盤開關（Ctrl＋Space，#117）；拿不到就只是沒有這個熱鍵。
+                // 鍵盤開關（Ctrl＋Space，#117）；拿不到就只是沒有這個熱鍵。啟用時先設成開（#257），再註冊通知，
+                // 自己這次設定不會被當成熱鍵。
                 let openclose = tm
                     .cast::<ITfCompartmentMgr>()
                     .and_then(|mgr| mgr.GetCompartment(&GUID_COMPARTMENT_KEYBOARD_OPENCLOSE))
                     .ok()
                     .and_then(|compartment| {
+                        opened = Some(open_keyboard(&compartment, tid));
                         let sink: ITfCompartmentEventSink = self.to_interface();
                         let cookie = compartment
                             .cast::<ITfSource>()
@@ -1253,10 +1330,14 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
                 }
             }
             zlog!(
-                "activate 完成 exe={} tid={} ui_less={}",
+                "activate 完成 exe={} tid={} ui_less={}{}",
                 crate::log::exe_name(),
                 tid,
-                self.state.borrow().ui_less
+                self.state.borrow().ui_less,
+                match opened {
+                    Some((before, after)) if before != after => format!(" 鍵盤開關 {} -> {}", before, after),
+                    _ => String::new(),
+                }
             );
             Ok(())
         })
@@ -1376,9 +1457,10 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             self.commit_before_host_key(pic.as_ref(), vk, lparam.0);
             self.learn_mode(vk);
             self.sync_caps(pic.as_ref(), vk);
-            let wants = self
-                .english_key_policy(pic.as_ref(), vk, lparam.0)
-                .unwrap_or_else(|| self.wants_key(vk, lparam.0));
+            let wants = match self.english_key_policy(pic.as_ref(), vk, lparam.0) {
+                Some(policy) => policy.eats(),
+                None => self.wants_key(vk, lparam.0),
+            };
             zdebug!("OnTestKeyDown vk={} -> {}", wparam.0, wants);
             self.state.borrow_mut().key_tested.record(vk, wants);
             Ok(wants.into())
@@ -1448,10 +1530,21 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
                 let st = self.state.borrow();
                 !st.composing && !st.session.english()
             };
-            if !self
-                .english_key_policy(pic.as_ref(), vk, lparam.0)
-                .unwrap_or_else(|| self.wants_key(vk, lparam.0))
-            {
+            let wants = match self.english_key_policy(pic.as_ref(), vk, lparam.0) {
+                Some(EnglishKey::Literal(text)) => {
+                    // #112：IMM32 沒有系統插入點的視窗裡 Caps Lock 小寫的字母，不經引擎直接送出（不開始英文補字）。
+                    zdebug!("OnKeyDown vk={} Caps Lock 小寫字母直接送出", vk);
+                    return Ok(self.type_text(pic.as_ref(), vk, text).into());
+                }
+                Some(EnglishKey::WordEnd { key, typed }) => {
+                    zdebug!("OnKeyDown vk={} IMM32 程式：單字連同按鍵一起送出", vk);
+                    self.confirm_document_context(pic.as_ref());
+                    return Ok(self.end_word_with(pic.as_ref(), vk, &key, typed).into());
+                }
+                Some(policy) => policy.eats(),
+                None => self.wants_key(vk, lparam.0),
+            };
+            if !wants {
                 zdebug!("OnKeyDown vk={} wants=false", vk);
                 if literal_fallback {
                     return Ok(self.type_literal(pic.as_ref(), vk, lparam.0).into());
@@ -1633,6 +1726,19 @@ impl ITfCompartmentEventSink_Impl for TextService_Impl {
             Ok(())
         })
     }
+}
+
+/// 啟用時把執行緒的鍵盤開關（GUID_COMPARTMENT_KEYBOARD_OPENCLOSE）設成開，回傳（設定前, 設定後）的值（#257）。
+/// 系統相容層把它當成 IMM32 程式的 ImmGetOpenStatus：沒人設的話，只裝靈犀注音時新開的程式一律看到「輸入法關著」，
+/// 相信這個值的程式（CAD 外掛、指令列）就把按鍵當英文、不收組字結果。微軟注音、新酷音（windows-chewing-tsf 的
+/// init_openclose）與 PIME（libIME 的 Activate）啟用時都設成開。只在是 0 的時候設；外殼仍不看這個值決定要不要組字（#117）。
+fn open_keyboard(compartment: &ITfCompartment, client: u32) -> (i32, i32) {
+    let before = compartment_i32(compartment).unwrap_or(0);
+    if before != 0 {
+        return (before, before);
+    }
+    let set = unsafe { compartment.SetValue(client, &windows::Win32::System::Variant::VARIANT::from(1i32)) };
+    (before, compartment_i32(compartment).unwrap_or(if set.is_ok() { 1 } else { before }))
 }
 
 /// compartment 的 VT_I4 值；沒有值（VT_EMPTY）或讀不到回傳 None。
@@ -1834,6 +1940,10 @@ mod composition_tests {
 mod focus_host_tests;
 
 #[cfg(test)]
+#[path = "imm32_order_tests.rs"]
+mod imm32_order_tests;
+
+#[cfg(test)]
 mod shift_tests {
     //! #217：PuTTY 這類 IMM32 程式對 Shift 放開只經 OnTestKeyUp 問輸入法；放開被吃掉後，要宿主對那個放開
     //! 呼叫 TranslateMessage 才會有 OnKeyUp，PuTTY 從不呼叫。以前在 OnKeyUp 才切換，單按左右 Shift 都切不了。
@@ -1904,5 +2014,129 @@ mod shift_tests {
         unsafe {
             let _ = DestroyWindow(view);
         }
+    }
+}
+
+#[cfg(test)]
+mod caps_lower_tests {
+    //! #112：「Caps Lock 開著時直接打英文」加「Caps Lock 英文字母：預設小寫」，在 IMM32 沒有系統插入點的視窗
+    //! （#210 英文模式按鍵整個交給程式）裡字母被系統照 Caps Lock 打成大寫，同一台電腦有的程式小寫、有的大寫。
+    //! 以 IMM32 暫時 context 的假宿主走 ITfKeyEventSink；Caps Lock 與 Shift 用 SetKeyboardState 設在本測試執行緒。
+    //! 需要 ZUIN_TEST_CAPS_LOWER_PIPE 的測試引擎：設定 caps-lock-english on、style-caps-letter lower、english-autocomplete on。
+    use super::*;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyboardState, SetKeyboardState, VK_CAPITAL, VK_SHIFT};
+    use windows::Win32::UI::TextServices::ITfKeyEventSink;
+    use windows::Win32::UI::WindowsAndMessaging::DestroyWindow;
+
+    /// 只改本執行緒的鍵盤狀態（GetKeyState、ToUnicode 看的），不動系統的 Caps Lock。
+    fn keyboard(caps: bool, shift: bool) {
+        let mut state = [0u8; 256];
+        unsafe {
+            GetKeyboardState(&mut state).unwrap();
+            state[VK_CAPITAL.0 as usize] = if caps { 1 } else { 0 };
+            state[VK_SHIFT.0 as usize] = if shift { 0x80 } else { 0 };
+            SetKeyboardState(&state).unwrap();
+        }
+    }
+
+    fn down(sink: &ITfKeyEventSink, ctx: &ITfContext, vk: u32, scan: isize) -> (bool, bool) {
+        let (w, l) = (WPARAM(vk as usize), LPARAM(1 | scan << 16));
+        let test = unsafe { sink.OnTestKeyDown(ctx, w, l) }.unwrap().as_bool();
+        let key = test && unsafe { sink.OnKeyDown(ctx, w, l) }.unwrap().as_bool();
+        (test, key)
+    }
+
+    #[test]
+    fn caps_lower_letters_in_imm32_windows_without_caret() {
+        let Some(pipe) = std::env::var("ZUIN_TEST_CAPS_LOWER_PIPE").ok() else {
+            return;
+        };
+        let (view, ctx) = crate::privacy::host_tests::imm32_window_without_caret();
+        let service = ComObject::new(TextService::new());
+        service.state.borrow_mut().session = Session::with_client(crate::ipc::Client::with_pipe(&pipe));
+        let sink: ITfKeyEventSink = service.to_interface();
+        keyboard(true, false);
+        // Caps Lock 開著：第一個按鍵同步到引擎、切到英文；字母由輸入法吃下送出小寫，交給程式就是大寫。
+        assert_eq!(down(&sink, &ctx, 0x41, 0x1e), (true, true), "Caps Lock 的 a 要由輸入法送出");
+        {
+            let st = service.state.borrow();
+            assert!(st.session.english() && st.session.english_state.caps_lock);
+            // 仍不在沒有插入點的視窗開始英文補字（#210）。
+            assert!(!st.composing && !st.session.english_state.english_pending, "不開始英文補字");
+        }
+        keyboard(true, true);
+        assert_eq!(down(&sink, &ctx, 0x42, 0x30), (true, true), "Caps Lock＋Shift 的 B 也由輸入法送出");
+        keyboard(true, false);
+        // 數字與標點不受 Caps Lock 影響，照舊交給程式。
+        assert_eq!(down(&sink, &ctx, 0x31, 0x02), (false, false), "數字交給程式");
+        assert_eq!(down(&sink, &ctx, 0xBA, 0x27), (false, false), "標點交給程式");
+        // 關掉 Caps Lock：回到注音，字母照常組字。
+        keyboard(false, false);
+        assert_eq!(down(&sink, &ctx, 0x41, 0x1e), (true, true));
+        assert!(!service.state.borrow().session.english());
+        unsafe {
+            let _ = DestroyWindow(view);
+        }
+    }
+}
+
+#[cfg(test)]
+mod openclose_tests {
+    //! #257：啟用時把鍵盤開關設成開。系統相容層把它當成 IMM32 程式的 ImmGetOpenStatus；只裝靈犀注音時沒人設，
+    //! 新開的程式一律看到「輸入法關著」。以假的 compartment 驗證只在 0 的時候設、已經是開的不動、設不了就照實回報。
+    use super::*;
+    use windows::Win32::System::Variant::VARIANT;
+    use windows::Win32::UI::TextServices::ITfCompartment_Impl;
+
+    #[implement(ITfCompartment)]
+    struct Fake {
+        value: Cell<Option<i32>>,
+        writable: bool,
+        writes: Cell<u32>,
+    }
+    impl ITfCompartment_Impl for Fake_Impl {
+        fn SetValue(&self, _: u32, value: *const VARIANT) -> windows_core::Result<()> {
+            if !self.writable {
+                return Err(windows::Win32::Foundation::E_ACCESSDENIED.into());
+            }
+            self.writes.set(self.writes.get() + 1);
+            let v = unsafe { &*value };
+            self.value.set(Some(unsafe { v.Anonymous.Anonymous.Anonymous.lVal }));
+            Ok(())
+        }
+        fn GetValue(&self) -> windows_core::Result<VARIANT> {
+            Ok(match self.value.get() {
+                Some(v) => VARIANT::from(v),
+                None => VARIANT::default(), // VT_EMPTY：剛建立、沒人設過
+            })
+        }
+    }
+
+    fn fake(value: Option<i32>, writable: bool) -> (ComObject<Fake>, ITfCompartment) {
+        let object = ComObject::new(Fake { value: Cell::new(value), writable, writes: Cell::new(0) });
+        let compartment: ITfCompartment = object.to_interface();
+        (object, compartment)
+    }
+
+    #[test]
+    fn closed_or_unset_keyboard_is_opened_on_activation() {
+        for initial in [None, Some(0)] {
+            let (object, compartment) = fake(initial, true);
+            assert_eq!(open_keyboard(&compartment, 7), (0, 1), "initial {initial:?}");
+            assert_eq!(object.value.get(), Some(1));
+        }
+    }
+
+    #[test]
+    fn open_keyboard_is_left_alone() {
+        let (object, compartment) = fake(Some(1), true);
+        assert_eq!(open_keyboard(&compartment, 7), (1, 1));
+        assert_eq!(object.writes.get(), 0);
+    }
+
+    #[test]
+    fn refused_write_reports_the_value_unchanged() {
+        let (_object, compartment) = fake(Some(0), false);
+        assert_eq!(open_keyboard(&compartment, 7), (0, 0));
     }
 }

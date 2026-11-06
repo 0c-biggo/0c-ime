@@ -2306,6 +2306,61 @@ class ReleaseTests(unittest.TestCase):
             package_windows.check_pe(file, "x86")
         self.assertEqual(package_windows.DLL32, "x86/0c_tsf.dll")
 
+    def test_windows_binaries_do_not_need_the_visual_cpp_redistributable(self):
+        # #261：0.2.7／0.2.8 的 x64 0c_tsf.dll 與 0c-ui.exe 匯入 VCRUNTIME140.dll，沒裝 VC++ 可轉散發套件的電腦
+        # regsvr32 載不了 DLL（exit status 3），安裝精靈在註冊那步失敗。UCRT（api-ms-win-crt-*）是 Windows 10 內建，可以。
+        import struct
+
+        def fake_pe(imports, delayed=(), pe32=False):
+            # 一個 .idata 區段（RVA 0x1000、檔案位移 0x200）放匯入描述、延遲載入描述與 DLL 名稱。
+            rva = 0x1000
+            table, delay_table = 20 * (len(imports) + 1), 32 * (len(delayed) + 1)
+            strings, names = b"", []
+            for name in (*imports, *delayed):
+                names.append(rva + table + delay_table + len(strings))
+                strings += name.encode() + b"\0"
+            section = b"".join(struct.pack("<5I", 0, 0, 0, n, 0) for n in names[:len(imports)]) + bytes(20)
+            section += b"".join(struct.pack("<8I", 1, n, 0, 0, 0, 0, 0, 0) for n in names[len(imports):]) + bytes(32)
+            section += strings
+            magic, directories = (0x10B, 96) if pe32 else (0x20B, 112)
+            optional = bytearray(directories + 16 * 8)
+            struct.pack_into("<H", optional, 0, magic)
+            struct.pack_into("<I", optional, directories - 4, 16)
+            struct.pack_into("<II", optional, directories + 8, rva, table)
+            if delayed:
+                struct.pack_into("<II", optional, directories + 13 * 8, rva + table, delay_table)
+            coff = struct.pack("<HHIIIHH", 0x14C if pe32 else 0x8664, 1, 0, 0, 0, len(optional), 0x2022)
+            header = struct.pack("<8sIIIIIIHHI", b".idata", len(section), rva, len(section), 0x200, 0, 0, 0, 0, 0)
+            return (b"MZ" + bytes(58) + struct.pack("<I", 64) + b"PE\0\0" + coff + bytes(optional) + header).ljust(0x200, b"\0") + section
+
+        file = self.root / "0c_tsf.dll"
+        dynamic = ("KERNEL32.dll", "msctf.dll", "VCRUNTIME140.dll", "api-ms-win-crt-runtime-l1-1-0.dll")
+        file.write_bytes(fake_pe(dynamic))
+        self.assertEqual(package_windows.pe_imports(file), list(dynamic))
+        with self.assertRaisesRegex(ValueError, "VCRUNTIME140.dll"):
+            package_windows.check_static_crt(file)
+        for imports, delayed, pe32 in ((("kernel32.dll",), ("MSVCP140.dll",), False),
+                                       (("kernel32.dll", "vcruntime140_1.dll"), (), False),
+                                       (("KERNEL32.dll", "VCRUNTIME140.dll"), (), True)):
+            file.write_bytes(fake_pe(imports, delayed, pe32))
+            self.assertEqual(package_windows.pe_imports(file), [*imports, *delayed])
+            with self.assertRaisesRegex(ValueError, "Visual C\\+\\+"):
+                package_windows.check_static_crt(file)
+        static = ("kernel32.dll", "ole32.dll", "msctf.dll", "api-ms-win-crt-heap-l1-1-0.dll", "ucrtbase.dll")
+        for pe32 in (False, True):
+            file.write_bytes(fake_pe(static, ("oleacc.dll",), pe32))
+            package_windows.check_static_crt(file)
+        file.write_bytes(fake_pe(()))  # Go 程式只匯入 kernel32；沒有匯入也不算錯
+        self.assertEqual(package_windows.pe_imports(file), [])
+        file.write_bytes(b"MZ" + bytes(80))
+        with self.assertRaisesRegex(ValueError, "PE"):
+            package_windows.pe_imports(file)
+        # 靜態連結寫在 Cargo 設定裡（每個 MSVC target，含 cargo test、驗收腳本自己的建置），不靠打包腳本的環境變數。
+        import tomllib
+        config = tomllib.loads((package_windows.PLATFORM / ".cargo/config.toml").read_text(encoding="utf-8"))
+        flags = config["target"]['cfg(all(windows, target_env = "msvc"))']["rustflags"]
+        self.assertIn("target-feature=+crt-static", " ".join(flags))
+
     def test_windows_version_info_resource(self):
         import struct
         def parse(data, offset=0):
@@ -2836,7 +2891,7 @@ Successfully verified: 0c-update.exe
         node = shutil.which("node")
         if not node:
             self.skipTest("沒有 node")
-        for name in ("app.js", "models.js"):
+        for name in ("app.js", "models.js", "vocab.js", "vocab-text.js"):
             app = Path(__file__).resolve().parents[1] / "platforms/settings/ui" / name
             result = subprocess.run([node, "--check", str(app)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, name + "：" + result.stderr)
@@ -2847,6 +2902,16 @@ Successfully verified: 0c-update.exe
         if not node:
             self.skipTest("沒有 node")
         test = Path(__file__).resolve().parents[1] / "platforms/settings/test/engine_state_test.js"
+        result = subprocess.run([node, "--test", str(test)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_settings_ui_vocab_text(self):
+        # #255「我的詞彙」匯出與匯入的文字格式：匯出再匯入詞彙相同（破音字讀音、英文詞、含換行與 Tab 的片語），
+        # 貼上「詞＋Tab＋讀音」不再把讀音切成另一行，合併只加不刪，超過 500 個分批。
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("沒有 node")
+        test = Path(__file__).resolve().parents[1] / "platforms/settings/test/vocab_text_test.js"
         result = subprocess.run([node, "--test", str(test)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 

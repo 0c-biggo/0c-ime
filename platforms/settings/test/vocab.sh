@@ -44,7 +44,9 @@ PY
 }
 watchers() { pgrep -fc 'vocab watc[h]' || true; }
 second() { HOME=$(home_of "$1") ZC_UPDATER=$FAKE timeout 10 "$SETTINGS_BIN" --page "$2" >/dev/null 2>&1; }
-# Tab 到某個位置：$NAV 個導覽按鈕（smoke.sh）之後是分頁列、搜尋、新增欄位、加入鈕，再來是每一列的讀音與刪除。
+# Tab 到某個位置：$NAV 個導覽按鈕（smoke.sh）、標題列的「匯出」「匯入」（#255）之後是分頁列、搜尋、新增欄位、加入鈕，
+# 再來是每一列的讀音與刪除。
+VNAV=$((NAV + 2))
 tabs() { local n=$1; local keys=(); for _ in $(seq "$n"); do keys+=(Tab); done; xdotool key --delay 120 "${keys[@]}"; }
 
 # ---- 舊版 0c-update（沒有 features.vocab）：側欄沒有「我的詞彙」，--page vocab 開總覽，畫面也不呼叫任何詞彙指令 ----
@@ -72,7 +74,7 @@ if window_up; then
   wshot vocab-words
   check "頁面開著時常駐一支 vocab watch" test "$(watchers)" -eq 1
   check "排名徽章向引擎查了每個詞（rank）" bash -c "grep '\"op\": \"rank\"' '$(home_of vfull)/fake.log' | grep -q 世介"
-  tabs $((NAV + 3))                                   # → 新增欄位
+  tabs $((VNAV + 3))                                   # → 新增欄位
   xdotool type --delay 120 '曾雅婷'
   sleep 1.5
   check "打字當下查讀音（annotate）" bash -c "grep '\"op\": \"annotate\"' '$(home_of vfull)/fake.log' | grep -q 曾雅婷"
@@ -119,7 +121,7 @@ vlaunch vfull vocab
 if window_up; then
   sleep 3.5
   n=$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1]))['words']))" "$(home_of vfull)/fake-vocab.json")
-  tabs $((NAV + 4 + 2 * n + 1)); xdotool key space   # 第一批的摘要
+  tabs $((VNAV + 4 + 2 * n + 1)); xdotool key space   # 第一批的摘要
   check "點開最近變更向引擎要明細" logged_after vfull batches 0
   sleep 1.2; wshot vocab-recent-detail
 else bad "vfull 最近變更視窗沒有出現"; fi
@@ -131,7 +133,7 @@ vlaunch vfull vocab
 if window_up; then
   sleep 3.5
   row=$(python3 -c "import json,sys; print([w['word'] for w in json.load(open(sys.argv[1]))['words']].index('曾國城'))" "$(home_of vfull)/fake-vocab.json")
-  tabs $((NAV + 5 + 2 * row)); xdotool key space; sleep 1.5   # 那一列的讀音
+  tabs $((VNAV + 5 + 2 * row)); xdotool key space; sleep 1.5   # 那一列的讀音
   wshot vocab-edit-reading
   xdotool key Down; sleep .3; xdotool key Return
   check "改讀音（readings，附上看到的原讀音）" fake_state vfull "any(w['word']=='曾國城' and w['readings']==['ㄘㄥˊ ㄍㄨㄛˊ ㄔㄥˊ'] for w in state['words'])"
@@ -149,7 +151,7 @@ stop_app
 vlaunch vfull vocab
 if window_up; then
   sleep 3.5
-  tabs $((NAV + 1)); xdotool key Right; sleep 1.5      # 分頁列 → 靈犀學到的
+  tabs $((VNAV + 1)); xdotool key Right; sleep 1.5      # 分頁列 → 靈犀學到的
   wshot vocab-learned
   check "沒有不再學的詞時不查也不顯示入口" bash -c "! grep -q '\"op\": \"forgotten\"' '$(home_of vfull)/fake.log'"
   xdotool key Tab Tab Tab space             # 全選 → 第一列勾選 → 第一列（大同區）保留
@@ -172,7 +174,7 @@ stop_app
 vlaunch vfull vocab
 if window_up; then
   sleep 3.5
-  tabs $((NAV + 1)); xdotool key Right; sleep 1.5
+  tabs $((VNAV + 1)); xdotool key Right; sleep 1.5
   xdotool key Tab space; sleep .5           # 全選
   wshot vocab-learned-selected
   xdotool key Tab Tab Tab space             # 批次：保留 → 移除 → 不再學
@@ -196,7 +198,7 @@ stop_app
 vlaunch vfull vocab
 if window_up; then
   sleep 3.5
-  tabs $((NAV + 1)); xdotool key Right; sleep 1.5
+  tabs $((VNAV + 1)); xdotool key Right; sleep 1.5
   wshot vocab-learned-with-forgotten
   xdotool key Tab space; sleep 1.5          # 「不再學的詞（2）」
   check "打開不再學的詞（forgotten）" logged_after vfull forgotten 0
@@ -218,7 +220,7 @@ vocab_home vlearn full
 vlaunch vlearn vocab
 if window_up; then
   sleep 3.5
-  tabs $((NAV + 1)); xdotool key Right; sleep 1.5
+  tabs $((VNAV + 1)); xdotool key Right; sleep 1.5
   xdotool key Tab space Tab Tab space       # 全選 → 保留 → 移除
   check "全選移除：三個學到的詞都清掉、不留 tombstone" fake_state vlearn "state['tombstones']==[] and [l['word'] for l in state['learned']]==['長庚']"
   sleep .8; wshot vocab-learned-unlearn-undo
@@ -231,7 +233,7 @@ stop_app
 vlaunch vfull vocab
 if window_up; then
   sleep 3.5
-  tabs $((NAV + 1)); xdotool key Right Right; sleep 1  # → 我的片語
+  tabs $((VNAV + 1)); xdotool key Right Right; sleep 1  # → 我的片語
   xdotool key Tab
   xdotool type --delay 100 '張天堂'; xdotool key Return
   xdotool type --delay 100 '林志玲'; xdotool key Return
@@ -243,10 +245,88 @@ if window_up; then
   check "貼上多行時一次查讀音" bash -c "grep '\"op\": \"annotate\"' '$(home_of vfull)/fake.log' | grep 張天堂 | grep -q 林志玲"
   wshot vocab-paste-preview
   check "貼上的英文詞不查讀音" bash -c "! grep '\"op\": \"annotate\"' '$(home_of vfull)/fake.log' | grep -q kubectl"
-  tabs 5; xdotool key space                  # 加入鈕、三個勾選框（Hello world 不能勾）→ 加入勾選的 3 個
+  tabs 2; xdotool key space                  # 加入鈕 → 預覽上方的「加入勾選的 3 個」（Hello world 不能勾）
   check "勾選的詞一起加入（同一批，含英文詞）" fake_state vfull "any(b['op']=='add' and sorted(c['after']['word'] for c in b['changes'])==['kubectl','張天堂','林志玲'] for b in state['batches'])"
   sleep 1; wshot vocab-paste-added
 else bad "vfull 貼上視窗沒有出現"; fi
+stop_app
+
+# ---- 換電腦（#255）：匯出成文字檔，另一台從檔案匯入；讀音照檔案（不重查），片語含換行，超過 500 個分批、整批復原 ----
+vocab_home vexp full
+mkdir -p "$(home_of vexp)/Downloads"
+vlaunch vexp vocab
+if window_up; then
+  sleep 3.5
+  tabs $((NAV + 1)); xdotool key space; sleep 2      # 標題列的「匯出」
+  wshot vocab-export-done
+  check "匯出讀了全部的詞與片語" bash -c "grep -q '\"op\": \"list\"' '$(home_of vexp)/fake.log' && grep -q '\"op\": \"phrases\"' '$(home_of vexp)/fake.log'"
+else bad "vexp 視窗沒有出現"; cat /tmp/app-vexp-vocab.log; fi
+stop_app
+exported=$(ls "$(home_of vexp)"/Downloads/0c-vocab-*.txt 2>/dev/null | head -1)
+check "匯出到下載資料夾（0c-vocab-日期.txt）" test -f "$exported"
+check "匯出檔只有自己能讀" test "$(stat -c %a "$exported" 2>/dev/null)" = 600
+check "匯出檔一行一詞：詞、Tab、讀音（破音字照自訂的讀音）" grep -qP '^曾國城\tㄗㄥ ㄍㄨㄛˊ ㄔㄥˊ$' "$exported"
+check "匯出檔的片語另一段，有換行的寫成 JSON 字串" bash -c "grep -qx '\[我的片語\]' '$exported' && grep -qxF '\"陳怡君 敬上\\n研發部\"' '$exported'"
+cp "$exported" /tmp/qexport.txt 2>/dev/null
+
+# 從檔案匯入：GTK 的檔案對話框（WebView 的 <input type="file">），Ctrl+L 打路徑。對話框會自動補完路徑，
+# 測試檔的檔名開頭各不相同，免得補完選到別的檔。
+pick_file() { # 路徑：焦點在「匯入」時按下並選檔
+  xdotool key space; sleep 2
+  xdotool key ctrl+l; sleep .5
+  xdotool type --delay 80 "$1"; sleep .8
+  xdotool key Return; sleep 2.5
+}
+vocab_home vimp empty
+vlaunch vimp vocab
+if window_up; then
+  sleep 3.5
+  tabs $((NAV + 2)); pick_file /tmp/qexport.txt   # 標題列的「匯入」
+  wshot vocab-import-preview
+  check "匯入的詞帶了讀音，不重查（沒有 annotate）" bash -c "! grep -q '\"op\": \"annotate\"' '$(home_of vimp)/fake.log'"
+  xdotool key space                                   # 焦點已交給預覽的「加入勾選的…」
+  check "匯入後詞與讀音和匯出的一樣" python3 - "$(home_of vexp)/fake-vocab.json" "$(home_of vimp)/fake-vocab.json" <<'PY'
+import json,sys,time
+a=json.load(open(sys.argv[1]))
+for _ in range(50):
+    b=json.load(open(sys.argv[2]))
+    if [(w['word'],w['readings']) for w in a['words']]==[(w['word'],w['readings']) for w in b['words']] and [p['text'] for p in a['phrases']]==[p['text'] for p in b['phrases']]: sys.exit(0)
+    time.sleep(.1)
+print(b['words'], b['phrases']); sys.exit(1)
+PY
+  sleep 1.5; wshot vocab-import-added
+  # 同一個檔案再匯入一次：都已經有了，什麼都不加。
+  tabs $((NAV + 2)); pick_file /tmp/qexport.txt
+  wshot vocab-import-again
+  check "再匯入一次：沒有要加的（只有第一次送過 add）" test "$(grep -c '"op": "add"' "$(home_of vimp)/fake.log")" -eq 1
+else bad "vimp 視窗沒有出現"; cat /tmp/app-vimp-vocab.log; fi
+stop_app
+
+# 1,200 個詞：分三批送（500、500、200），底部的「復原」整批復原。
+python3 - /tmp/jbig.txt "$FAKE" <<'PY'
+import importlib.util,sys
+spec=importlib.util.spec_from_file_location('fake', sys.argv[2]); fake=importlib.util.module_from_spec(spec); spec.loader.exec_module(fake)
+chars=list(fake.CHARS)
+lines=['[我加的詞]']
+for a in chars:
+    for b in chars:
+        if len(lines) > 1200: break
+        lines.append(a+b+'\t'+fake.CHARS[a][0]+' '+fake.CHARS[b][0])
+open(sys.argv[1],'w',encoding='utf-8').write('\n'.join(lines)+'\n')
+PY
+vocab_home vbig empty
+vlaunch vbig vocab
+if window_up; then
+  sleep 3.5
+  tabs $((NAV + 2)); pick_file /tmp/jbig.txt
+  wshot vocab-import-big-preview
+  xdotool key space
+  check "1,200 個詞分三批加入" fake_state vbig "len(state['words'])==1200 and [len(b['changes']) for b in state['batches'] if b['op']=='add']==[500,500,200]"
+  sleep 2; wshot vocab-import-big-added
+  xdotool key Return                         # 焦點在底部提示的「復原」
+  check "整批復原：三批都復原" fake_state vbig "len(state['words'])==0"
+  sleep 1.5; wshot vocab-import-big-undone
+else bad "vbig 視窗沒有出現"; cat /tmp/app-vbig-vocab.log; fi
 stop_app
 
 # ---- 讓 AI 幫你加詞：展開、顯示範例、測試連線 ----
@@ -254,7 +334,7 @@ vocab_home vai ai
 vlaunch vai vocab
 if window_up; then
   sleep 3.5
-  tabs $((NAV + 5)); xdotool key space; sleep 2       # 空清單：分頁、搜尋、新增、加入之後就是收合區塊
+  tabs $((VNAV + 5)); xdotool key space; sleep 2       # 空清單：分頁、搜尋、新增、加入之後就是收合區塊
   check "展開 AI 區塊時查詢狀態（api status）" bash -c "grep -q '\"op\": \"api-status\"' '$(home_of vai)/fake.log'"
   wshot vocab-ai-open
   # 開關 → 顯示 → 複製 → 重新產生 → 工具選單：選「Claude Code」。
@@ -283,7 +363,7 @@ if window_up; then
   sleep 3.5
   wshot vocab-english
   check "英文詞不查排名" bash -c "grep '\"op\": \"rank\"' '$(home_of ven)/fake.log' | grep -q 陳怡君 && ! grep '\"op\": \"rank\"' '$(home_of ven)/fake.log' | grep -q kubectl"
-  tabs $((NAV + 3))                                   # → 新增欄位
+  tabs $((VNAV + 3))                                   # → 新增欄位
   xdotool type --delay 120 'rm'
   sleep 1.2
   wshot vocab-english-draft
@@ -304,7 +384,7 @@ check "（真引擎）詞彙指令可用" bash -c "HOME='$vlive_home' '$UPDATE_B
 launch vlive vocab
 if window_up; then
   sleep 3.5
-  tabs $((NAV + 3)); xdotool type --delay 120 '紫風'; sleep 1.5
+  tabs $((VNAV + 3)); xdotool type --delay 120 '紫風'; sleep 1.5
   wshot vocab-live-draft
   xdotool key Return
   check "（真引擎）從畫面加的詞寫進 vocab.json" bash -c "for i in \$(seq 30); do grep -q 紫風 '$(base_of vlive)/vocab.json' 2>/dev/null && exit 0; sleep .2; done; exit 1"
@@ -327,7 +407,7 @@ check "（真引擎）列出不再學的詞" bash -c "HOME='$vlive_home' '$UPDAT
 launch vlive vocab
 if window_up; then
   sleep 3.5
-  tabs $((NAV + 1)); xdotool key Right; sleep 1.5
+  tabs $((VNAV + 1)); xdotool key Right; sleep 1.5
   wshot vocab-live-learned-forgotten
   xdotool key Tab space; sleep 1.5
   wshot vocab-live-forgotten
@@ -337,4 +417,21 @@ undo=$(HOME=$vlive_home "$UPDATE_BIN" vocab relearn 測試詞 -json | python3 -c
 check "（真引擎）恢復學習回傳復原編號" test "$undo" -gt 0
 check "（真引擎）復原恢復學習" bash -c "echo '{\"op\":\"learned-undo\",\"undo\":$undo}' | HOME='$vlive_home' '$UPDATE_BIN' vocab request | grep -q '\"forgotten_count\":1'"
 check "（真引擎）同一個復原只能用一次" bash -c "! echo '{\"op\":\"learned-undo\",\"undo\":$undo}' | HOME='$vlive_home' '$UPDATE_BIN' vocab request | grep -q '\"ok\":true'"
+# 換電腦（#255）：真的 0c-update 匯出（沒有下載資料夾時放家目錄），再從檔案匯入另一個詞到同一份：已經有的略過。
+launch vlive vocab
+if window_up; then
+  sleep 3.5
+  tabs $((NAV + 1)); xdotool key space; sleep 2.5
+  live_export=$(ls "$vlive_home"/0c-vocab-*.txt 2>/dev/null | head -1)
+  check "（真引擎）匯出到家目錄" test -f "$live_export"
+  check "（真引擎）匯出檔有標好讀音的詞與英文詞" bash -c "grep -qP '^紫風\tㄗˇ ㄈㄥ$' '$live_export' && grep -qx 'ls' '$live_export' && grep -qx 'kubectl' '$live_export'"
+  printf '[我加的詞]\n紫風\tㄗˇ ㄈㄥ\n曾經\tㄗㄥ ㄐㄧㄥ\n' > /tmp/klive.txt   # 曾 用不常見的 ㄗㄥ：照檔案，不重查
+  wshot vocab-live-exported
+  xdotool key Tab; pick_file /tmp/klive.txt
+  wshot vocab-live-import-preview
+  xdotool key space
+  check "（真引擎）匯入的破音字讀音照檔案加入" bash -c "for i in \$(seq 30); do HOME='$vlive_home' '$UPDATE_BIN' vocab list -json -query 曾經 | grep -q 'ㄗㄥ ㄐㄧㄥ' && exit 0; sleep .2; done; exit 1"
+  sleep 1.5; wshot vocab-live-imported
+else bad "vlive 匯出視窗沒有出現"; fi
+stop_app
 kill "$VSERVER" 2>/dev/null; wait "$VSERVER" 2>/dev/null

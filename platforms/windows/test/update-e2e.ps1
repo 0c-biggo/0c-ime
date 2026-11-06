@@ -7,6 +7,7 @@ param([Parameter(Mandatory=$true)][string]$ArchiveA, [Parameter(Mandatory=$true)
       [Parameter(Mandatory=$true)][string]$Tools, [string]$ResultDir, [string]$Updater,
       [ValidateSet('core','fail','shell','online','menu','button')][string]$Case = 'core', [string]$ArchiveF)
 $ErrorActionPreference = 'Stop'
+$ownUpdateTask = '0c-update-' + [Security.Principal.WindowsIdentity]::GetCurrent().User.Value.ToLowerInvariant()  # 只動自己帳號的排程：同一台機器可能還有其他帳號的 0c-update 工作。
 $ProgressPreference = 'SilentlyContinue'
 $ArchiveA = (Resolve-Path -LiteralPath $ArchiveA).Path; $ArchiveB = (Resolve-Path -LiteralPath $ArchiveB).Path; $Tools = (Resolve-Path -LiteralPath $Tools).Path
 if (-not $ResultDir) { $ResultDir = Join-Path ([IO.Path]::GetTempPath()) ('0c-update-e2e-' + (Get-Date -Format 'yyyyMMdd-HHmmss')) }
@@ -158,7 +159,7 @@ try {
         & (Join-Path $ResultDir '0c-update-A.exe') apply -archive $ArchiveA -sha256 $shaA -channel internal-preview | Out-String | ForEach-Object { Log 'installed_a' $_.Trim() }
     }
     if ($LASTEXITCODE -ne 0) { throw 'installing A failed' }
-    $tasks = @(Get-ScheduledTask | Where-Object { $_.TaskName -like '0c-update-*' })
+    $tasks = @(Get-ScheduledTask | Where-Object { $_.TaskName -eq $ownUpdateTask })
     Check ($tasks.Count -eq 1) 'a_created_exactly_one_task'
     Check ($tasks[0].Principal.RunLevel -eq 'Limited') 'task_runs_without_elevation'
     Check (Test-Path $stable) 'stable_updater_installed'
@@ -253,7 +254,7 @@ try {
         $again = & (Join-Path $ResultDir '0c-update-A.exe') install -online -feed $feedUrl -channel internal-preview | Out-String
         Log 'rerun' $again.Trim()
         Check ($LASTEXITCODE -eq 0 -and $again -like '*不重新安裝*') 'rerun_is_safe'
-        Check (@(Get-ScheduledTask | Where-Object { $_.TaskName -like '0c-update-*' }).Count -eq 1) 'still_one_task'
+        Check (@(Get-ScheduledTask | Where-Object { $_.TaskName -eq $ownUpdateTask }).Count -eq 1) 'still_one_task'
         $report.passed = $true
     } elseif ($Case -eq 'shell') {
         # E15／E16（可自動化部分）：外殼版需要系統管理員；排程以一般權限執行，只能提醒並等待確認。
@@ -273,7 +274,7 @@ try {
         $receipt = Get-Content "$base\install-receipt.json" -Raw -Encoding UTF8 | ConvertFrom-Json
         Check ($receipt.version -eq $fb.version) 'finish_installed_b'
         $dll = (Get-Item $reg).GetValue('')
-        Check ($dll -like "*$($fb.version)*") 'registration_points_to_b' $dll
+        Check ((Get-FileHash $dll).Hash -eq (Get-FileHash (Join-Path (Join-Path $base $receipt.directory) '0c_tsf.dll')).Hash) 'registration_points_to_b' $dll
         Check ((State).stage -in 'pending', 'active') 'active_or_waiting_for_the_new_engine'
         # 已經開著的應用程式留在 A 的 DLL；新開的應用程式載入 B 的 DLL。輸入必須照常，不必登出（#253）。
         Check (TypeKeys 'su3cl3{ENTER}' '你好') 'typing_in_new_app_during_mixed_period'
@@ -341,13 +342,13 @@ try {
 } catch { $report.error = $_.Exception.Message; Log 'error' $_.Exception.Message } finally {
     if (-not $report.state) { $report.state = State }
     try {
-        $t = Get-ScheduledTask | Where-Object { $_.TaskName -like '0c-update-*' } | Select-Object -First 1
+        $t = Get-ScheduledTask | Where-Object { $_.TaskName -eq $ownUpdateTask } | Select-Object -First 1
         if ($t) { $i = $t | Get-ScheduledTaskInfo; $report.task = [ordered]@{ last_run = "$($i.LastRunTime)"; last_result = $i.LastTaskResult; next_run = "$($i.NextRunTime)"; runs = $i.NumberOfMissedRuns } }
     } catch {}
     try {
         if (Get-ScheduledTask $probeTask -ErrorAction SilentlyContinue) { Unregister-ScheduledTask $probeTask -Confirm:$false }
         if (Test-Path $stable) { & $stable schedule remove | Out-Null }
-        Get-ScheduledTask | Where-Object { $_.TaskName -like '0c-update-*' } | Unregister-ScheduledTask -Confirm:$false
+        Get-ScheduledTask | Where-Object { $_.TaskName -eq $ownUpdateTask } | Unregister-ScheduledTask -Confirm:$false
         if ($feedProc) { Stop-Process -Id $feedProc.Id -ErrorAction SilentlyContinue }
         Get-Process 0c-server, 0c-ui, python -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$base\versions\*" } | Stop-Process -Force -ErrorAction SilentlyContinue
         Start-Sleep 2

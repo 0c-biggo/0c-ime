@@ -6,6 +6,7 @@
 # 結果與視窗截圖（只擷取設定程式自己的視窗）放在 ResultDir。
 param([Parameter(Mandatory=$true)][string]$Setup, [string]$BaselineSetup, [string]$ResultDir)
 $ErrorActionPreference = 'Stop'
+$ownUpdateTask = '0c-update-' + [Security.Principal.WindowsIdentity]::GetCurrent().User.Value.ToLowerInvariant()  # 只動自己帳號的排程：同一台機器可能還有其他帳號的 0c-update 工作。
 $ProgressPreference = 'SilentlyContinue'
 $Setup = (Resolve-Path -LiteralPath $Setup).Path
 if ($BaselineSetup) { $BaselineSetup = (Resolve-Path -LiteralPath $BaselineSetup).Path }
@@ -252,7 +253,7 @@ try {
                 Start-Sleep -Seconds 2
             }
             if (Test-Path $reg) { $current = (Get-Item $reg).GetValue(''); if ($current) { Run "$env:WINDIR\System32\regsvr32.exe" ('/u /s "' + $current + '"') } }
-            Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -like '0c-update-*' -or $_.TaskName -like '0c-SettingsTest-*' } | ForEach-Object { Unregister-ScheduledTask $_.TaskName -Confirm:$false }
+            Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -eq $ownUpdateTask -or $_.TaskName -like '0c-SettingsTest-*' } | ForEach-Object { Unregister-ScheduledTask $_.TaskName -Confirm:$false }
             $report.engine_tasks_removed = @(Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -like '0c-engine-*' -and $engineTasksBefore -notcontains $_.TaskName } | ForEach-Object { Unregister-ScheduledTask $_.TaskName -Confirm:$false; $_.TaskName })
             if (Test-Path $lnk) { Remove-Item $lnk -Force }
             if (-not $folderExisted -and (Test-Path $folder)) { Remove-Item $folder -Recurse -Force }

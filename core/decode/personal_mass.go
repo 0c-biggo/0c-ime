@@ -15,6 +15,10 @@ type MassVersion interface {
 	MassVersion() (gen int, time int64)
 }
 
+// maxMassKeys 是 massScale 跨搜尋保留時的上限。真實資料包上一般打字一個 session 最多約 2,200 筆；
+// 暫停學習又沒有跨小時（版本不變）時會一直累積，約 9 萬個請求長到 10 萬筆。超過就整份清掉重算。
+const maxMassKeys = 16384
+
 // Only a proper prefix of an already reachable complete word needs this guard.
 // Ordinary evidence for complete words and learned adjacent word pairs remains
 // available. Unfinished future words do not create a protected boundary.
@@ -29,8 +33,8 @@ func (d *Decoder) prepareMass(lat input.Lattice) {
 	if ok && !reflect.ValueOf(d.Score).Comparable() {
 		ok = false // 身分無法比較（!= 會 panic）：不保留
 	}
-	if !ok {
-		d.massScale = nil // 來源不報版本：保守起見照舊重建
+	if !ok || d.FreshMass {
+		d.massScale = nil // 來源不報版本（或測試要求每次重建）：照舊重建
 	} else if d.massScale != nil {
 		gen, at := v.MassVersion()
 		if d.massScorer != d.Score || d.massGen != gen || d.massTime != at {
@@ -153,8 +157,8 @@ func (d *Decoder) languageProbability(left string, e lexicon.Entry) float64 {
 	if system > 0 && personal > 0 {
 		factor = min(1, system/personal)
 	}
-	if d.massScale == nil {
-		d.massScale = map[string]float64{}
+	if d.massScale == nil || len(d.massScale) >= maxMassKeys {
+		d.massScale = map[string]float64{} // 同一版本內打很久（暫停學習）也不無限長大；清掉只是之後重算
 	}
 	d.massScale[key] = factor
 	return p * factor

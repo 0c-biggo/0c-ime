@@ -1,6 +1,7 @@
 ﻿# EXE 升級／解除安裝驗收；測試機必須已登入，並以同一帳號管理員執行。
 param([Parameter(Mandatory=$true)][string]$Setup,[Parameter(Mandatory=$true)][string]$BaselineSetup,[string]$ResultDir)
 $ErrorActionPreference='Stop'
+$ownUpdateTask = '0c-update-' + [Security.Principal.WindowsIdentity]::GetCurrent().User.Value.ToLowerInvariant()  # 只動自己帳號的排程：同一台機器可能還有其他帳號的 0c-update 工作。
 $Setup=(Resolve-Path -LiteralPath $Setup).Path
 $BaselineSetup=(Resolve-Path -LiteralPath $BaselineSetup).Path
 if(-not $ResultDir){$ResultDir=Join-Path ([IO.Path]::GetTempPath()) ('0c-installer-test-'+[guid]::NewGuid().ToString('N'))}
@@ -67,7 +68,7 @@ try {
  if($app.DisplayVersion -ne $receipt.version -or $app.DisplayVersion -eq $baselineVersion){throw 'upgraded app entry mismatch'}
  $report.version=$app.DisplayVersion
  $installedDirectory=$receipt.directory
- $tasks=@(Get-ScheduledTask | Where-Object { $_.TaskName -like '0c-update-*' })
+ $tasks=@(Get-ScheduledTask | Where-Object { $_.TaskName -eq $ownUpdateTask })
  if($tasks.Count -ne 1 -or $tasks[0].Principal.RunLevel -ne 'Limited'){throw 'upgrade did not create exactly one non-elevated update task'}
  if(-not(Test-Path "$base\bin\0c-update.exe")){throw 'upgrade did not install the stable updater'}
  $report.schedule=$true
@@ -78,7 +79,7 @@ try {
  $deadline=(Get-Date).AddSeconds(15)
  while((Test-Path $arp) -and (Get-Date) -lt $deadline){Start-Sleep -Milliseconds 200}
  if((Test-Path $arp) -or (Test-Path $reg)){throw 'uninstall left registration'}
- if(@(Get-ScheduledTask | Where-Object { $_.TaskName -like '0c-update-*' }).Count -ne 0){throw 'uninstall left the update task'}
+ if(@(Get-ScheduledTask | Where-Object { $_.TaskName -eq $ownUpdateTask }).Count -ne 0){throw 'uninstall left the update task'}
  if(Test-Path 'Registry::HKEY_CURRENT_USER\Software\Classes\zc-update'){throw 'uninstall left the notification protocol'}
  $report.uninstall=$true
  $report.passed=$true

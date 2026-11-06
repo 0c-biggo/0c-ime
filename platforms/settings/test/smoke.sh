@@ -133,12 +133,12 @@ check "引擎已啟動" test -S "$XDG_RUNTIME_DIR/0c/0c.sock"
 check "更新器看得到執行中的引擎" bash -c "'$UPDATE_BIN' settings -json | python3 -c \"import json,sys; sys.exit(0 if json.load(sys.stdin)['engine']['state']=='running' else 1)\""
 check "補標點 Beta 預設關閉且引擎未啟用" bash -c "'$UPDATE_BIN' settings -json | python3 -c \"import json,sys; it=next(x for x in json.load(sys.stdin)['items'] if x['key']=='punctuation'); sys.exit(0 if it['value']=='off' and it['running']=='off' and it['default']=='off' and 'Beta' in it['label'] else 1)\""
 check "補標點狀態為依設定關閉" bash -c "'$UPDATE_BIN' status -json | python3 -c \"import json,sys; sys.exit(0 if json.load(sys.stdin)['runtime']['punctuation_state']=='disabled_by_setting' else 1)\""
-# 鍵盤路徑：「鍵盤與符號」的鍵盤排列（一組單選）、Ctrl＋標點 → 「提交時補標點（Beta）」開關，按空白鍵開啟。
+# 鍵盤路徑：「鍵盤與符號」的鍵盤排列（一組單選）、Ctrl＋標點、Shift＋符號打半形（#258）→ 「提交時補標點（Beta）」開關，按空白鍵開啟。
 launch live keyboard
 if window_up; then
   sleep 2.5
   import -window root "$OUT/live-keyboard-before.png"
-  tabs $((NAV + 3)); xdotool key space
+  tabs $((NAV + 4)); xdotool key space
   sleep 6
   import -window root "$OUT/live-keyboard-after.png"
   check "自行開啟後新路徑 settings.json 的 punctuation 為 true" grep -q '"punctuation": true' "$(settings_of live)"
@@ -368,12 +368,12 @@ for _ in range(80):
 sys.exit(1)
 PY
 }
-# Emoji 在「鍵盤與符號」：鍵盤排列（一組單選）、Ctrl＋標點、補標點 → Emoji（導覽後第 4 個）→ 等號首項（子選項）。
+# Emoji 在「鍵盤與符號」：鍵盤排列（一組單選）、Ctrl＋標點、Shift＋符號打半形、補標點 → Emoji（導覽後第 5 個）→ 等號首項（子選項）。
 launch toggles keyboard
 if window_up; then
   sleep 2.5
   import -window root "$OUT/toggles-before.png"
-  tabs $((NAV + 4)); xdotool key space
+  tabs $((NAV + 5)); xdotool key space
   check "預設啟用的 Emoji 開關可以關閉，保留未知設定" toggle_value emoji_off
   sleep 1
   xdotool key space
@@ -400,7 +400,7 @@ stop_app
 launch toggles keyboard
 if window_up; then
   sleep 2.5
-  tabs $((NAV + 4)); xdotool key space
+  tabs $((NAV + 5)); xdotool key space
   check "停用子選項後仍可重新啟用 Emoji" toggle_value emoji_on
   sleep 1
   xdotool key Tab space
@@ -506,6 +506,14 @@ if window_up; then
   sleep 3
   check "Ctrl＋標點開關可關閉" grep -q '"ctrl_punctuation": false' "$(settings_of eten)"
   import -window root "$OUT/ctrl-punctuation-off.png"
+  # 再下一項是「Shift＋符號打半形」（#258），預設關閉；空白鍵開啟，再按一次關閉。
+  xdotool key Tab space
+  sleep 3
+  check "Shift＋符號打半形開關可開啟" grep -q '"shift_symbol_halfwidth": true' "$(settings_of eten)"
+  import -window root "$OUT/shift-symbol-halfwidth-on.png"
+  xdotool key space
+  sleep 3
+  check "Shift＋符號打半形開關可關閉" grep -q '"shift_symbol_halfwidth": false' "$(settings_of eten)"
 else bad "eten/mode 視窗沒有出現"; cat /tmp/app-eten-mode.log; fi
 stop_app
 # 選字鍵在「選字」（一組單選，預設 1234567890，#112）：選字方式、前文、空白選字、修改位置、選字後游標、排列之後第 7 個。

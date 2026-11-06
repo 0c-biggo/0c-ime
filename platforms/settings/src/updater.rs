@@ -397,6 +397,58 @@ pub fn build_summary(status: &Value, settings: &Value, app_version: &str, secs: 
     scrub_home(&serde_json::to_string_pretty(&doc).unwrap_or_default(), home)
 }
 
+/// 「我的詞彙」匯出（#255）的文字檔上限：一萬個詞、各 4 個讀音加 200 則千字片語也遠小於這個大小。
+pub const VOCAB_EXPORT_MAX: usize = 16 << 20;
+
+/// 匯出檔放的位置：下載資料夾，沒有就家目錄（與狀態摘要相同）。Linux 的下載資料夾可能是中文名稱（~/下載），
+/// 依 user-dirs.dirs 的 XDG_DOWNLOAD_DIR；那個資料夾不存在時才用 ~/Downloads。
+pub fn download_dir(home: &Path, user_dirs: Option<&str>) -> PathBuf {
+    let xdg = user_dirs.and_then(|text| xdg_download_dir(text, home)).filter(|dir| dir.is_dir() && dir != home);
+    if let Some(dir) = xdg {
+        return dir;
+    }
+    let downloads = home.join("Downloads");
+    if downloads.is_dir() { downloads } else { home.to_path_buf() }
+}
+
+/// 解析 user-dirs.dirs 的 XDG_DOWNLOAD_DIR="$HOME/下載"（只接受 $HOME 開頭或絕對路徑，與 xdg-user-dirs 相同）。
+pub fn xdg_download_dir(text: &str, home: &Path) -> Option<PathBuf> {
+    let value = text.lines().map(str::trim).filter(|line| !line.starts_with('#')).find_map(|line| line.strip_prefix("XDG_DOWNLOAD_DIR="))?;
+    let value = value.trim().strip_prefix('"')?.strip_suffix('"')?;
+    if let Some(rest) = value.strip_prefix("$HOME") {
+        let rest = rest.trim_start_matches('/');
+        return Some(if rest.is_empty() { home.to_path_buf() } else { home.join(rest) });
+    }
+    value.starts_with('/').then(|| PathBuf::from(value))
+}
+
+/// 寫一個新檔案：不覆寫既有的檔案，只有自己能讀寫（Unix 0600；Windows 的使用者資料夾本來就只有自己能讀）。
+pub fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path)?.write_all(bytes)
+}
+
+/// 在 dir 寫 stem.ext；已經有同名的檔案（同一秒匯出兩次）就改名 stem-2.ext、stem-3.ext…，回傳寫好的路徑。
+pub fn write_new_file(dir: &Path, stem: &str, ext: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
+    for n in 1..=100 {
+        let name = if n == 1 { format!("{stem}.{ext}") } else { format!("{stem}-{n}.{ext}") };
+        let path = dir.join(name);
+        match write_private(&path, bytes) {
+            Ok(()) => return Ok(path),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "同名的檔案太多"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -625,6 +677,34 @@ mod tests {
         assert_eq!(file_stamp(1_700_000_000), "20231114-221320");
         assert_eq!(iso_time(1_791_248_523), "2026-10-06T01:02:03Z");
         assert_eq!(file_stamp(4_102_444_799), "20991231-235959");
+    }
+
+    #[test]
+    fn vocab_export_goes_to_the_download_folder_without_overwriting() {
+        let home = temp("vocab-export");
+        assert_eq!(download_dir(&home, None), home, "沒有下載資料夾時放家目錄");
+        fs::create_dir(home.join("Downloads")).unwrap();
+        assert_eq!(download_dir(&home, None), home.join("Downloads"));
+        // 中文桌面的下載資料夾是 ~/下載（user-dirs.dirs）。
+        let dirs = "# 註解\nXDG_DESKTOP_DIR=\"$HOME/桌面\"\nXDG_DOWNLOAD_DIR=\"$HOME/下載\"\n";
+        assert_eq!(xdg_download_dir(dirs, &home), Some(home.join("下載")));
+        assert_eq!(download_dir(&home, Some(dirs)), home.join("Downloads"), "user-dirs 的資料夾不存在時用 ~/Downloads");
+        fs::create_dir(home.join("下載")).unwrap();
+        assert_eq!(download_dir(&home, Some(dirs)), home.join("下載"));
+        assert_eq!(xdg_download_dir("XDG_DOWNLOAD_DIR=\"/data/dl\"", &home), Some(PathBuf::from("/data/dl")));
+        assert_eq!(xdg_download_dir("XDG_DOWNLOAD_DIR=\"$HOME/\"", &home), Some(home.clone()));
+        assert_eq!(xdg_download_dir("XDG_DOWNLOAD_DIR=relative", &home), None);
+        assert_eq!(download_dir(&home, Some("XDG_DOWNLOAD_DIR=\"$HOME\"")), home.join("Downloads"), "XDG 指向家目錄時仍優先用 Downloads");
+
+        let dir = home.join("下載");
+        let first = write_new_file(&dir, "0c-vocab-20261104-010203", "txt", "陳怡君\tㄔㄣˊ ㄧˊ ㄐㄩㄣ\n".as_bytes()).unwrap();
+        let second = write_new_file(&dir, "0c-vocab-20261104-010203", "txt", b"second").unwrap();
+        assert_eq!(first, dir.join("0c-vocab-20261104-010203.txt"));
+        assert_eq!(second, dir.join("0c-vocab-20261104-010203-2.txt"), "同一秒再匯出不覆寫，改名");
+        assert_eq!(fs::read_to_string(&first).unwrap(), "陳怡君\tㄔㄣˊ ㄧˊ ㄐㄩㄣ\n");
+        #[cfg(unix)]
+        assert_eq!(fs::metadata(&first).unwrap().permissions().mode() & 0o777, 0o600, "只有自己能讀");
+        let _ = fs::remove_dir_all(&home);
     }
 
     #[test]

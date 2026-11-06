@@ -118,6 +118,8 @@ type Decoder struct {
 	cache     map[string][]lexicon.Entry // 尾端讀音 → 依先驗排序的前 M 個系統詞條
 	massScale map[string]float64
 	longerEnd []int
+	// FreshMass 讓每次搜尋都重建 massScale，不跨搜尋保留；給快取開／關比對的測試用。
+	FreshMass bool
 	// massScale 的失效條件：評分源與個人資料版本（MassVersion）。
 	massScorer any
 	massGen    int

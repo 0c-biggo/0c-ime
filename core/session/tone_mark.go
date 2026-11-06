@@ -59,7 +59,11 @@ func (s *Session) finishToneKey(p *toneKeyPending) bool {
 	return true
 }
 
-// setLiteralKey 記下照字面留下的符號是哪個按鍵打出的，↓ 第二項可選回；編輯時隨位置平移，被換掉或刪除時一起消失。
+// literalKeySep 分開 literalKeys 裡同一個位置的多個選項（#258 的半形逗號：↓ 依序列「，」「<」）。
+const literalKeySep = "\n"
+
+// setLiteralKey 記下照字面留下的符號是哪個按鍵打出的，↓ 第二項可選回（多個選項以 literalKeySep 分開，依序排在第二項起）；
+// 編輯時隨位置平移，被換掉或刪除時一起消失。
 func (s *Session) setLiteralKey(at int, key string) {
 	if s.literalKeys == nil {
 		s.literalKeys = map[int]string{}
@@ -75,7 +79,7 @@ func (s *Session) literalKeyAlternatives(items []string, start, length int) []st
 		return items
 	}
 	if k := s.literalKeys[start]; k != "" {
-		return slices.Insert(items, 1, k)
+		return slices.Insert(items, 1, strings.Split(k, literalKeySep)...)
 	}
 	if sym, ok := s.loneToneKeyAt(start); ok {
 		return slices.Insert(items, 1, string(sym))

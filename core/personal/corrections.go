@@ -356,9 +356,14 @@ func (m *Model) exactCorrections(syls []zhuyin.Syllable, local map[string]Correc
 			left = syls[i-1]
 		}
 		for _, record := range m.correctionIndex.byPrefix[string(left)+"\t"+string(syls[i])] {
-			if match(i, record.c, record.reading) {
-				fn(i, correctionKey(record.c.Reading, record.c.Left, record.c.Right), record.c)
+			if !match(i, record.c, record.reading) {
+				continue
 			}
+			k := correctionKey(record.c.Reading, record.c.Left, record.c.Right)
+			if _, shadowed := local[k]; shadowed {
+				continue // 同鍵的當次手選取代已存紀錄，手選的詞在 tombstone 裡時這個鍵整個不算（同逐鍵查表）
+			}
+			fn(i, k, record.c)
 		}
 		for _, record := range locals {
 			if len(record.reading) > 0 && record.c.Left == left && record.reading[0] == syls[i] && match(i, record.c, record.reading) {

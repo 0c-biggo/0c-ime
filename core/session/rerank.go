@@ -89,7 +89,8 @@ type segMemo struct {
 func (s *Session) rerankSegment(lat input.Lattice, start, end int) {
 	shown, before, first, last, cross := s.segPathWords(start, end)
 	digest := s.segRerankDigest(start, end, shown, before)
-	if m, ok := s.rerankMemo[start]; ok && m.digest == digest {
+	if m, ok := s.rerankMemo[start]; ok && m.digest == digest && !s.noCaches {
+		s.rerankMemoHits++
 		// decodeWithLiterals 每鍵重建整條 path，所以 winner 與提示仍要重放。
 		if m.hint != nil {
 			h := *m.hint
@@ -146,11 +147,12 @@ func (s *Session) segRerankDigest(start, end int, shown, before string) string {
 	var b strings.Builder
 	b.WriteString(zhuyin.Key(s.syls[start:end]))
 	b.WriteByte('|')
-	// extendShown 只看段內的 shownPath 與 shownSyls，段外不收。
+	// extendShown 只看段內的 shownPath 與 shownSyls，段外不收：它只用到 g.End <= min(end, len(shownSyls))。
+	// 收整串的長度的話，每打一個音節前面各段的摘要都會變，打字時這個快取幾乎不會命中（PR #51 審查）。
 	if s.shownSyls == nil {
 		b.WriteString("nil")
 	} else {
-		fmt.Fprintf(&b, "%d:", len(s.shownSyls))
+		fmt.Fprintf(&b, "%d:", max(start, min(end, len(s.shownSyls))))
 		if start < len(s.shownSyls) {
 			b.WriteString(zhuyin.Key(s.shownSyls[start:min(end, len(s.shownSyls))]))
 		}

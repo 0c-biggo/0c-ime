@@ -246,13 +246,15 @@ func TestMixedNumberWritingRightAfterEnglish(t *testing.T) {
 }
 
 // #119：緊接中文時，英文＋數字的保護不得攔走完整的反序音節（u2,6 是 ㄧㄉㄝˊ）。
-// 句首、英文、空白後維持數字寫法。中文後真的要輸入這個識別字時，仍可選原按鍵或切到英文。
+// #256：句首、英文、空白後的 u2,6、u2.7（聲母晚介音一鍵）也照位置組字，不再照 #200 當成「英文接數字寫法」——
+// 2026-11-04 負責人決定比照常見注音輸入法的混打（實測組字）。字母開頭的英文字接數字（hellou2,6、v1.2）照舊照字面。
+// 中文後真的要輸入這個識別字時，仍可選原按鍵或切到英文。
 func TestMixedCompleteReadingAfterChineseBeforeEnglishNumberGuard(t *testing.T) {
 	for _, tc := range []struct{ keys, want string }{
-		{"u2,6", "u2,6"}, {"2u,6", "疊"}, {"u2.7", "u2.7"},
+		{"u2,6", "疊"}, {"2u,6", "疊"}, {"u2.7", "丟"},
 		{"5k6u2,6", "折疊"},
-		{"5k6 u2,6", "折 u2,6"}, {"ji3u2.7", "我丟"},
-		{"hello u2,6", "hello u2,6"},
+		{"5k6 u2,6", "折 疊"}, {"ji3u2.7", "我丟"},
+		{"hello u2,6", "hello 疊"},
 		{"hellou2,6", "hellou2,6"}, {"v1.2", "v1.2"},
 		{"ji3hellou2,6", "我hellou2,6"}, {"ji3v1.2", "我v1.2"},
 	} {

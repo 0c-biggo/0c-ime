@@ -148,6 +148,9 @@ type Session struct {
 	// CtrlPunct 由宿主依「Ctrl＋標點打全形」設定（#168，預設開）：中文模式的 Ctrl＋, . ' ; 與 Ctrl＋Shift＋/ 1 ; 9 0（#231）
 	// 打全形標點，跟一般標點一樣插進組字區。零值時這些鍵回 handled=false，外殼照一般快捷鍵交給應用程式。
 	CtrlPunct bool
+	// ShiftSymbolHalfwidth 由宿主依「Shift＋符號打半形」設定（#258，預設關）：注音模式的 Shift＋符號鍵打英文鍵盤上的
+	// 半形符號（shift_symbol.go），全形標點改用 Ctrl＋符號。零值時行為與沒有此功能時相同。
+	ShiftSymbolHalfwidth bool
 	// CapsLockEnglish 由宿主依「Caps Lock 開著時直接打英文」設定（#173，預設關）：外殼送來的 caps_lock 請求才有作用，
 	// 開啟時暫時切到英文、關閉時回到原本的模式。零值時 caps_lock 回 handled=false，注音模式照舊不理 Caps Lock（#168）。
 	CapsLockEnglish bool
@@ -170,6 +173,8 @@ type Session struct {
 	pendingNeural      string
 	rerankCache        map[string]rerankEntry // 分段神經決策快取；提交／取消時清空
 	rerankMemo         map[int]segMemo        // 段級輸入摘要：輸入全同的段整段跳過（含 N-best）；提交／取消時清空
+	rerankMemoHits     int                    // rerankMemo 命中次數，只給測試確認打字時真的命中
+	noCaches           bool                   // 測試用：不用 rerankMemo 與 sugPrev，與開著時比對結果（rerank_caches_test.go）
 	sugPrev            *suggest.Suggestion    // 補全建議與其輸入摘要；refresh 每鍵跑好幾次，同輸入不重算
 	sugPrevKey         string
 	phonetic           *phoneticHint
@@ -774,6 +779,13 @@ func (s *Session) key(k string) (handled bool, commit string) {
 	}
 	// 標點保留在組字區，可移動、替換候選；Enter 才提交。
 	if p, ok := s.layout.Punct(runes[0]); ok {
+		if s.halfwidthShift(k) && !s.composing() {
+			// Shift＋符號打半形（#258）：沒在組字時，半形就是鍵帽字元的同 @ # 交還應用程式；< > " 直接送出 , . ;。
+			if half := halfwidthPunct(p, k); half != k {
+				return true, half
+			}
+			return false, ""
+		}
 		s.insertPendingLiteral()
 		s.insertPunctKey(k, p)
 		return true, ""
@@ -1091,7 +1103,7 @@ func (s *Session) refresh() {
 	if !s.english && s.mixed.raw == "" && s.cursor == len(s.syls) && s.comp.Empty() && s.cand == nil && !s.autoFuzzed() {
 		// refresh 每鍵最多跑三次；輸入沒變就沿用上次的建議。
 		key := s.sugKey()
-		if key == s.sugPrevKey {
+		if key == s.sugPrevKey && !s.noCaches {
 			s.sug = s.sugPrev
 		} else {
 			s.sug = s.suggestAfterLiteral()
