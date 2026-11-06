@@ -61,8 +61,8 @@ func TestShiftSymbolHalfwidthDefaultsOffAndPersists(t *testing.T) {
 	for _, goos := range []string{"windows", "linux", "darwin"} {
 		d := shiftSymbolHalfwidthDescription(goos)
 		ctrl := map[bool]string{true: "⌃", false: "Ctrl＋"}[goos == "darwin"]
-		if !strings.Contains(d, "Shift＋, 打半形逗號") || !strings.Contains(d, "Shift＋9 打 (") || !strings.Contains(d, "< >") || !strings.Contains(d, ctrl+", 打「，」") || !strings.Contains(d, "[ ] 照舊打「」") {
-			t.Fatalf("%s 的說明要寫出打什麼、全形怎麼打、[ ] 不變：%s", goos, d)
+		if !strings.Contains(d, "Shift＋, 打半形逗號") || !strings.Contains(d, "Shift＋9 打 (") || !strings.Contains(d, "< >") || !strings.Contains(d, ctrl+", 打「，」") || !strings.Contains(d, "[ ] 照舊打「」") || !strings.Contains(d, "微軟參考時，< > ? \" 照舊打按鍵上的字") {
+			t.Fatalf("%s 的說明要寫出打什麼、全形怎麼打、[ ] 不變、微軟參考照風格（#272）：%s", goos, d)
 		}
 	}
 	for _, it := range Default().Items() {

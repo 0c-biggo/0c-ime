@@ -512,7 +512,8 @@ func (s *Session) finishMixedTone(key string) bool {
 		return false
 	}
 	// 字母與數字鍵混打、順序顛倒的按鍵（#249）：真的在打注音時不會這樣打。數字開頭的是數字接注音（70億 的 70＋u4、30度 的 30＋2j4，不是 7彥、3段）；
-	// 其他的照字面（i16 不是博，比照 #175 的 813）。字母開頭而且緊接中文的（我＋u2,6）照舊組成反序的音節（#119）。
+	// 其他的照字面（i14 不是播，比照 #175 的 813）。字母開頭而且緊接中文的（我＋u2,6）照舊組成反序的音節（#119）；
+	// 數字鍵聲母晚一鍵的兩鍵組成常用字的（k27 的、j14 不）不論前面是什麼都組字（lateDigitInitial）。
 	if key != " " && s.mixed.choice == 0 && s.reversedAlnum(raw) {
 		if at, done, ok := s.numberThenSyllable(raw, sym); ok {
 			prefix := raw[:at]
@@ -521,7 +522,7 @@ func (s *Session) finishMixedTone(key string) bool {
 			s.insertMixedTyped(done, raw[at:]+key)
 			return true
 		}
-		if _, ok := s.mixedReading(raw, sym); ok && !s.mixedAfterChinese() {
+		if _, ok := s.mixedReading(raw, sym); ok && !s.mixedAfterChinese() && !s.lateDigitInitial(raw, sym) {
 			return false
 		}
 	}
@@ -676,7 +677,7 @@ func (s *Session) mixedBoundary(raw, key string, tone rune) (int, zhuyin.Syllabl
 
 // mixedAfterTypo：打錯一鍵的注音（qji3：ㄆㄨㄛˇ 組不成音節）在聲調鍵後仍是待定的按鍵，之後的注音會一路接在後面，
 // 直到下一個空白才整串照字面送出，好幾個字都變成英文字母（qji3ap6rup 而不是 qji3們今）。前段最後一個聲調鍵
-// （前一鍵不是數字：帳號、編號照舊）之後的按鍵照順序打、組成的不是罕用字（mixedRareFloor）時，從那裡切開：打錯的那段照字面，
+// （前一鍵不是數字：帳號、編號照舊；照字面留下的反序兩鍵接聲調 p54 不算，見 reversedTone）之後的按鍵照順序打、組成的不是罕用字（mixedRareFloor）時，從那裡切開：打錯的那段照字面，
 // 後面照常是中文。前段要有字母：只有數字與標點的是數字寫法。罕用字門檻不用 mixedUnknownWordFloor 的常用字門檻：
 // 句首機率會隨個人用字大幅變動（整串照字面送出的句子讓個人模型學到「句首接天」，們的句首機率掉到 5e-5）。
 func (s *Session) mixedAfterTypo(raw string, tone rune) (int, zhuyin.Syllable, bool) {
@@ -684,7 +685,7 @@ func (s *Session) mixedAfterTypo(raw string, tone rune) (int, zhuyin.Syllable, b
 		sym, ok := s.layout.Symbol(r)
 		return ok && r != ' ' && zhuyin.ClassOf(sym) == zhuyin.Tone
 	}) + 1
-	if at < 2 || at >= len(raw) || unicode.IsDigit(rune(raw[at-2])) || !s.keysInSyllableOrder(raw[at:]) {
+	if at < 2 || at >= len(raw) || unicode.IsDigit(rune(raw[at-2])) && !s.reversedTone(raw[:at]) || !s.keysInSyllableOrder(raw[at:]) {
 		return 0, "", false
 	}
 	if strings.ContainsFunc(raw[:at], func(r rune) bool { _, ok := s.layout.Symbol(r); return !ok }) {
@@ -854,6 +855,27 @@ func (s *Session) swappedSyllable(raw string, tone rune) bool {
 	}
 	_, ok := s.mixedReading(raw, tone)
 	return ok
+}
+
+// lateDigitInitial（#119）：兩鍵的音節，數字鍵上的聲母（ㄅ 1、ㄉ 2、ㄓ 5）晚韻母或介音一鍵（k2 是 ㄜㄉ），接明確的聲調鍵組成常用字
+// （單一音節解碼機率至少 mixedUnknownWordFloor）：k27 的、k54 這、j14 不、l24 到、o14 被、p13 本，句首、空白、標點或英文後也照位置組字，
+// 跟緊接中文時一樣。快打時右手的韻母鍵常比左手上排的數字鍵先到；一般注音模式與常見注音輸入法的混打都照位置組字，只用字母打的
+// 反序（kg4 社）與只用數字標點鍵打的（;24 當）在混打本來就是。組成罕用字的照舊照字面（i14 不是播、i13 不是跛，iPhone 的簡寫）；
+// i16 的 ㄅㄛˊ 連「博士」等詞首算達到門檻，跟 mp3 允一樣先出博，↓ 有原按鍵。
+// 接空白（u2␣）、沒有聲調（u2 Enter）、數字開頭（8x4、0x4，乘號與十六進位）的照舊是 #249 的英數寫法。
+func (s *Session) lateDigitInitial(raw string, tone rune) bool {
+	if len(raw) != 2 || !unicode.IsLetter(rune(raw[0])) || !unicode.IsDigit(rune(raw[1])) || !s.keyIsInitial(rune(raw[1])) {
+		return false
+	}
+	done, ok := s.mixedReading(raw, tone)
+	// 系統機率是下限（同 #55 的 rareDigitReading）：學了其他字讓個人機率變低，不該讓 k27 又變回照字面。
+	return ok && (s.mixedSyllableScore(done) >= mixedUnknownWordFloor || s.mixedSystemSyllableScore(done) >= mixedUnknownWordFloor)
+}
+
+// reversedTone（#119）：t 只有字母與數字鍵順序顛倒的兩鍵接一個聲調鍵（p54、j23、i14），是照 #249 留下的英數寫法，不是帳號、編號：
+// 後面接著打的注音照 mixedAfterTypo 切開來組字（p54cl3 是 p54好，不是整串 p54cl3），不再一路接在後面。
+func (s *Session) reversedTone(t string) bool {
+	return len(t) == 3 && s.reversedAlnum(t[:2])
 }
 
 // alnumThenSpace（#249）：英數寫法接空白照字面，不組成一聲。緊接在字面數字後面的一個字母，組成的不是常用字時（4k␣、3m␣ 不是 4阿、3淤；

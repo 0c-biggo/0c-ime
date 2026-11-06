@@ -202,8 +202,8 @@ func (s *Session) styleKey(k string) (handled bool, commit string, done bool) {
 	if len(r) != 1 || !unicode.IsPrint(r[0]) {
 		return false, "", false
 	}
-	// 設定「Shift＋符號打半形」開著時 " < > ? 照設定打半形標點 ; , . ?（#258），不打鍵帽字元；反引號前導已在上面處理。
-	if s.InputStyle.Punctuation == "microsoft" && microsoftRawPunctuation(k) && !s.halfwidthShift(k) {
+	// 設定「Shift＋符號打半形」開著時照樣打鍵帽字元（#272，見 halfwidthShift）；反引號前導已在上面處理。
+	if s.InputStyle.Punctuation == "microsoft" && microsoftRawPunctuation(k) {
 		if s.mixedKeepsPunctuation(k) {
 			return true, "", true
 		}

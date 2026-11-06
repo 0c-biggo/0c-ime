@@ -76,7 +76,7 @@ stop_app
 launch styles keyboard
 if window_up; then
   sleep 2.5
-  tabs $((NAV + 7)); xdotool key Down  # 鍵盤排列、Ctrl＋標點、Shift＋符號打半形（#258）、補標點、Emoji、標點操作之後
+  tabs $((NAV + 8)); xdotool key Down  # 鍵盤排列、Ctrl＋標點、Shift＋符號打半形（#258）、中英文之間自動加空格（#273）、補標點、Emoji、標點操作之後
   sleep 3
   run_update styles settings -json > "$OUT/styles-rule.json"
   check "自訂習慣的 Shift＋空白可單獨修改並保留在同一份副本" python3 - "$OUT/styles-copy.json" "$OUT/styles-rule.json" <<'PY_RULE'

@@ -92,6 +92,7 @@ func listSettings(w io.Writer, r settings.Report, path string) {
 	fmt.Fprintf(w, "selection-keys=%s（選字鍵：1234567890、1234qweras 或 asdfghjkl;；換成字母時數字仍照位置選字）\n", s.SelectionKeys)
 	fmt.Fprintf(w, "ctrl-punctuation=%s（注音模式按 Ctrl＋, . ' ; 與 Ctrl＋Shift＋/ 1 ; 9 0 打全形標點；關閉時交給應用程式）\n", onOff(s.CtrlPunctuation))
 	fmt.Fprintf(w, "shift-symbol-halfwidth=%s（注音模式按 Shift＋符號鍵打半形標點，例如 Shift＋, 打 ,、Shift＋9 打 (；全形與 < > 改按 Ctrl＋符號或 ↓；[ ] 照舊打「」）\n", onOff(s.ShiftSymbolHalfwidth))
+	fmt.Fprintf(w, "cjk-latin-space=%s（送出時在中文字和英文字母相連處補半形空格，例如「用Python寫」送出「用 Python 寫」；已有空格、標點與數字旁不補，也不跟前面已送出的字補）\n", onOff(s.CJKLatinSpace))
 	if settings.CapsLockEnglishSetting(runtime.GOOS) {
 		fmt.Fprintf(w, "caps-lock-english=%s（Caps Lock 開著時直接打英文：字母大寫、數字與符號半形，關掉回到注音；關閉時注音模式不理 Caps Lock）\n", onOff(s.CapsLockEnglish))
 	}

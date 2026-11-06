@@ -151,6 +151,10 @@ type Session struct {
 	// ShiftSymbolHalfwidth 由宿主依「Shift＋符號打半形」設定（#258，預設關）：注音模式的 Shift＋符號鍵打英文鍵盤上的
 	// 半形符號（shift_symbol.go），全形標點改用 Ctrl＋符號。零值時行為與沒有此功能時相同。
 	ShiftSymbolHalfwidth bool
+	// CJKLatinSpace 由宿主依「中英文之間自動加空格」設定（#273，預設關）：送出時在同一次送出的文字裡，漢字與英文字母
+	// 直接相連的地方補一個半形空格（cjk_latin_space.go）。組字區照打的顯示；學習、前文與簡體對照都用補空格前的文字，
+	// 送給外殼的 Commit 是補過的（外殼核對前文時比對的就是它）。私人欄位不補。零值時不補。
+	CJKLatinSpace bool
 	// CapsLockEnglish 由宿主依「Caps Lock 開著時直接打英文」設定（#173，預設關）：外殼送來的 caps_lock 請求才有作用，
 	// 開啟時暫時切到英文、關閉時回到原本的模式。零值時 caps_lock 回 handled=false，注音模式照舊不理 Caps Lock（#168）。
 	CapsLockEnglish bool
@@ -298,6 +302,7 @@ func (s *Session) Handle(r proto.Request) proto.Snapshot {
 	} else {
 		s.private = s.private || r.Private
 	}
+	private := s.private // 送出時 reset 會清掉；中英文之間補空格（#273）看送出前的
 	if r.Private || r.Type == proto.Pause && r.On {
 		s.clearDocumentContext()
 		s.localBlocked = true
@@ -393,6 +398,11 @@ func (s *Session) Handle(r proto.Request) proto.Snapshot {
 		commit = s.snapshot().Text() // direct palette output is exact; no punctuation/model rewrite.
 		commit = s.output(commit, commit, s.readingPins(commit))
 		s.reset()
+	}
+	if commit != "" && s.CJKLatinSpace && !private {
+		// #273：整個送出的字串一起補，含 Shift＋字母送出組字再打的字母（commit()+k）與符號表直接送出的組字，
+		// 同輸出簡體字；commit() 已用原文學過、記好前文。
+		commit = spaceCJKLatin(commit)
 	}
 	s.refresh()
 	// 保護狀態／前文確認／撤銷可以在候選窗仍開啟時變更；不能留下過期的個人或關聯標示。

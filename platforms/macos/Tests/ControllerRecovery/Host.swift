@@ -31,10 +31,21 @@ final class CandidatePanel {
     var choose: ((Int) -> Void)?
     var level = NSWindow.Level.popUpMenu
     func orderOut(_ sender: Any?) {}
-    func show(_ snapshot: Snapshot, at: NSRect) {}
+    static var compositions: [String] = []
+    func show(_ snapshot: Snapshot, at: NSRect, composition: Bool = false) {
+        if composition { Self.compositions.append(snapshot.text) }
+    }
     func showHint(_ text: String, at: NSRect, for duration: TimeInterval = 1) { Self.hints.append(text) }
 }
 final class RetireMonitor { static let shared = RetireMonitor(); func noteKey() {} }
+final class ShellStats {
+    static let shared = ShellStats()
+    var floating: [(String?, Bool)] = []
+    func noteKey() {}
+    func noteActivate() {}
+    func noteDeactivate() {}
+    func noteFloating(bundle: String?, field: Bool) { floating.append((bundle, field)) }
+}
 final class ModelStatusMonitor {
     static let shared = ModelStatusMonitor()
     var labels: [String] { [] }

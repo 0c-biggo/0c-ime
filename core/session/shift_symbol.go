@@ -16,10 +16,15 @@ const shiftedSymbols = "~!@#$%^&*()_+{}|:\"<>?"
 // 不打全形。只管排列有全形標點的 Shift 符號鍵；@ # $ 等本來就是半形。照舊的有：未按 Shift 的 [ ] ' \（打「」、，
 // 給 [ ] 留著唯一一鍵打引號的路）、全形模式（Shift＋空白切的全形，要的就是全形）、英文模式、
 // Ctrl＋符號（#168，全形）與微軟參考的反引號前導（全形），後兩者在進到這裡之前就處理掉了。
+// 風格本來就打半形原字元的鍵也照風格（#272，微軟參考的 " < > ?，microsoftRawPunctuation）：這個設定是「Shift 組合
+// 不打全形」，不是把已經是半形的鍵帽字元換成另一個字。
 // 跟沒開時的全形標點一樣：組字中插在游標處、留在組字區。沒在組字時，半形就是鍵帽字元的交還應用程式
 // （同 @ #，引擎的 idle_keys 也拿掉它們），不是的（< > "）由核心直接送出半形。
 func (s *Session) halfwidthShift(k string) bool {
 	if !s.ShiftSymbolHalfwidth || s.fullWidth || s.english || len(k) != 1 || !strings.Contains(shiftedSymbols, k) {
+		return false
+	}
+	if s.InputStyle.Punctuation == "microsoft" && microsoftRawPunctuation(k) {
 		return false
 	}
 	_, ok := s.layout.Punct(rune(k[0]))

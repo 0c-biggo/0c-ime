@@ -122,7 +122,7 @@ func TestMixedSwappedVowelsBeforeYi(t *testing.T) {
 func TestMixedSwappedVowelsKeepNumbers(t *testing.T) {
 	for _, tc := range []struct{ keys, want string }{
 		{"70u4", "70億"}, {"100u4", "100億"}, {"30u4", "30億"}, {"720u4", "720億"}, {"ji3100u4", "我100億"},
-		{"40m6", "40餘"}, {"30m4", "30遇"}, {"302j4", "30度"}, {"3.5u4", "3.5億"}, {"u2", "u2"}, {"o1 ", "o1 "}, {"u24", "u24"},
+		{"40m6", "40餘"}, {"30m4", "30遇"}, {"302j4", "30度"}, {"3.5u4", "3.5億"}, {"u2", "u2"}, {"o1 ", "o1 "},
 	} {
 		s := swappedKeysSession()
 		s.MixedInput = true

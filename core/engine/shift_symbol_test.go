@@ -40,18 +40,24 @@ func TestShiftSymbolHalfwidthReachesSessionsAndIdleKeys(t *testing.T) {
 	}
 }
 
-// 微軟參考風格本來把 " < > 交還應用程式；開了設定時它們打 ; , .，閒置時要由核心送出。
+// 微軟參考風格本來就把 \ ' " < > ? 交還應用程式打半形原字元；開了設定也照風格（#272），閒置按鍵不能列，
+// 設定拿掉的 ( ) 等也不列。
 func TestShiftSymbolHalfwidthMicrosoftIdleKeys(t *testing.T) {
 	e := testEngine()
 	p, _ := inputstyle.Get("microsoft")
 	e.InputStyle = p.Rules
 	e.ShiftSymbolHalfwidth = true
 	keys := e.IdleKeys()
-	if !strings.Contains(keys, "<") || !strings.Contains(keys, ">") || !strings.Contains(keys, "\"") || strings.ContainsAny(keys, "\\'?(") {
+	if strings.ContainsAny(keys, "\\'\"<>?(){}:") || !strings.Contains(keys, "[") {
 		t.Fatalf("微軟風格＋Shift＋符號打半形的閒置按鍵：%q", keys)
 	}
-	id := e.OpenSession()
-	if snap := styleDo(t, e, id, proto.Request{Type: proto.Key, Key: ">"}); !snap.Handled || snap.Commit != "." {
-		t.Fatalf("閒置的 Shift＋. 送出半形句號：%+v", snap)
+	// 閒置按鍵要跟 session 實際的處理一致（Windows 的 TestKeyDown 照它決定要不要吃）。
+	for r := rune(0x21); r <= 0x7e; r++ {
+		id := e.OpenSession()
+		snap := styleDo(t, e, id, proto.Request{Type: proto.Key, Key: string(r)})
+		if want := strings.ContainsRune(keys, r); snap.Handled != want {
+			t.Errorf("微軟風格＋設定：%q 實際 handled=%v，IdleKeys 回報 %v", r, snap.Handled, want)
+		}
+		e.CloseSession(id)
 	}
 }

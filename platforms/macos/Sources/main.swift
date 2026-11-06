@@ -30,6 +30,11 @@ guard let name = bundle.object(forInfoDictionaryKey: "InputMethodConnectionName"
 NotificationCenter.default.addObserver(forName: NSApplication.didFinishLaunchingNotification, object: application, queue: .main) { _ in
     CandidatePanel.revealApp(application)
 }
+// 診斷計數（#266）：睡眠、喚醒的時間，以及喚醒後有沒有按鍵進到輸入法。
+let workspaceEvents = NSWorkspace.shared.notificationCenter
+workspaceEvents.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { _ in ShellStats.shared.noteWake() }
+workspaceEvents.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { _ in ShellStats.shared.noteSleep() }
+ShellStats.shared.write()
 RetireMonitor.shared.start { LingxiInputController.anyComposing() }
 HandoverMonitor.shared.start()
 UpdateAgentMonitor.shared.start()

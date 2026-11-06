@@ -152,8 +152,179 @@ for (steps, want) in nativeCases {
     nativeOK = nativeOK && capsOnHint && hints.last == want && (result["zhuyin_after"] as? Bool) == (want == "中")
 }
 
-let passed = capsOK && compositionOK && coldOK && englishHintOK && chineseHintOK && coldHintOK && nativeOK
-let output: [String: Any] = ["passed": passed, "caps_recovery": capsOK, "composition_preserved_once": compositionOK,
+// #84：模擬 Chrome 裡每次 input 事件把輸入框 blur／focus 的欄位。組字一交給它就被結束、留成文字（殘字），
+// App 隨即要求結束組字；插入文字後同樣再要求一次。真正的控制器與引擎，只有 App 是替身。
+final class PageClient: IMKTextInput {
+    var document = ""
+    var marked = ""
+    var endsComposition = true
+    var setMarkedCount = 0
+    var bundle = "test.page"
+    // 網頁攔下 Enter 的 keydown（cmdk 等搜尋框按 Enter 開啟結果時 preventDefault）。
+    var preventsEnter = false
+    weak var controller: LingxiInputController?
+    private var pendingEnd = false
+    // Chromium 處理按鍵時：沒給位置的 insertText 先記下，按鍵處理完才決定怎麼送（render_widget_host_view_cocoa.mm keyEvent:）。
+    private(set) var handlingKey = false
+    private var markedBeforeKey = false
+    private var toBeInserted = ""
+    var caret: Int { (document as NSString).length }
+    func bundleIdentifier() -> String! { bundle }
+    func overrideKeyboard(withKeyboardNamed: String!) {}
+    func insertText(_ text: Any!, replacementRange: NSRange) {
+        let string = (text as? String) ?? (text as? NSAttributedString)?.string ?? ""
+        if handlingKey, replacementRange.location == NSNotFound {
+            toBeInserted += string
+            marked = ""
+            return
+        }
+        let base = document as NSString
+        if replacementRange.location != NSNotFound {
+            document = base.replacingCharacters(in: replacementRange, with: string)
+        } else {
+            document += string
+        }
+        marked = ""
+        if endsComposition { pendingEnd = true }
+    }
+    func selectedRange() -> NSRange { NSRange(location: caret, length: 0) }
+    func markedRange() -> NSRange {
+        marked.isEmpty ? NSRange(location: NSNotFound, length: 0) : NSRange(location: caret, length: (marked as NSString).length)
+    }
+    func attributedSubstring(from range: NSRange) -> NSAttributedString! {
+        guard range.location != NSNotFound, NSMaxRange(range) <= caret else { return nil }
+        return NSAttributedString(string: (document as NSString).substring(with: range))
+    }
+    func attributes(forCharacterIndex: Int, lineHeightRectangle: UnsafeMutablePointer<NSRect>!) -> [AnyHashable: Any]! { [:] }
+    func firstRect(forCharacterRange: NSRange, actualRange: NSRangePointer!) -> NSRect { .zero }
+    func windowLevel() -> Int32 { 0 }
+    func setMarkedText(_ text: Any!, selectionRange: NSRange, replacementRange: NSRange) {
+        marked = (text as? NSAttributedString)?.string ?? ""
+        setMarkedCount += 1
+        if endsComposition, !marked.isEmpty { pendingEnd = true }
+    }
+    func beginKey() {
+        handlingKey = true
+        markedBeforeKey = !marked.isEmpty
+        toBeInserted = ""
+    }
+    /// 按鍵處理完，照 Chromium 的規則送出記下的文字：App 裡前後有組字或文字超過一個 UTF-16 單位時當成輸入法送出的文字直接插入；
+    /// 只有一個單位時當成這個鍵打出的字元，跟在 keydown 後面——網頁攔下這個鍵（preventDefault）就不會插入。
+    func endKey(enter: Bool) {
+        handlingKey = false
+        let text = toBeInserted
+        toBeInserted = ""
+        guard !text.isEmpty else { return }
+        let viaIME = markedBeforeKey || !marked.isEmpty || (text as NSString).length > 1
+        if viaIME || !(enter && preventsEnter) { insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0)) }
+    }
+    /// 網頁的 input 事件處理完：blur／focus 讓 Chrome 把組字留成文字，IMK 隨後呼叫 commitComposition。
+    func settle() {
+        guard pendingEnd else { return }
+        pendingEnd = false
+        document += marked
+        marked = ""
+        controller?.commitComposition(self)
+    }
+}
+func pageKey(_ page: PageClient, _ characters: String, code: UInt16 = 0) {
+    let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil,
+                                 characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)!
+    page.beginKey()
+    _ = page.controller?.handle(event, client: page)
+    page.endKey(enter: code == 36)
+    page.settle()
+}
+func typeWord(_ page: PageClient, end: (String, UInt16) = ("\r", 36)) {
+    for k in ["a", "8", "6", "q", "i", "6"] { pageKey(page, k) }
+    pageKey(page, end.0, code: end.1)
+}
+ControllerTestHost.socketPath = CommandLine.arguments[5]
+let page = PageClient()
+controller = LingxiInputController(client: page)
+page.controller = controller
+ShellStats.shared.floating = []
+CandidatePanel.compositions = []
+typeWord(page)
+let firstWord = page.document
+let firstFloated = CandidatePanel.compositions.count >= 5 && ShellStats.shared.floating.count == 1
+typeWord(page)
+let secondWord = page.document
+let markedBeforeSticky = page.setMarkedCount
+let stuck = ShellStats.shared.floating.count == 2 && ShellStats.shared.floating[1].1 && ShellStats.shared.floating[1].0 == "test.page"
+typeWord(page)
+let thirdWord = page.document
+let stickyNeverMarked = page.setMarkedCount == markedBeforeSticky
+// 固定浮動的欄位送出一個字、網頁攔下 Enter（搜尋框按 Enter 開啟結果）：那個字照樣要進到欄位，不能跟著按鍵被網頁攔掉
+page.preventsEnter = true
+for k in ["a", "8", "6"] { pageKey(page, k) }
+pageKey(page, "\r", code: 36)
+let singleWord = page.document
+let singleKept = singleWord.hasPrefix(thirdWord) && singleWord.count == thirdWord.count + 1
+page.preventsEnter = false
+// 救回的組字按 Esc 取消：殘字也刪掉
+let cancelPage = PageClient()
+controller.inputControllerWillClose()
+controller = LingxiInputController(client: cancelPage)
+cancelPage.controller = controller
+pageKey(cancelPage, "a")
+pageKey(cancelPage, "8")
+pageKey(cancelPage, "\u{1b}", code: 53)
+let cancelled = cancelPage.document
+// 一般欄位：組字留在 App 裡；按鍵後過一陣子 App 才結束組字（點到別處），照常送出，不改成浮動
+let normal = PageClient()
+normal.endsComposition = false
+controller.inputControllerWillClose()
+controller = LingxiInputController(client: normal)
+normal.controller = controller
+ShellStats.shared.floating = []
+for k in ["a", "8", "6"] { pageKey(normal, k) }
+Thread.sleep(forTimeInterval: FloatingComposition.earlyEnd + 0.1)
+let shownBeforeClick = normal.marked
+controller.commitComposition(normal)
+let normalOK = !shownBeforeClick.isEmpty && normal.document == shownBeforeClick && normal.marked.isEmpty && ShellStats.shared.floating.isEmpty && normal.setMarkedCount == 3
+controller.inputControllerWillClose()
+// Electron App 的一般欄位照常 inline（負責人 2026-11-06：不依 App 種類一律浮動）：每鍵都交給 App 組字，沒有改畫在面板。
+// 前面的測試已讓引擎學到「嘛」，所以只比對兩個字。
+let electron = PageClient()
+electron.endsComposition = false
+electron.bundle = "test.electron"
+controller = LingxiInputController(client: electron)
+electron.controller = controller
+CandidatePanel.compositions = []
+ShellStats.shared.floating = []
+for k in ["a", "8", "6", "q", "i", "6"] { pageKey(electron, k) }
+let electronInline = !electron.marked.isEmpty && electron.setMarkedCount >= 6 && CandidatePanel.compositions.isEmpty
+pageKey(electron, "\r", code: 36)
+let electronWord = electron.document
+let electronOK = electronInline && electronWord.count == 2 && electron.marked.isEmpty && ShellStats.shared.floating.isEmpty
+controller.inputControllerWillClose()
+// 會結束組字的 Electron 欄位（Claude 桌面版的搜尋框）：跟 Chrome 一樣靠偵測救回、殘字換掉，兩次後固定浮動
+let electronBad = PageClient()
+electronBad.bundle = "test.electron"
+controller = LingxiInputController(client: electronBad)
+electronBad.controller = controller
+ShellStats.shared.floating = []
+typeWord(electronBad)
+typeWord(electronBad)
+let electronBadOK = electronBad.document == electronWord + electronWord && ShellStats.shared.floating.count == 2 &&
+    ShellStats.shared.floating[1].1 && ShellStats.shared.floating[1].0 == "test.electron"
+let markedBeforeThird = electronBad.setMarkedCount
+typeWord(electronBad)
+let electronBadSticky = electronBad.document == electronWord + electronWord + electronWord && electronBad.setMarkedCount == markedBeforeThird
+controller.inputControllerWillClose()
+
+let floatingOK = firstWord == "麻婆" && firstFloated && secondWord == "麻婆麻婆" && stuck &&
+    thirdWord == "麻婆麻婆麻婆" && stickyNeverMarked && singleKept && cancelled.isEmpty && normalOK &&
+    electronOK && electronBadOK && electronBadSticky
+let floatingResult: [String: Any] = ["first": firstWord, "second": secondWord, "third": thirdWord, "cancelled": cancelled, "single": singleWord,
+                                     "normal": normal.document, "sticky_never_marked": stickyNeverMarked, "stuck": stuck,
+                                     "electron_inline": electronOK, "electron": electronWord, "electron_bad": electronBad.document,
+                                     "electron_bad_sticky": electronBadSticky]
+
+let passed = capsOK && compositionOK && coldOK && englishHintOK && chineseHintOK && coldHintOK && nativeOK && floatingOK
+let output: [String: Any] = ["passed": passed, "floating": floatingOK, "floating_cases": floatingResult,
+                          "caps_recovery": capsOK, "composition_preserved_once": compositionOK,
                           "native_caps_restore": nativeOK, "native_cases": nativeResults,
                           "cold_queue": coldOK, "timeout_seconds": elapsed, "steps": results,
                           "english_hints": englishHints, "chinese_hints": chineseHints,

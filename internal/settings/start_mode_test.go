@@ -40,7 +40,7 @@ func TestStartModeDefaultAndCompat(t *testing.T) {
 	if err := s.Set("start-mode", "english"); err != nil || !s.StartsEnglish() {
 		t.Fatal(err)
 	}
-	if b, _ = json.Marshal(s); strings.Contains(string(b), "latin") {
+	if b, _ = json.Marshal(s); strings.Contains(string(b), `"latin"`) { // 只看值；鍵名 cjk_latin_space（#273）也有 latin
 		t.Fatalf("明確設定後不再寫回舊值：%s", b)
 	}
 	if err := s.Set("start-mode", "chinese"); err == nil {
