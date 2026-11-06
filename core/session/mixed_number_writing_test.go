@@ -31,6 +31,7 @@ func numberWritingSession() *Session {
 		{"軸", "ㄓㄡˊ", 1e-5}, {"周", "ㄓㄡ", 1e-3}, {"手", "ㄕㄡˇ", 1e-3}, {"手肘", "ㄕㄡˇ ㄓㄡˇ", 2e-5},
 		{"疊", "ㄉㄧㄝˊ", 1e-4}, {"折", "ㄓㄜˊ", 1e-4}, {"折疊", "ㄓㄜˊ ㄉㄧㄝˊ", 2e-4},
 		{"丟", "ㄉㄧㄡ", 1e-4},
+		{"窄", "ㄓㄞˇ", 2e-5}, {"齋", "ㄓㄞ", 2e-5}, {"眨", "ㄓㄚˇ", 8e-6}, {"把", "ㄅㄚˇ", 2e-3},
 	} {
 		lex.Add(lexicon.Entry{Surface: e.w, Reading: zhuyin.ParseReading(e.r), PRW: 1})
 		sys.SetUni(e.w, e.p)
@@ -312,5 +313,80 @@ func TestMixedRareDigitKeyReading(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("1/3 按 ↓ 沒有 ㄅㄥˇ：%v", snap.Candidates.Items)
+	}
+}
+
+// Learning unrelated words must not turn valid digit-key syllables into numbers.
+func TestMixedDigitReadingsSurviveUnrelatedLearning(t *testing.T) {
+	for _, tc := range []struct{ keys, want string }{
+		{"593", "窄"}, {"583", "眨"}, {"03", "俺"}, {"53", "只"}, {"183", "把"},
+		{"2.4", "豆"}, {"5.6", "軸"},
+		{"354", "354"}, {"57", "57"}, {"107", "107"}, {"1/3", "1/3"}, {"86", "86"},
+	} {
+		t.Run(tc.keys, func(t *testing.T) {
+			s := numberWritingSession()
+			for i := 0; i < 100; i++ {
+				mixedType(s, "ji3")
+				if got := key(s, proto.KeyEnter).Commit; got != "我" {
+					t.Fatalf("learning commit: %q", got)
+				}
+			}
+			if s.model.Store.Total == 0 {
+				t.Fatal("typing did not produce learning evidence")
+			}
+			for _, k := range tc.keys[:len(tc.keys)-1] {
+				key(s, string(k))
+			}
+			if tc.keys == "593" {
+				if hint := s.snapshot().ReadingHint; hint == nil || hint.Text != "ㄓㄞ" {
+					t.Fatalf("59 reading hint: %+v", hint)
+				}
+			}
+			if got := key(s, tc.keys[len(tc.keys)-1:]).Text(); got != tc.want {
+				t.Fatalf("after unrelated learning: %q, want %q", got, tc.want)
+			}
+			if got := key(s, proto.KeyEnter).Commit; got != tc.want {
+				t.Fatalf("commit: %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestMixedRareDigitReadingCanStillLearn(t *testing.T) {
+	s := numberWritingSession()
+	if got := mixedType(s, "5.3").Text(); got != "5.3" {
+		t.Fatalf("unlearned rare reading: %q", got)
+	}
+	key(s, proto.KeyEscape)
+	// Normal Chinese input can teach a rare word; mixed input should honor that evidence.
+	s.MixedInput = false
+	for i := 0; i < 4; i++ {
+		mixedType(s, "5.3")
+		if got := key(s, proto.KeyEnter).Commit; got != "肘" {
+			t.Fatalf("learning rare word: %q", got)
+		}
+	}
+	s.MixedInput = true
+	if got := mixedType(s, "5.3").Text(); got != "肘" {
+		t.Fatalf("learned rare reading: %q", got)
+	}
+}
+
+func TestMixedDigitReadingAfterLearningCanSelectNumber(t *testing.T) {
+	s := numberWritingSession()
+	for i := 0; i < 100; i++ {
+		mixedType(s, "ji3")
+		key(s, proto.KeyEnter)
+	}
+	if got := mixedType(s, "593").Text(); got != "窄" {
+		t.Fatalf("default reading: %q", got)
+	}
+	items := downItems(key(s, proto.KeyDown))
+	if len(items) < 2 || items[0] != "窄" || items[1] != "593" {
+		t.Fatalf("word and original keys: %q", items)
+	}
+	s.Handle(proto.Request{Type: proto.Select, Index: 1})
+	if got := key(s, proto.KeyEnter).Commit; got != "593" {
+		t.Fatalf("selected number: %q", got)
 	}
 }

@@ -898,8 +898,25 @@ func (s *Session) rareDigitReading(raw string, tone rune) bool {
 		return false
 	}
 	done, ok := s.mixedReading(raw, tone)
-	return ok && s.mixedSyllableScore(done) < mixedRareFloor && !s.readingContinues(done)
+	if !ok || s.mixedSyllableScore(done) >= mixedRareFloor || s.readingContinues(done) {
+		return false
+	}
+	// 系統機率是下限：學了其他字讓個人機率變低，不該把原本打得出來的字（593 的窄）變成數字。
+	return s.mixedSystemSyllableScore(done) < mixedRareFloor
 }
+
+// mixedSystemSyllableScore：同 mixedSyllableScore，但只用系統字典的機率，不含個人學習。只給罕用判斷當下限，排序仍含個人用字。
+func (s *Session) mixedSystemSyllableScore(syl zhuyin.Syllable) float64 {
+	dec := &decode.Decoder{Lex: s.model.Source(), Score: mixedSystemScorer{s.model}}
+	_, score := dec.Best(input.Exact{}.Expand([]zhuyin.Syllable{syl}), nil, true)
+	return math.Exp(score)
+}
+
+type mixedSystemScorer struct{ model *personal.Model }
+
+func (m mixedSystemScorer) Prob(left, word string) float64 { return m.model.SystemProb(left, word) }
+
+func (m mixedSystemScorer) Prior(word string) float64 { return m.model.Prior(word) }
 
 // mixedSyllableScore：單一音節在句首的解碼機率（含個人用字）。只在多字詞裡常見的音節以詞首計（應 → 應該）。
 func (s *Session) mixedSyllableScore(syl zhuyin.Syllable) float64 {
