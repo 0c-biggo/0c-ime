@@ -209,6 +209,20 @@ func preeditAttrs(style string, start, end uint32) []attribute {
 	return []attribute{{attrUnderline, underlineSingle, start, end}}
 }
 
+// preeditAttrList 把組字分段轉成 IBus 的文字屬性（範圍以字元計）。
+func preeditAttrList(segs []proto.Segment) []attribute {
+	var attrs []attribute
+	at := uint32(0)
+	for _, g := range segs {
+		n := uint32(utf8.RuneCountInString(g.Text))
+		if n > 0 {
+			attrs = append(attrs, preeditAttrs(g.Style, at, at+n)...)
+		}
+		at += n
+	}
+	return attrs
+}
+
 type engine struct {
 	svc     *service
 	path    dbus.ObjectPath
@@ -483,11 +497,20 @@ func (e *engine) render(snap snapshot) {
 	}
 	text := snap.Text()
 	cursor := uint32(min(max(snap.Cursor.Rune, 0), utf8.RuneCountInString(text)))
+	downgraded := false // 提交前把組字模式降成 CLEAR；下面的重畫一定要送，才會回到 COMMIT
 	if snap.Commit != "" {
-		// 先清掉畫面上的組字再提交：preeditCommit 模式下留著組字，用戶端可能在提交時再送出一次。
+		// 提交順序：組字模式降成 CLEAR（文字不變）→ CommitText → 下面的重畫（組字變空或剩下的組字，模式回 COMMIT）。
+		//
+		// 不能先把組字清空再提交：Chromium（原生 Wayland 的 VS Code 等 Electron 程式）把先到的空組字當成組字取消，
+		// 之後的提交又是一般的文字輸入，xterm.js 這類終端機就把同一段字送兩次（Enter 之後字出現兩次）。
+		// 所以提交時組字要還在，用戶端才會把提交當成「組字完成」，只送一次。
+		//
+		// 但組字還在又是 COMMIT 模式時，ibus-daemon 或 GTK／Qt 的 IBus 模組在失焦或重設時會把它再提交一次
+		// （這是原本先清組字要避免的重複）。CommitText 到清組字之間若剛好失焦，就會中。
+		// 把模式降成 CLEAR 就堵住這個空窗：組字照舊顯示（Chromium 仍在組字中），但失焦時只會清掉、不會代為提交。
 		if e.preedit != "" {
-			e.emit("UpdatePreeditText", newText(""), uint32(0), false, uint32(preeditCommit))
-			e.preedit, e.preCursor, e.preSegs = "", 0, nil
+			e.emit("UpdatePreeditText", newText(e.preedit, preeditAttrList(e.preSegs)...), e.preCursor, true, uint32(preeditClear))
+			downgraded = true
 		}
 		before := docText{}
 		if e.session.contextAllowed() {
@@ -496,17 +519,8 @@ func (e *engine) render(snap snapshot) {
 		e.context.committed(before, snap.Commit, snap.ContextID)
 		e.emit("CommitText", newText(snap.Commit))
 	}
-	if text != e.preedit || cursor != e.preCursor || !slices.Equal(snap.Preedit, e.preSegs) {
-		var attrs []attribute
-		at := uint32(0)
-		for _, g := range snap.Preedit {
-			n := uint32(utf8.RuneCountInString(g.Text))
-			if n > 0 {
-				attrs = append(attrs, preeditAttrs(g.Style, at, at+n)...)
-			}
-			at += n
-		}
-		e.emit("UpdatePreeditText", newText(text, attrs...), cursor, text != "", uint32(preeditCommit))
+	if downgraded || text != e.preedit || cursor != e.preCursor || !slices.Equal(snap.Preedit, e.preSegs) {
+		e.emit("UpdatePreeditText", newText(text, preeditAttrList(snap.Preedit)...), cursor, text != "", uint32(preeditCommit))
 		e.preedit, e.preCursor, e.preSegs = text, cursor, slices.Clone(snap.Preedit)
 	}
 	// 通知（例如候選窗的 Shift＋Delete 之後「已從詞庫刪除：…」）是使用者剛做的動作的回饋，只出現在這一次快照，
