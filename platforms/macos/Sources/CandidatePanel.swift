@@ -24,7 +24,8 @@ final class CandidatePanel: NSPanel {
         if let app, app.isHidden { app.unhideWithoutActivation() }
     }
 
-    func show(_ snapshot: Snapshot, at caret: NSRect) {
+    /// composition：浮動組字（#84），組字不在 App 裡，畫在面板最上面（提示之下）。
+    func show(_ snapshot: Snapshot, at caret: NSRect, composition: Bool = false) {
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -105,6 +106,9 @@ final class CandidatePanel: NSPanel {
             label.textColor = .labelColor
             label.setAccessibilityIdentifier("reading")
             stack.addArrangedSubview(label)
+        }
+        if composition, let preedit = snapshot.preedit, !snapshot.text.isEmpty {
+            stack.insertArrangedSubview(CompositionLine(preedit, cursor: snapshot.cursor.utf16), at: 0)
         }
         // 標示中（Shift＋←／→，#123）說明 Enter 會加入哪幾個字：VS Code 等自己畫組字的 App 看不出底線樣式，
         // 這行在每個 App 都看得到。新引擎會以提示送出說明（含讀音與不能加入的原因），這時不重複顯示。
@@ -222,6 +226,45 @@ final class CandidateSurface: NSView {
             layer?.backgroundColor = reduceTransparency ? NSColor.windowBackgroundColor.cgColor : nil
             layer?.borderColor = NSColor.separatorColor.cgColor
         }
+    }
+}
+
+/// 浮動組字（#84）的組字列：跟 App 裡的組字一樣的底線樣式（MarkedText），加上游標。
+final class CompositionLine: NSView {
+    let text: NSAttributedString
+    let cursor: Int
+    private static let font = NSFont.systemFont(ofSize: 18)
+
+    init(_ segments: [Snapshot.Segment], cursor: Int) {
+        let styled = NSMutableAttributedString(attributedString: MarkedText.attributed(segments))
+        let whole = NSRange(location: 0, length: styled.length)
+        styled.addAttribute(.font, value: Self.font, range: whole)
+        styled.enumerateAttribute(.foregroundColor, in: whole) { value, range, _ in
+            if value == nil { styled.addAttribute(.foregroundColor, value: NSColor.labelColor, range: range) }
+        }
+        text = styled
+        self.cursor = min(max(0, cursor), styled.length)
+        super.init(frame: .zero)
+        setAccessibilityIdentifier("composition")
+        setAccessibilityElement(true)
+        setAccessibilityRole(.staticText)
+        setAccessibilityValue(styled.string)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override var intrinsicContentSize: NSSize {
+        let size = text.size()
+        return NSSize(width: ceil(size.width) + 4, height: max(ceil(size.height), 22) + 4)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let size = text.size()
+        let y = (bounds.height - size.height) / 2
+        text.draw(at: NSPoint(x: 1, y: y))
+        let x = 1 + text.attributedSubstring(from: NSRange(location: 0, length: cursor)).size().width
+        NSColor.controlAccentColor.setFill()
+        NSRect(x: floor(x), y: y + 1, width: 2, height: size.height - 2).fill()
     }
 }
 

@@ -2,6 +2,28 @@
 
 每個版本的「公開摘要」與 [官網更新紀錄](https://0c.biggo.com/updates/) 相同；「原始碼套件」記錄 Release 完整 tarball 的內容變化。
 
+## 0.2.10（2026-11-07，public-beta）
+
+### 公開摘要
+
+- 中英混打：打字快、聲母比韻母晚一鍵時（「的」打成 k27、「這」k54、「不」j14、「到」l24），在句首、空白、標點後或剛送出一段之後也照按鍵位置組成中文，後面接著打的字也正常出中文，不再整串變成英數。少數型號簡寫（例如句首的 i16）可能先變成中文，要打原本的英數可以切換到英文模式。
+- 中英混打：593（窄）、03（俺）、5.6（軸）這類用數字鍵打的常用字，不再因為學了很多別的字而變回數字。
+- 新設定「中英文之間自動加空格」（鍵盤與符號頁，預設關閉）：送出時在中文字和英文字母相連的地方補一個半形空格，例如「今天用VS Code寫Python」送出「今天用 VS Code 寫 Python」。已有空格、標點和數字旁不補，只處理同一次送出的文字。
+- 「標點操作」選微軟參考並開著「Shift＋符號打半形」時，Shift＋, . ' / 照舊打出半形的小於、大於、雙引號和問號，不再變成逗號、句點、分號和問號。
+- Mac：ChatGPT 網頁的 ⌘K 搜尋框、Claude 桌面版的搜尋框這類一打字就把組字結束掉的欄位，不再打出一串注音符號；靈犀會自動改在候選視窗裡組字，打完才送進去。其他欄位照舊在文字框裡組字。
+- Mac：設定程式匯出的狀態檔會記錄輸入法收到按鍵、睡眠喚醒的次數與時間，以及系統的「安全輸入」是否開著（不記打字內容），喚醒後打不出中文時比較好查。
+- Linux（IBus）：在 VS Code 的終端機裡快速打字按 Enter 送出時，同一段字不再出現兩次。
+- 設定程式：背景更新或切回視窗時，畫面不再跳回頁頂。
+
+### 原始碼套件
+
+- 新設定 `cjk-latin-space`（`settings.json` 的 `cjk_latin_space`，預設關閉，#58）：`core/session/cjk_latin_space.go` 在同一次送出的字串裡，漢字與 ASCII 字母相連處補一個半形空格；私密欄位不補，學習、前文與神經前文仍用原文。設定檔 schema 與個人詞庫格式不變。
+- 中英混打（`core/session/mixed.go`）：新增 `lateDigitInitial`，兩鍵、數字鍵聲母晚一鍵、接聲調鍵而組成常用字時，不論前文都照位置組字；`reversedTone` 讓照字面留下的反序兩鍵接聲調之後，後面的注音照常切開組字。#55 的系統字典機率下限也用在 `lateDigitInitial`。新增 `mixed_late_initial_test.go`。
+- 「Shift＋符號打半形」與微軟參考風格（#57）：微軟參考本來就打半形的 `"` `<` `>` `?` 不再被設定蓋過（`microsoftRawPunctuation`），`engine.IdleKeys` 不再看這個設定。
+- macOS：新增 `platforms/macos/Sources/FloatingComposition.swift`，App 在組字中途自己結束組字的欄位改在候選面板組字，只送一個字時指定插在目前游標；`ShellStats.swift` 寫 `input-method-stats.json`（按鍵、啟用、睡眠喚醒與浮動次數，不含打字內容）。`0c-update status -json -diagnostics` 新增 `shell.input_method_stats` 與 `shell.secure_input`（`cmd/0c-update/input_method_stats.go`、`secure_input_mac.go`）。新增 `platforms/macos/Tests/Floating`。
+- 設定程式（接 PR #53）：重建控制項後先還原捲動位置再還原焦點，WebKitGTK 與 WKWebView 點過單選後也不再跳回頁頂。`platforms/settings/test/scroll_position_test.py` 改在 Chromium 與 Playwright WebKit 都跑並加單選情境；新增 `platforms/settings/test/scroll.sh`，在 smoke 容器裡以真的 0c-settings 檢查（`--only scroll`）。
+- 字典與配對模型沿用 0.2.5。
+
 ## 0.2.9（2026-11-05，public-beta）
 
 ### 公開摘要

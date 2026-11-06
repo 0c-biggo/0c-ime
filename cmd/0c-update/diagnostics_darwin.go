@@ -31,6 +31,23 @@ func shellDiagnostics() map[string]any {
 	} else if changed != nil {
 		out["app_check"] = changed.Error()
 	}
+	// #266：安全輸入開著時系統停用靈犀（選單變灰、打出英文）。匯出狀態摘要時記下有沒有開著，以及開啟當下的前景 App
+	// （foreground_at_enable：系統記的是開啟時的前景 App，不一定是真正呼叫、還沒放掉的程式，只當線索）。
+	if v, err := exec.CommandContext(ctx, "/usr/sbin/ioreg", "-l", "-d", "1", "-w", "0", "-k", "IOConsoleUsers").Output(); err == nil {
+		foreground := []map[string]any{}
+		for _, pid := range secureInputPIDs(string(v)) {
+			h := map[string]any{"pid": pid}
+			if comm, err := exec.CommandContext(ctx, "/bin/ps", "-o", "comm=", "-p", strconv.Itoa(pid)).Output(); err == nil {
+				h["app"] = strings.TrimSpace(string(comm))
+			}
+			foreground = append(foreground, h)
+		}
+		out["secure_input"] = map[string]any{"on": len(foreground) > 0, "foreground_at_enable": foreground}
+	}
+	// 外殼自己記的啟用、按鍵次數與最近喚醒時間（#266）、浮動組字（#84）：分辨按鍵有沒有進到輸入法。
+	if stats := inputMethodStats(basePath()); stats != nil {
+		out["input_method_stats"] = stats
+	}
 	installed := filepath.Join(installedApp(), "Contents/MacOS/0c")
 	var inode uint64
 	if info, err := os.Stat(installed); err == nil {

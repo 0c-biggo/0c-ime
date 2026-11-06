@@ -444,8 +444,9 @@
     keyboard: {
       title: '鍵盤與符號', lead: '注音的鍵盤排列，以及標點符號和 Emoji 怎麼打。',
       // emoji-equals-first 是 Emoji 選單的子選項，畫在它下面。
-      // shift-symbol-halfwidth（#258）跟 Ctrl＋標點是一對（Shift 半形、Ctrl 全形），排在它下面。
-      keys: ['keyboard-layout', 'ctrl-punctuation', 'shift-symbol-halfwidth', 'punctuation', 'emoji-shortcut', 'emoji-equals-first', 'style-punctuation', 'style-shift-space', 'style-shift-delete'],
+      // shift-symbol-halfwidth（#258）跟 Ctrl＋標點是一對（Shift 半形、Ctrl 全形），排在它下面；
+      // cjk-latin-space（#273，中英文之間自動加空格）也是半形排版，接在後面。
+      keys: ['keyboard-layout', 'ctrl-punctuation', 'shift-symbol-halfwidth', 'cjk-latin-space', 'punctuation', 'emoji-shortcut', 'emoji-equals-first', 'style-punctuation', 'style-shift-space', 'style-shift-delete'],
     },
   };
   const OUTPUT_KEYS = ['output-simplified', 'simplified-hotkey'];
@@ -673,6 +674,13 @@
     }
     if (page === 'vocab' && vocabOn && !vocabActive) { vocabActive = true; vocab.setActive(true); }
     else if (page !== 'vocab' && vocabActive) { vocabActive = false; vocab.setActive(false); }
+    // 背景更新（每 15 秒、視窗重新取得焦點）會重建控制項。區段暫時清空時被歸零的捲動位置要還原，
+    // 還原焦點也不能把畫面拉回舊控制項（#268）。
+    // 先還原捲動再還原焦點：設定 scrollTop 會先排版，新控制項這時才有 renderer。WebKit（WebKitGTK、
+    // WKWebView）的 <input> 若在還沒排版前就取得焦點，排版時會另排一個工作把它捲進畫面，
+    // 不理 preventScroll；點過的選項（radio）、風格名稱欄位都是 <input>。
+    main.scrollTop = scroll.top;
+    main.scrollLeft = scroll.left;
     if (focused) {
       const again = Array.from(document.querySelectorAll('[data-focus]')).find((node) => node.dataset.focus === focused);
       if (again && !again.disabled) {
@@ -680,10 +688,6 @@
         if (selection && typeof again.setSelectionRange === 'function') again.setSelectionRange(...selection);
       }
     }
-    // 背景更新（每 15 秒、視窗重新取得焦點）會重建控制項。還原焦點不能把畫面拉回舊控制項，
-    // 區段暫時清空時被歸零的捲動位置也要還原。
-    main.scrollTop = scroll.top;
-    main.scrollLeft = scroll.left;
   }
 
   let vocabActive = false;

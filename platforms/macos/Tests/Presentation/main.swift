@@ -249,6 +249,26 @@ let plainMarked = MarkedText.attributed([Snapshot.Segment(text: "20", style: "pe
 precondition(plainMarked.attribute(.foregroundColor, at: 0, effectiveRange: nil) == nil, "ordinary composition keeps the app's color")
 let legacy = try JSONDecoder().decode(Snapshot.self, from: Data(#"{"handled":true,"cursor":{"utf16":2},"mode":"zhuyin","preedit":[{"text":"20","style":"pending"}]}"#.utf8))
 precondition(legacy.visibleReading == nil, "old engines without reading_hint show nothing new")
+// #84 浮動組字：組字畫在面板最上面一列（候選之上），沒有候選時也顯示；一般組字（composition: false）不畫。
+let composing = try JSONDecoder().decode(Snapshot.self, from: Data(#"{"handled":true,"cursor":{"utf16":1},"mode":"zhuyin","preedit":[{"text":"數","style":"locked"},{"text":"ㄨㄟ","style":"normal"}]}"#.utf8))
+panel.show(composing, at: NSRect(x: bounds.minX + 40, y: bounds.minY + 200, width: 1, height: 20), composition: true)
+panel.contentView!.layoutSubtreeIfNeeded()
+let line = descendants(panel.contentView!, of: CompositionLine.self)
+precondition(panel.isVisible && line.count == 1 && line[0].accessibilityValue() as? String == "數ㄨㄟ" && line[0].cursor == 1, "floating composition line shows the preedit and cursor")
+precondition(line[0].frame.width > 30 && line[0].frame.height >= 22, "composition line has room for its text")
+let withCandidates = try JSONDecoder().decode(Snapshot.self, from: Data(#"{"handled":true,"cursor":{"utf16":1},"mode":"zhuyin","preedit":[{"text":"數","style":"normal"}],"candidates":{"items":[{"id":1,"text":"數"},{"id":2,"text":"術"}],"page":0,"pages":1,"highlight":0}}"#.utf8))
+panel.show(withCandidates, at: NSRect(x: bounds.minX + 40, y: bounds.minY + 200, width: 1, height: 20), composition: true)
+panel.contentView!.layoutSubtreeIfNeeded()
+let stackView = descendants(panel.contentView!, of: NSStackView.self).first!
+precondition(stackView.arrangedSubviews.first is CompositionLine, "composition line sits above the candidates")
+if CommandLine.arguments.count > 1, let view = panel.contentView, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+    view.cacheDisplay(in: view.bounds, to: bitmap)
+    if let png = bitmap.representation(using: .png, properties: [:]) {
+        try png.write(to: URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("floating-composition.png"))
+    }
+}
+panel.show(composing, at: NSRect(x: bounds.minX + 40, y: bounds.minY + 200, width: 1, height: 20))
+precondition(!panel.isVisible || descendants(panel.contentView!, of: CompositionLine.self).isEmpty, "inline composition is not drawn in the panel")
 let empty = try JSONDecoder().decode(Snapshot.self, from: Data(#"{"handled":false,"cursor":{"utf16":0},"mode":"zhuyin"}"#.utf8))
 panel.show(empty, at: .zero)
 precondition(!panel.isVisible, "empty snapshot must hide the panel")
@@ -258,4 +278,4 @@ app.hide(nil)
 precondition(app.isHidden, "test setup: app must be hidden")
 CandidatePanel.revealApp(app)
 precondition(!app.isHidden && !app.isActive, "revealApp unhides without activating")
-print("Passed native candidate panel checks: legacy payload, near notes, labels, light/dark layout, hit testing, focus, accessibility fallback, hints and notices, hidden app")
+print("Passed native candidate panel checks: legacy payload, near notes, labels, light/dark layout, hit testing, focus, accessibility fallback, hints and notices, floating composition, hidden app")

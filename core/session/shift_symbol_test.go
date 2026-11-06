@@ -271,25 +271,61 @@ func TestShiftSymbolHalfwidthIdleKeysMatchSession(t *testing.T) {
 	}
 }
 
-// 微軟參考風格的 " < > 本來是半形原字元（microsoftRawPunctuation）；開了設定時照設定打 ; , .（要的是半形標點），
-// 反引號前導照舊打全形。\ ' 沒按 Shift，照風格。
-func TestShiftSymbolHalfwidthWinsOverMicrosoftRawKeys(t *testing.T) {
-	for _, tc := range []struct{ key, want string }{{"<", ","}, {">", "."}, {"\"", ";"}, {"?", "?"}} {
-		s := styleSession("microsoft")
-		s.ShiftSymbolHalfwidth = true
-		if snap := key(s, tc.key); tc.want != tc.key && (!snap.Handled || snap.Commit != tc.want) {
-			t.Fatalf("微軟風格沒在組字時 %q 應送出 %q：%+v", tc.key, tc.want, snap)
+// 微軟參考風格的 \ ' " < > ? 本來就打半形原字元（microsoftRawPunctuation）。這個設定的意思是「Shift 組合不打全形」，
+// 不是換成另一個字，所以開了也照風格（#272）：Shift＋, 仍是 <、Shift＋. 仍是 >、Shift＋' 仍是 "，閒置、組字中、
+// ↓、中英混打都跟沒開時一樣。其他 Shift 符號（( ) { } : ! ~ & ^ _）照設定打半形；反引號前導照舊打全形。
+func TestShiftSymbolHalfwidthKeepsMicrosoftRawKeys(t *testing.T) {
+	same := func(name string, run func(s *Session) proto.Snapshot, after func(s *Session) []string) {
+		t.Helper()
+		off, on := styleSession("microsoft"), styleSession("microsoft")
+		on.ShiftSymbolHalfwidth = true
+		a, b := run(off), run(on)
+		if !reflect.DeepEqual(a, b) {
+			t.Errorf("微軟風格%s開了設定應照風格：關 %+v，開 %+v", name, a, b)
 		}
-		typeSyl(s, "ㄨㄛˇ")
-		if snap := key(s, tc.key); snap.Text() != "我"+tc.want {
-			t.Fatalf("微軟風格組字中 %q 應打 %q：%+v", tc.key, tc.want, snap)
+		if after != nil && !reflect.DeepEqual(after(off), after(on)) {
+			t.Errorf("微軟風格%s的 ↓ 應照風格：關 %q，開 %q", name, after(off), after(on))
 		}
+	}
+	for _, k := range []string{"<", ">", "\"", "?", "\\", "'"} {
+		same("閒置 "+k, func(s *Session) proto.Snapshot { return key(s, k) }, nil)
+		same("組字中 "+k, func(s *Session) proto.Snapshot { typeSyl(s, "ㄨㄛˇ"); key(s, k); return key(s, proto.KeyEnter) }, nil)
+		same("組字中 ↓ "+k, func(s *Session) proto.Snapshot {
+			typeSyl(s, "ㄨㄛˇ")
+			key(s, k)
+			key(s, proto.KeyLeft)
+			return key(s, proto.KeyDown)
+		}, candidateTexts)
+		same("混打 "+k, func(s *Session) proto.Snapshot {
+			s.MixedInput = true
+			mixedType(s, "ji3"+k+"DNS"+k+"ji3")
+			return key(s, proto.KeyEnter)
+		}, nil)
 	}
 	s := styleSession("microsoft")
 	s.ShiftSymbolHalfwidth = true
-	if snap := key(s, "'"); snap.Handled {
-		t.Fatalf("微軟風格的 ' 照風格交還應用程式：%+v", snap)
+	if snap := key(s, "<"); snap.Handled {
+		t.Fatalf("微軟風格閒置的 Shift＋, 照風格交還應用程式打 <：%+v", snap)
 	}
+	typeSyl(s, "ㄨㄛˇ")
+	key(s, "<")
+	key(s, ">")
+	key(s, "\"")
+	if snap := key(s, proto.KeyEnter); snap.Commit != "我<>\"" {
+		t.Fatalf("微軟風格組字中 Shift＋, . ' 照風格打 < > \"：%+v", snap)
+	}
+	// 其他 Shift 符號照設定打半形。
+	for _, k := range []string{"(", ")", "{", "}", ":", "!", "~", "&", "^", "_"} {
+		s := styleSession("microsoft")
+		s.ShiftSymbolHalfwidth = true
+		typeSyl(s, "ㄨㄛˇ")
+		key(s, k)
+		if snap := key(s, proto.KeyEnter); snap.Commit != "我"+k {
+			t.Errorf("微軟風格開了設定時 %q 打半形：%+v", k, snap)
+		}
+	}
+	s = styleSession("microsoft")
+	s.ShiftSymbolHalfwidth = true
 	key(s, "`")
 	if snap := key(s, "<"); snap.Text() != "＜" {
 		t.Fatalf("反引號前導照舊全形：%+v", snap)

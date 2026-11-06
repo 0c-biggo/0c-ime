@@ -16,7 +16,12 @@ final class LingxiInputController: IMKInputController {
         return panel
     }()
     private var snapshot: Snapshot? {
-        didSet { if snapshot == nil { shownMarked = nil } }
+        didSet {
+            guard snapshot == nil else { return }
+            shownMarked = nil
+            // 重設、失焦、改插入文字：下一段組字重新決定要不要浮動（#84）。
+            floating.compositionEnded()
+        }
     }
     // 上一次交給 App 的組字；內容相同時不重送（#108）。snapshot 清空（重設、失焦、改插入文字）時一併忘記。
     private var shownMarked: MarkedText.Shown?
@@ -27,6 +32,11 @@ final class LingxiInputController: IMKInputController {
     // 引擎冷啟動期間暫存的請求（含原始字元，引擎不處理時補送給 App），連上後依序重送。
     private let queued = RequestQueue()
     private var retry: Timer?
+    // 浮動組字（#84，FloatingComposition.swift）：App 在組字中途自己結束組字的欄位，組字改畫在面板。
+    private var floating = FloatingComposition()
+    // 組字開頭的游標行（#84）：Chrome 沒有組字時給不出游標位置，在每段組字開頭（App 裡還有組字時）先記下，
+    // 浮動組字的面板放在這裡，欄位改成固定浮動時也用它認欄位。
+    private var compositionAnchor: NSRect?
 
     // 更新交接（#170，Retire.swift）：任一個輸入控制器還在組字時，收到 SIGTERM 也先不結束。
     private static let live = NSHashTable<LingxiInputController>.weakObjects()
@@ -125,6 +135,10 @@ final class LingxiInputController: IMKInputController {
     override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
         guard let event, let client = sender as? IMKTextInput else { return false }
         RetireMonitor.shared.noteKey()
+        if event.type == .keyDown {
+            ShellStats.shared.noteKey()
+            floating.keyArrives(composing: snapshot?.composing == true)
+        }
         Self.live.add(self)
         guard !bypassSecureInput(client) else { return false }
         if event.type == .flagsChanged { return handleFlags(event, client: client) }
@@ -145,13 +159,13 @@ final class LingxiInputController: IMKInputController {
            session.ctrlPunct(key: ctrl), !capsMode, snapshot?.mode != "english" {
             confirmDocumentContext(client)
             if send(Request(type: "key", key: ctrl), to: client, characters: KeyMapping.ctrlPunctText[ctrl]) { return true }
-            if !flushQueuedEnglish(to: client) { commitComposition(sender) }
+            if !flushQueuedEnglish(to: client) { commitNow(client) }
             return false
         }
         guard let key = KeyMapping.key(code: event.keyCode, characters: event.characters,
                                        modifiers: event.modifierFlags, vocabKeys: session.vocabKeys,
                                        styleShiftSpace: session.styleShiftSpace, capsLower: session.styleCapsLower) else {
-            if !flushQueuedEnglish(to: client) { commitComposition(sender) }
+            if !flushQueuedEnglish(to: client) { commitNow(client) }
             return false
         }
         confirmDocumentContext(client)
@@ -235,6 +249,9 @@ final class LingxiInputController: IMKInputController {
     }
 
     override func activateServer(_ sender: Any!) {
+        ShellStats.shared.noteActivate()
+        floating.reset()
+        compositionAnchor = nil
         dropQueued()
         capsMode = false
         capsViaMode = false
@@ -253,6 +270,7 @@ final class LingxiInputController: IMKInputController {
     }
 
     override func deactivateServer(_ sender: Any!) {
+        ShellStats.shared.noteDeactivate()
         dropQueued()
         capsMode = false
         capsViaMode = false
@@ -260,7 +278,8 @@ final class LingxiInputController: IMKInputController {
         rightShift.reset()
         leftShift.reset()
         hint.orderOut(nil)
-        commitComposition(sender)
+        if let client = sender as? IMKTextInput { commitNow(client) }
+        floating.reset()
         dropQueued() // callbacks from the old client must not survive focus loss
         pendingContext = nil
         lastCaret = nil
@@ -269,15 +288,44 @@ final class LingxiInputController: IMKInputController {
         panel.orderOut(nil)
     }
 
+    /// App 要求結束組字（點到別處、網頁把輸入框 blur 等）。輸入法自己因按鍵、失焦送出組字走 commitNow，不經過這裡。
+    /// 剛把組字交給 App 就被結束的是 App 自己結束的（#84）：這段組字不送出，改畫在面板。
     override func commitComposition(_ sender: Any!) {
         toggleArmed = false // 點到別處等由系統結束組字的時機；沒有組字時也不再放回注音
-        guard let client = sender as? IMKTextInput,
-              !bypassSecureInput(client), snapshot?.composing == true || !queued.isEmpty else { return }
+        guard let client = sender as? IMKTextInput else { return }
+        let composing = snapshot?.composing == true && queued.isEmpty && !queued.isProcessing
+        let shown = shownMarked?.text.string
+        // App 回報的組字位置：Chrome 這時已結束組字，回報的仍是剛結束的那段（殘字的位置）。只在可能救回時才問。
+        var location: Int?
+        if composing, shown != nil {
+            let range = client.markedRange()
+            if range.location != NSNotFound { location = range.location }
+        }
+        let wasSticky = floating.sticky
+        switch floating.appEndsComposition(at: ProcessInfo.processInfo.systemUptime, composing: composing, shown: shown,
+                                           location: location, line: compositionAnchor) {
+        case .ignore:
+            return
+        case .rescue:
+            shownMarked = nil // App 已經把組字留成文字，App 裡沒有組字了
+            let field = floating.sticky && !wasSticky
+            ShellStats.shared.noteFloating(bundle: client.bundleIdentifier(), field: field)
+            NSLog("0c: the app ended the composition; showing it in the panel%@", field ? " (field switched to floating)" : "")
+            if let snapshot, !rendering { showPanel(snapshot, client: client) }
+        case .commit:
+            commitNow(client)
+        }
+    }
+
+    private func commitNow(_ client: IMKTextInput) {
+        toggleArmed = false
+        guard !bypassSecureInput(client), snapshot?.composing == true || !queued.isEmpty else { return }
         _ = send(Request(type: "commit"), to: client)
     }
 
     override func hidePalettes() { panel.orderOut(nil) }
     override func inputControllerWillClose() {
+        floating.reset()
         dropQueued()
         pendingContext = nil
         panel.orderOut(nil)
@@ -505,9 +553,10 @@ final class LingxiInputController: IMKInputController {
     // TextEdit 移動視窗後只移動候選的水平位置；零高度矩形也不能覆蓋有效的行錨點。
     private var lastCaret: NSRect?
 
+    /// 浮動組字（#84）時 App 裡沒有組字、游標不動，以組字開頭（index 0）定位。
     private func caretRect(_ client: IMKTextInput) -> NSRect {
         var line = NSRect.zero
-        let index = max(0, (snapshot?.cursor.utf16 ?? 0) - 1)
+        let index = floating.floating ? 0 : max(0, (snapshot?.cursor.utf16 ?? 0) - 1)
         _ = client.attributes(forCharacterIndex: index, lineHeightRectangle: &line)
         if !CaretGeometry.valid(line), index != 0 {
             _ = client.attributes(forCharacterIndex: 0, lineHeightRectangle: &line)
@@ -518,7 +567,7 @@ final class LingxiInputController: IMKInputController {
             cursor = client.firstRect(forCharacterRange: NSRange(location: selected.location, length: 0), actualRange: nil)
         }
         guard let caret = CaretGeometry.resolve(cursor: cursor, line: line, screens: NSScreen.screens.map(\.frame))
-        else { return lastCaret ?? .zero }
+        else { return (floating.floating ? compositionAnchor : nil) ?? lastCaret ?? .zero }
         lastCaret = caret
         return caret
     }
@@ -529,31 +578,103 @@ final class LingxiInputController: IMKInputController {
         defer { rendering = false }
         let generation = queued.cancellationGeneration
         let hadMarkedText = !(snapshot?.text.isEmpty ?? true)
+        let wasComposing = snapshot?.composing == true
         snapshot = next
         EngineSession.note(next) // 「輸出簡體字」在別處切換後跟上（#169）
+        if !wasComposing, next.composing {
+            var line: NSRect?, caret: Int?
+            if floating.needsField {
+                line = fieldLine(client)
+                let selection = client.selectedRange()
+                if selection.location != NSNotFound, selection.length == 0 { caret = selection.location }
+            }
+            floating.compositionStarts(line: line, caret: caret)
+        }
+        let now = ProcessInfo.processInfo.systemUptime
         if let commit = next.commit, !commit.isEmpty {
             shownMarked = nil // insertText 取代了 App 裡的組字
-            queued.present { client.insertText(commit, replacementRange: replacement) }
+            var range = leftoverRange(client) ?? replacement
+            // 浮動組字送出一個字（#84）：App 裡沒有組字時，Chromium 把只有一個 UTF-16 單位的文字當成這個按鍵打出的字元，
+            // 跟在原本的按鍵後面送給網頁；網頁攔下那個鍵（搜尋框按 Enter 開啟結果時 preventDefault）字就不見了。
+            // 給明確的位置（目前的游標）讓 Chromium 直接插入；兩個字以上本來就直接插入（網頁收到 keyCode 229）。
+            if range.location == NSNotFound, floating.floating, (commit as NSString).length == 1 {
+                let selection = client.selectedRange()
+                if selection.location != NSNotFound, selection.length == 0 { range = selection }
+            }
+            // 浮動組字送出後游標應在哪裡：下一段組字開始時用來判斷是不是換了輸入框（App 裡沒有組字，插在游標處）。
+            var start: Int?
+            if floating.floating {
+                let selection = range.location != NSNotFound ? range : client.selectedRange()
+                if selection.location != NSNotFound { start = selection.location }
+            }
+            queued.present { client.insertText(commit, replacementRange: range) }
+            floating.textInserted(at: now)
+            floating.caretAfterInsert(start.map { $0 + (commit as NSString).length })
             guard queued.cancellationGeneration == generation else { return }
             pendingContext = session.contextEnabled ? next.contextID.map { ($0, commit) } : nil
+        } else if !next.composing, let range = leftoverRange(client) {
+            // 救回的組字被取消（Esc、刪光）：App 留下的殘字也一起刪掉。
+            queued.present { client.insertText("", replacementRange: range) }
+            floating.textInserted(at: now)
+            guard queued.cancellationGeneration == generation else { return }
         }
         let marked = MarkedText.attributed(next.preedit ?? [])
         let shown = MarkedText.Shown(text: marked, cursor: min(max(0, next.cursor.utf16), marked.length))
-        if marked.length > 0 || (hadMarkedText && (next.commit ?? "").isEmpty),
+        if floating.floating {
+            shownMarked = nil // 浮動組字（#84）：組字畫在面板，App 裡不放組字，也不送空的組字
+        } else if marked.length > 0 || (hadMarkedText && (next.commit ?? "").isEmpty),
            !MarkedText.unchanged(shown, last: shownMarked, clientMarkedRange: { client.markedRange() }) {
             shownMarked = marked.length > 0 ? shown : nil // 先記：送出途中的回呼若重設狀態會清掉它
             queued.present {
                 client.setMarkedText(marked, selectionRange: NSRange(location: shown.cursor, length: 0),
                                      replacementRange: replacement)
             }
+            if marked.length > 0 { floating.markedTextShown(at: now) }
+            if marked.length > 0, !wasComposing { noteCompositionAnchor(client) }
         }
+        if !next.composing { floating.compositionEnded() }
         guard queued.cancellationGeneration == generation else { return }
         // 提示（加入詞庫、反悔鍵的結果，#123）與標示中的說明跟候選一起畫在同一個面板；只有提示時面板幾秒後自己收起。
         // 讀音提示（#162）也畫在這個面板。
-        if next.candidates != nil || next.suggestion != nil || !next.visibleNotices.isEmpty || next.markedText != nil || next.visibleReading != nil {
+        showPanel(next, client: client)
+    }
+
+    private func showPanel(_ next: Snapshot, client: IMKTextInput) {
+        let composition = floating.floating && next.composing
+        if composition || next.candidates != nil || next.suggestion != nil || !next.visibleNotices.isEmpty || next.markedText != nil || next.visibleReading != nil {
             let caret = caretRect(client)
             panel.level = NSWindow.Level(rawValue: max(NSWindow.Level.popUpMenu.rawValue, Int(client.windowLevel()) + 1))
-            panel.show(next, at: caret)
+            panel.show(next, at: caret, composition: composition)
         } else { panel.orderOut(nil) }
+    }
+
+    /// 組字開頭的位置（#84）：App 結束組字後（Chrome）就問不到了，浮動組字的面板放在這裡。每段組字開頭一次查詢。
+    private func noteCompositionAnchor(_ client: IMKTextInput) {
+        var line = NSRect.zero
+        _ = client.attributes(forCharacterIndex: 0, lineHeightRectangle: &line)
+        compositionAnchor = CaretGeometry.resolve(cursor: .zero, line: line, screens: NSScreen.screens.map(\.frame))
+    }
+
+    /// 欄位所在的行（#84）：只在已改成浮動的欄位開始新的組字時查，用來分辨游標是不是換到別的輸入框。
+    private func fieldLine(_ client: IMKTextInput) -> NSRect? {
+        var line = NSRect.zero
+        _ = client.attributes(forCharacterIndex: 0, lineHeightRectangle: &line)
+        var cursor = NSRect.zero
+        let selected = client.selectedRange()
+        if selected.location != NSNotFound {
+            cursor = client.firstRect(forCharacterRange: NSRange(location: selected.location, length: 0), actualRange: nil)
+        }
+        return CaretGeometry.resolve(cursor: cursor, line: line, screens: NSScreen.screens.map(\.frame))
+    }
+
+    /// App 結束組字時留下的殘字（#84）：送出或取消救回的組字時取走（只試一次），游標仍緊接在它後面才回傳它的範圍，
+    /// 否則（使用者點到別處、網頁沒留下）不動 App 裡的文字。
+    private func leftoverRange(_ client: IMKTextInput) -> NSRange? {
+        guard let leftover = floating.takeLeftover() else { return nil }
+        let range = FloatingComposition.leftoverRange(leftover, selection: client.selectedRange()) {
+            client.attributedSubstring(from: $0)?.string
+        }
+        if range == nil { NSLog("0c: the text the app kept from the composition is no longer before the caret; leaving it") }
+        return range
     }
 }

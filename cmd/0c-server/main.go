@@ -161,6 +161,7 @@ func serve() string {
 	eng.AdvanceAfterSelect = config.AdvanceAfterSelect
 	eng.CtrlPunct = config.CtrlPunctuation                 // #168
 	eng.ShiftSymbolHalfwidth = config.ShiftSymbolHalfwidth // #258
+	eng.CJKLatinSpace = config.CJKLatinSpace               // #273
 	// #173：Windows、Linux 的設定；macOS 開 Caps Lock 一律切到英文（#84），不看設定檔的值。
 	capsSetting := config.CapsLockEnglish && (settings.CapsLockEnglishSetting(runtime.GOOS) || config.ProfileRules().CapsLetter == "lower")
 	eng.CapsLockEnglish = capsLockRequests(runtime.GOOS, capsSetting)
@@ -458,6 +459,8 @@ func serve() string {
 		"ctrl_punctuation_keys": proto.CtrlPunctKeys,
 		// #258：Shift＋符號打半形；外殼不用看（沒在組字時交還的鍵已從 idle_keys 拿掉），0c-update 拿它跟設定檔比較。
 		"shift_symbol_halfwidth": fmt.Sprint(eng.ShiftSymbolHalfwidth),
+		// #273：中英文之間自動加空格；外殼不用看（送出的 Commit 已補好），0c-update 拿它跟設定檔比較。
+		"cjk_latin_space": fmt.Sprint(eng.CJKLatinSpace),
 		// #173：引擎認得 caps_lock 請求而且設定「Caps Lock 開著時直接打英文」開著；外殼只在這一項是 true 時回報
 		// Caps Lock 狀態，舊引擎沒有這一項、或設定關閉時，注音模式照舊不理 Caps Lock（#168）。
 		"caps_lock_english": fmt.Sprint(capsSetting),
