@@ -248,23 +248,40 @@ async fn export_summary() -> Result<Value, String> {
     let home = home().ok_or("找不到家目錄")?;
     let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let text = updater::build_summary(&status, &settings, option_env!("ZC_BUILD_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")), secs, &home.to_string_lossy());
-    let downloads = home.join("Downloads");
-    let dir = if downloads.is_dir() { downloads } else { home };
+    let dir = download_dir(&home);
     let path = dir.join(format!("0c-status-{}.json", updater::file_stamp(secs)));
-    write_private(&path, text.as_bytes()).map_err(|e| format!("無法寫入 {}：{e}", path.display()))?;
+    updater::write_private(&path, text.as_bytes()).map_err(|e| format!("無法寫入 {}：{e}", path.display()))?;
     Ok(json!({ "path": path.display().to_string() }))
 }
 
-fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true); // 不覆寫既有的檔案
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
+/// 下載資料夾，沒有就家目錄；Linux 依 user-dirs.dirs（中文桌面是 ~/下載）。
+fn download_dir(home: &Path) -> PathBuf {
+    let user_dirs = if cfg!(target_os = "linux") {
+        let config = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| home.join(".config"));
+        std::fs::read_to_string(config.join("user-dirs.dirs")).ok()
+    } else {
+        None
+    };
+    updater::download_dir(home, user_dirs.as_deref())
+}
+
+/// 「我的詞彙」匯出（#255）：前端組好的文字檔（ui/vocab-text.js）寫到下載資料夾，沒有就家目錄；
+/// 不覆寫既有的檔案、只有自己能讀。回傳路徑。內容就是使用者自己的詞，只寫到使用者自己的資料夾。
+#[tauri::command]
+async fn export_vocab(text: String) -> Result<Value, String> {
+    if text.len() > updater::VOCAB_EXPORT_MAX {
+        return Err("詞彙太多，無法匯出".to_string());
     }
-    options.open(path)?.write_all(bytes)
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = home().ok_or("找不到家目錄")?;
+        let dir = download_dir(&home);
+        let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let path = updater::write_new_file(&dir, &format!("0c-vocab-{}", updater::file_stamp(secs)), "txt", text.as_bytes())
+            .map_err(|e| format!("無法寫入 {}：{e}", dir.display()))?;
+        Ok(json!({ "path": path.display().to_string() }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// 視窗只准留在自己的本機頁面：任何導向外部網址（連結、重新導向）一律擋下。
@@ -308,7 +325,7 @@ fn main() {
         .manage(watch::Watcher::default())
         .invoke_handler(tauri::generate_handler![
             app_info, get_status, get_settings, set_settings, check_update, download_update, install_update, export_summary,
-            profile_command, vocab_request, api_command, vocab_watch, vocab_unwatch, models_command, open_url
+            profile_command, vocab_request, export_vocab, api_command, vocab_watch, vocab_unwatch, models_command, open_url
         ])
         .setup(move |app| {
             open_window(app.handle(), page)?;

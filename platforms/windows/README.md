@@ -18,11 +18,12 @@
 ```powershell
 cd platforms\windows
 cargo build --release                       # target\release\0c_tsf.dll、0c-ui.exe
-$env:CARGO_TARGET_I686_PC_WINDOWS_MSVC_RUSTFLAGS = "-C target-feature=+crt-static"
 cargo build --release --target i686-pc-windows-msvc -p zuin-tsf   # 32 位元應用程式用的 DLL
 cd ..\..
 go build -o platforms\windows\target\0c-server.exe .\cmd\0c-server
 ```
+
+C 執行階段靜態連結（`.cargo/config.toml` 的 `+crt-static`，x64 與 i686 都是）：DLL 與候選窗不依賴 Visual C++ 可轉散發套件，沒裝的電腦也註冊得起來（#261）。設了 `RUSTFLAGS` 環境變數會蓋掉這個設定，`scripts/package_windows.py` 打包時會檢查匯入表，發現 `VCRUNTIME140.dll`、`MSVCP140.dll` 等就中止。內附 Python 與 onnxruntime 需要的 `vcruntime140*.dll`、`msvcp140*.dll` 放在 `neural\python\` 裡（#80）。
 
 從 Linux 交叉編譯 server 也可以：`GOOS=windows GOARCH=amd64 go build -o build/windows/0c-server.exe ./cmd/0c-server`（沒有 cgo）。
 
@@ -67,11 +68,13 @@ go build -o platforms\windows\target\0c-server.exe .\cmd\0c-server
 - 敏感欄位：每次送鍵前核對 TSF 的停用／空 context compartment、唯讀狀態及 InputScope。密碼、PIN、secure mode 不送鍵到引擎、不記錄鍵碼；清除候選與待重播組字。只標 `IS_PRIVATE` 的欄位（Chrome 無痕／訪客、Firefox 私密視窗的所有欄位）照常組字，但每個請求帶 `private`：引擎不學習、不補標點、不做神經重排，外殼也不讀前文；同時帶密碼／PIN 時仍繞過。部分原生 RichEdit（含記事本）未提供 InputScope 而回傳 E_FAIL／E_NOTIMPL 時，只在核對 context、焦點、程序及已知原生控制項類別後，改查密碼遮罩、唯讀與停用狀態。其他讀不到 InputScope 的自訂欄位——IMM32 程式（系統相容層的暫時 context，`TF_SS_TRANSITORY`）、自行繪製候選的宿主（UI-less，#86），以及自己實作 TSF 文字儲存、不支援任何文字屬性的程式（Unreal Engine 遊戲的 `UnrealWindow`，WARDOGS 聊天框，#209）——焦點、程序相符且不是密碼／唯讀的原生編輯框、MSAA 也沒標成保護、唯讀或停用時，以私人欄位組字（不學習、不讀前文）。Windows App SDK（WinUI 3）XAML island 的文字框（23H2 起檔案總管的網址列與搜尋框、相片等）沒設 InputScope 時同樣回 E_FAIL，焦點視窗是 `InputSiteWindowClass`、MSAA 只有空的 CLIENT；焦點與程序相符時照常組字，宿主開了觸控鍵盤預測或自動校正（`TS_SS_TKB*`）視為一般欄位，沒開的以私人欄位組字（#105）；PasswordBox 的預設 InputScope 是 Password，仍由 InputScope 擋下。OneNote 桌面版的頁面 `OneNote::DocumentCanvas` 同樣回 E_FAIL，而且在 OneNote 行程內查不到 MSAA（AccessibleObjectFromWindow 回 E_FAIL），焦點與程序相符時以已知文件畫布照常組字（#163）。其他無法確認的欄位（焦點不在這個 context、MSAA 標成保護等）放行給宿主，不讀取文件文字；降級成私人組字或放行時，tsf.log 每個行程對同樣的情況記一次「欄位政策：…」（宿主執行檔、HRESULT、context 旗標、焦點與 view 的視窗類別，不含文字與鍵碼），不必開 `tsf-debug`（#209）。系統的輸入法開關熱鍵 Ctrl＋Space 不送按鍵、不讀文件，只有確定擋下的欄位（停用、唯讀、密碼）不切換；Word、Outlook 收到熱鍵當下不給同步唯讀鎖，讀不到欄位政策時照常切換（#164）。
 - UI-less 宿主（#86）：遊戲等自行繪製候選的程式（例如英雄聯盟遊戲內聊天、SDL2 程式）以 `TF_TMAE_UIELEMENTENABLEDONLY` 啟用，只載入註冊了 `GUID_TFCAT_TIPCAP_UIELEMENTENABLED` 的輸入法。候選清單以 `ITfCandidateListUIElement` 提供（只含目前這一頁）；宿主在 `BeginUIElement` 回 pbShow=FALSE 時不顯示外殼的候選窗，一般程式照常顯示。新類別隨每次更新以新版 DLL 重新註冊，升級即生效。
 - COM-less 啟用（#157）：GUI 執行緒的 COM 不是 STA（例如以 MTA 初始化）時，系統以 `TF_TMAE_COMLESS` 啟用輸入法，只載入註冊了 `GUID_TFCAT_TIPCAP_COMLESS` 的輸入法；沒註冊時工作列仍顯示「中」，按鍵卻直接以英文送出（Minecraft Java 版）。DLL 註冊這個類別；啟用時不呼叫 `CoCreateInstance`，顯示屬性的 GUID 以 msctf 的 `TF_CreateCategoryMgr` 註冊（`msctf.rs`，不分是不是 COM-less 啟用）。
+- 鍵盤開關（`GUID_COMPARTMENT_KEYBOARD_OPENCLOSE`）：系統相容層把它當成 IMM32 程式的 `ImmGetOpenStatus`。啟用時是 0 就設成 1（#257），同微軟注音、新酷音（windows-chewing-tsf 的 `init_openclose`）與 PIME（libIME 的 `Activate`）；以前外殼從不設，只裝靈犀注音時新開的程式一律看到「輸入法關著」（.14：微軟注音當預設 6/6 是開，靈犀當預設時切換後第二個程式起 5/5 是關），相信這個值的程式（CAD 外掛、指令列）就把組字結果丟掉或改走英文。設定在註冊變更通知之前，不會被當成 Ctrl＋Space；系統的 Ctrl＋Space 熱鍵照舊翻轉它、外殼跟著切換中英（#117），所以切到英文時程式看到的是「關」。程式自己 `ImmSetOpenStatus(FALSE)` 時外殼仍照常組字、不看這個值（微軟注音與 libIME 會改打英文），這個差異沒有改。`activate 完成` 那行在設定時記 `鍵盤開關 0 -> 1`。
 - 換欄位（ITfThreadMgrEventSink::OnSetFocus）與停用時送 `commit`；應用程式自行終止組字（滑鼠點到別處）時送 `cancel`，不學習。例外是宿主把組字搬到新的焦點文件（#189）：Excel 的儲存格還沒進入編輯時，第一鍵在試算表的文件開始組字，Excel 隨即把焦點移到 NULL、建立儲存格編輯器，再把焦點連同組字交給編輯器的文件。新的焦點文件就是組字範圍所在的文件時繼續組字，不送出、不重開 session；焦點移到 NULL 時先不送出，以回呼視窗的 WM_TIMER（佇列空了才產生，宿主接連的焦點變化都處理完才輪到）再確認一次，焦點沒回到組字所在的文件才照舊送出到原文件。以前第一次焦點變化就把第一鍵的注音送出，「第一次」變成「ㄉ億一次」（0.2.1 的混打是「2億一次」）。TSF 範例輸入法與 libIME（PIME、新酷音）都不因換文件結束組字；小狼毫曾在 OnSetFocus 結束組字，在 Excel 與檔案總管網址列造成同樣的第一鍵問題後撤回（rime/weasel#1178、#1182）。
 - 每個 COM 入口以 `catch_unwind` 攔 panic：四個 DLL 匯出用 `guard`，`#[implement]` 產生的介面方法（`OnKeyDown`、`DoEditSession`、`Activate`、`CreateInstance`…）一律用 `guarded` 包住方法本體。windows crate 的 vtable thunk 不會自己攔，漏掉一個就等於讓 panic 終止宿主應用程式。`profile.release.panic = "unwind"` 不可改成 abort。
 - `DllCanUnloadNow` 依活著的 COM 物件數回答：`TextService`、`ClassFactory`、edit session 與顯示屬性物件都在建構時加一、`Drop` 時減一，加上 `LockServer`。漏算任何一種，DLL 可能在還有物件存活時被卸載。輸入指示器向 `0c-ui` 查狀態的背景執行緒另外持有一份模組參考（`GetModuleHandleExW`），以 `FreeLibraryAndExitThread` 結束，執行緒收尾時 DLL 不會被卸載（#89）。
 - 提交不能丟：`TF_ES_SYNC` 的 edit session 在按鍵回呼之外可能被拒（失焦、停用時）。此時若快照有提交文字，改排 `TF_ES_ASYNCDONTCARE` 的 edit session 由它寫入並結束組字；只是更新組字則保留原本的組字物件，下一鍵再同步。提交文字一旦寫進文件就不再重排：之後放游標、結束組字失敗只記錄，宿主跑完 edit session 卻回報失敗也照成功處理，否則同一段字會在新組字裡再插入一次（#88）。SetText 本身回報失敗時，以同一個 edit cookie 讀回組字範圍：內容就是提交文字才算已寫入，讀不回或不相符就照未寫入改排非同步，提交不會遺失。
-- 診斷紀錄：`%LOCALAPPDATA%\Zuin\tsf.log`（目錄存在才寫；超過 4 MiB 重來），只記事件與錯誤，不記輸入的文字。每次啟用記一行開始、一行完成（含宿主執行檔名稱）；panic 只記檔案與行號，不記訊息（訊息可能帶出輸入的字，#89）；edit session 失敗記步驟與 HRESULT。
+- 診斷紀錄：`%LOCALAPPDATA%\Zuin\tsf.log`（目錄存在才寫；超過 4 MiB 重來），只記事件與錯誤，不記輸入的文字。每次啟用記一行開始、一行完成（含宿主執行檔名稱）；panic 只記檔案與行號，不記訊息（訊息可能帶出輸入的字，#89）；edit session 失敗記步驟與 HRESULT。每個行程對每種文字欄位記一次「文件：…」（IMM32 相容層或 TSF 文字儲存、靜態旗標、焦點視窗類別、欄位政策結果，最多 8 種），欄位被擋下時記一次原因（程式停用輸入法：唯讀／鍵盤停用／空的 context、密碼或 PIN、沒有焦點文件），不含文字與鍵碼（#257）。
+- 狀態摘要（設定程式「匯出狀態」、`0c-update status -json -diagnostics`）的 `shell.tsf_log` 由 `cmd/0c-update/tsf_apps.go` 從 tsf.log 尾端（最多 4 MiB）整理：最近 7 天、最多 30 個程式，每個程式只有執行檔名稱、最近一次時間、是否 32 位元、啟用旗標、各種判定的次數（`events`；多數紀錄每個行程只記一次，所以是「幾個行程遇到」而不是按鍵次數）與最多 8 則判定細節（欄位政策、文件種類、候選窗退路、提交失敗，路徑換成檔名）。`debug` 開頭或帶 `vk=` 的行整行不讀，引擎回傳的錯誤只計次不抄內容；平常的狀態輪詢不帶（#257）。
 - 除錯紀錄：另外建立空檔 `%LOCALAPPDATA%\Zuin\tsf-debug` 後，同一個檔會多記每個按鍵的虛擬鍵碼與快照摘要。**這等於記下輸入內容，只在排錯時開，用完刪掉那個檔。**
 
 候選窗跟隨 Windows 應用程式亮／暗主題，收到設定變更立即重繪；高對比模式採系統文字、背景與選取色。Emoji 多排及單欄退回都使用 DirectWrite／Direct2D 彩色字型，高對比與繪圖不可用時保留系統色／GDI 退回。DPI 改變後重新排版最新快照，避免舊候選重新出現。
@@ -93,6 +96,8 @@ go build -o platforms\windows\target\0c-server.exe .\cmd\0c-server
   Start-Process .\target\0c-server.exe -ArgumentList "-data",".\data","-user",".\test-user.json","-socket",$pipe
   $env:ZUIN_TEST_PIPE = $pipe; cargo test --release
   ```
+
+  另外兩個管道各接一個設定不同的測試引擎（`-user` 目錄裡放 `settings.json`）：`ZUIN_TEST_CAPS_PIPE` 是 `caps_lock_english` 開著（#173）；`ZUIN_TEST_CAPS_LOWER_PIPE` 再加上英文自動補字與「Caps Lock 英文字母：預設小寫」（`0c-update set caps-lock-english on`、`set english-autocomplete on`、`set style-caps-letter lower`，#112）。`ZUIN_TEST_ENGLISH_PIPE` 只開英文自動補字（`set english-autocomplete on`），`service::imm32_order_tests` 以假的系統相容層宿主檢查 IMM32 程式裡單字與空白、標點、方向鍵的先後（#260；沒設時改用 `ZUIN_TEST_CAPS_LOWER_PIPE`），以及組字中 Ctrl 組合鍵與組字的先後（#262，注音組字用 `ZUIN_TEST_PIPE`）。沒設就略過那幾個測試。
 
 - `test\desktop-test.ps1`：桌面驗收。要在**已登入的互動工作階段**執行（沒有人坐在機器前時，可用 `Register-ScheduledTask -Principal (New-ScheduledTaskPrincipal -UserId <使用者> -LogonType Interactive)` 從 SSH 觸發）。它開一個 WPF 文字框、SendKeys 打字，每步把文字框內容記到 `job.out`、截圖到 `shot-NN.png`。前提是 Zuin 已是目前輸入法：`Set-WinUserLanguageList` 加入 `0404:{138C35D0-7F08-4CEF-BA90-C34C16301528}{EF62F743-9855-4C94-A658-1F0F98B7B840}`，再 `Set-WinDefaultInputMethodOverride` 或以 `ITfInputProcessorProfileMgr::ActivateProfile`（profile type 1）切換。這是舊版手動驗收腳本，會產生個人學習；只能搭配使用暫存 `-user` 的隔離引擎，不要對日常詞庫執行，也不要為清理測試而刪除日常 `user.json`。建議改用下列新版腳本。
 

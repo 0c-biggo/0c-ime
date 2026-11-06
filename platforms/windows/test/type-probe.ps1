@@ -76,7 +76,9 @@ public static class UpdateProbe {
         throw "probe window is not in the foreground ($($result.foreground)); refusing to type"
     }
     [System.Windows.Forms.SendKeys]::SendWait($Keys)
-    Pump 1500
+    # 剛交接的引擎要一點時間才接上：文字穩定 1.5 秒才讀，最多等 10 秒。
+    $stable = 0; $last = $null; $deadline = (Get-Date).AddSeconds(10)
+    do { Pump 500; if ($box.Text -and $box.Text -eq $last) { $stable += 500 } else { $stable = 0 }; $last = $box.Text } while ($stable -lt 1500 -and (Get-Date) -lt $deadline)
     $result.text = $box.Text
     if ($Hold -gt 0) {
         # 保持在前景（例如讓測試在工作列輸入指示器上操作），結束時回報宿主仍在。

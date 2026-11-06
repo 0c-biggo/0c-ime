@@ -91,3 +91,47 @@ func TestPrefixGuardNeverRaisesUnobservedMass(t *testing.T) {
 		t.Fatalf("normalization itself boosted an unobserved fragment: %g", got)
 	}
 }
+
+type versionedMass struct {
+	massScore
+	gen int
+}
+
+func (s *versionedMass) MassVersion() (int, int64) { return s.gen, 0 }
+
+// massScale 在個人資料版本不變時跨搜尋保留，版本一變就重建；保留時有上限（PR #51 審查）。
+func TestMassScaleKeptPerVersionAndBounded(t *testing.T) {
+	lex := lexicon.NewMem()
+	for _, x := range []struct{ w, r string }{{"甲", "ㄐㄧㄚˇ"}, {"假", "ㄐㄧㄚˇ"}, {"乙", "ㄧˇ"}, {"甲乙", "ㄐㄧㄚˇ ㄧˇ"}} {
+		lex.Add(lexicon.Entry{Surface: x.w, Reading: zhuyin.ParseReading(x.r), PRW: 1})
+	}
+	score := &versionedMass{massScore: massScore{map[string]float64{"甲": .01, "假": .02, "乙": .5, "甲乙": .005}, map[string]float64{"甲": .001, "假": .9, "乙": .5, "甲乙": .005}}}
+	d := Decoder{Lex: lex, Score: score}
+	lat := input.Exact{}.Expand(zhuyin.ParseReading("ㄐㄧㄚˇ ㄧˇ"))
+	d.Decode(lat, nil, false)
+	if len(d.massScale) == 0 {
+		t.Fatal("測試前提：前綴保護應算出 massScale")
+	}
+	d.massScale["保留"] = 1
+	d.Decode(lat, nil, false)
+	if _, ok := d.massScale["保留"]; !ok {
+		t.Fatal("版本沒變，massScale 應保留")
+	}
+	score.gen++
+	d.Decode(lat, nil, false)
+	if _, ok := d.massScale["保留"]; ok {
+		t.Fatal("版本變了，massScale 應重建")
+	}
+	full := map[string]float64{} // 已滿、而且沒有這次要用的鍵：下一個新鍵要讓它整份清掉
+	for i := range maxMassKeys {
+		full[string(rune(0x4e00+i))] = 1
+	}
+	d.massScale = full
+	d.Decode(lat, nil, false)
+	if n := len(d.massScale); n == 0 || n > maxMassKeys {
+		t.Fatalf("massScale 有 %d 筆，應清掉重算而不超過 %d", n, maxMassKeys)
+	}
+	if _, ok := d.massScale[string(rune(0x4e00+maxMassKeys-1))]; ok {
+		t.Fatal("超過上限時應整份清掉")
+	}
+}

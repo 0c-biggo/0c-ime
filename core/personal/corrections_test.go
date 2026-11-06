@@ -300,3 +300,21 @@ func TestUntonedMarkNeverReachesPersonalData(t *testing.T) {
 		t.Errorf("被推翻的範圍不學：%v", m.Store.Uni)
 	}
 }
+
+// 當次手選與已存更正同鍵時，手選取代已存紀錄；手選的詞在 tombstone 裡時這個鍵整個不算。
+// PR #51 改用 correctionIndex 後兩筆都進了 pick，tombstone 只擋掉手選那筆，已存的「甚麼」反而生效（審查時找到）。
+func TestCorrectionOverrideShadowsStoredEvenWhenTombstoned(t *testing.T) {
+	m := NewModel(nil, nil)
+	syls := zhuyin.ParseReading("ㄨㄛˇ ㄕㄜˊ ㄇㄜ˙ ㄉㄜ˙")
+	m.Store.CorrectionSerial = 1
+	m.Store.Corrections[correctionKey("ㄕㄜˊ ㄇㄜ˙", syls[0], syls[3])] = Correction{Reading: "ㄕㄜˊ ㄇㄜ˙", Left: syls[0], Right: syls[3], Word: "甚麼", Serial: 1}
+	m.Store.Tombstones["什麼"] = true
+	if f := m.CorrectionPenalty(syls, []Seg{{Word: "什麼", Start: 1, End: 3, Manual: true}}); f != nil {
+		t.Fatalf("已存更正不該生效：什麼 %.1f、甚麼 %.1f", f(1, 3, "什麼"), f(1, 3, "甚麼"))
+	}
+	// 沒有當次手選時，已存更正照常生效。
+	f := m.CorrectionPenalty(syls, nil)
+	if f == nil || f(1, 3, "什麼") <= 0 || f(1, 3, "甚麼") != 0 {
+		t.Fatal("沒有手選時已存更正應生效")
+	}
+}

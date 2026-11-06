@@ -237,6 +237,17 @@ button.icon {
 .vprow .vword { min-width: 5.5em; }
 .vprow.bad .vword { color: var(--muted); }
 .vpaste .actions { padding: 6px 0 4px; }
+.vpaste-note { margin: 8px 0 0; }
+.vpaste .notice { margin: 8px 0 0; }
+.vprows.scroll { max-height: 55vh; overflow-y: auto; border-top: 1px solid var(--line); }
+.vprows > .vprow:last-child { border-bottom: 0; }
+.vpsub { padding: 12px 0 2px; font-weight: 600; }
+.vptext { flex: 1 1 12em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 換電腦（#255）：標題列右邊的「匯出」「匯入」 */
+.vtitle { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 0 0 4px; }
+.vtitle h1 { margin: 0; }
+.vio { display: flex; gap: 8px; }
+.vpath { overflow-wrap: anywhere; }
 .batches .vrow { grid-template-columns: 3.6em 5.5em minmax(0, 1fr) auto; border-bottom: 0; }
 .btime { font-size: 13px; }
 .bwho { font-size: 13px; font-weight: 600; }

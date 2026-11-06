@@ -429,6 +429,17 @@ pub(crate) fn open_field() -> (HWND, ITfContext) {
     (view, ctx)
 }
 
+/// 給其他模組的宿主測試（#112）：IMM32 程式經系統相容層的暫時 context（只有 TS_SS_TRANSITORY），焦點視窗沒有系統插入點
+/// （自繪的編輯器、Photoshop 的畫布）。欄位政策是 Open，英文模式按鍵整個交給程式（#210）。回傳的視窗由呼叫端 DestroyWindow。
+pub(crate) fn imm32_window_without_caret() -> (HWND, ITfContext) {
+    init();
+    let view = window(w!("UnrealWindow"), 0);
+    let ctx = host(view, view, Scope::Scopes(vec![IS_DEFAULT]), TS_SS_TRANSITORY, 0);
+    assert_eq!(field(Some(&ctx), 1, false), Field::Open);
+    assert!(english_passthrough(&ctx, 0));
+    (view, ctx)
+}
+
 fn init() {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);

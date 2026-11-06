@@ -504,8 +504,10 @@ func (s *Session) finishMixedTone(key string) bool {
 		return false
 	}
 	// #119：緊接中文的完整反序音節（摺＋u2,6 → 摺疊）不拆成英文 u＋數字 2,6。
-	// 句首、空白或英文後仍保留 #200 的數字寫法；也不放寬後面的英→中切分。
-	englishNumber := key != " " && s.mixed.choice == 0 && s.englishThenNumber(raw, key)
+	// 句首、空白或英文後仍保留 #200 的數字寫法（hellou2,6、v1.2）；也不放寬後面的英→中切分。
+	// #256：聲母晚介音一鍵的整個音節（u1,6 是 ㄧㄅㄝˊ 別、u2,6 是 跌／疊、u2.7 是 丟）在句首、空白或英文後也照位置組字，
+	// 跟 u2/4 定一樣；單一個 u 接數字寫法不當成英文（2026-11-04 負責人決定比照常見注音輸入法的混打）。
+	englishNumber := key != " " && s.mixed.choice == 0 && s.englishThenNumber(raw, key) && !s.swappedSyllable(raw, sym)
 	if englishNumber && !s.mixedAfterChinese() {
 		return false
 	}
@@ -806,12 +808,51 @@ func (s *Session) digitThenLetters(raw string) bool {
 }
 
 // reversedAlnum（#249）：字母與數字鍵混打、組得成音節但按鍵順序顛倒（u2 的 ㄧㄉ、o1 的 ㄟㄅ、8x 的 ㄚㄌ、i1 的 ㄛㄅ、70 億的 0u）。
-// 真的在打注音時照順序打（2u、1o、x8、1i），比照 #175 只有數字的 813、017。
+// 真的在打注音時照順序打（2u、1o、x8、1i），比照 #175 只有數字的 813、017。快打時介音晚韻母一鍵（swappedVowels）不算。
 func (s *Session) reversedAlnum(raw string) bool {
-	if !strings.ContainsFunc(raw, unicode.IsLetter) || !strings.ContainsFunc(raw, unicode.IsDigit) || s.keysInSyllableOrder(raw) {
+	if !strings.ContainsFunc(raw, unicode.IsLetter) || !strings.ContainsFunc(raw, unicode.IsDigit) || s.keysInSyllableOrder(raw) || s.swappedVowels(raw) {
 		return false
 	}
 	_, ok := s.mixedComposer(raw)
+	return ok
+}
+
+// swappedVowels（#256）：快打時一個音節的按鍵只有相鄰兩鍵順序顛倒，照位置組字：
+//   - 介音晚韻母一鍵：聲母、韻母、介音（2/u 是 ㄉㄥㄧ、r0u 是 ㄐㄢㄧ、2ij 是 ㄉㄛㄨ、50j 是 ㄓㄢㄨ），沒有聲母時韻母、介音（9j 是 ㄞㄨ、0j 是 ㄢㄨ）；
+//   - 聲母晚介音一鍵：介音、聲母、韻母（u2/ 是 ㄧㄉㄥ、ur0 是 ㄧㄐㄢ）。
+//
+// 介音鍵（u j m）和多數韻母鍵都在右手，鍵程短的鍵盤快打時常常顛倒；一般注音模式本來就照位置組字（ㄉㄧㄥ，同新酷音、小麥注音），
+// 混打也照位置組，不當成英數寫法照字面留下或切成「2/一」，跟常見注音輸入法的混打模式一樣。
+// 只有兩鍵、聲母在後的（u2、o1、8x、i1）不算：英數寫法常見這種兩鍵（#249），照舊照字面。沒有聲母的兩鍵緊接在字面數字後面時
+// （40 餘年的 4＋0m、30 預期的 3＋0m、70 億的 7＋0u）是數字的一部分，照 #249 是數字接注音，不改成 4元、3院、7燕；
+// 聲母、韻母都是數字鍵的三鍵也一樣（720 億的 7＋20u 不是 7電）。
+// 介音是 ㄧ、前面的聲母與韻母都是數字鍵的（20u 電、10u 變、0u 演、8u 亞）也照位置組字，跟常見注音輸入法的混打一樣；
+// 要「20億」「10以上」時打完數字按 Enter 再打（PTT 2023 一萬個「數字＋中文」片段照順序打，有 19 個因此由對變錯）。
+func (s *Session) swappedVowels(raw string) bool {
+	var cls []zhuyin.Class
+	for _, k := range raw {
+		sym, ok := s.layout.Symbol(k)
+		if !ok {
+			return false
+		}
+		cls = append(cls, zhuyin.ClassOf(sym))
+	}
+	const i, m, f = zhuyin.Initial, zhuyin.Medial, zhuyin.Final
+	switch {
+	case slices.Equal(cls, []zhuyin.Class{m, i, f}):
+		return true
+	case slices.Equal(cls, []zhuyin.Class{i, f, m}), slices.Equal(cls, []zhuyin.Class{f, m}):
+		return !s.literalDigitBefore() || !unicode.IsDigit(rune(raw[0]))
+	}
+	return false
+}
+
+// swappedSyllable：raw 是快打時相鄰兩鍵顛倒的一個音節（swappedVowels），加上 tone 組得成字。
+func (s *Session) swappedSyllable(raw string, tone rune) bool {
+	if !s.swappedVowels(raw) {
+		return false
+	}
+	_, ok := s.mixedReading(raw, tone)
 	return ok
 }
 

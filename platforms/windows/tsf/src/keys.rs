@@ -164,6 +164,12 @@ pub fn is_lock_or_ime(vk: u32) -> bool {
     matches!(vk, 0x90 | 0x91 | 0x15..=0x1f | 0xe5)
 }
 
+/// Ctrl 剛按下（不是按住不放的自動重複，lParam 第 30 位）：IMM32 程式裡組字中要在這時就送出組字（#262）。
+pub fn ctrl_press(vk: u32, lparam: isize) -> bool {
+    let v = vk as u16;
+    (v == VK_CONTROL.0 || v == VK_LCONTROL.0 || v == VK_RCONTROL.0) && lparam & (1 << 30) == 0
+}
+
 /// 組字中要先送出組字、再交給宿主的按鍵（#106）：Ctrl／Alt／Win 組合鍵（單按修飾鍵本身除外），
 /// 以及轉不成協定按鍵、核心不會處理的鍵（F 鍵、Insert、其他排列的非 ASCII 字元…）。
 /// `protocol` 是 `to_key` 的結果。
@@ -190,6 +196,33 @@ pub fn style_key(key: String, shift: bool, caps: bool, shift_space: bool, caps_l
         return if shift { key.to_ascii_uppercase() } else { key.to_ascii_lowercase() };
     }
     key
+}
+
+/// 英文模式交給程式的按鍵裡，要由輸入法直接送出的 Caps Lock 小寫字母（#112）。`key` 是 [`style_key`] 之後的鍵：
+/// 「Caps Lock 英文字母：預設小寫」時 Caps Lock 是小寫、加 Shift 是大寫，交給程式的話系統照 Caps Lock 反過來打。
+/// 數字、標點、空白與具名鍵不受 Caps Lock 影響，照舊交給程式。
+pub fn caps_lower_literal(caps_lower: bool, key: Option<&str>) -> Option<String> {
+    let key = key?;
+    (caps_lower && key.len() == 1 && key.as_bytes()[0].is_ascii_alphabetic()).then(|| key.to_string())
+}
+
+/// 英文補字的單字中，IMM32 程式的這一鍵怎麼送出單字（#260）。`key` 是 [`style_key`] 之後的協定鍵。
+/// IMM32 程式經系統相容層接 TSF，單字送出後是以 WM_IME_COMPOSITION 的結果字串排在程式自己的訊息之後：
+/// 先送出單字再把按鍵交給程式的話，按鍵先作用（空白、標點比單字先進文件，方向鍵先移動插入點）。
+/// - `Some(字)`：空白、標點、數字（含數字鍵盤）——吃下，單字連同這個字一起送出。
+/// - `Some("")`：方向鍵、Home／End、PageUp／PageDown、Tab——吃下，只送出單字（同 Enter，#235），再按一次才作用。
+/// - `None`：其他鍵照舊（Delete 不移動插入點，先刪再送出結果相同；Backspace、Escape 核心自己處理）。
+pub fn imm32_word_end(key: &str) -> Option<String> {
+    match key {
+        " " => Some(" ".into()),
+        "Left" | "Right" | "Up" | "Down" | "Home" | "End" | "PageUp" | "PageDown" | "Tab" | "BackTab" => {
+            Some(String::new())
+        }
+        k => {
+            let c = k.strip_prefix("KP").filter(|c| c.len() == 1).unwrap_or(k);
+            (c.len() == 1 && (0x21..=0x7e).contains(&c.as_bytes()[0])).then(|| c.to_string())
+        }
+    }
 }
 
 pub fn to_key(vk: u32, lparam: isize, vocab: bool, caps_lock: bool) -> Option<String> {
@@ -576,6 +609,37 @@ mod tests {
         assert_eq!(style_key("A".into(), true, true, false, true), "A");
         assert_eq!(style_key("a".into(), true, true, false, true), "A");
         assert_eq!(style_key("a".into(), true, true, false, false), "a");
+    }
+
+    #[test]
+    fn caps_lower_letters_where_english_keys_go_to_the_app() {
+        // #112：IMM32 沒有系統插入點的視窗（#210：英文模式按鍵整個交給程式）裡，Caps Lock 小寫的字母仍由輸入法送出；
+        // 交給程式的話系統照 Caps Lock 打成大寫。style_key 之後的鍵：Caps Lock 是小寫、Caps Lock＋Shift 是大寫。
+        assert_eq!(caps_lower_literal(true, Some("a")).as_deref(), Some("a"));
+        assert_eq!(caps_lower_literal(true, Some("A")).as_deref(), Some("A"));
+        // 數字、標點、空白與具名鍵不受 Caps Lock 影響，照舊交給程式。
+        for key in ["1", ";", " ", "Enter", "Tab", "BackTab", "ShiftSpace", "KP1"] {
+            assert_eq!(caps_lower_literal(true, Some(key)), None, "{key}");
+        }
+        // 「依平台大小寫」或 Caps Lock 沒開：字母照舊交給程式（畫布的單鍵快捷鍵不受影響）。
+        assert_eq!(caps_lower_literal(false, Some("a")), None);
+        assert_eq!(caps_lower_literal(true, None), None);
+    }
+
+    #[test]
+    fn imm32_word_end_types_the_key_with_the_word_or_only_confirms_it() {
+        // #260：IMM32 程式裡單字中的空白、標點、數字連同單字一起送出（程式會打出的字），數字鍵盤的 KP1 是 1。
+        for (key, typed) in [(" ", " "), (",", ","), (".", "."), ("1", "1"), ("!", "!"), ("'", "'"), ("KP1", "1"), ("KP+", "+")] {
+            assert_eq!(imm32_word_end(key).as_deref(), Some(typed), "{key}");
+        }
+        // 方向鍵、Home／End、PageUp／PageDown、Tab 只送出單字。
+        for key in ["Left", "Right", "Up", "Down", "Home", "End", "PageUp", "PageDown", "Tab", "BackTab"] {
+            assert_eq!(imm32_word_end(key).as_deref(), Some(""), "{key}");
+        }
+        // Delete、Enter（#235 已只送出）、Backspace、Escape 與 Shift＋空白照舊。
+        for key in ["Delete", "Enter", "Backspace", "Escape", "ShiftSpace", "KP", ""] {
+            assert_eq!(imm32_word_end(key), None, "{key}");
+        }
     }
 
     #[test]

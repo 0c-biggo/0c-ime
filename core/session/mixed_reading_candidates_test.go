@@ -2,6 +2,7 @@ package session
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/0c-biggo/0c-ime/core/english"
@@ -12,8 +13,9 @@ import (
 	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
-// #146：句首、空白後、英文後的 u1,6（ㄧㄅㄝˊ，反序打的 ㄅㄧㄝˊ 別）、u2,6（ㄉㄧㄝˊ 疊）照 #200 的
-// 「英文接數字寫法」照字面顯示；↓ 除了原按鍵與原樣注音，還要有完整讀音的中文字，選了就是那個字。
+// #146：照 #200 的「英文接數字寫法」照字面顯示的按鍵（hellou2,6、1/3），↓ 除了原按鍵與原樣注音，還要有完整讀音的中文字，
+// 選了就是那個字。句首、空白後、英文後的 u1,6（ㄧㄅㄝˊ，反序打的 ㄅㄧㄝˊ 別）、u2,6（ㄉㄧㄝˊ 疊）原本也在這裡；
+// #256 起直接照位置組字（2026-11-04 負責人決定比照常見注音輸入法的混打），見 TestMixedLateInitialComposesAtSentenceStart。
 func mixedReadingSession() *Session {
 	lex, sys := lexicon.NewMem(), lm.NewMem()
 	for _, e := range []struct {
@@ -46,10 +48,6 @@ func TestMixedLiteralToneKeysOfferChineseOfTheReading(t *testing.T) {
 		keys, shown, pick, want string
 		zhuyin                  string // 原樣注音仍在清單裡
 	}{
-		{"u1,6", "u1,6", "別", "別", "ㄅㄧㄝˊ"},
-		{"u2,6", "u2,6", "疊", "疊", "ㄉㄧㄝˊ"},
-		{"5k6 u2,6", "折 u2,6", "疊", "折 疊", "ㄉㄧㄝˊ"},
-		{"hello u1,6", "hello u1,6", "別", "hello 別", "ㄅㄧㄝˊ"},
 		{"hellou2,6", "hellou2,6", "hello疊", "hello疊", ""},
 		{"1/3", "1/3", "繃", "繃", "ㄅㄥˇ"}, // #200 照字面的罕用字，明確按 ↓ 時也選得到
 	} {
@@ -94,16 +92,16 @@ func TestMixedLiteralToneKeysOfferChineseOfTheReading(t *testing.T) {
 // 字典不認得的英文前段也不切（kevin87 不列 kevi挲）。
 func TestMixedLiteralToneKeysKeepTheKeysFirst(t *testing.T) {
 	s := mixedReadingSession()
-	mixedType(s, "u1,6")
+	mixedType(s, "hellou2,6")
 	snap := key(s, proto.KeyDown)
-	if got := itemTexts(snap); got[0] != "u1,6" {
+	if got := itemTexts(snap); got[0] != "hellou2,6" {
 		t.Fatalf("原按鍵應排第一：%q", got)
 	}
 	snap = s.Handle(proto.Request{Type: proto.Select, Index: snap.Candidates.Items[0].ID})
-	if snap.Text() != "u1,6" {
+	if snap.Text() != "hellou2,6" {
 		t.Fatalf("選原按鍵後顯示 %q", snap.Text())
 	}
-	if commit := key(s, proto.KeyEnter).Commit; commit != "u1,6" {
+	if commit := key(s, proto.KeyEnter).Commit; commit != "hellou2,6" {
 		t.Fatalf("提交 %q", commit)
 	}
 	for _, keys := range []string{"2024", "co6", "kevin87"} {
@@ -117,5 +115,29 @@ func TestMixedLiteralToneKeysKeepTheKeysFirst(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// #256：句首、空白後、英文後，聲母晚介音一鍵、韻母是 , 或 . 的按鍵（u1,6 是 ㄧㄅㄝˊ、u2,6 是 ㄉㄧㄝˊ）照位置組成別、疊，
+// 不再照 #200 當成「英文接數字寫法」照字面留下：2026-11-04 負責人決定比照常見注音輸入法的混打（u2/4 定、ur04 見已經這樣）。
+// 出字後 ↓ 找得回原按鍵；字母開頭的英文字接數字（hellou2,6）照舊照字面。
+func TestMixedLateInitialComposesAtSentenceStart(t *testing.T) {
+	for _, tc := range []struct{ keys, want string }{
+		{"u1,6", "別"}, {"u2,6", "疊"}, {"5k6 u2,6", "折 疊"}, {"hello u1,6", "hello 別"},
+	} {
+		t.Run(tc.keys, func(t *testing.T) {
+			s := mixedReadingSession()
+			if snap := mixedType(s, tc.keys); snap.Text() != tc.want {
+				t.Fatalf("顯示 %q，要 %q", snap.Text(), tc.want)
+			}
+			raw := strings.TrimSpace(tc.keys[strings.LastIndex(tc.keys, "u"):])
+			if got := itemTexts(key(s, proto.KeyDown)); !slices.ContainsFunc(got, func(t string) bool { return strings.TrimSpace(t) == raw }) {
+				t.Errorf("出字後 ↓ 找不回原按鍵 %q：%q", raw, got)
+			}
+			key(s, proto.KeyEscape)
+			if commit := key(s, proto.KeyEnter).Commit; commit != tc.want {
+				t.Errorf("提交 %q，要 %q", commit, tc.want)
+			}
+		})
 	}
 }

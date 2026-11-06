@@ -177,6 +177,9 @@ func (s *Session) openingBracketHalf(k string) (half, ok bool) {
 // 另一種寬度記在 literalKeys，↓ 第二項換得回來：半形 ) ] } 不在任何符號組裡（symbolGroups），全形的組裡也沒有半形，
 // 不記的話選錯寬度就換不回來（比照 #190 的「，」記 <）。
 func (s *Session) insertPairedBracket(k string) bool {
+	if s.halfwidthShift(k) {
+		return false // Shift＋符號打半形（#258）：) } 一律半形，全形改用 Ctrl＋Shift＋0 或 ↓
+	}
 	half, ok := s.openingBracketHalf(k)
 	if !ok {
 		return false
@@ -198,13 +201,17 @@ func (s *Session) insertPairedBracket(k string) bool {
 // insertPunctKey 在游標處插入標點鍵 k 打出的全形標點 p。中英混打時 Shift＋, Shift＋. 的「，」「。」記下原按鍵，
 // ↓ 第二項是半形 < >（#190）：混打的注音鍵、數字鍵出字後 ↓ 第二項都是原按鍵（#162、#175、#187），這兩個鍵比照辦理，
 // 不切英文也打得出大於、小於。只限這兩個鍵在混打下；一般注音模式與其他標點維持全形（#177），Ctrl＋標點（#168）也不附。
-// 混打的閉括號跟著配對的開括號（#232，insertPairedBracket）。
+// 混打的閉括號跟著配對的開括號（#232，insertPairedBracket）。設定「Shift＋符號打半形」開著時 Shift 符號打半形的 k（#258）。
 func (s *Session) insertPunctKey(k, p string) {
+	if s.halfwidthShift(k) {
+		s.insertHalfwidthShift(k, p)
+		return
+	}
 	if s.insertPairedBracket(k) {
 		return
 	}
 	s.insertLiteral(p)
-	if s.mixedInput() && (k == "<" || k == ">") {
+	if s.mixedInput() && (k == "<" || k == ">") || s.halfwidthAlternative(k, p) {
 		s.setLiteralKey(s.cursor-1, k)
 	}
 }

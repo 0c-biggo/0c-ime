@@ -1,0 +1,6 @@
+# C 執行階段靜態連結（x64 與 i686）：0c_tsf.dll 會被載入每個應用程式，0c-ui.exe 由它啟動；動態連結時要求
+# VCRUNTIME140.dll，沒裝 Visual C++ 可轉散發套件的電腦（乾淨安裝、精簡或企業映像）regsvr32 載不了 DLL，
+# 安裝精靈在註冊那步失敗（#261）。小狼毫、PIME 以 /MT、Windows 新酷音以 +crt-static 建置，做法相同。
+# 設了 RUSTFLAGS 環境變數會蓋掉這裡；scripts/package_windows.py 打包時會再檢查匯入表。
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]

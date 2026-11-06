@@ -1,18 +1,16 @@
-// 神經重排的 golden transcript：隨機操作序列加偽評分器驅動 Session，
-// 每個 seed 的輸出以 SHA-256 對 golden；預期的行為改變後以 -update 重寫。
+// 神經重排的快取開／關比對：隨機操作序列加偽評分器驅動 Session，同一個 seed 開著快取
+// （段級重排 rerankMemo、補全沿用 sugPrev、massScale 跨搜尋保留）與全部關掉各跑一次，快照必須逐字相同。
+// 比的是兩次執行，不是存下來的結果，之後刻意改變 session 行為時不必重寫任何檔案（PR #51 審查）。
 
 package session
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"hash/fnv"
 	"io"
 	"math/rand/v2"
-	"os"
 	"reflect"
 	"testing"
 
@@ -63,40 +61,38 @@ func (d *fuzzScorer) Score(r rerank.Request) ([]float64, error) {
 	return out, nil
 }
 
-const rerankGolden = "../../testdata/transcripts/rerank-fuzz.golden.txt"
-
-var updateGolden = flag.Bool("update", false, "以目前的行為重寫神經重排 golden transcript")
-
-func TestRerankGoldenTranscript(t *testing.T) {
-	const seeds = 60
-	var out bytes.Buffer
-	for seed := range seeds {
-		h := sha256.New()
-		runRerankSeed(t, seed, h, nil)
-		fmt.Fprintf(&out, "%d %x\n", seed, h.Sum(nil))
-	}
-	if *updateGolden {
-		if err := os.WriteFile(rerankGolden, out.Bytes(), 0o644); err != nil {
-			t.Fatal(err)
+func TestRerankCachesKeepBehavior(t *testing.T) {
+	for seed := range 60 {
+		var on, off bytes.Buffer
+		runRerankSeed(t, seed, &on, nil, true)
+		runRerankSeed(t, seed, &off, nil, false)
+		if bytes.Equal(on.Bytes(), off.Bytes()) {
+			continue
 		}
-		return
-	}
-	want, err := os.ReadFile(rerankGolden)
-	if err != nil {
-		t.Fatalf("%v（以 -update 產生）", err)
-	}
-	if !bytes.Equal(out.Bytes(), want) {
-		t.Errorf("與 golden 不符；確認是預期的行為改變後以 -update 重寫")
+		a, b := bytes.Split(on.Bytes(), []byte("\n")), bytes.Split(off.Bytes(), []byte("\n"))
+		for i := range min(len(a), len(b)) {
+			if !bytes.Equal(a[i], b[i]) {
+				at := 0
+				for at < len(a[i]) && at < len(b[i]) && a[i][at] == b[i][at] {
+					at++
+				}
+				from := max(0, at-120)
+				t.Fatalf("seed %d 第 %d 行第 %d 位元組起不同：\n快取開 …%s\n快取關 …%s", seed, i+1, at,
+					a[i][from:min(len(a[i]), at+120)], b[i][from:min(len(b[i]), at+120)])
+			}
+		}
+		t.Fatalf("seed %d：快取開 %d 行、關 %d 行", seed, len(a), len(b))
 	}
 }
 
-func runRerankSeed(t *testing.T, seed int, w io.Writer, check func(*Session)) {
+func runRerankSeed(t *testing.T, seed int, w io.Writer, check func(*Session), caches bool) {
 	t.Helper()
 	plain, tones, misc := fuzzKeyPool()
 	syls := zhuyin.ParseReading(fuzzSyllables)
 
 	rng := rand.New(rand.NewPCG(uint64(seed)*104729+17, 0x9E3779B97F4A7C15))
 	s := newShemeSessionWithKeeps(t)
+	s.noCaches, s.dec.FreshMass = !caches, !caches
 	sc := &fuzzScorer{}
 	s.Rerank = rerank.Options{
 		Weight: 2, ContextRunes: rerank.MaxContextRunes,
@@ -204,7 +200,7 @@ func runRerankSeed(t *testing.T, seed int, w io.Writer, check func(*Session)) {
 			do("toggle", proto.Request{Type: proto.Toggle, Restore: rng.IntN(2) == 0})
 		}
 	}
-	fmt.Fprintf(w, `{"seed":%d,"op":"end","score_calls":%d}`+"\n", seed, sc.calls)
+	fmt.Fprintf(w, `{"seed":%d,"op":"end"}`+"\n", seed) // 評分次數不比：段級快取讓 rerankCache 清空後不必重評
 }
 
 func mustJSON(t *testing.T, v any) []byte {
@@ -226,6 +222,6 @@ func TestRerankSuggestionFresh(t *testing.T) {
 			if want := s.suggestAfterLiteral(); !reflect.DeepEqual(s.sug, want) {
 				t.Fatalf("seed %d: 補全建議 %+v，重算為 %+v", seed, s.sug, want)
 			}
-		})
+		}, true)
 	}
 }

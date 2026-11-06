@@ -159,7 +159,8 @@ func serve() string {
 	eng.EscKeepComposition = !config.EscClear
 	eng.SpaceInsertsSpace = !config.SpaceSelects
 	eng.AdvanceAfterSelect = config.AdvanceAfterSelect
-	eng.CtrlPunct = config.CtrlPunctuation // #168
+	eng.CtrlPunct = config.CtrlPunctuation                 // #168
+	eng.ShiftSymbolHalfwidth = config.ShiftSymbolHalfwidth // #258
 	// #173：Windows、Linux 的設定；macOS 開 Caps Lock 一律切到英文（#84），不看設定檔的值。
 	capsSetting := config.CapsLockEnglish && (settings.CapsLockEnglishSetting(runtime.GOOS) || config.ProfileRules().CapsLetter == "lower")
 	eng.CapsLockEnglish = capsLockRequests(runtime.GOOS, capsSetting)
@@ -455,6 +456,8 @@ func serve() string {
 		// #231：引擎認得的 Ctrl＋標點鍵（不跟著設定）。外殼送 Ctrl+: ( ) 前要看到這一項列了那個字元，
 		// 舊引擎沒有這一項，外殼只送最早的六個鍵。
 		"ctrl_punctuation_keys": proto.CtrlPunctKeys,
+		// #258：Shift＋符號打半形；外殼不用看（沒在組字時交還的鍵已從 idle_keys 拿掉），0c-update 拿它跟設定檔比較。
+		"shift_symbol_halfwidth": fmt.Sprint(eng.ShiftSymbolHalfwidth),
 		// #173：引擎認得 caps_lock 請求而且設定「Caps Lock 開著時直接打英文」開著；外殼只在這一項是 true 時回報
 		// Caps Lock 狀態，舊引擎沒有這一項、或設定關閉時，注音模式照舊不理 Caps Lock（#168）。
 		"caps_lock_english": fmt.Sprint(capsSetting),

@@ -14,6 +14,7 @@
     "allow-install-update",
     "allow-export-summary",
     "allow-vocab-request",
+    "allow-export-vocab",
     "allow-api-command",
     "allow-vocab-watch",
     "allow-vocab-unwatch",

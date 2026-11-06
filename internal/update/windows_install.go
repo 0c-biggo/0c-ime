@@ -135,7 +135,12 @@ func verifyReceipt(base string, r *Receipt) error {
 			return fmt.Errorf("receipt missing %s", name)
 		}
 	}
-	for name, expected := range r.Files {
+	names := make([]string, 0, len(r.Files))
+	for name := range r.Files {
+		names = append(names, name)
+	}
+	sort.Strings(names) // 有好幾個檔案不符時，每次回報同一個
+	for _, name := range names {
 		p, err := regular(dir, name)
 		if err != nil {
 			return err
@@ -144,11 +149,17 @@ func verifyReceipt(base string, r *Receipt) error {
 		if err != nil {
 			return err
 		}
-		if sum != expected {
+		if sum != r.Files[name] {
 			return fmt.Errorf("installed file changed: %s", name)
 		}
 	}
 	return nil
+}
+
+// notePreviousChanged 提示被換下的版本檔案與收據不符（#254）：它只是回復用，不擋安裝，之後回復到它時才會拒絕。
+// 不加「0c-update: 」前綴：安裝精靈以那個前綴判斷 0c-update 有沒有留下錯誤訊息（setup.nsi 的 DescribeFailure）。
+func notePreviousChanged(r *Receipt, bad error) {
+	fmt.Fprintf(os.Stderr, "注意：%s 的檔案與安裝時不同（%v），可能被防毒軟體或其他程式改動；照常安裝新版，之後無法回復到 %s。\n", r.Version, bad, r.Version)
 }
 
 // ErrForeignRegistration：輸入法註冊屬於別的安裝（例如其他 Windows 帳號），解除安裝沒有變更它。
@@ -407,16 +418,19 @@ func InstallWindows(bundle, base, arch string, reg Registrar) (string, []string,
 	if err != nil {
 		return "", nil, err
 	}
-	if previous != nil && previous.Active {
-		if err = verifyReceipt(base, previous); err != nil {
-			return "", nil, err
-		}
-	}
 	manifestHash, err := Hash(filepath.Join(bundle, "release.json"))
 	if err != nil {
 		return "", nil, err
 	}
 	directory := "versions/" + release.Version + "-" + manifestHash[:12]
+	// 被換下的版本只是回復用（#254）：檔案被改動或缺少（防毒軟體隔離或修改、使用者自己改過 0c-server.exe）時照常安裝，
+	// 否則自動更新、立即安裝、重新執行安裝精靈都會永遠卡在這裡（macOS 同理，#83）。回復到它時 RollbackWindows 仍會核對並拒絕。
+	// 同一版重新安裝時版本目錄就是新版的目錄，由下面的 Verify 發現不符並移開重放。新版本身一律逐檔核對。
+	if previous != nil && previous.Active && previous.Directory != directory {
+		if bad := verifyReceipt(base, previous); bad != nil {
+			notePreviousChanged(previous, bad)
+		}
+	}
 	next := &Receipt{Schema: 1, Product: "0c", Version: release.Version, Directory: directory, Files: release.Files, Active: true}
 	destination := filepath.Join(base, filepath.FromSlash(directory))
 	if err = noLinks(destination); err != nil {
@@ -544,6 +558,7 @@ func RollbackWindows(base string, reg Registrar, restoreUser bool) ([]string, er
 			return nil, fmt.Errorf("no personal dictionary was saved before this version: %w", err)
 		}
 	}
+	// 回復只從命令列執行（設定程式沒有這個入口），兩邊都照舊要完好：目前版本被改動時，同一版重新安裝就會修好（#254）。
 	if err = verifyReceipt(base, current); err != nil {
 		return nil, err
 	}

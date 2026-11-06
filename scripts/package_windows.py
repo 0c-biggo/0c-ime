@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import struct
 import subprocess
@@ -27,7 +28,8 @@ if ROOT != Path(__file__).resolve().parents[1]:
 
 TARGET = "x86_64-pc-windows-msvc"
 # 32 位元應用程式（例如 32 位元 Office、HCL Notes 12）只載入 32 位元的 TSF DLL（#112）。只建 DLL：引擎與候選窗
-# 由 x64 那份經 named pipe 服務。C 執行階段靜態連結：32 位元的 Visual C++ 可轉散發套件不一定有裝。
+# 由 x64 那份經 named pipe 服務。兩個 target 的 C 執行階段都靜態連結（.cargo/config.toml）：Visual C++ 可轉散發
+# 套件不一定有裝，x64 也一樣（#261）。
 TARGET32 = "i686-pc-windows-msvc"
 DLL32 = "x86/0c_tsf.dll"  # 與 internal/update 的 WindowsDLL32 相同
 PLATFORM = ROOT / "platforms/windows"
@@ -45,6 +47,69 @@ def check_pe(path, machine="x64"):
         stream.seek(struct.unpack("<I", offset)[0])
         if stream.read(6) != b"PE\0\0" + PE_MACHINE[machine]:
             raise ValueError(f"需要 Windows {machine} PE：{path}")
+
+
+def pe_imports(path):
+    """PE 匯入表與延遲載入表列出的 DLL 名稱，依出現順序；不在 Windows 上也能讀（只解析檔案）。"""
+    data = regular(path).read_bytes()
+    try:
+        if data[:2] != b"MZ":
+            raise ValueError
+        pe = struct.unpack_from("<I", data, 0x3C)[0]
+        if data[pe:pe + 4] != b"PE\0\0":
+            raise ValueError
+        count, optional_size = struct.unpack_from("<H", data, pe + 6)[0], struct.unpack_from("<H", data, pe + 20)[0]
+        optional = pe + 24
+        magic = struct.unpack_from("<H", data, optional)[0]
+        directories = optional + {0x10B: 96, 0x20B: 112}[magic]
+        image_base = (struct.unpack_from("<I", data, optional + 28) if magic == 0x10B else struct.unpack_from("<Q", data, optional + 24))[0]
+        directory_count = struct.unpack_from("<I", data, directories - 4)[0]
+        sections = [struct.unpack_from("<IIII", data, optional + optional_size + 40 * i + 8) for i in range(count)]
+
+        def offset(rva):
+            for virtual_size, address, raw_size, raw in sections:
+                if address <= rva < address + max(virtual_size, raw_size):
+                    return raw + rva - address
+            raise ValueError
+
+        def name(rva):
+            start = offset(rva)
+            return data[start:data.index(b"\0", start)].decode("ascii")
+
+        names = []
+        # 1：匯入表（每筆 20 位元組，DLL 名稱在 +12）；13：延遲載入表（32 位元組，名稱在 +4，屬性沒有 1 時是 VA）。
+        for index, size, field in ((1, 20, 12), (13, 32, 4)):
+            if index >= directory_count:
+                continue
+            rva = struct.unpack_from("<I", data, directories + 8 * index)[0]
+            if not rva:
+                continue
+            at = offset(rva)
+            while any(entry := data[at:at + size]):
+                if len(entry) < size:
+                    raise ValueError
+                value = struct.unpack_from("<I", entry, field)[0]
+                if index == 13 and not struct.unpack_from("<I", entry, 0)[0] & 1:
+                    value -= image_base
+                names.append(name(value))
+                at += size
+        return names
+    except (ValueError, KeyError, IndexError, struct.error, UnicodeDecodeError):
+        raise ValueError(f"不是可解析的 Windows PE：{path}") from None
+
+
+# Visual C++ 可轉散發套件的 DLL；UCRT（api-ms-win-crt-*、ucrtbase.dll）是 Windows 10 起內建，不在此列。
+VC_REDIST = re.compile(r"^(vcruntime|msvcp|concrt|vccorlib|vcomp|mfc)\d", re.IGNORECASE)
+
+
+def check_static_crt(path):
+    """我們建的執行檔與 DLL 不得依賴 VC++ 可轉散發套件（#261）：沒裝的電腦 regsvr32 載不了 0c_tsf.dll，
+    安裝精靈在註冊那步失敗。Rust 由 platforms/windows/.cargo/config.toml 的 +crt-static 靜態連結；設了
+    RUSTFLAGS 環境變數會蓋掉那個設定，所以打包時再檢查一次。"""
+    needed = [name for name in pe_imports(path) if VC_REDIST.match(name)]
+    if needed:
+        raise ValueError(f"{Path(path).name} 需要 Visual C++ 可轉散發套件（{', '.join(needed)}），沒裝的電腦載入不了；"
+                         "請以 -C target-feature=+crt-static 建置，並確認沒有設定 RUSTFLAGS")
 
 
 # 檔案內容（說明）出現在檔案內容對話框、工作管理員與 SmartScreen／Defender 的報告；發行者與 Artifact Signing 的
@@ -236,13 +301,13 @@ def build(args):
             target = stage / dst
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(regular(src), target)
-        # Force the documented target even if the shell has another default toolchain.
+        # Force the documented target even if the shell has another default toolchain. 兩個 target 都由
+        # platforms/windows/.cargo/config.toml 靜態連結 C 執行階段（#261），下面 check_static_crt 再核對。
         subprocess.run([args.cargo, "build", "--locked", "--release", "--target", TARGET], cwd=PLATFORM, check=True)
         for binary in ("0c_tsf.dll", "0c-ui.exe"):
             copy(PLATFORM / "target" / TARGET / "release" / binary, binary)
-        env32 = dict(os.environ, CARGO_TARGET_I686_PC_WINDOWS_MSVC_RUSTFLAGS="-C target-feature=+crt-static")
         subprocess.run([args.cargo, "build", "--locked", "--release", "--target", TARGET32, "-p", "zuin-tsf"],
-                       cwd=PLATFORM, env=env32, check=True)
+                       cwd=PLATFORM, check=True)
         copy(PLATFORM / "target" / TARGET32 / "release" / "0c_tsf.dll", DLL32)
         env = dict(os.environ, GOOS="windows", GOARCH="amd64", CGO_ENABLED="0")
         # 0c-mcp：只支援 stdio 的 AI 工具用的轉接（#126）；0c-update 安裝時把它複製到不隨版本變動的
@@ -259,6 +324,8 @@ def build(args):
             check_pe(binary)
         check_pe(stage / DLL32, "x86")
         ours.append(stage / DLL32)
+        for binary in ours:
+            check_static_crt(binary)
         for binary in ours:
             stamp_version(binary, args.version)
         # 先寫版本資訊再簽章；之後才計算 release.json 與 SHA256SUMS 的雜湊。

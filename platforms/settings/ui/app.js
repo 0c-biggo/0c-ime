@@ -444,7 +444,8 @@
     keyboard: {
       title: '鍵盤與符號', lead: '注音的鍵盤排列，以及標點符號和 Emoji 怎麼打。',
       // emoji-equals-first 是 Emoji 選單的子選項，畫在它下面。
-      keys: ['keyboard-layout', 'ctrl-punctuation', 'punctuation', 'emoji-shortcut', 'emoji-equals-first', 'style-punctuation', 'style-shift-space', 'style-shift-delete'],
+      // shift-symbol-halfwidth（#258）跟 Ctrl＋標點是一對（Shift 半形、Ctrl 全形），排在它下面。
+      keys: ['keyboard-layout', 'ctrl-punctuation', 'shift-symbol-halfwidth', 'punctuation', 'emoji-shortcut', 'emoji-equals-first', 'style-punctuation', 'style-shift-space', 'style-shift-delete'],
     },
   };
   const OUTPUT_KEYS = ['output-simplified', 'simplified-hotkey'];

@@ -217,6 +217,9 @@ def vocab_locked(req):
         items = req.get('words') or []
         if not items:
             resp = {'ok': False, 'error': err('empty', '沒有要加入的詞')}
+        if len(items) > 500:  # 同 core/vocab.MaxBatchItems：設定程式要分批送（#255）
+            resp = {'ok': False, 'error': err('limit_batch', '一次最多修改 500 筆，這次有 %d 筆；請分批進行' % len(items))}
+            items = []
         changes = []
         for i, item in enumerate(items):
             text, rs = item.get('word', '').strip(), item.get('readings') or []

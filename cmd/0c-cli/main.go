@@ -48,6 +48,7 @@ func main() {
 	escClear := flag.Bool("esc-clear", true, "按 Esc 清除整段組字；關閉時只清未打完的注音")
 	capsLockEnglish := flag.Bool("caps-lock-english", false, "Caps Lock 開著時直接打英文（用 :caps on 送）；關閉時 caps_lock 不起作用。重播需使用相同開關")
 	ctrlPunct := flag.Bool("ctrl-punctuation", true, "注音模式的 Ctrl＋, . ' ; ? ! : ( ) 打全形標點（用 :k Ctrl+, 送）；關閉時交給應用程式")
+	shiftSymbolHalfwidth := flag.Bool("shift-symbol-halfwidth", false, "注音模式的 Shift＋符號鍵打半形（#258），全形改用 Ctrl＋符號或 ↓。重播需使用相同開關")
 	advanceAfterSelect := flag.Bool("advance-after-select", false, "選字後游標移到所選詞後面（前方模式往後移一個字）。重播需使用相同開關")
 	candidateCursor := flag.String("candidate-cursor", "after", "修改字詞的位置：after（游標後方）或 before（游標前方）。重播需使用相同設定")
 	outputSimplified := flag.Bool("output-simplified", false, "送出時轉成簡體字（組字與候選仍是繁體）")
@@ -79,6 +80,7 @@ func main() {
 	}
 	eng.CandidateBeforeCursor = *candidateCursor == "before"
 	eng.CtrlPunct = *ctrlPunct
+	eng.ShiftSymbolHalfwidth = *shiftSymbolHalfwidth
 	eng.CapsLockEnglish = *capsLockEnglish
 	if *outputSimplified {
 		eng.Simplified, err = simplified.TW2S()
@@ -139,6 +141,9 @@ func main() {
 		}
 		if *toneless {
 			fmt.Fprintln(rec, "# 重播需要相同的聲調選填設定：0c-cli -toneless")
+		}
+		if *shiftSymbolHalfwidth {
+			fmt.Fprintln(rec, "# 重播需要相同的 Shift＋符號設定：0c-cli -shift-symbol-halfwidth")
 		}
 		if *advanceAfterSelect {
 			fmt.Fprintln(rec, "# 重播需要相同的選字後游標設定：0c-cli -advance-after-select")

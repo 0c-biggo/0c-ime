@@ -14,11 +14,13 @@ window.ZcVocab = function (ctx) {
   // compose 是打字當下的操作：組字中加詞，或候選窗用反悔鍵刪除；「組字中加入　刪除」讀起來矛盾（Fcitx5 驗收）。
   const WHO = { manual: '你', compose: '打字時', assistant: 'AI 助手', learned: '學到的' };
   const KIND = { phrase: '常一起用', reading: '你選過的寫法' };
-  const HAN = /^\p{Script=Han}+$/u;
+  // 文字檔格式、貼上的解析與詞的檢查在 vocab-text.js（#255，node 測試）。
+  const VT = window.ZcVocabText;
   // 英文詞（#146）：終端機指令、工具名。沒有讀音，中英混打時打出完全相同的字母（大小寫照字面）就照英文送出；英文模式自動補字打前幾個字母（不分大小寫）就建議（#247）。
-  const ENGLISH = /^(?=.*[A-Za-z])[A-Za-z0-9._-]{1,32}$/;
-  const ASCII = /^[\x21-\x7e]+$/;
-  const isEnglish = (text) => ENGLISH.test(text);
+  const isEnglish = VT.isEnglish;
+  const wordProblem = VT.wordProblem;
+  const BATCH = 500; // 引擎一次最多改 500 筆（core/vocab.MaxBatchItems）；匯入、貼上更多時分批送
+  const PHRASE_LIMIT = 200; // core/vocab.MaxPhrases
   const TOOLS = [
     ['chat', '直接跟 AI 說'], ['claude-code', 'Claude Code'], ['cursor', 'Cursor'], ['vscode', 'VS Code'],
     ['stdio', '只支援 stdio 的工具'], ['script', '自己寫腳本'],
@@ -30,7 +32,7 @@ window.ZcVocab = function (ctx) {
     learned: null, learnedError: null, phrases: null, phrasesError: null,
     learnedView: 'learned', learnedSel: new Set(), learnedBusy: false, forgotten: null, forgottenSel: new Set(), forgottenCount: 0,
     batches: null, showAllBatches: false, openBatch: null, batchDetail: new Map(),
-    draft: null, paste: null, editing: null, staleList: false, flash: new Set(),
+    draft: null, paste: null, editing: null, staleList: false, flash: new Set(), exporting: false, exported: null,
     undo: null, ai: { open: false, view: null, busy: false, tool: 'chat', shown: false, regenAsk: false, test: null, testing: false, port: '' },
     active: false, watching: false, overview: null, overviewAt: 0, seq: 0,
   };
@@ -133,18 +135,6 @@ window.ZcVocab = function (ctx) {
 
   const charsOf = (text, ann) => (ann && ann.chars && ann.chars.length === [...text].length ? ann.chars : [...text].map((c) => ({ char: c, options: [] })));
   const complete = (chosen) => chosen.length > 0 && chosen.every((x) => x && x.trim());
-
-  function wordProblem(text) {
-    if (isEnglish(text)) return null;
-    if (ASCII.test(text)) {
-      if (text.length > 32) return '英文詞最多 32 個字元；比較長的內容請放到「我的片語」。';
-      if (!/[A-Za-z]/.test(text)) return '英文詞至少要有一個英文字母。';
-      return '英文詞只能有英文字母、數字與 - _ .；其他符號請放到「我的片語」。';
-    }
-    if (!HAN.test(text)) return '只能加漢字，或英文字母、數字與 - _ . 組成的英文詞（例如 ls）；符號、假名或句子請放到「我的片語」。';
-    if ([...text].length > 32) return '一個詞最多 32 個字；比較長的句子請放到「我的片語」。';
-    return null;
-  }
   const englishWord = (w) => !(w.readings || []).length;
 
   // ---- 建立頁面 ----
@@ -201,10 +191,16 @@ window.ZcVocab = function (ctx) {
     el.undo.addEventListener('mouseenter', () => clearTimeout(undoTimer));
     el.undo.addEventListener('mouseleave', () => armUndo());
 
+    // 換電腦（#255）：匯出成文字檔、從檔案匯入。檔案對話框用 WebView 自己的 <input type="file">（三個平台的 WebView 都有），
+    // 讀檔不經 Rust；寫檔交給 Rust 的 export_vocab（下載資料夾）。
+    el.exportButton = h('button', { type: 'button', class: 'secondary small', 'data-k': 'vexport', title: '把我加的詞與我的片語存成文字檔，帶到另一台電腦', onclick: exportVocab }, '匯出');
+    el.fileInput = h('input', { type: 'file', accept: '.txt,text/plain', class: 'offscreen', tabindex: '-1', 'aria-hidden': 'true', onchange: onFile });
+    el.importButton = h('button', { type: 'button', class: 'secondary small', 'data-k': 'vimport', title: '從匯出的文字檔加回詞彙', onclick: () => el.fileInput.click() }, '匯入');
+    el.io = h('div', {});
     el.root = h('div', { class: 'vocab' },
-      h('h1', {}, '我的詞彙'),
+      h('div', { class: 'vtitle' }, h('h1', {}, '我的詞彙'), h('div', { class: 'vio' }, el.exportButton, el.importButton, el.fileInput)),
       h('p', { class: 'lead' }, '加進來的人名、術語打得出來，也看得到靈犀自己學到了什麼。'),
-      tabBar, el.notices, el.panels.words, el.panels.learned, el.panels.phrases,
+      el.io, tabBar, el.notices, el.panels.words, el.panels.learned, el.panels.phrases,
       h('h2', {}, '最近變更'), el.batches, el.ai, el.undo);
     section.append(el.root);
     drawTabs();
@@ -262,6 +258,7 @@ window.ZcVocab = function (ctx) {
     const readOnly = v.engineDown === true;
     el.root.classList.toggle('readonly', readOnly);
     el.add.disabled = el.addButton.disabled = el.phraseInput.disabled = readOnly;
+    el.importButton.disabled = readOnly;
     if (readOnly) {
       el.notices.append(h('div', { class: 'notice info' }, h('p', {}, '暫時不能修改自訂詞彙（輸入法引擎正在切換），稍後會自動恢復。')));
     }
@@ -559,76 +556,276 @@ window.ZcVocab = function (ctx) {
     reload();
   }
 
-  // 一次貼上多行：變成預覽清單，勾選後一起加入（一個批次，可整批復原）。
-  async function onPaste(event) {
-    const text = (event.clipboardData && event.clipboardData.getData('text')) || '';
-    const lines = [...new Set(text.split(/[\r\n\t]+/).map((x) => x.trim()).filter(Boolean))];
-    if (lines.length < 2) return;
-    event.preventDefault();
-    if (lines.length > 500) toast('一次最多加 500 個，只取前 500 行。', 'warn');
-    const rows = lines.slice(0, 500).map((t) => ({ text: t, problem: wordProblem(t), english: isEnglish(t), chosen: [], checked: isEnglish(t) }));
-    v.paste = { rows, pending: true };
-    drawPaste();
-    const valid = rows.filter((x) => !x.problem && !x.english);
-    let r = { ok: true, annotations: [] };
-    if (valid.length) {
-      try { r = await req({ op: 'annotate', texts: valid.map((x) => x.text) }); } catch (error) { r = { error: { message: String(error) } }; }
+  // ---- 貼上多行、匯入、匯出（#255） ----
+  // 貼上多行或從檔案匯入：都變成同一個預覽清單，勾選後一起加入。檔案帶了讀音的詞照檔案的讀音加（不重查，破音字的
+  // 自訂讀音才保得住）；沒帶讀音的查 annotate。合併是「加入」：已經有的詞只多加新的讀音，不刪除這邊有、檔案沒有的詞。
+  // 引擎一次最多改 500 筆，更多時分批送；中途有一批被拒絕就把已經加的批次復原，維持整批加入或整批不加。
+
+  // 全部的詞：list 一次最多 1,000 個；換頁之間有人改了（版本變了）就從頭再抓。
+  async function allWords() {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const words = [];
+      let version = null;
+      let total = 0;
+      let moved = false;
+      do {
+        const r = await req({ op: 'list', offset: words.length, limit: PAGE_SIZE });
+        if (!r.ok) throw new Error(errText(r));
+        if (version != null && r.version !== version) { moved = true; break; }
+        version = r.version;
+        total = r.total || 0;
+        const got = r.words || [];
+        if (!got.length) break;
+        words.push(...got);
+      } while (words.length < total);
+      if (!moved) return words;
     }
-    if (!v.paste || v.paste.rows !== rows) return;
-    if (!r.ok) { v.paste = null; drawPaste(); toast(errText(r), 'error'); drawNotices(); return; }
-    (r.annotations || []).forEach((ann, i) => {
-      const row = valid[i];
-      row.ann = ann;
-      row.chosen = charsOf(row.text, ann).map((c) => c.reading || '');
-      row.checked = complete(row.chosen);
-    });
-    v.paste.pending = false;
-    drawPaste();
+    throw new Error('詞彙一直在變動，請稍後再試一次。');
   }
 
+  async function allPhrases() {
+    const r = await req({ op: 'phrases' });
+    if (!r.ok) throw new Error(errText(r));
+    return r.phrases || [];
+  }
+
+  const message = (error) => String((error && error.message) || error);
+  const amount = (words, phrases) => [words ? num(words) + ' 個詞' : '', phrases ? num(phrases) + ' 則片語' : ''].filter(Boolean).join('、');
+
+  async function exportVocab() {
+    if (v.exporting) return;
+    v.exporting = true;
+    v.exported = null;
+    drawIO();
+    try {
+      const [words, phrases] = await Promise.all([allWords(), allPhrases()]);
+      if (!words.length && !phrases.length) toast('還沒有詞彙可以匯出。', 'warn');
+      else {
+        const r = await invoke('export_vocab', { text: VT.format({ words, phrases }) });
+        v.exported = { path: r.path, words: words.length, phrases: phrases.length };
+      }
+    } catch (error) {
+      toast('無法匯出：' + message(error), 'error');
+    }
+    v.exporting = false;
+    drawIO();
+    if (!document.activeElement || document.activeElement === document.body) el.exportButton.focus(); // 匯出中停用時焦點會掉
+  }
+
+  function drawIO() {
+    if (!el.io) return;
+    el.exportButton.disabled = !!v.exporting;
+    el.exportButton.textContent = v.exporting ? '匯出中…' : '匯出';
+    clear(el.io);
+    const x = v.exported;
+    if (!x) return;
+    el.io.append(h('div', { class: 'notice info' },
+      h('p', {}, '已匯出 ' + amount(x.words, x.phrases) + '：'), h('p', {}, h('code', { class: 'vpath' }, x.path)),
+      h('p', {}, '到另一台電腦打開「我的詞彙」，按「匯入」選這個檔案就能加回去。'),
+      h('div', { class: 'actions' }, h('button', { type: 'button', class: 'link', onclick: () => { v.exported = null; drawIO(); el.exportButton.focus(); } }, '知道了'))));
+  }
+
+  async function onFile() {
+    const file = el.fileInput.files && el.fileInput.files[0];
+    if (!file) return;
+    let text = null;
+    if (file.size > 16 * 1024 * 1024) toast('這個檔案太大，不是匯出的詞彙檔。', 'error');
+    else {
+      try { text = await file.text(); } catch (error) { toast('無法讀取「' + file.name + '」：' + message(error), 'error'); }
+    }
+    el.fileInput.value = ''; // 同一個檔案再選一次也會觸發
+    if (text == null) return;
+    if (text.includes('\u0000')) { toast('這不是文字檔。請選「匯出」存下來的 .txt 檔。', 'error'); return; }
+    if (text.includes('\ufffd')) { toast('這個檔案不是 UTF-8 編碼，請在編輯器另存成 UTF-8 再匯入。', 'error'); return; }
+    if (v.tab !== 'words') setTab('words');
+    startImport(VT.parse(text), file.name);
+  }
+
+  function onPaste(event) {
+    const text = (event.clipboardData && event.clipboardData.getData('text')) || '';
+    const parsed = VT.parse(text);
+    const items = parsed.words.length + parsed.phrases.length;
+    // 只有一個沒帶讀音的詞：照一般貼上，貼進新增欄位。
+    if (!items || (items === 1 && parsed.words.length === 1 && !parsed.words[0].readings.length)) return;
+    event.preventDefault();
+    startImport(parsed, null);
+  }
+
+  async function startImport(parsed, file) {
+    if (v.paste && v.paste.busy) return;
+    const token = {};
+    v.paste = { token, file, pending: true, rows: [], phrases: [], same: 0, samePhrases: 0, room: 0, phraseRoom: 0 };
+    drawPaste();
+    const gone = () => !v.paste || v.paste.token !== token;
+    if (!parsed.words.length && !parsed.phrases.length) {
+      v.paste = null;
+      drawPaste();
+      toast(file ? '檔案裡沒有詞彙。' : '貼上的內容沒有詞。', 'warn');
+      return;
+    }
+    let words, phrases;
+    try {
+      [words, phrases] = await Promise.all([allWords(), allPhrases()]);
+    } catch (error) {
+      if (!gone()) { v.paste = null; drawPaste(); }
+      toast(message(error), 'error');
+      drawNotices();
+      return;
+    }
+    if (gone()) return;
+    const plan = VT.plan(parsed, { words, phrases: phrases.map((p) => p.text), count: words.length, limit: v.limit, phraseLimit: PHRASE_LIMIT });
+    Object.assign(v.paste, {
+      rows: plan.rows.map((r) => Object.assign(r, { chosen: [], checked: !r.problem && r.given })),
+      phrases: plan.phrases.map((p) => Object.assign(p, { checked: !p.problem })),
+      same: plan.same, samePhrases: plan.samePhrases, room: plan.room, phraseRoom: plan.phraseRoom,
+    });
+    drawPaste();
+    // 沒帶讀音的詞查讀音，一次最多 500 個。
+    const need = v.paste.rows.filter((x) => !x.problem && !x.given);
+    for (let i = 0; i < need.length; i += BATCH) {
+      const part = need.slice(i, i + BATCH);
+      let r;
+      try { r = await req({ op: 'annotate', texts: part.map((x) => x.word) }); } catch (error) { r = { error: { message: String(error) } }; }
+      if (gone()) return;
+      if (!r.ok) { v.paste = null; drawPaste(); toast(errText(r), 'error'); drawNotices(); return; }
+      (r.annotations || []).forEach((ann, k) => {
+        const row = part[k];
+        row.ann = ann;
+        row.chosen = charsOf(row.word, ann).map((c) => c.reading || '');
+        row.checked = complete(row.chosen);
+      });
+    }
+    v.paste.pending = false;
+    drawPaste();
+    // 從檔案匯入：焦點在標題列的「匯入」，離預覽很遠；交給「加入勾選的…」（貼上時焦點留在新增欄位）。
+    const add = file && el.paste.querySelector('[data-k="paste-add"]');
+    if (add && !add.disabled) add.focus();
+  }
+
+  const lineText = (text) => text.replace(/\r\n|\r|\n/g, ' ⏎ ').replace(/\t/g, ' ');
+
   function drawPaste() {
+    if (!el.paste) return;
+    keepFocus(el.paste, drawPasteNow);
+  }
+  function drawPasteNow() {
     clear(el.paste);
     const p = v.paste;
     if (!p) return;
-    const picked = p.rows.filter((x) => x.checked);
-    const count = h('span', {});
-    const addButton = h('button', { type: 'button', class: 'primary', disabled: p.pending, onclick: addPaste });
+    const title = p.file ? '匯入「' + p.file + '」' : '貼上的詞';
+    const count = h('span', { class: 'muted' });
+    const warn = h('div', {});
+    const addButton = h('button', { type: 'button', class: 'primary', 'data-k': 'paste-add', onclick: addPaste });
     const update = () => {
-      const n = p.rows.filter((x) => x.checked).length;
-      addButton.textContent = '加入勾選的 ' + n + ' 個';
-      addButton.disabled = p.pending || n === 0;
-      count.textContent = '貼上了 ' + p.rows.length + ' 行，勾選要加入的詞';
+      const words = p.rows.filter((x) => x.checked);
+      const fresh = words.filter((x) => !x.more).length;
+      const phrases = p.phrases.filter((x) => x.checked).length;
+      const over = [];
+      if (fresh > p.room) over.push('自訂詞最多 ' + num(v.limit) + ' 個，這台電腦還能加 ' + num(p.room) + ' 個，勾選了 ' + num(fresh) + ' 個新詞。');
+      if (phrases > p.phraseRoom) over.push('「我的片語」最多 ' + PHRASE_LIMIT + ' 則，這台電腦還能加 ' + p.phraseRoom + ' 則，勾選了 ' + phrases + ' 則。');
+      clear(warn);
+      if (over.length) warn.append(h('div', { class: 'notice' }, over.map((x) => h('p', {}, x)), h('p', {}, '少勾一些，或先刪掉用不到的詞再加。')));
+      const n = words.length + phrases;
+      addButton.textContent = p.busy ? '加入中…' : p.pending ? '查讀音中…' : n ? '加入勾選的 ' + (phrases ? amount(words.length, phrases) : num(words.length) + ' 個') : '加入';
+      addButton.disabled = !!(p.pending || p.busy || n === 0 || over.length);
+      const total = p.rows.length + p.phrases.length;
+      count.textContent = total ? '勾選要加入的' + (p.phrases.length ? '詞與片語' : '詞') : '';
     };
+    const notes = [];
+    if (p.same || p.samePhrases) notes.push('已經有的 ' + amount(p.same, p.samePhrases) + '會略過。');
+    const bad = p.rows.filter((x) => x.problem).length + p.phrases.filter((x) => x.problem).length;
+    if (bad) notes.push(num(bad) + ' 個不能加入，原因寫在那一行。');
+    if (!p.pending && !p.rows.length && !p.phrases.length) notes.push('沒有要加的，都已經有了。');
+    const lock = p.pending || p.busy;
+    const wordRows = p.rows.map((row, i) => h('div', { class: 'vprow' + (row.problem ? ' bad' : '') },
+      h('input', { type: 'checkbox', 'data-k': 'pw:' + i, checked: row.checked, disabled: !!row.problem || lock, 'aria-label': '加入「' + row.word + '」',
+        onchange: (event) => { row.checked = event.target.checked; update(); } }),
+      h('span', { class: 'vword' }, row.word),
+      row.problem ? h('span', { class: 'status-warn small' }, row.problem)
+        : row.english ? h('span', { class: 'vtag' }, '英文')
+        : row.given ? h('span', { class: 'vreading plain' }, readingsText(row.readings))
+        : row.ann ? picker(charsOf(row.word, row.ann), row.chosen, () => { if (!complete(row.chosen)) { row.checked = false; drawPaste(); } }) : null,
+      row.more && !row.problem ? h('span', { class: 'muted small' }, '已經有這個詞，多加讀音') : null));
+    const phraseRows = p.phrases.map((x, i) => h('div', { class: 'vprow' + (x.problem ? ' bad' : '') },
+      h('input', { type: 'checkbox', 'data-k': 'pp:' + i, checked: x.checked, disabled: !!x.problem || lock, 'aria-label': '加入片語「' + clipText(x.text) + '」',
+        onchange: (event) => { x.checked = event.target.checked; update(); } }),
+      h('span', { class: 'vptext', title: x.text }, lineText(x.text)),
+      x.problem ? h('span', { class: 'status-warn small' }, x.problem) : null));
     el.paste.append(h('div', { class: 'card vpaste' },
-      h('div', { class: 'vpaste-head' }, h('strong', {}, count), p.pending ? h('span', { class: 'muted' }, '查讀音中…') : null),
-      p.rows.map((row) => h('div', { class: 'vprow' + (row.problem ? ' bad' : '') },
-        h('input', { type: 'checkbox', checked: row.checked, disabled: !!row.problem || p.pending, 'aria-label': '加入「' + row.text + '」',
-          onchange: (event) => { row.checked = event.target.checked; update(); } }),
-        h('span', { class: 'vword' }, row.text),
-        row.problem ? h('span', { class: 'status-warn small' }, row.problem)
-          : row.english ? h('span', { class: 'vtag' }, '英文')
-          : row.ann ? picker(charsOf(row.text, row.ann), row.chosen, () => { if (!complete(row.chosen)) { row.checked = false; drawPaste(); } }) : null)),
+      h('div', { class: 'vpaste-head' }, h('strong', {}, title), count, p.pending ? h('span', { class: 'muted' }, '讀取中…') : null),
+      notes.length ? h('p', { class: 'muted small vpaste-note' }, notes.join('')) : null,
+      warn,
       h('div', { class: 'actions' }, addButton,
-        h('button', { type: 'button', class: 'secondary', onclick: () => { v.paste = null; drawPaste(); } }, '取消'))));
+        h('button', { type: 'button', class: 'secondary', 'data-k': 'paste-cancel', disabled: !!p.busy, onclick: () => { v.paste = null; drawPaste(); el.add.focus(); } }, '取消')),
+      h('div', { class: 'vprows' + (wordRows.length + phraseRows.length > 12 ? ' scroll' : '') },
+        wordRows,
+        phraseRows.length ? h('div', { class: 'vpsub muted small' }, '我的片語') : null,
+        phraseRows)));
     update();
-    void picked;
   }
 
   async function addPaste() {
-    const rows = v.paste.rows.filter((x) => x.checked);
-    if (rows.some((x) => !x.english && !complete(x.chosen))) { toast('請先填好每個字的讀音。', 'warn'); return; }
-    const r = await req({ op: 'add', words: rows.map((x) => (x.english ? { word: x.text } : { word: x.text, readings: [x.chosen.join(' ')] })) });
-    if (!r.ok) {
-      const bad = r.error && r.error.item >= 0 ? rows[r.error.item] : null;
-      if (bad) { bad.problem = errText(r); bad.checked = false; drawPaste(); }
-      toast(errText(r), 'error');
-      return;
-    }
-    v.version = r.version;
-    rows.forEach((x) => v.flash.add(x.text));
-    v.paste = null;
+    const p = v.paste;
+    if (!p || p.busy || p.pending) return;
+    const rows = p.rows.filter((x) => x.checked);
+    const phrases = p.phrases.filter((x) => x.checked);
+    if (rows.some((x) => !x.given && !complete(x.chosen))) { toast('請先填好每個字的讀音。', 'warn'); return; }
+    const entries = rows.map((x) => (x.english ? { word: x.word } : { word: x.word, readings: x.given ? x.readings : [x.chosen.join(' ')] }));
+    const steps = [];
+    let base = 0;
+    for (const part of VT.chunks(entries, BATCH)) { steps.push({ body: { op: 'add', words: part }, items: rows, base }); base += part.length; }
+    base = 0;
+    for (const part of VT.chunks(phrases.map((x) => x.text), BATCH)) { steps.push({ body: { op: 'phrase-add', texts: part }, items: phrases, base }); base += part.length; }
+    p.busy = true;
     drawPaste();
-    showUndo('已加入 ' + rows.length + ' 個詞', r.batch && r.batch.id);
+    const done = [];
+    let last = null;
+    for (const step of steps) {
+      let r;
+      try { r = await req(step.body); } catch (error) { r = { error: { message: String(error), item: -1 } }; }
+      if (!r.ok) {
+        // 已經加的批次復原，維持整批不加；被拒絕的那一行標出原因、取消勾選。
+        const kept = await undoAll(done);
+        const bad = r.error && r.error.item >= 0 ? step.items[step.base + r.error.item] : null;
+        if (bad) { bad.problem = errText(r); bad.checked = false; }
+        p.busy = false;
+        if (v.paste === p) drawPaste();
+        toast(errText(r) + (kept ? '（前面已加入的 ' + kept + ' 批沒能復原，可到「最近變更」復原）' : ''), 'error');
+        drawNotices();
+        if (done.length) reload();
+        return;
+      }
+      if (r.batch && r.batch.id) done.push(r.batch.id);
+      last = r;
+    }
+    if (last) v.version = last.version;
+    if (last && last.phrases) v.phrases = last.phrases;
+    rows.forEach((x) => v.flash.add(x.word));
+    v.paste = null;
+    clear(el.paste); // 不找回焦點：按下的鈕跟著預覽消失，底部提示的「復原」接手焦點
+    const what = amount(rows.length, phrases.length);
+    if (!done.length) { toast('沒有新的詞彙，都已經有了。', 'ok'); el.add.focus(); }
+    else showUndo('已加入 ' + what, done.length === 1 ? done[0] : () => undoImport(done));
+    reload();
+  }
+
+  // 依相反順序復原幾個批次；回傳沒能復原的批次數。
+  async function undoAll(ids) {
+    let failed = 0;
+    for (const id of ids.slice().reverse()) {
+      try {
+        const r = await req({ op: 'undo', batch: id });
+        if (!r.ok) failed++;
+      } catch (_) { failed++; }
+    }
+    return failed;
+  }
+
+  async function undoImport(ids) {
+    hideUndo();
+    const failed = await undoAll(ids);
+    if (failed) toast('有 ' + failed + ' 批已經又改過，沒有復原；可以到「最近變更」個別處理。', 'warn');
+    else toast('已復原。', 'ok');
     reload();
   }
 
