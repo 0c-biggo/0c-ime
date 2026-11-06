@@ -27,7 +27,8 @@ public:
         focusWatcher_ = instance_->watchEvent(fcitx::EventType::InputContextFocusIn,
             fcitx::EventWatcherPhase::PostInputMethod, [this](fcitx::Event &) { restorePending(); });
         bus_ = std::make_unique<fcitx::dbus::Bus>(fcitx::dbus::BusType::Session);
-        if (!bus_->isOpen() || !bus_->requestName("org.biggo.ime.Update", fcitx::dbus::RequestNameFlag::None)) {
+        // Empty flags also work on Fcitx 5.0, before RequestNameFlag::None.
+        if (!bus_->isOpen() || !bus_->requestName("org.biggo.ime.Update", fcitx::Flags<fcitx::dbus::RequestNameFlag>{})) {
             bus_.reset(); return; // 更新器無法取得保護時不自動重啟。
         }
         bus_->attachEventLoop(&instance_->eventLoop());
@@ -80,7 +81,9 @@ private:
         auto *ic = instance_->mostRecentInputContext();
         if (!ic || !ic->hasFocus() || ic->program() != restoreProgram_ ||
             ic->capabilityFlags().testAny(fcitx::CapabilityFlag::PasswordOrSensitive) ||
-            ic->capabilityFlags().test(fcitx::CapabilityFlag::Disable)) { return; }
+            // Fcitx 5.0 (Ubuntu 22.04) predates the Disable enumerator. Its
+            // ABI bit is stable in 5.1; keep checking it when loaded there.
+            ic->capabilityFlags().test(static_cast<fcitx::CapabilityFlag>(1ULL << 40))) { return; }
         auto im = std::move(restoreIM_);
         restoreProgram_.clear();
         instance_->setCurrentInputMethod(ic, im, true);
