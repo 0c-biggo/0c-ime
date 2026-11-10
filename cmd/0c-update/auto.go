@@ -720,6 +720,9 @@ func setFeed(base, feed string) error {
 	})
 }
 
+// directAfterInstall 是 after-install 指令要做的事（測試換掉：go test 不動這台機器的 systemd 排程）。
+var directAfterInstall = afterInstall
+
 // afterInstall：完整安裝成功後建立（或更新）自動更新排程；失敗只提示，不影響安裝結果。
 func afterInstall() {
 	defer restartRetiredUI() // Windows：排程與穩定副本都處理完才帶起新版 0c-ui；排程建不起來時也要帶（#243）

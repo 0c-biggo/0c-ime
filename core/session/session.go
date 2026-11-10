@@ -1421,9 +1421,11 @@ func (s *Session) openAt(pos, length int) bool {
 	// The ordinary raw-zhuyin candidate remains last for existing clients.
 	keyLiterals := map[int]string{}
 	if keys := s.originalMixedKeys(pos, length); keys != "" {
-		// 只用數字鍵出的字（#134 的 5 之、#162 的 20 單）：要數字的人多，原按鍵排第二個，第一個仍是目前的字。
+		// 只用數字鍵出的字（#134 的 5 之、#162 的 20 單）要數字的人多；照位置組出的字（#274：i16 博、k27 的、u2/4 定）
+		// 是引擎替使用者改的順序，同音字多時原按鍵在最後一頁找不到；型號後面數字鍵開頭的字（#249：h264 的、Q2 的）
+		// 前面的數字也可能還是型號。這些原按鍵都排第二個，第一個仍是目前的字。
 		at := len(items)
-		if length == 1 && at > 1 && s.digitWordKeys(pos) {
+		if at > 1 && (length == 1 && (s.digitWordKeys(pos) || s.digitAfterAlnumKeys(pos)) || s.positionalKeysIn(pos, length)) {
 			at = 1
 		}
 		keyLiterals[at] = keys

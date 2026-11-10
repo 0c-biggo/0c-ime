@@ -437,6 +437,27 @@ def settings_dependencies(home, interactive=None, ask=input, run=subprocess.run,
     return True
 
 
+def after_install(home, run=subprocess.run):
+    """直接執行 install.py install 時，請剛裝好的 0c-update 做一行安裝裝完後的步驟（#276）。
+
+    自動更新排程與應用程式選單的「靈犀注音設定」都由 0c-update 在安裝後建立（afterInstall，與 Windows、macOS
+    同一套核對），經過 0c-update 的安裝與自動更新都會做；使用者自己執行 install.py 時沒有人做，就不會自動更新，
+    選單也搜尋不到設定程式。由 0c-update 執行時（ZC_UPDATER）交給它；裝到別的 --home、或測試環境
+    （ZC_NO_SCHEDULE）時不碰目前使用者的排程與選單。失敗不影響安裝。
+    """
+    if os.environ.get("ZC_UPDATER") == "1" or os.environ.get("ZC_MANAGED_RELOAD") == "1" or os.environ.get("ZC_NO_SCHEDULE"):
+        return False
+    if home.resolve() != Path.home().resolve():
+        return False
+    updater = home / PAYLOAD["bin/0c-update"]
+    if not updater.is_file():
+        return False
+    try:
+        return run([str(updater), "after-install"], capture_output=True, timeout=60).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def first_install(home):
     """No earlier 0c or zuin install: nothing in use can be replaced, so the desktop may keep running."""
     return not any((home / p).exists() for p in (".local/share/zuin/install-receipt.json", ".local/bin/0c-server",
@@ -1511,6 +1532,7 @@ def main():
                 prune_backups(args.home.resolve(), backup)
                 if restore_zuin:
                     mark_zuin_restore(args.home.resolve(), release["version"])
+                after_install(args.home)  # 在刷新圖示之前：選單項目的圖示也算進這次的圖示變動
                 refresh_icon_theme(args.home.resolve(), icons)
             print(f"安裝完成，舊程式與配對字典備份：{backup}")
             clear_session_addon_dirs(args.home, old_env)

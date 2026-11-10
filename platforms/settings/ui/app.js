@@ -13,6 +13,7 @@
   const state = {
     info: null, status: null, settings: null, error: null,
     busy: new Set(), profileBusy: false, checking: false, updating: null, repairAsk: false, exporting: false, summary: null,
+    unlock: null, // 按了被內建風格鎖住的項目：{ key, value }，在那一列提議複製成自訂（#275）
   };
   let page = 'overview';
   let toastTimer = null;
@@ -203,14 +204,18 @@
     return changePairs([[key, value]]);
   }
 
-  async function changePairs(pairs) {
+  // note：成功時接在套用結果前面的說明（複製成自訂後再改一項時，#275）。
+  async function changePairs(pairs, note) {
     const focused = document.activeElement?.dataset?.focus;
     for (const [key] of pairs) state.busy.add(key);
     render();
     try {
       const result = await invoke('set_settings', { pairs, apply: true, repair: false });
       if (!result.ok) toast(errorText(result.error), 'error');
-      else toast(...applyText(result.apply));
+      else {
+        const [text, tone] = applyText(result.apply);
+        toast((note || '') + text, tone);
+      }
     } catch (error) {
       toast(String(error), 'error');
     }
@@ -391,14 +396,17 @@
     // item.disabled：另一個設定讓這一項不起作用（倚天 41 鍵時的混打與 Emoji，#83；許氏時的混打，#183；不用 Shift 時的開始模式，#184）。開關顯示實際狀態（關閉），
     // 設定檔中的值不動，條件解除後照舊。
     const view = window.ZcInputStylesLogic.controlState(item, locked || state.profileBusy || state.busy.has(item.key));
-    const disabled = view.disabled;
+    // 被內建風格鎖住（#275）：外觀照樣是停用，但按得到，按了在這一列提議複製成自訂再改，而不是毫無反應。
+    const ask = view.copyToChange ? (value) => offerCopy(item, value) : null;
+    const disabled = view.disabled && !ask;
     const labelId = 'label-' + item.key;
     if (values.length === 2 && values.includes('off')) {
       const on = values.find((v) => v !== 'off');
       const checked = view.checked;
       return h('button', {
-        type: 'button', class: 'switch', role: 'switch', 'aria-checked': String(checked), 'aria-labelledby': labelId,
-        'data-focus': item.key, disabled, onclick: () => change(item.key, checked ? 'off' : on),
+        type: 'button', class: ask ? 'switch locked' : 'switch', role: 'switch', 'aria-checked': String(checked), 'aria-labelledby': labelId,
+        'aria-disabled': ask ? 'true' : false, 'data-focus': item.key, disabled,
+        onclick: () => (ask ? ask(checked ? 'off' : on) : change(item.key, checked ? 'off' : on)),
       });
     }
     // 選項也畫實際使用的值：不用 Shift 時開始模式固定為注音（#184，item.effective），設定檔裡的英文保留到改回 Shift。
@@ -407,8 +415,51 @@
       ...values.map((value) => h('label', {},
         h('input', {
           type: 'radio', name: item.key, value, checked: shown === value, 'data-focus': item.key + ':' + value,
-          onchange: () => change(item.key, value),
+          'aria-disabled': ask ? 'true' : false,
+          onclick: ask ? (event) => { event.preventDefault(); if (value !== shown) ask(value); } : null,
+          onchange: () => (ask ? ask(value) : change(item.key, value)),
         }), (item.value_labels && item.value_labels[value]) || VALUE[value] || value)));
+  }
+
+  function offerCopy(item, value) {
+    state.unlock = { key: item.key, value };
+    render();
+    const button = Array.from(document.querySelectorAll('[data-focus]')).find((node) => node.dataset.focus === 'unlock:' + item.key);
+    if (button) button.focus();
+  }
+
+  // 按了被內建風格鎖住的項目後，在那一列說明並提供「複製成自訂並開啟」（#275）。
+  function unlockOffer(item) {
+    if (!state.unlock || state.unlock.key !== item.key) return null;
+    const value = state.unlock.value;
+    const offer = window.ZcInputStylesLogic.copyOffer(state.settings?.profiles, item, value, VALUE);
+    if (!offer) return null;
+    return h('div', { class: 'notice info unlock', role: 'group', 'aria-labelledby': 'label-' + item.key },
+      h('p', {}, offer.text),
+      h('div', { class: 'actions' },
+        h('button', { type: 'button', class: 'primary', 'data-focus': 'unlock:' + item.key, disabled: state.profileBusy,
+          onclick: () => copyAndChange(offer, item.key, value) }, offer.button),
+        h('button', { type: 'button', class: 'secondary', 'data-focus': 'unlock-cancel:' + item.key, disabled: state.profileBusy,
+          onclick: () => { state.unlock = null; render(); } }, '取消')));
+  }
+
+  // 先把目前的內建風格複製成自訂（與「輸入習慣」頁的「建立並套用」相同），成功後才改這一項。
+  async function copyAndChange(offer, key, value) {
+    if (state.profileBusy) return;
+    state.profileBusy = true;
+    render();
+    let copied = false;
+    try {
+      const result = await invoke('profile_command', { action: 'copy', id: offer.id, name: offer.name });
+      copied = !!result.ok;
+      if (!copied) toast(errorText(result.error), 'error');
+    } catch (error) {
+      toast(String(error), 'error');
+    }
+    state.profileBusy = false;
+    state.unlock = null;
+    if (copied) await changePairs([[key, value]], '已建立「' + offer.name + '」。');
+    else await refresh();
   }
 
   function profileLockLabel() {
@@ -424,7 +475,7 @@
     else if (item.pending) name.append(h('span', { class: 'badge' }, '已儲存，尚未套用'));
     return row(
       h('div', {}, h('div', { class: 'label', id: 'label-' + item.key }, name), item.description ? h('div', { class: 'desc' }, item.description) : null,
-        causeLink(item)),
+        causeLink(item), unlockOffer(item)),
       control(item, locked));
   }
 
@@ -489,7 +540,7 @@
     const locked = settings.file.read_only;
     const items = settings.items || [];
     if (items.some((item) => item.locked && pageOfKey(item.key) === name)) {
-      root.append(h('div', { class: 'notice info' }, h('p', {}, '部分設定' + profileLockLabel() + '。複製成自訂後可微調；不相容的功能仍會停用。'),
+      root.append(h('div', { class: 'notice info' }, h('p', {}, '部分設定' + profileLockLabel() + '，不能直接修改。點一下想改的項目，可以複製成自訂後修改；不相容的功能仍會停用。'),
         h('button', { type: 'button', class: 'secondary', 'data-focus': 'style-settings', onclick: () => show('styles') }, '選用風格／複製成自訂')));
     }
     const emoji = items.find((item) => item.key === 'emoji-shortcut');
@@ -694,6 +745,7 @@
   function show(name) {
     const next = pageName(name);
     if (next !== page) document.querySelector('main').scrollTop = 0;
+    if (next !== page) state.unlock = null;
     page = next;
     if (page === 'overview' && vocabEnabled()) vocab.refreshOverview().then(() => { if (page === 'overview') render(); });
     if (page === 'models') models.refresh().then(() => { if (page === 'models') render(); });

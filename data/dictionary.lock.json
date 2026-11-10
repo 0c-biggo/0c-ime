@@ -18,8 +18,8 @@
       "sha256": "aa03049852110645bce87b5a7bcb9a383a1b0748e59465827148adb534701782"
     },
     "lexicon.bin": {
-      "size": 8791438,
-      "sha256": "4ac93e27eb771f9440c61461fcf04c0d19b16ee954fbef8c257249a310170a89"
+      "size": 8791416,
+      "sha256": "46721ccb95e55c7fc36abd3a351f9191eef087e47bd30b580c5711c05dc30f57"
     },
     "lm.bin": {
       "size": 52766129,
@@ -27,11 +27,11 @@
     },
     "manifest.json": {
       "size": 7131,
-      "sha256": "3e93ed1ef3d2fc7443f64a0b5203294298181b84bed2cd6a144c48a4852aefee"
+      "sha256": "4e4c4cdf7681b48de2004927745c2adc03f53b0c7b776e9258c39a7f5b0f4075"
     },
     "report.txt": {
       "size": 2134,
-      "sha256": "d3639a50005c92947348e71f107b9396c88318fb45da9266741b39aedf6e398b"
+      "sha256": "de85eeec5dd275e3b0eccd011f467103d5f0920cebee510a0683b93f8babf3e9"
     }
   }
 }

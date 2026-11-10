@@ -2,6 +2,26 @@
 
 每個版本的「公開摘要」與 [官網更新紀錄](https://0c.biggo.com/updates/) 相同；「原始碼套件」記錄 Release 完整 tarball 的內容變化。
 
+## 0.2.11（2026-11-11，public-beta）
+
+### 公開摘要
+
+- 中英混打：打字快、按鍵順序顛倒而被組成中文的字（例如 i16 變成「博」、k27 變成「的」），在字上按 ↓，第二個就是原本打的按鍵，不必再翻好幾頁找。
+- 中英混打：型號、代號後面直接接著打中文，會在型號後面切開，例如「PS5的」「HDR400的」「m2成」「DDR5都」，不再整串變成英數。win10、java8、i9 這類常見型號按空白會照原樣送出，不再變成「win班」；2k 按空白也照原樣，不會變成冷僻字。
+- 打 ㄧㄡˇ 時，候選不再出現「那」。教育部辭典沒有這個讀音，「那」原本的讀音都照常能打。
+- 設定程式：被內建輸入習慣固定住的開關，點下去會說明原因，並提供「複製成自訂並開啟」，不再按了沒反應。
+- Windows：用 Shift＋空白切到全形後，@ # $ % + 等符號和數字鍵盤也會打出全形；英文全形模式按數字鍵盤不再一次出現好幾個數字。
+- Linux：直接執行套件裡的 install.py 安裝時，也會建立「靈犀注音設定」選單項目和自動更新排程；KDE 第一次安裝後不必重新登入，就能在應用程式啟動器搜尋到設定程式並看到圖示。
+
+### 原始碼套件
+
+- 中英混打（`core/session/mixed.go`）：按鍵不照聲母、介音、韻母順序而照位置組出的字（i16 博、k27 的、u2/4 定、9j4 外），↓ 第二項改為原按鍵（`positionalKeysIn`，#274），第一候選不變；新增 `mixed_keys_first_page_test.go`。
+- 中英混打英數型號（#249）：新增 `core/english/alnum.tsv`（141 筆，每筆有出處，由 `core/english/alnum.go` 以 go:embed 讀入，格式錯誤是測試失敗），取代程式裡的 `literalTokens`／`keysSecondTokens`。清單內的詞接空白照字面（win10、java8、i9），後面只接數字鍵且組成常用字時從詞後切開（`mixedAfterKnownAlnum`：DDR5都、Q3至少）；英文字母接數字後面緊接著打的注音從數字後面切開（`mixedAfterAlnum`：HDR400的、m2成、PS5賺），數字鍵開頭的字 ↓ 第二是原按鍵（`digitAfterAlnumKeys`）；字母與數字混打的按鍵按空白只組得出罕用字時照原按鍵送出（`rareAlnumSpace`：2k、32k）。新增 `mixed_alnum_known_test.go`、`mixed_alnum_split_test.go`。
+- 資料（#223）：`data/lexicon/chars.tsv` 拿掉「那 ㄧㄡˇ」（只有 cns11643 收），記入 `rejected.tsv`。內附字典以 `scripts/build_release_data.py` 重建：`lexicon.bin`、`report.txt` 與 manifest 改變，`lm.bin`、`NOTICE.txt` 與英文子包不變；`data/dictionary.lock.json` 與 `models/pairing.lock.json` 改為 manifest `4e4c4cdf…`。模型權重、token 順序與推論設定不變，只重新配對新字典。
+- 設定程式（#275）：被內建輸入習慣固定住的開關仍顯示停用但按得到，按下後在那一列說明原因並提供「複製成自訂並開啟」（`platforms/settings/ui/app.js`、`input-styles.js`）。
+- Windows（#278）：沒組字時的按鍵預檢在全形時改看引擎 health 的 `idle_keys_full_width`（`Engine.IdleKeysFullWidth`），`@ # $ % * + = |` 交給引擎打全形；數字鍵盤在全形時交給引擎（`full_width_keypad`），半形照舊交還；英文全形修正數字鍵盤一鍵送出三次。舊引擎沒有這一項時照舊。新增 `core/engine/full_width_idle_test.go`。
+- Linux（#276，GitHub #63）：直接執行 `install.py install` 時（不是由 0c-update 執行，沒有 `ZC_UPDATER`），裝完呼叫新的內部指令 `0c-update after-install`，跟一行安裝一樣建立自動更新排程、引擎服務與「靈犀注音設定」選單項目；裝到別的 `--home` 或設了 `ZC_NO_SCHEDULE` 時不做。建立設定程式選單項目時送 KIconLoader `iconChanged`，KDE 第一次安裝後啟動器就看得到圖示。`platforms/linux-fcitx5/test/desktop_test.py` 以 `ZC_NO_SCHEDULE` 安裝。
+
 ## 0.2.10（2026-11-07，public-beta）
 
 ### 公開摘要

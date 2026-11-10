@@ -840,7 +840,7 @@ func installLiveBundle(ctx context.Context, root string, r *update.Release, env 
 		return fmt.Errorf("舊 zuin-* 套件請使用 rollback")
 	}
 	cmd := exec.CommandContext(ctx, "python3", filepath.Join(root, "install.py"), "install")
-	cmd.Env = append(append(os.Environ(), "ZC_MANAGED_RELOAD=1"), env...)
+	cmd.Env = append(append(os.Environ(), "ZC_MANAGED_RELOAD=1", updaterEnv), env...)
 	out, err := cmd.CombinedOutput()
 	// 舊版安裝器不認得 managed reload 的提示設定。
 	text := strings.ReplaceAll(string(out), "登出再登入後，Fcitx5 會載入「靈犀注音」。", "更新器將重新載入輸入法並核對生效。")

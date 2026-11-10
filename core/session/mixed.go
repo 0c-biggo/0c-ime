@@ -479,6 +479,11 @@ func (s *Session) finishMixedTone(key string) bool {
 	if s.mixed.choice == 0 && key != " " && s.literalToken(raw+key) {
 		return false
 	}
+	// 英文字接數字的英數詞接空白（win10␣、java8␣、i9␣、gen5␣）照字面，不切成 win班、java阿（#249）；
+	// 不是英數詞的（Line5␣、BUG5␣、mini0␣）照舊是 Line之、BUG之、mini安。只看 alnum.tsv：個人英文學到的字母詞（rup）接空白照舊是中文（#247）。
+	if s.mixed.choice == 0 && key == " " && english.Alnum(raw) == english.AlnumLiteral {
+		return false
+	}
 	// Keep the one-letter English word a. Other collisions, including i
 	// (ㄛ 喔, #69), let a reachable Chinese reading win the tone; uppercase I is
 	// not a phonetic key and stays English. Literal selection above opts out.
@@ -495,6 +500,11 @@ func (s *Session) finishMixedTone(key string) bool {
 		}
 		if s.mixedSpaceNumber(raw, sym) || s.alnumThenSpace(raw, sym) {
 			s.flushMixed()
+			s.insertMixedLiteral(" ", false, false)
+			return true
+		}
+		if s.mixed.choice == 0 && s.rareAlnumSpace(raw) {
+			s.flushMixedAsTyped()
 			s.insertMixedLiteral(" ", false, false)
 			return true
 		}
@@ -645,6 +655,12 @@ func (s *Session) mixedBoundary(raw, key string, tone rune) (int, zhuyin.Syllabl
 		(key != " " || len(raw)-at >= 2 || s.keyIsInitial(rune(raw[at]))) {
 		return at, done, true
 	}
+	if at, done, ok := s.mixedAfterKnownAlnum(raw, key, tone); ok {
+		return at, done, true
+	}
+	if at, done, ok := s.mixedAfterAlnum(raw, key, tone); ok {
+		return at, done, true
+	}
 	if at, done, ok := s.mixedAfterToken(raw, key, tone); ok {
 		return at, done, true
 	}
@@ -699,6 +715,41 @@ func (s *Session) mixedAfterTypo(raw string, tone rune) (int, zhuyin.Syllable, b
 		return 0, "", false
 	}
 	return at, done, true
+}
+
+// mixedAfterAlnum（#249）：英文字母接數字的型號、代號（GTA6、m2、ios27、Q3、HDR400、h264）後面緊接著打的注音，從數字裡或數字後面切開：
+// 數字後面接字母鍵，真的在打注音時只會是「前一段打完、這一段開始」（GTA6 偷、m2 成、Q3 開），型號本身很少這樣打。
+// 後段是數字串的最後幾鍵（可以沒有）接後面全部的按鍵，要有字母、照聲母、介音、韻母的順序（HDR400 的 2k7、Q2 的 2k7、h264 我 的 ji3）；
+// 取組得成字的最長後段，數字鍵先算給中文（PS5 賺 的 5j04 不是 PS55 萬、FSR2 補 的 1j3 不是 FSR21 五）。只有數字的後段
+// （DDR5 都 的 2.、RX104 的 04）分不出是型號還是注音，不在這裡切。
+// 字母後面的數字本身就組得成後段時（AI 的 2k7、YP 比 的 1u3）不是型號，交給原本的切法。
+// 接聲調鍵時後段組成的不是罕用字（mixedRareFloor）；接空白時後段至少兩鍵、組成常用字（mixedUnknownWordFloor）：
+// 型號結尾的單一字母（gpt4o␣、ps4u␣、S24u␣、Vm4630g␣）照字面。
+func (s *Session) mixedAfterAlnum(raw, key string, tone rune) (int, zhuyin.Syllable, bool) {
+	letters := len(raw) - len(strings.TrimLeftFunc(raw, func(r rune) bool { return r <= unicode.MaxASCII && unicode.IsLetter(r) }))
+	end := letters + len(raw[letters:]) - len(strings.TrimLeft(raw[letters:], "0123456789"))
+	if letters == 0 || end == letters || end >= len(raw) || !strings.ContainsFunc(raw[end:], func(r rune) bool { return r >= 'a' && r <= 'z' }) {
+		return 0, "", false
+	}
+	if s.keysInSyllableOrder(raw[letters:]) {
+		if _, ok := s.mixedReading(raw[letters:], tone); ok {
+			return 0, "", false
+		}
+	}
+	floor := mixedRareFloor
+	if key == " " {
+		floor = mixedUnknownWordFloor
+	}
+	var best mixedCut
+	for at := letters + 1; at <= end; at++ {
+		if key == " " && len(raw)-at < 2 {
+			break
+		}
+		if s.tryMixedCut(&best, raw, at, tone, floor); best.at > 0 {
+			break
+		}
+	}
+	return best.at, best.syl, best.at > 0
 }
 
 // mixedCut 是英→中切法的候選：從最長的音節開始，短的音節常用得多時才換（mixedUnknownRatio），跟 mixedBoundary 字典不認得的前段一樣。
@@ -788,18 +839,82 @@ func (s *Session) mixedAfterLetter(raw, key string, tone rune) (int, zhuyin.Syll
 	return best.at, best.syl, best.at > 0
 }
 
-// literalTokens（#249）：常見、打注音時幾乎不會這樣打的英數詞：不論前面是什麼都照字面，接著打的注音也從詞的後面切開，↓ 仍有中文。
-// ps 的 p 是韻母 ㄣ、s 是聲母 ㄋ，順序顛倒（嫩是 sp4）；x86 的 ㄌㄚˊ 是罕用字（語料 7 次，x86 354 次）。
-// mp3、mp4 是照順序打的允、運，不放在這裡。
-var literalTokens = map[string]bool{"ps2": true, "ps3": true, "ps4": true, "ps5": true, "x86": true}
-
-// keysSecondTokens（#249）：照順序打、中文比英數詞常用幾百倍的英數詞（允、運）：照舊出字，↓ 第二項是原按鍵。
-var keysSecondTokens = map[string]bool{"mp3": true, "mp4": true}
-
-// literalToken（#249）：t 是已知的英數詞，或個人英文已經認得（選回原按鍵幾次學到的 mp3）。個人英文要大小寫也相同：
+// literalToken（#249）：t 是 core/english/alnum.tsv 照字面的英數詞（ps4、x86、win10、DDR5），或個人英文已經認得（選回原按鍵幾次學到的 mp3）：
+// 不論前面是什麼都照字面，接著打的注音也從詞的後面切開，↓ 仍有中文。個人英文要大小寫也相同：
 // 大寫不是注音鍵，學到 A87 不代表打注音的 a87（嗎）也要照字面。
 func (s *Session) literalToken(t string) bool {
-	return literalTokens[t] || s.personalEnglishAllowed() && s.model.EnglishKnownAs(t)
+	return english.Alnum(t) == english.AlnumLiteral || s.personalEnglishAllowed() && s.model.EnglishKnownAs(t)
+}
+
+// mixedAfterKnownAlnum（#249）：前段是 alnum.tsv 的英數詞（DDR5、Q3、win10），後面緊接著只有數字鍵、整串不是英數詞（DDR52 不是型號）時，
+// 從詞的後面切開：DDR5＋2.␣ 是 DDR5都、Q3＋54 是 Q3至。後段照聲母、介音、韻母的順序打、組成常用字（mixedUnknownWordFloor），
+// 接空白時後段至少兩鍵（F1＋2␣ 的 F12 是按鍵名稱）。後段有字母的由 mixedAfterAlnum 切。只看最長的英數詞前段，
+// 不看個人學到的英文：帳號、生日（lisa03）後面的數字常是同一串（lisa0304）。#241 的 RX104、BR186 前段沒有數字，照舊。
+// 切出的字後面再接數字（DDR5＋56＋00 的 5600）時，比照 #241 改回原按鍵（tokenDigitWord）。
+func (s *Session) mixedAfterKnownAlnum(raw, key string, tone rune) (int, zhuyin.Syllable, bool) {
+	whole := raw
+	if key != " " {
+		whole += key
+	}
+	if english.Alnum(raw) != english.AlnumUnknown || english.Alnum(whole) != english.AlnumUnknown {
+		return 0, "", false
+	}
+	for at := len(raw) - 1; at >= 2; at-- {
+		if english.Alnum(raw[:at]) == english.AlnumUnknown {
+			continue
+		}
+		rest := raw[at:]
+		if strings.ContainsFunc(rest, unicode.IsLetter) || key == " " && len(rest) < 2 || !s.keysInSyllableOrder(rest) {
+			return 0, "", false
+		}
+		// 詞的最後一個數字鍵連後段也組得成常用字時（B5＋04 的 504 是站、Q1＋8 的 18 是吧），分不出是哪一種，不切。
+		if s.keysInSyllableOrder(raw[at-1:]) {
+			if done, ok := s.mixedReading(raw[at-1:], tone); ok && s.mixedSyllableScore(done) >= mixedUnknownWordFloor {
+				return 0, "", false
+			}
+		}
+		done, ok := s.mixedReading(rest, tone)
+		if !ok || s.mixedSyllableScore(done) < mixedUnknownWordFloor {
+			return 0, "", false
+		}
+		return at, done, true
+	}
+	return 0, "", false
+}
+
+// knownAlnumBefore：游標前面 at 之前緊接著照字面送出的英數是 alnum.tsv 的英數詞（DDR5、Q3），mixedAfterKnownAlnum 從它後面切開過。
+func (s *Session) knownAlnumBefore(at int) bool {
+	var token []byte
+	for pos := at - 1; pos >= 0 && s.literals[pos] && len(s.syls[pos]) == 1; pos-- {
+		c := s.syls[pos][0]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z') {
+			break
+		}
+		token = append([]byte{c}, token...)
+	}
+	return english.Alnum(string(token)) != english.AlnumUnknown
+}
+
+// rareAlnumSpace（#249）：字母與數字混打的待定按鍵接空白組成的一聲只有罕用字時照字面（2k␣ 是 2k，不是 ㄉㄜ 的嘚；32k␣ 是 32k），
+// 比照 #200 的 rareDigitReading。打到一半的畫面（ㄉㄜ）不變，接聲調鍵（2k7 的）也照舊；跟前面的中文成詞時照舊出字。
+func (s *Session) rareAlnumSpace(raw string) bool {
+	if !strings.ContainsFunc(raw, unicode.IsLetter) || !strings.ContainsFunc(raw, unicode.IsDigit) {
+		return false
+	}
+	done, ok := s.mixedReading(raw, zhuyin.Tone1)
+	if !ok || len(s.model.Source().Exact([]zhuyin.Syllable{done})) == 0 { // 只能當詞頭、沒有單字的音節不算
+		return false
+	}
+	return s.mixedSyllableScore(done) < mixedRareFloor && !s.readingContinues(done) && s.mixedSystemSyllableScore(done) < mixedRareFloor
+}
+
+// flushMixedAsTyped：待定按鍵照原按鍵送出，不論畫面顯示成什麼（2k 打到一半顯示 ㄉㄜ）。
+func (s *Session) flushMixedAsTyped() {
+	raw, previous, at, before := s.mixed.raw, slices.Clone(s.path), s.cursor, len(s.syls)
+	s.clearMixed()
+	s.insertMixedLiteral(raw, false, false)
+	s.refresh()
+	s.keepMixedDisplay(previous, at, len(s.syls)-before)
 }
 
 // digitThenLetters（#249）：緊接在字面數字（3 4 6 7 是聲調鍵，先照字面送出）後面的待定字母，只有一鍵（4k、6j）或
@@ -1003,6 +1118,35 @@ func (s *Session) keysInSyllableOrder(keys string) bool {
 	return true
 }
 
+// positionalKeysIn（#274）：[pos, pos+length) 有字是中英混打照位置組出來的：去掉結尾的聲調鍵或空白後，
+// 按鍵不照聲母、介音、韻母的順序（#119 的 k27、i16，#256 的 2/u4、u2/4、9j4）。照順序打的（ji3、ru04）不算。
+func (s *Session) positionalKeysIn(pos, length int) bool {
+	for at := pos; at < pos+length; at++ {
+		keys := s.mixedKeys[at]
+		if keys == "" {
+			continue
+		}
+		if sym, ok := s.layout.Symbol(rune(keys[len(keys)-1])); keys[len(keys)-1] == ' ' || ok && zhuyin.ClassOf(sym) == zhuyin.Tone {
+			keys = keys[:len(keys)-1]
+		}
+		if keys != "" && !s.keysInSyllableOrder(keys) {
+			return true
+		}
+	}
+	return false
+}
+
+// digitAfterAlnumKeys（#249）：at 是數字鍵開頭打出的字，緊接在照字面的數字後面（h264 的 2k7、Q2 的 2k7，mixedAfterAlnum 從數字裡切開）：
+// 前面的數字可能還是型號的一部分，比照 #241 的 RX104 辦，↓ 的原按鍵排第二個。
+func (s *Session) digitAfterAlnumKeys(at int) bool {
+	keys := s.mixedKeys[at]
+	if keys == "" || keys[0] < '0' || keys[0] > '9' || at == 0 || !s.literals[at-1] {
+		return false
+	}
+	prev := s.syls[at-1]
+	return len(prev) == 1 && prev[0] >= '0' && prev[0] <= '9'
+}
+
 // mixedLiteralPrefix 判斷聲調前的按鍵能否在 at 切開：前段留原樣、後段組成中文。前段可以是英文單字，
 // 也可以是數字或標點（2024ru04 → 2024建，,ji3 → ,我；標準排列的 , . / ; - 與 1 2 5 8 9 0 都是注音鍵），
 // 或英文單字接數字／標點（iphone15ru04）。前段以數字或標點結尾時，後段必須有字母，
@@ -1019,7 +1163,17 @@ func (s *Session) mixedLiteralPrefix(prefix, rest, key string) bool {
 	if key == " " || !strings.ContainsFunc(rest, unicode.IsLetter) {
 		return false
 	}
-	return word == "" && !strings.ContainsFunc(prefix, unicode.IsLetter) || s.mixedEnglishWord(word) || s.literalToken(prefix)
+	return word == "" && !strings.ContainsFunc(prefix, unicode.IsLetter) || s.mixedEnglishWord(word) || s.literalTokenPrefix(prefix)
+}
+
+// literalTokenPrefix：前段是照字面的英數詞，後段從它後面切開（ps42k7 是 ps4的）。alnum.tsv 的詞要以聲調鍵結尾（ps4、x86、usb4）：
+// 以 1 2 5 8 9 0 結尾的（PS2、SATA2、Q2、m2、gta5）那一鍵可能是後段中文的開頭（PS電容、SATA的、Q的、gta主角），
+// 交給 mixedAfterAlnum 數字鍵先算給中文（#249）。個人英文學到的照舊。
+func (s *Session) literalTokenPrefix(prefix string) bool {
+	if s.personalEnglishAllowed() && s.model.EnglishKnownAs(prefix) {
+		return true
+	}
+	return english.Alnum(prefix) == english.AlnumLiteral && strings.ContainsAny(prefix[len(prefix)-1:], "3467")
 }
 
 // mixedCapsThenLower（#241）：兩個以上大寫接一個小寫（AIr）不是英文字：字典不分大小寫，AI 後面打的 ru/4 不能切成 air＋應。
@@ -1208,7 +1362,8 @@ func (s *Session) reviseDigitWord(k string) {
 	s.refresh()
 }
 
-// tokenDigitWord（#241）：游標前一個字是英文後面只用數字鍵＋聲調鍵切出來的字（GT 後面的 103 版、GG 後面的 104 辦），回傳它的原按鍵。
+// tokenDigitWord（#241）：游標前一個字是英文後面只用數字鍵＋聲調鍵切出來的字（GT 後面的 103 版、GG 後面的 104 辦），
+// 或 alnum.tsv 英數詞後面切出來的字（DDR5 後面的 56 直，#249），回傳它的原按鍵。
 // 使用者選過的字（鎖定）不算。
 func (s *Session) tokenDigitWord() (string, bool) {
 	if s.cursor < 2 {
@@ -1219,7 +1374,7 @@ func (s *Session) tokenDigitWord() (string, bool) {
 	if s.literals[at] || len(keys) < 2 || strings.Trim(keys, "0123456789") != "" || !strings.ContainsAny(keys[len(keys)-1:], "3467") {
 		return "", false
 	}
-	if prev := s.syls[at-1]; !s.literals[at-1] || len(prev) != 1 || !unicode.IsLetter(rune(prev[0])) {
+	if prev := s.syls[at-1]; !s.literals[at-1] || len(prev) != 1 || !unicode.IsLetter(rune(prev[0])) && !s.knownAlnumBefore(at) {
 		return "", false
 	}
 	for start, lock := range s.locks {
@@ -1276,7 +1431,7 @@ func (s *Session) digitWordKeys(at int) bool {
 		return false
 	}
 	keys := s.mixedKeys[at]
-	if keysSecondTokens[keys] {
+	if english.Alnum(keys) == english.AlnumKeysSecond {
 		return true
 	}
 	digits, ok := strings.CutSuffix(keys, " ")

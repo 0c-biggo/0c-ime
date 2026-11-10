@@ -119,6 +119,13 @@ func (e *Engine) IdleKeys() string {
 	return keys // 聲調選填時混打停用（#150）
 }
 
+// IdleKeysFullWidth 回報全形（Shift＋空白，#278）時沒在組字、注音模式會處理的可見 ASCII 按鍵（session.FullWidthIdleKeys）。
+// 全形時「Shift＋符號打半形」與微軟參考風格的半形原字元都打全形，不像 IdleKeys 拿掉那些鍵；Shift＋字母一律由核心處理。
+// Windows 外殼的 TestKeyDown 在快照的 full_width 為 true 時照這份決定。
+func (e *Engine) IdleKeysFullWidth() string {
+	return session.FullWidthIdleKeys(e.Layout, e.MixedInput && !e.Toneless, e.EmojiShortcut)
+}
+
 func (e *Engine) OpenSession() uint64 {
 	e.mu.Lock()
 	defer e.mu.Unlock()

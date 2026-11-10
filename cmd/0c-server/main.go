@@ -451,6 +451,9 @@ func serve() string {
 		// #183：沒在組字時引擎會處理的可見 ASCII 按鍵，依鍵盤排列與設定（許氏的數字、- / 交還應用程式）。
 		// Windows 外殼的 TestKeyDown 依此決定；舊引擎沒有這一項，外殼照舊依 keyboard_layout、emoji_shortcut 與 tone_mark_keys 推算。
 		"idle_keys": eng.IdleKeys(),
+		// #278：全形（Shift＋空白）時沒在組字引擎會處理的可見 ASCII 按鍵（@ # * + 等打全形）。外殼在快照的 full_width
+		// 為 true 時照這一項；舊引擎沒有這一項，外殼照舊只補攔大寫、空白與 \ ' " < > ?。
+		"idle_keys_full_width": eng.IdleKeysFullWidth(),
 		// #168：引擎認得 Ctrl＋標點的鍵名而且設定開著；外殼只在這一項是 true、又在中文模式時送那六個鍵，
 		// 舊引擎沒有這一項，外殼照舊交給應用程式。
 		"ctrl_punctuation": fmt.Sprint(eng.CtrlPunct),

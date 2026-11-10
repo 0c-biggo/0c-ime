@@ -69,9 +69,17 @@ impl Snapshot {
         self.full_width && key.len() == 1 && (key.as_bytes()[0].is_ascii_uppercase() || " \\'\"<>?".contains(key))
     }
 
+    /// 全形時（#278）沒在組字的數字鍵盤（KP1、KP*）：核心一律打成全形字元；半形時照舊交還宿主（#75）。
+    pub fn full_width_keypad(&self, key: &str) -> bool {
+        self.full_width && key.strip_prefix("KP").is_some_and(|c| c.len() == 1 && c.as_bytes()[0].is_ascii_graphic())
+    }
+
     /// Predict only keys the English word buffer will actually consume.
     pub fn english_wants_key(&self, key: &str) -> bool {
-        if self.english && self.full_width && (key.len() == 1 && key.as_bytes()[0].is_ascii_graphic() || key == " ") {
+        // 全形英文：可見字元、空白與數字鍵盤（KP1，#278）都打全形。數字鍵盤以前落到 english_key_policy 最後
+        // 「先送給核心」的路：TestKeyDown、OnKeyDown 的預檢與 OnKeyDown 本身各送一次，按一下打出「１１１」。
+        let literal = key.strip_prefix("KP").unwrap_or(key);
+        if self.english && self.full_width && (literal.len() == 1 && literal.as_bytes()[0].is_ascii_graphic() || key == " ") {
             return true;
         }
         if !self.english_autocomplete || !self.english {
@@ -388,16 +396,18 @@ impl Session {
             && self.client.connected()
             && self.idle_generation == self.client.generation()
             && self.client.alive();
+        // 字寬是 session 的狀態（Shift＋空白，#278），跟著最近一次快照；換欄位清掉 english_state 時引擎也開新的半形 session。
+        let full_width = self.english_state.full_width;
         if !fresh {
             match self.client.call(&json!({"op": "health"})).filter(|r| r["ok"] == true) {
                 Some(reply) => {
                     self.idle_info = Some(reply["info"].clone());
                     self.idle_generation = self.client.generation();
                 }
-                None => return idle_key_from(self.idle_info.as_ref().unwrap_or(&Value::Null), key),
+                None => return idle_key_from(self.idle_info.as_ref().unwrap_or(&Value::Null), key, full_width),
             }
         }
-        self.idle_info.as_ref().is_some_and(|info| idle_key_from(info, key))
+        self.idle_info.as_ref().is_some_and(|info| idle_key_from(info, key, full_width))
     }
 
     /// 「用快捷鍵切換簡體字」開著、引擎也能即時切換（health 的 simplified_hotkey 與 output_simplified_live，#192）。
@@ -750,14 +760,23 @@ mod parse_tests {
         for key in ["A", "Z", " ", "'", "\"", "\\", "<", ">", "?"] { assert!(snap.full_width_extra_key(key), "{key}"); }
         for key in ["3", "a", "Tab", "ShiftSpace"] { assert!(!snap.full_width_extra_key(key), "{key}"); }
         assert!(!Snapshot::default().full_width_extra_key("\\"));
+        // #278：數字鍵盤全形時由核心打全形，半形時交還宿主。
+        for key in ["KP1", "KP0", "KP*", "KP+", "KP-", "KP.", "KP/"] {
+            assert!(snap.full_width_keypad(key), "{key}");
+            assert!(!Snapshot::default().full_width_keypad(key), "半形 {key}");
+        }
+        for key in ["1", "KP", "Left", "@"] { assert!(!snap.full_width_keypad(key), "{key}"); }
     }
 
     #[test]
     fn full_width_english_preflight_consumes_printable_keys_without_completion() {
         let snap = parse(&json!({"snapshot":{"mode":"english","full_width":true}}));
         for key in ["a", "A", "0", "9", " ", "'", "\\"] { assert!(snap.english_wants_key(key), "{key}"); }
-        for key in ["Tab", "Escape", "Left", "KP1"] { assert!(!snap.english_wants_key(key), "{key}"); }
+        // 數字鍵盤（#278）：全形時打全形，預檢就說吃，OnKeyDown 才送一次。
+        for key in ["KP1", "KP0", "KP*", "KP+", "KP."] { assert!(snap.english_wants_key(key), "{key}"); }
+        for key in ["Tab", "Escape", "Left", "KP"] { assert!(!snap.english_wants_key(key), "{key}"); }
         assert!(!parse(&json!({"snapshot":{"mode":"english"}})).english_wants_key("a"));
+        assert!(!parse(&json!({"snapshot":{"mode":"english"}})).english_wants_key("KP1"), "半形數字鍵盤照舊交給宿主");
     }
 
     #[test]
@@ -915,7 +934,12 @@ fn idle_tone_keys(info: &Value) -> bool {
 /// - 引擎回報 idle_keys（#183 起）：照它。答案依鍵盤排列與設定而不同（許氏的數字、- / 不是注音鍵、交還宿主），
 ///   由引擎算（core/session.IdleKeys，測試逐鍵比對實際處理結果），外殼不必為每種排列各寫一份按鍵表。
 /// - 舊引擎：依 keyboard_layout（標準或倚天，#83）、emoji_shortcut 與聲調鍵設定（idle_tone_keys）推算。
-fn idle_key_from(info: &Value, key: &str) -> bool {
+/// - 全形（`full_width`，Shift＋空白，#278）：照引擎回報的 idle_keys_full_width（core/session.FullWidthIdleKeys），
+///   @ # * + 等不是注音鍵也不是標點的鍵都打全形。舊引擎沒有這一項時照半形的答案，另由 full_width_extra_key 補攔。
+fn idle_key_from(info: &Value, key: &str, full_width: bool) -> bool {
+    if let Some(keys) = info["idle_keys_full_width"].as_str().filter(|_| full_width) {
+        return key.chars().count() == 1 && keys.contains(key);
+    }
     if let Some(keys) = info["idle_keys"].as_str() {
         return key.chars().count() == 1 && keys.contains(key);
     }
@@ -947,25 +971,50 @@ mod idle_tone_key_tests {
         // #183 許氏：數字與 - / 交還宿主，字母、, . ; = 交給引擎。
         let hsu = json!({"idle_keys": "!\"&'(),.:;<=>?[\\]^_`abcdefghijklmnoprstuvwxyz{}~", "keyboard_layout": "hsu", "mixed_input": "true", "tone_mark_keys": "true"});
         for key in ["1", "3", "4", "6", "7", "0", "-", "/", "q"] {
-            assert!(!idle_key_from(&hsu, key), "{key}");
+            assert!(!idle_key_from(&hsu, key, false), "{key}");
         }
         for key in ["=", "a", ","] {
-            assert!(idle_key_from(&hsu, key), "{key}");
+            assert!(idle_key_from(&hsu, key, false), "{key}");
         }
         // 舊引擎沒有 idle_keys：照原本的推算。
         let standard = json!({"keyboard_layout": "standard", "emoji_shortcut": "equals", "tone_mark_keys": "true"});
         for key in ["1", "2", "5", "3", "7", "=", "-", "/"] {
-            assert!(idle_key_from(&standard, key), "{key}");
+            assert!(idle_key_from(&standard, key, false), "{key}");
         }
         let eten = json!({"keyboard_layout": "eten", "emoji_shortcut": "equals", "tone_mark_keys": "true"});
         for key in ["1", "2", "7", "="] {
-            assert!(idle_key_from(&eten, key), "{key}");
+            assert!(idle_key_from(&eten, key, false), "{key}");
         }
         for key in ["5", "6"] {
-            assert!(!idle_key_from(&eten, key), "{key}");
+            assert!(!idle_key_from(&eten, key, false), "{key}");
         }
-        assert!(!idle_key_from(&json!({"emoji_shortcut": "off"}), "="));
-        assert!(!idle_key_from(&json!({}), "3"), "舊引擎沒有聲調設定：交還宿主");
+        assert!(!idle_key_from(&json!({"emoji_shortcut": "off"}), "=", false));
+        assert!(!idle_key_from(&json!({}), "3", false), "舊引擎沒有聲調設定：交還宿主");
+    }
+
+    #[test]
+    fn full_width_idle_keys_follow_the_engine_report() {
+        // #278：客戶的設定（標準排列、Shift＋空白切全形）。半形時 @ # * + 交還宿主，全形時由引擎打成全形。
+        let info = json!({
+            "idle_keys": "!\"&'(),-./0123456789:;<=>?[\\]^_`abcdefghijklmnopqrstuvwxyz{}~",
+            "idle_keys_full_width": "!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~",
+        });
+        for key in ["@", "#", "$", "%", "*", "+", "|", "A"] {
+            assert!(!idle_key_from(&info, key, false), "半形 {key}");
+            assert!(idle_key_from(&info, key, true), "全形 {key}");
+        }
+        for key in ["j", "3", ",", "["] {
+            assert!(idle_key_from(&info, key, false) && idle_key_from(&info, key, true), "{key}");
+        }
+        assert!(!idle_key_from(&info, "KP1", true), "數字鍵盤不在清單，由 wants_key 看字寬");
+        // 引擎的全形清單沒列的鍵（例如以後的排列把某個可見字元當一聲）全形時照樣交還宿主，不能吃了又不處理。
+        let partial = json!({"idle_keys": "abc", "idle_keys_full_width": "abc@"});
+        assert!(idle_key_from(&partial, "@", true));
+        assert!(!idle_key_from(&partial, "#", true));
+        // 舊引擎沒有 idle_keys_full_width：照半形的答案（大寫、\ ' " < > ? 另由 full_width_extra_key 補攔）。
+        let old = json!({"idle_keys": "abc"});
+        assert!(!idle_key_from(&old, "@", true));
+        assert!(idle_key_from(&old, "a", true));
     }
 }
 
@@ -1158,6 +1207,43 @@ mod tests {
         menu.client.disconnect_for_test();
         assert_eq!(menu.key("Enter").commit, "風景", "重連重播後送出，不會再切一次");
         assert_eq!(menu.simplified(), Some(false));
+    }
+
+    // #278：Shift＋空白切全形後，TestKeyDown 的預檢（idle_key、full_width_keypad）要跟引擎實際的處理一致：
+    // 說要吃卻回未處理，WPF 會掉鍵；說不吃，@ # * 就交給應用程式打成半形。ZUIN_TEST_FULL_WIDTH_PIPE 是
+    // settings.json 有 style-shift-space=fullwidth 的獨立引擎（例如「我的原有設定」改 Shift＋空白切換全半形）。
+    #[test]
+    fn full_width_preflight_matches_the_engine() {
+        let Ok(pipe) = std::env::var("ZUIN_TEST_FULL_WIDTH_PIPE") else {
+            return;
+        };
+        let mut s = Session::with_client(Client::with_pipe(&pipe));
+        for full_width in [false, true] {
+            for c in 0x21u8..=0x7e {
+                let key = (c as char).to_string();
+                if full_width {
+                    let snap = s.key("ShiftSpace");
+                    assert!(snap.ok && snap.handled && snap.full_width, "{snap:?}");
+                }
+                let want = s.idle_key(&key);
+                let snap = s.key(&key);
+                assert!(snap.ok);
+                assert_eq!(want, snap.handled, "全形={full_width} {key:?}：預檢 {want}，引擎 {snap:?}");
+                if full_width && "@#$%*+=|".contains(&key) {
+                    assert_eq!(snap.commit, char::from_u32(c as u32 + 0xfee0).unwrap().to_string(), "{key}");
+                }
+                s.reset();
+            }
+            for key in ["KP1", "KP0", "KP*", "KP+", "KP-", "KP.", "KP/"] {
+                if full_width {
+                    s.key("ShiftSpace");
+                }
+                let want = s.english_state.full_width_keypad(key);
+                let snap = s.key(key);
+                assert_eq!(want, snap.handled, "全形={full_width} {key}：{snap:?}");
+                s.reset();
+            }
+        }
     }
 
     // #192：一般的 ZUIN_TEST_PIPE（設定關閉）不回報 simplified_hotkey，Ctrl＋Shift＋F11 照舊交給應用程式；

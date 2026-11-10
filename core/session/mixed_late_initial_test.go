@@ -93,11 +93,12 @@ func TestMixedLateDigitInitialKeepsLiterals(t *testing.T) {
 }
 
 // #119：照字面留下的反序兩鍵接聲調（p54 的 ㄓㄣˋ 震是罕用字），後面接著打的注音從它後面切開組字，不再一路接成英數
-// （客戶說的「出現 k27 之後所有中文都會無法呈現」）。帳號、生日（nina87、lisa03）照舊整串照字面。
+// （客戶說的「出現 k27 之後所有中文都會無法呈現」）。帳號、生日（nina87、lisa03）後面接著打的注音，#249 起也從數字後面切開
+// （PCDVD、PTT 語料裡 leehamin777的、mobile01發 這類型號、帳號接中文常見，抽樣重播沒有因此由對變錯的）。
 func TestMixedLateDigitInitialSplitsAfterLiteral(t *testing.T) {
 	for _, tc := range []struct{ keys, want string }{
 		{"p54cl3", "p54好"}, {"p54su3cl3", "p54你好"}, {"i14cl3", "i14好"},
-		{"nina87su3", "nina87su3"}, {"lisa03su3", "lisa03su3"},
+		{"nina87su3", "nina87你"}, {"lisa03su3", "lisa03你"},
 	} {
 		s := lateInitialSession()
 		mixedType(s, tc.keys)

@@ -112,6 +112,9 @@ button:disabled { opacity: .55; cursor: default; }
 .switch[aria-checked="true"] { background: var(--accent); }
 .switch[aria-checked="true"]::after { transform: translateX(20px); }
 .switch:disabled { opacity: .5; cursor: default; }
+/* 被內建風格鎖住（#275）：看起來跟停用一樣，但按得到，按了提議複製成自訂 */
+.switch.locked, fieldset.choices input[aria-disabled="true"] { opacity: .5; }
+.row .notice.unlock { margin: 10px 0 0; }
 fieldset.choices { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
 fieldset.choices label { display: flex; gap: 8px; align-items: center; cursor: pointer; }
 .toast {
