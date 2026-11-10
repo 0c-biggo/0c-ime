@@ -1227,13 +1227,17 @@ impl TextService_Impl {
         if st.session.english() {
             return false;
         }
-        // 沒在組字：具名鍵、空白與數字鍵盤交還應用程式；可能產生可見 ASCII 的鍵（數字、字母、OEM 符號）才問核心
-        if keys::named(vk).is_some() || keys::is_keypad(vk) {
+        // 沒在組字：數字鍵盤全形時由核心打全形（#278），半形時交還應用程式（#75）；
+        // 具名鍵、空白交還應用程式；可能產生可見 ASCII 的鍵（數字、字母、OEM 符號）才問核心
+        if keys::is_keypad(vk) {
+            return style_key.as_deref().is_some_and(|k| st.session.english_state.full_width_keypad(k));
+        }
+        if keys::named(vk).is_some() {
             return false;
         }
         keys::printable(vk, lparam, false) // 中文模式不理 Caps Lock（#168）
             .map(|key| {
-                // 排列與風格都可能改變閒置時攔哪些字元；包含 Shift 字母及標點。
+                // 排列、風格與字寬（Shift＋空白的全形，#278）都可能改變閒置時攔哪些字元；包含 Shift 字母及標點。
                 // idle_keys 依連線快取，不會每鍵往返。
                 st.session.idle_key(&key)
             })

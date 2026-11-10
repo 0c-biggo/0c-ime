@@ -1,0 +1,151 @@
+# 中英混打認得的英數詞（#249）：真的存在的型號、版本、規格，不分大小寫。core/english 以 go:embed 讀入，格式錯誤是測試失敗。
+# 處理：
+#   literal：照字面。接空白（win10␣、java8␣ 不是 win班、java阿）或接聲調鍵（usb4 不是 us日）都不組成中文，接著打的注音從詞的後面切開；
+#            詞後面緊接著只有數字鍵、整串不是這裡的詞時，數字鍵組得成常用字就從詞的後面切開（DDR5＋2.␣ 是 DDR5都、Q3＋54 是 Q3至）。
+#   keys：照順序打就是常用的注音（mp3 允、mp4 運）：照舊出字，↓ 第二項是原按鍵。
+# 收錄原則：官方名稱或通行簡稱。照順序打就組得成常用字的詞（a8 媽、g9 篩）不收成 literal，收了就打不出那個字；
+# m3 與、m4 預、i7 喔、i3 嚄 照 #249 的紀錄，原按鍵照舊排在同音字後面；A5␣ 照 #249 是 A之（一個數字鍵的中文跟型號差不多多）：都不收。
+# 次數是研究語料 toneless-local-training-source-20261024-r1 的 train-ptt 前 6 份與 train-pcdvd 前 5 份不分大小寫、前後不接英數的出現次數，只供參考，不是收錄門檻。
+# 參考：RIME 霧凇拼音 en_dicts/en_ext.dict.yaml 也另外維護含數字的英文詞（GTA5、MP3、x86、Windows 10）。
+# 詞	處理	依據
+win7	literal	Microsoft Windows 版本；PTT／PCDVD 4,493 次
+win8	literal	Microsoft Windows 版本；PTT／PCDVD 1,208 次
+win10	literal	Microsoft Windows 版本；PTT／PCDVD 5,239 次
+win11	literal	Microsoft Windows 版本；PTT／PCDVD 1,075 次
+win95	literal	Microsoft Windows 版本；PTT／PCDVD 61 次
+win98	literal	Microsoft Windows 版本；PTT／PCDVD 174 次
+windows7	literal	Microsoft Windows 版本；PTT／PCDVD 262 次
+windows8	literal	Microsoft Windows 版本；PTT／PCDVD 104 次
+windows10	literal	Microsoft Windows 版本；PTT／PCDVD 175 次
+windows11	literal	Microsoft Windows 版本；PTT／PCDVD 49 次
+i5	literal	Intel Core 處理器等級；PTT／PCDVD 4,929 次
+i9	literal	Intel Core 處理器等級；PTT／PCDVD 1,370 次
+r3	literal	AMD Ryzen 處理器等級；PTT／PCDVD 536 次
+r5	literal	AMD Ryzen 處理器等級；PTT／PCDVD 1,213 次
+r7	literal	AMD Ryzen 處理器等級；PTT／PCDVD 1,259 次
+r9	literal	AMD Ryzen 處理器等級；PTT／PCDVD 1,624 次
+am4	literal	AMD 處理器腳位；PTT／PCDVD 764 次
+am5	literal	AMD 處理器腳位；PTT／PCDVD 363 次
+zen2	literal	AMD Zen 微架構；PTT／PCDVD 344 次
+zen3	literal	AMD Zen 微架構；PTT／PCDVD 212 次
+zen4	literal	AMD Zen 微架構；PTT／PCDVD 101 次
+zen5	literal	AMD Zen 微架構；PTT／PCDVD 42 次
+m1	literal	Apple M 系列晶片；PTT／PCDVD 509 次
+m2	literal	Apple M 系列晶片；PTT／PCDVD 1,292 次
+m5	literal	Apple M 系列晶片；PTT／PCDVD 256 次
+java8	literal	Java SE 版本（8、11、17、21 是長期支援版）；PTT／PCDVD 5 次
+java11	literal	Java SE 版本（8、11、17、21 是長期支援版）；PTT／PCDVD 1 次
+java17	literal	Java SE 版本（8、11、17、21 是長期支援版）；PTT／PCDVD 1 次
+java21	literal	Java SE 版本（8、11、17、21 是長期支援版）；PTT／PCDVD 0 次
+python2	literal	Python 主版本；PTT／PCDVD 4 次
+python3	literal	Python 主版本；PTT／PCDVD 25 次
+ios16	literal	Apple iOS 版本；PTT／PCDVD 2 次
+ios17	literal	Apple iOS 版本；PTT／PCDVD 2 次
+ios18	literal	Apple iOS 版本；PTT／PCDVD 6 次
+ios26	literal	Apple iOS 版本；PTT／PCDVD 11 次
+android14	literal	Google Android 版本；PTT／PCDVD 3 次
+android15	literal	Google Android 版本；PTT／PCDVD 5 次
+android16	literal	Google Android 版本；PTT／PCDVD 7 次
+ps2	literal	Sony PlayStation 主機；PTT／PCDVD 936 次
+ps3	literal	Sony PlayStation 主機；PTT／PCDVD 1,669 次
+ps4	literal	Sony PlayStation 主機；PTT／PCDVD 2,630 次
+ps5	literal	Sony PlayStation 主機；PTT／PCDVD 1,593 次
+xbox360	literal	Microsoft Xbox 360 主機；PTT／PCDVD 299 次
+ns2	literal	Nintendo Switch 2 簡稱；PTT／PCDVD 89 次
+gen3	literal	PCIe 世代；PTT／PCDVD 345 次
+gen4	literal	PCIe 世代；PTT／PCDVD 726 次
+gen5	literal	PCIe 世代；PTT／PCDVD 629 次
+pcie3	literal	PCI Express 版本；PTT／PCDVD 155 次
+pcie4	literal	PCI Express 版本；PTT／PCDVD 111 次
+pcie5	literal	PCI Express 版本；PTT／PCDVD 40 次
+ddr2	literal	JEDEC 記憶體規格；PTT／PCDVD 1,637 次
+ddr3	literal	JEDEC 記憶體規格；PTT／PCDVD 3,987 次
+ddr4	literal	JEDEC 記憶體規格；PTT／PCDVD 5,503 次
+ddr5	literal	JEDEC 記憶體規格；PTT／PCDVD 2,498 次
+lpddr4	literal	JEDEC 記憶體規格；PTT／PCDVD 46 次
+lpddr5	literal	JEDEC 記憶體規格；PTT／PCDVD 27 次
+gddr5	literal	JEDEC 顯示記憶體規格；PTT／PCDVD 495 次
+gddr6	literal	JEDEC 顯示記憶體規格；PTT／PCDVD 431 次
+gddr7	literal	JEDEC 顯示記憶體規格；PTT／PCDVD 92 次
+usb2	literal	USB 版本；PTT／PCDVD 735 次
+usb3	literal	USB 版本；PTT／PCDVD 2,899 次
+usb4	literal	USB 版本；PTT／PCDVD 589 次
+sata2	literal	SATA 版本；PTT／PCDVD 306 次
+sata3	literal	SATA 版本；PTT／PCDVD 808 次
+wifi5	literal	Wi-Fi Alliance 世代名稱；PTT／PCDVD 19 次
+wifi6	literal	Wi-Fi Alliance 世代名稱；PTT／PCDVD 172 次
+wifi7	literal	Wi-Fi Alliance 世代名稱；PTT／PCDVD 104 次
+h264	literal	影片編碼格式與編碼器；PTT／PCDVD 271 次
+h265	literal	影片編碼格式與編碼器；PTT／PCDVD 105 次
+x264	literal	影片編碼格式與編碼器；PTT／PCDVD 387 次
+x265	literal	影片編碼格式與編碼器；PTT／PCDVD 146 次
+av1	literal	影片編碼格式與編碼器；PTT／PCDVD 283 次
+vp9	literal	影片編碼格式與編碼器；PTT／PCDVD 362 次
+mp3	keys	影音檔案格式；PTT／PCDVD 2,900 次；照順序打是 ㄩㄣˇ（允：語料 5,032 次對小寫 mp3 11 次，#249），照舊出字
+mp4	keys	影音檔案格式；PTT／PCDVD 448 次；照順序打是 ㄩㄣˋ（運：語料 156,217 次對小寫 mp4 0 次，#249），照舊出字
+html5	literal	網頁標準版本（HTML5、CSS3、ECMAScript 5／6）；PTT／PCDVD 172 次
+css3	literal	網頁標準版本（HTML5、CSS3、ECMAScript 5／6）；PTT／PCDVD 72 次
+es5	literal	網頁標準版本（HTML5、CSS3、ECMAScript 5／6）；PTT／PCDVD 18 次
+es6	literal	網頁標準版本（HTML5、CSS3、ECMAScript 5／6）；PTT／PCDVD 107 次
+ipv4	literal	網際網路協定版本；PTT／PCDVD 70 次
+ipv6	literal	網際網路協定版本；PTT／PCDVD 128 次
+utf8	literal	文字編碼；PTT／PCDVD 31 次
+big5	literal	文字編碼；PTT／PCDVD 53 次
+q1	literal	季度（財報、發表時程）；PTT／PCDVD 374 次
+q2	literal	季度（財報、發表時程）；PTT／PCDVD 383 次
+q3	literal	季度（財報、發表時程）；PTT／PCDVD 341 次
+q4	literal	季度（財報、發表時程）；PTT／PCDVD 232 次
+a3	literal	ISO 216／JIS 紙張尺寸；PTT／PCDVD 177 次
+a4	literal	ISO 216／JIS 紙張尺寸；PTT／PCDVD 306 次
+b5	literal	ISO 216／JIS 紙張尺寸；PTT／PCDVD 98 次
+gpt3	literal	OpenAI GPT 模型；PTT／PCDVD 5 次
+gpt4	literal	OpenAI GPT 模型；PTT／PCDVD 9 次
+gpt5	literal	OpenAI GPT 模型；PTT／PCDVD 10 次
+gta5	literal	遊戲簡稱（GTA V／VI、Counter-Strike 2）；PTT／PCDVD 420 次
+gta6	literal	遊戲簡稱（GTA V／VI、Counter-Strike 2）；PTT／PCDVD 88 次
+cs2	literal	遊戲簡稱（GTA V／VI、Counter-Strike 2）；PTT／PCDVD 29 次
+f1	literal	一級方程式賽車；PTT／PCDVD 1,316 次
+s23	literal	Samsung Galaxy S 系列；PTT／PCDVD 171 次
+s24	literal	Samsung Galaxy S 系列；PTT／PCDVD 233 次
+s25	literal	Samsung Galaxy S 系列；PTT／PCDVD 641 次
+s26	literal	Samsung Galaxy S 系列；PTT／PCDVD 84 次
+note8	literal	Samsung Galaxy Note 系列；PTT／PCDVD 74 次
+note9	literal	Samsung Galaxy Note 系列；PTT／PCDVD 34 次
+note10	literal	Samsung Galaxy Note 系列；PTT／PCDVD 108 次
+note20	literal	Samsung Galaxy Note 系列；PTT／PCDVD 8 次
+fold5	literal	Samsung Galaxy Z Fold／Flip 系列；PTT／PCDVD 70 次
+fold6	literal	Samsung Galaxy Z Fold／Flip 系列；PTT／PCDVD 36 次
+fold7	literal	Samsung Galaxy Z Fold／Flip 系列；PTT／PCDVD 164 次
+flip5	literal	Samsung Galaxy Z Fold／Flip 系列；PTT／PCDVD 4 次
+flip6	literal	Samsung Galaxy Z Fold／Flip 系列；PTT／PCDVD 22 次
+flip7	literal	Samsung Galaxy Z Fold／Flip 系列；PTT／PCDVD 35 次
+pixel8	literal	Google Pixel 手機；PTT／PCDVD 13 次
+pixel9	literal	Google Pixel 手機；PTT／PCDVD 31 次
+pixel10	literal	Google Pixel 手機；PTT／PCDVD 52 次
+iphone12	literal	Apple iPhone 型號；PTT／PCDVD 31 次
+iphone13	literal	Apple iPhone 型號；PTT／PCDVD 18 次
+iphone14	literal	Apple iPhone 型號；PTT／PCDVD 8 次
+iphone15	literal	Apple iPhone 型號；PTT／PCDVD 27 次
+iphone16	literal	Apple iPhone 型號；PTT／PCDVD 40 次
+iphone17	literal	Apple iPhone 型號；PTT／PCDVD 55 次
+x64	literal	處理器架構；PTT／PCDVD 1,781 次
+x86	literal	處理器架構；PTT／PCDVD 1,154 次；ㄌㄚˊ 是罕用字（語料 7 次，x86 354 次，#249）
+arm64	literal	處理器架構；PTT／PCDVD 20 次
+amd64	literal	處理器架構；PTT／PCDVD 36 次
+raid0	literal	RAID 磁碟陣列等級；PTT／PCDVD 755 次
+raid1	literal	RAID 磁碟陣列等級；PTT／PCDVD 410 次
+raid5	literal	RAID 磁碟陣列等級；PTT／PCDVD 214 次
+raid6	literal	RAID 磁碟陣列等級；PTT／PCDVD 78 次
+raid10	literal	RAID 磁碟陣列等級；PTT／PCDVD 25 次
+cat5	literal	網路線規格與接頭；PTT／PCDVD 52 次
+cat6	literal	網路線規格與接頭；PTT／PCDVD 95 次
+cat7	literal	網路線規格與接頭；PTT／PCDVD 14 次
+rj45	literal	網路線規格與接頭；PTT／PCDVD 303 次
+dx11	literal	Microsoft DirectX 版本；PTT／PCDVD 444 次
+dx12	literal	Microsoft DirectX 版本；PTT／PCDVD 1,059 次
+top3	literal	排行榜寫法；PTT／PCDVD 26 次
+top5	literal	排行榜寫法；PTT／PCDVD 20 次
+top10	literal	排行榜寫法；PTT／PCDVD 27 次
+top20	literal	排行榜寫法；PTT／PCDVD 11 次
+top100	literal	排行榜寫法；PTT／PCDVD 10 次
+covid19	literal	COVID-19；PTT／PCDVD 13 次

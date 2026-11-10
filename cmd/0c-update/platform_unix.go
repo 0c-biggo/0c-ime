@@ -14,6 +14,9 @@ import (
 	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
+// updaterEnv 告訴 install.py 它是由 0c-update 執行的：安裝後的步驟（排程、選單項目）由 0c-update 接著做。
+const updaterEnv = "ZC_UPDATER=1"
+
 func basePath() string    { home, _ := os.UserHomeDir(); return filepath.Join(home, ".local/share/zuin") }
 func receiptPath() string { return filepath.Join(basePath(), "install-receipt.json") }
 func python(script string, args ...string) error {
@@ -22,6 +25,7 @@ func python(script string, args ...string) error {
 	}
 	command := exec.Command("python3", append([]string{script}, args...)...)
 	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
+	command.Env = append(os.Environ(), updaterEnv) // 安裝後的選單項目由 afterInstall 處理，install.py 不必另外呼叫（#276）
 	return command.Run()
 }
 func install(bundle string, release *update.Release) error {

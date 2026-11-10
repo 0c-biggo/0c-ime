@@ -37,6 +37,9 @@ def inside(menu=False, shell_update=False, shell_manual=False, shell_recover=Fal
     for key in ('WAYLAND_DISPLAY','GNOME_SETUP_DISPLAY','XAUTHORITY','ZUIN_TRACE','ZUIN_TRACE_DIR'):
         env.pop(key,None)
     env['LIBGL_ALWAYS_SOFTWARE']='1'
+    # install.py 直接執行時會呼叫 0c-update after-install 建立排程與穩定副本（#276）；外殼會改用穩定副本，
+    # 測試換掉的 ~/.local/bin/0c-update 就收不到 open-settings。沙箱裡也不該建使用者排程。
+    env['ZC_NO_SCHEDULE']='1'
     Path('/tmp/.X11-unix').mkdir(mode=0o1777)
     def install(action, *extra):
         subprocess.run(['/usr/bin/python3','/tmp/0c-bundle/install.py',action,'--home',str(home),*extra],env=env,check=True)

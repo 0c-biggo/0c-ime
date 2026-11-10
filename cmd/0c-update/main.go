@@ -243,6 +243,14 @@ func run(args []string) error {
 			return fmt.Errorf("check-account 不接受參數")
 		}
 		return refuseOtherAccount()
+	case "after-install":
+		// 內部用：使用者直接執行套件的 install.py install 時，由它在裝好後呼叫（#276）。那條路不經過 afterInstall，
+		// 沒有自動更新排程，應用程式選單也一直沒有「靈犀注音設定」；這裡補做一行安裝裝完後的同一組步驟。不列在用法裡。
+		if len(args) != 1 {
+			return fmt.Errorf("after-install 不接受參數")
+		}
+		directAfterInstall()
+		return nil
 	case "prune":
 		// 內部用：安裝、回復、解除安裝成功後在背景清理舊版（#179，Windows），不列在用法裡。
 		if len(args) != 1 {

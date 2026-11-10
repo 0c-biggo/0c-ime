@@ -36,3 +36,24 @@ func IdleKeys(l layout.Layout, mixedInput bool, emojiShortcut string) string {
 	}
 	return b.String()
 }
+
+// FullWidthIdleKeys 回報全形（Shift＋空白切的字寬，#278）時沒在組字、注音模式會處理的可見 ASCII 按鍵。
+// 全形時不是注音鍵也不是標點的鍵（@ # $ * + 數字，許氏的數字與 q）與 Shift＋字母打成全形字元（styleKey），
+// 注音鍵與標點照半形時的規則（IdleKeys）。「Shift＋符號打半形」與微軟參考風格的半形原字元在全形時不適用，
+// 所以從沒拿掉這些鍵的 IdleKeys 算起。數字鍵盤全形時一律打成全形字元，不在這份清單（外殼看字寬自己判斷）。
+// 字寬是 session 的狀態：外殼依快照的 full_width 在這份與 IdleKeys 之間選。
+func FullWidthIdleKeys(l layout.Layout, mixedInput bool, emojiShortcut string) string {
+	if l == nil {
+		l = layout.Standard
+	}
+	idle := IdleKeys(l, mixedInput, emojiShortcut)
+	var b strings.Builder
+	for r := rune(0x21); r <= 0x7e; r++ {
+		_, phonetic := l.Symbol(r)
+		_, punct := l.Punct(r)
+		if r >= 'A' && r <= 'Z' || !phonetic && !punct || strings.ContainsRune(idle, r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}

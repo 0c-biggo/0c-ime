@@ -367,6 +367,49 @@ class ReleaseTests(unittest.TestCase):
             self.assertTrue(installer.refresh_icon_theme(self.home, before))
             notify.assert_called_once_with(self.home)
 
+    def test_after_install_runs_the_installed_updater_only_for_a_direct_install(self):
+        # #276：直接執行 install.py install 不經過 0c-update 的 afterInstall，排程與選單項目要由這裡請 0c-update 建立。
+        updater = self.home / installer.PAYLOAD['bin/0c-update']
+        run = unittest.mock.Mock()
+        run.return_value.returncode = 0
+        clean = {k: v for k, v in os.environ.items() if k not in ('ZC_UPDATER', 'ZC_MANAGED_RELOAD', 'ZC_NO_SCHEDULE')}
+        with patch.object(installer.Path, 'home', return_value=self.home), patch.dict(os.environ, clean, clear=True):
+            self.assertFalse(installer.after_install(self.home, run), '還沒裝好 0c-update 就不呼叫')
+            updater.parent.mkdir(parents=True, exist_ok=True)
+            updater.write_text('updater')
+            self.assertTrue(installer.after_install(self.home, run))
+            run.assert_called_once_with([str(updater), 'after-install'], capture_output=True, timeout=60)
+            run.reset_mock()
+            for env in ({'ZC_UPDATER': '1'}, {'ZC_MANAGED_RELOAD': '1'}, {'ZC_NO_SCHEDULE': '1'}):
+                with patch.dict(os.environ, env):
+                    self.assertFalse(installer.after_install(self.home, run), f'{env}：由 0c-update 接著處理，或測試環境')
+            self.assertFalse(installer.after_install(self.home / 'other-user', run), '裝到別的 --home 不碰目前使用者的排程與選單')
+            run.assert_not_called()
+            run.side_effect = subprocess.TimeoutExpired('0c-update', 30)
+            self.assertFalse(installer.after_install(self.home, run), '失敗不影響安裝')
+
+    def test_direct_install_creates_the_menu_entry_before_refreshing_icons(self):
+        # 設定程式的圖示由同一個動作寫入；要在通知桌面重讀圖示之前，KDE 的啟動器才會顯示它，不是空白圖示。
+        icon = self.home / installer.DESKTOP_ICON
+        def entry(home):
+            self.assertEqual(home, self.home)
+            icon.parent.mkdir(parents=True, exist_ok=True)
+            icon.write_bytes(b'png')
+            return True
+        self.release['channel'] = 'internal-preview'
+        self.save_release()
+        with patch.object(installer.sys, 'argv', ['install.py', 'install', '--bundle', str(self.bundle), '--home', str(self.home)]), \
+                patch.object(installer.os, 'getuid', return_value=1000), \
+                patch.object(installer, 'runtime_check'), patch.object(installer, 'require_desktop_stopped'), \
+                patch.object(installer, 'first_install', return_value=True), \
+                patch.object(installer, 'clear_session_addon_dirs'), patch.object(installer, 'settings_dependencies'), \
+                patch.object(installer, 'report_fcitx_addon', return_value=True), \
+                patch.object(installer, 'after_install', side_effect=entry) as after_install, \
+                patch.object(installer, 'refresh_kde_icons') as notify, redirect_stdout(io.StringIO()):
+            installer.main()
+        after_install.assert_called_once()
+        notify.assert_called_once_with(self.home.resolve())
+
     def add_status_icons(self):
         for name in installer.STATUS_ICONS:
             target = self.bundle / name
@@ -2921,6 +2964,15 @@ Successfully verified: 0c-update.exe
         if not node:
             self.skipTest("沒有 node")
         test = Path(__file__).resolve().parents[1] / "platforms/settings/test/models_test.js"
+        result = subprocess.run([node, "--test", str(test)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_settings_ui_input_styles(self):
+        # #225 輸入習慣頁的預覽／複製流程；#275 被內建風格鎖住的項目按下去要提議複製成自訂，其他原因停用的不提議。
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("沒有 node")
+        test = Path(__file__).resolve().parents[1] / "platforms/settings/test/input_styles_test.js"
         result = subprocess.run([node, "--test", str(test)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 

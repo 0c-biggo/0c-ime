@@ -6,6 +6,7 @@ import (
 
 	"github.com/0c-biggo/0c-ime/core/english"
 	"github.com/0c-biggo/0c-ime/core/lexicon"
+	"github.com/0c-biggo/0c-ime/core/lm"
 	"github.com/0c-biggo/0c-ime/core/proto"
 	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
@@ -395,6 +396,7 @@ func TestMixedLetterIAndNeutralToneParticle(t *testing.T) {
 		} {
 			s.model.Lex.(*lexicon.Mem).Add(lexicon.Entry{Surface: e.surface, Reading: zhuyin.ParseReading(e.reading), PRW: 1})
 		}
+		s.model.LM.(*lm.Mem).SetUni("東", 6e-4) // 常用字：2j/␣ 接空白組成罕用字才照字面（#249）
 		return s
 	}
 	for _, tc := range []struct {

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/godbus/dbus/v5"
+
 	"github.com/0c-biggo/0c-ime/internal/autoupdate"
 	"github.com/0c-biggo/0c-ime/internal/installs"
 	"github.com/0c-biggo/0c-ime/internal/settingsapp"
@@ -81,10 +83,27 @@ func ensureSettingsEntry() {
 	}
 	for _, updater := range []string{stableUpdater(base), filepath.Join(home, ".local/bin/0c-update")} {
 		if st, err := os.Stat(updater); err == nil && st.Mode().IsRegular() {
-			_, _ = settingsapp.EnsureDesktopEntry(settingsapp.DataHome(), updater)
+			if wrote, _ := settingsapp.EnsureDesktopEntry(settingsapp.DataHome(), updater); wrote {
+				iconsChanged()
+			}
 			return
 		}
 	}
+}
+
+// iconsChanged 請目前工作階段的 KDE 重新掃描圖示目錄（與 install.py 的 refresh_kde_icons 同一個廣播，#227）。
+// 選單項目的圖示寫在 hicolor/128x128/apps；第一次安裝時這個目錄才建立，Plasma 的啟動器不重新掃描就只顯示
+// 空白圖示，要重新登入才有（#276）。其他桌面沒有人收這個訊號；沒有工作階段匯流排（例如背景更新）時不連線。
+var iconsChanged = func() {
+	if os.Getenv("DBUS_SESSION_BUS_ADDRESS") == "" {
+		return
+	}
+	conn, err := dbus.ConnectSessionBus()
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	_ = conn.Emit("/KIconLoader", "org.kde.KIconLoader.iconChanged", int32(0))
 }
 
 func removeSettingsEntry() { _ = settingsapp.RemoveDesktopEntry(settingsapp.DataHome()) }
