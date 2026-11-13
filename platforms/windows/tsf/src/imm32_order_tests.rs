@@ -287,7 +287,6 @@ impl Host {
         eaten
     }
     /// TestKeyDown 吃下之後不呼叫 OnKeyDown（#66：模擬 TSF 沒有接著送 OnKeyDown 的情況）。
-    #[allow(dead_code)] // 後續的測試才用（#66）
     fn press_without_keydown(&mut self, vk: u32, scan: isize, act: Act) -> bool {
         self.acts.insert(vk, act);
         let eaten = self.step(vk, 1 | scan << 16, act, false);
@@ -367,6 +366,13 @@ impl Host {
                 }
             }
         }
+    }
+    /// 放開一個鍵：OnTestKeyUp，說吃才有 OnKeyUp。回傳 (OnTestKeyUp 的答案, OnKeyUp 的答案或 false)。
+    fn key_up(&mut self, vk: u32, scan: isize) -> (bool, bool) {
+        let (w, l) = (WPARAM(vk as usize), LPARAM(1 | scan << 16 | 1 << 30 | 1 << 31));
+        let test = unsafe { self.sink.OnTestKeyUp(&self.ctx, w, l) }.unwrap().as_bool();
+        let up = if test { unsafe { self.sink.OnKeyUp(&self.ctx, w, l) }.unwrap().as_bool() } else { false };
+        (test, up)
     }
     fn letters(&mut self, s: &str) {
         for c in s.chars() {
@@ -1038,4 +1044,84 @@ fn imm32_complete_reports_by_cuas_only_when_cuas_ended_it() {
         Completed::BySelf,
         "組字狀態是別的路徑清掉的，不是相容層終止的"
     );
+}
+
+/// 攔下重排之後，重排的鍵沒有回來（post 的訊息比之後的輸入先取出、或視窗已經換了）：
+/// 結果字串照常送達，只有重排的按鍵從佇列拿掉，等待狀態還留著。
+fn lost_repost(h: &mut Host, vk: u32, scan: isize, act: Act) {
+    set_mods(true, false, false, false);
+    h.acts.insert(vk, act);
+    assert!(h.step(vk, 1 | scan << 16, act, true), "Ctrl+S 被攔下");
+    set_mods(false, false, false, false);
+    h.cuas.queue.borrow_mut().retain(|q| matches!(q, Queued::Char { .. }));
+    h.drain();
+    assert!(h.service.state.borrow().pending_repost.is_some(), "重排的鍵還沒回來，等待狀態在");
+}
+
+fn pending_cleared(h: &Host) -> bool {
+    h.service.state.borrow().pending_repost.is_none()
+}
+
+#[test]
+fn imm32_reposted_key_lives_for_one_press() {
+    // #66 不變量 I1 的另一半：重排的快捷鍵狀態只活過一次按鍵，之後的輸入不能被它誤判成重排回來的鍵。
+    let (vk, scan) = (0x53u32, scan_of(0x53));
+    let lparam = 1 | scan << 16;
+    let Some(mut h) = open_zhuyin(TS_SS_TRANSITORY) else { return };
+
+    // (b) OnKeyDown 沒來：重排回來的鍵仍然交給程式，快捷鍵作用剛好一次
+    let word = composing_in_default_host(&mut h);
+    h.app = App::new();
+    set_mods(true, false, false, false);
+    let eaten = h.press_without_keydown(vk, scan, Act::Shortcut);
+    set_mods(false, false, false, false);
+    assert!(eaten, "(b) TestKeyDown 吃下");
+    assert!(pending_cleared(&h), "(b) 重排回來就清掉");
+    let full = format!("前{word}");
+    assert_eq!(h.app.fired, vec![(vk, full)], "(b) 快捷鍵作用一次、看到完整文字");
+    assert_eq!(keys_in(&h).len(), 1, "(b) 只重排一次");
+
+    // (e) 放開不被吃：正常的一次按鍵之後
+    let (test, up) = h.key_up(vk, scan);
+    assert!(!test && !up, "(e) 放開交給程式");
+    assert!(!h.service.state.borrow().eaten.contains(&vk), "(e) 放開不放進 eaten");
+
+    // (c1) 重排的鍵沒回來，接著放開：狀態清掉，放開仍交給程式
+    let _ = composing_in_default_host(&mut h);
+    lost_repost(&mut h, vk, scan, Act::Shortcut);
+    let (test, up) = h.key_up(vk, scan);
+    assert!(pending_cleared(&h), "(c1) 放開清掉等待狀態");
+    assert!(!test && !up, "(c1) 放開交給程式");
+    assert!(!h.service.state.borrow().eaten.contains(&vk), "(c1) 放開不放進 eaten");
+
+    // (c2) 重排的鍵沒回來，接著按別的鍵：狀態清掉，下一次 Ctrl+S 照常送出並重排
+    let word = composing_in_default_host(&mut h);
+    h.app = App::new();
+    lost_repost(&mut h, vk, scan, Act::Shortcut);
+    let word2 = composing_in_default_host(&mut h);
+    assert!(pending_cleared(&h), "(c2) 別的鍵清掉等待狀態");
+    h.app = App::new();
+    set_mods(true, false, false, false);
+    let eaten = h.press(vk, scan, Act::Shortcut);
+    set_mods(false, false, false, false);
+    assert!(eaten, "(c2) 組字中 Ctrl+S 不被當成重排回來的鍵");
+    assert!(!h.composing(), "(c2) 組字送出");
+    assert_eq!(
+        *h.cuas.history.borrow(),
+        vec![Queued::Char { hwnd: app_hwnd(), text: word2.clone() }, Queued::Key { hwnd: app_hwnd(), vk, lparam }],
+        "(c2) 照常送出並重排"
+    );
+    assert_eq!(h.app.fired, vec![(vk, format!("前{word2}"))], "(c2) 快捷鍵作用一次");
+    let _ = word;
+
+    // (d) 重排回來之前先來同 vk、不同 lParam(自動重複，第 30 位)：狀態清掉，自動重複照常處理
+    let _ = composing_in_default_host(&mut h);
+    lost_repost(&mut h, vk, scan, Act::Shortcut);
+    h.cuas.history.borrow_mut().clear();
+    set_mods(true, false, false, false);
+    let repeat = h.press(vk, scan | 1 << 14, Act::Nothing);
+    set_mods(false, false, false, false);
+    assert!(pending_cleared(&h), "(d) 不同 lParam 的同鍵清掉等待狀態");
+    assert!(!repeat, "(d) 自動重複照常處理(已沒有組字，不吃)");
+    assert!(keys_in(&h).is_empty(), "(d) 沒有再重排");
 }

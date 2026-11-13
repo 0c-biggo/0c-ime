@@ -1593,10 +1593,13 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             // 就是重排的鍵回來了：清掉等待、不吃，交給程式，不再做任何判斷。
             {
                 let mut st = self.state.borrow_mut();
-                if st.pending_repost.as_ref().is_some_and(|p| p.vk == wparam.0 as u32 && p.lparam == lparam.0) {
-                    st.pending_repost = None;
-                    zdebug!("OnTestKeyDown vk={} 重排回來 -> 不吃", wparam.0);
-                    return Ok(false.into());
+                if let Some(p) = st.pending_repost.take() {
+                    if p.vk == wparam.0 as u32 && p.lparam == lparam.0 {
+                        zdebug!("OnTestKeyDown vk={} 重排回來 -> 不吃", wparam.0);
+                        return Ok(false.into());
+                    }
+                    // 別的鍵(或自動重複的同一鍵)先到：重排的鍵已經丟了，等待狀態只活過一次按鍵，這一鍵照常處理
+                    zdebug!("OnTestKeyDown vk={} 重排的鍵沒回來，清掉等待", p.vk);
                 }
             }
             if !self.allowed(pic.as_ref()) {
@@ -1636,6 +1639,8 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
                 let mut st = self.state.borrow_mut();
                 st.hotkey_tested.forget();
                 st.key_tested.forget();
+                // 放開就是這一鍵結束了：重排的鍵沒回來也不再等（#66），放開本身照常交給程式
+                st.pending_repost = None;
             }
             if !self.allowed(pic.as_ref()) {
                 return Ok(false.into());
@@ -1757,6 +1762,8 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
                 let mut st = self.state.borrow_mut();
                 st.hotkey_tested.forget();
                 st.key_tested.forget();
+                // 放開就是這一鍵結束了：重排的鍵沒回來也不再等（#66），放開本身照常交給程式
+                st.pending_repost = None;
             }
             if !self.allowed(pic.as_ref()) {
                 return Ok(false.into());
