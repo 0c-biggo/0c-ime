@@ -927,14 +927,29 @@ fn imm32_system_and_ime_keys_are_not_reposted() {
 fn imm32_simplified_hotkey_still_toggles() {
     // #192：設定開著時 Ctrl+Shift+F11 吃下切換簡體字、不送出組字，也不重排（#66 在這之後才判斷）。
     // 需要 ZUIN_TEST_HOTKEY_PIPE（設定開著簡體字快捷鍵的獨立引擎）；沒設就略過。
+    let Ok(pipe) = std::env::var("ZUIN_TEST_HOTKEY_PIPE") else { return };
+    // 這個測試真的切換引擎全域的「輸出簡體字」：與同一引擎的其他測試互斥，失敗時也把設定切回繁體。
+    let _engine = crate::hotkey_engine_lock();
+    struct RestoreTraditional(String);
+    impl Drop for RestoreTraditional {
+        fn drop(&mut self) {
+            let mut s = Session::with_client(crate::ipc::Client::with_pipe(&self.0));
+            if s.simplified() == Some(true) {
+                s.output_simplified(false);
+            }
+        }
+    }
+    let _restore = RestoreTraditional(pipe);
     let Some(mut h) = open_zhuyin_on("ZUIN_TEST_HOTKEY_PIPE", TS_SS_TRANSITORY) else { return };
     let word = composing_in_default_host(&mut h);
-    for _ in 0..2 {
+    for round in 0..2 {
         // 按兩次：切換之後再切回來，不改引擎的設定。
         set_mods(true, false, false, true);
         let eaten = h.press(0x7a, scan_of(0x7a), Act::Shortcut);
         set_mods(false, false, false, false);
         assert!(eaten, "吃下切換");
+        let now = h.service.state.borrow().session.simplified();
+        assert_eq!(now, Some(round == 0), "第 {} 次按下真的切換了簡體字設定", round + 1);
         assert!(h.composing(), "組字不送出");
         assert_eq!(h.doc.composing_text(), word);
     }

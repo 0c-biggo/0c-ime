@@ -1264,6 +1264,7 @@ mod tests {
     // 回報開著，按下時送選單同一個請求：組字不動，之後送出簡體。
     #[test]
     fn simplified_hotkey_follows_the_setting() {
+        let _engine = crate::hotkey_engine_lock();
         if let Some(mut s) = session() {
             assert!(!s.simplified_hotkey(), "設定關閉時不攔");
         }

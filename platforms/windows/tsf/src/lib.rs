@@ -35,6 +35,14 @@ mod session;
 mod ui;
 mod uielement;
 
+/// 共用 ZUIN_TEST_HOTKEY_PIPE 引擎的測試要互斥(#66)：它們會改引擎全域的「輸出簡體字」設定，平行執行會互相看到對方的切換。
+/// 整個測試期間持有；前一個測試 panic 留下的毒化不影響後面的測試。
+#[cfg(test)]
+pub(crate) fn hotkey_engine_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 static DLL_INSTANCE: AtomicIsize = AtomicIsize::new(0);
 /// 活著的 COM 物件（TextService、ClassFactory、edit session、顯示屬性物件）與 LockServer 的數量；
 /// 都是零時 DLL 才可卸載。每個 `#[implement]` 的型別都要在建構時加、Drop 時減。
