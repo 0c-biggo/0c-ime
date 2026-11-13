@@ -38,6 +38,17 @@ pub fn modifier_down() -> bool {
     }
 }
 
+/// Ctrl、Alt、Win（左右任一）目前是否按著（這個執行緒收到按鍵當下的狀態）。
+pub fn ctrl_alt_win() -> (bool, bool, bool) {
+    unsafe {
+        (
+            GetKeyState(VK_CONTROL.0 as i32) < 0,
+            GetKeyState(VK_MENU.0 as i32) < 0,
+            GetKeyState(VK_LWIN.0 as i32) < 0 || GetKeyState(VK_RWIN.0 as i32) < 0,
+        )
+    }
+}
+
 pub fn is_modifier(vk: u32) -> bool {
     let v = vk as u16;
     [

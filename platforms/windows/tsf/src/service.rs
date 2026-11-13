@@ -70,12 +70,23 @@ impl Drop for Applying<'_> {
 }
 
 /// 請系統相容層完成組字的期間（#66）：進入時記下那時的組字，離開（含 panic）時解除。
+/// 相容層有沒有終止這個組字是觀察到的：OnCompositionTerminated 對上守衛的組字時記在 `terminated`。
 struct Completing<'a>(&'a RefCell<State>);
 impl<'a> Completing<'a> {
     fn enter(state: &'a RefCell<State>, composition: Option<ITfComposition>) -> Self {
-        state.borrow_mut().completing = Some(composition);
+        state.borrow_mut().completing = Some(CompletingState { composition, terminated: false });
         Completing(state)
     }
+    /// 相容層同步終止了守衛記下的那個組字（OnCompositionTerminated 看到的）。
+    fn terminated(&self) -> bool {
+        self.0.borrow().completing.as_ref().is_some_and(|c| c.terminated)
+    }
+}
+
+/// `State.completing`：守衛記下的組字，與相容層是否終止了它。
+struct CompletingState {
+    composition: Option<ITfComposition>,
+    terminated: bool,
 }
 impl Drop for Completing<'_> {
     fn drop(&mut self) {
@@ -84,6 +95,15 @@ impl Drop for Completing<'_> {
             st.completing = None;
         }
     }
+}
+
+/// 已經攔下、重排給程式的快捷鍵（#66）：重排的鍵回來之前，同一個 (vk, lParam) 的 TestKeyDown 就是它回來了
+/// （TSF 對吃下的鍵一定先呼叫 OnKeyDown，所以不會被當成新的按鍵再問一次）。
+struct PendingRepost {
+    vk: u32,
+    lparam: isize,
+    /// 這一鍵的 OnKeyDown 已經來過（吃下，只吃一次）。
+    key_down_seen: bool,
 }
 
 /// `complete_via_cuas` 的結果：組字是相容層終止的，還是外殼自己收尾的。
@@ -104,7 +124,9 @@ struct State {
     cuas: Rc<dyn Cuas>,
     /// 正在請系統相容層完成組字（Completing 守衛，#66）：記著那時的組字。相容層同步終止的正是這個組字時，
     /// OnCompositionTerminated 只清外殼狀態、不送取消；期間的焦點變化也不再送出（見 complete_via_cuas）。
-    completing: Option<Option<ITfComposition>>,
+    completing: Option<CompletingState>,
+    /// 攔下重排的快捷鍵，等它從訊息佇列回來（#66）。
+    pending_repost: Option<PendingRepost>,
     composing: bool,
     attr_atoms: [u32; KINDS.len()],
     eaten: HashSet<u32>, // 吃掉了 key-down 的虛擬鍵，key-up 也要吃掉
@@ -336,6 +358,7 @@ impl TextService {
                 session: Session::new(),
                 cuas: Rc::new(Win32Cuas),
                 completing: None,
+                pending_repost: None,
                 composing: false,
                 attr_atoms: [0; KINDS.len()],
                 eaten: HashSet::new(),
@@ -1005,14 +1028,18 @@ impl TextService_Impl {
         self.present(ctx, &shown);
         let cuas = self.state.borrow().cuas.clone();
         let composition = self.state.borrow().composition.clone();
-        let result = {
-            let _completing = Completing::enter(&self.state, composition);
-            cuas.complete(hwnd)
+        let (result, terminated) = {
+            let completing = Completing::enter(&self.state, composition);
+            let result = cuas.complete(hwnd);
+            (result, completing.terminated())
         };
         zdebug!("經相容層完成組字 view={:#x} focus={:#x} 結果={:?}", hwnd.0 as usize, cuas.focus().0 as usize, result);
-        if self.state.borrow().composing {
-            // 相容層沒有結束組字（沒有輸入法 context、通知失敗、或受理了卻沒終止）：文件裡已是送出文字，自己結束。
-            self.present(ctx, &snapshot);
+        if !terminated {
+            // 沒有觀察到相容層終止這個組字（沒有輸入法 context、通知失敗、受理了卻沒終止，或組字狀態被別的路徑清掉）：
+            // 還在組字就照快照自己結束，文件裡已是送出文字。
+            if self.state.borrow().composing {
+                self.present(ctx, &snapshot);
+            }
             return Completed::BySelf;
         }
         Completed::ByCuas
@@ -1220,13 +1247,17 @@ impl TextService_Impl {
     /// 組字中交給宿主的按鍵（Ctrl／Alt／Win 組合鍵、F 鍵、Insert 等核心轉換不了的鍵）先送出組字（#106）。
     /// 必須在 TestKeyDown 就做：WPF 等宿主只看 TestKeyDown 的答案，說要吃之後 OnKeyDown 再回不吃，按鍵就消失；
     /// 先送出組字也讓 Ctrl+Enter、Ctrl+V 這類快捷鍵在組字之後才執行。OnKeyDown 再呼叫一次時已沒有組字，不會重複。
-    fn commit_before_host_key(&self, ctx: Option<&ITfContext>, vk: u32, lparam: isize) {
+    ///
+    /// 回傳 true＝IMM32 程式裡已經把這一鍵攔下、重排給程式（#66）：結果字串交給預設處理的程式（EDIT、WinForms）是 post 的
+    /// WM_CHAR，排在這一鍵之後，所以組字照樣送出，再把同一個 WM_KEYDOWN post 到焦點視窗、排在 WM_CHAR 之後，呼叫端回答吃下。
+    /// 只有 OnTestKeyDown 用這個值；OnKeyDown 呼叫時組字已結束，一定是 false。
+    fn commit_before_host_key(&self, ctx: Option<&ITfContext>, vk: u32, lparam: isize) -> bool {
         if !self.state.borrow().composing {
-            return;
+            return false;
         }
         // 要交給引擎的 Ctrl＋標點插進組字區，不先送出組字（#168）。
         if keys::modifier_down() && self.state.borrow_mut().ctrl_punct_key(vk, lparam).is_some() {
-            return;
+            return false;
         }
         let protocol = keys::to_key(vk, lparam, false, true); // 只看轉不轉得成協定按鍵，與新鍵名、大小寫無關
         if keys::commits_before_host(vk, keys::modifier_down(), protocol.as_deref()) {
@@ -1237,11 +1268,38 @@ impl TextService_Impl {
             let flags = self.state.borrow().activate_flags;
             if ctx.is_some_and(|c| privacy::imm32_context(c, flags)) {
                 zdebug!("IMM32 程式：經相容層送出組字");
-                self.complete_via_cuas(ctx, Self::view_window(ctx));
-            } else {
-                self.finish(ctx, "commit");
+                return self.complete_and_repost(ctx, vk, lparam);
             }
+            self.finish(ctx, "commit");
         }
+        false
+    }
+
+    /// 組字一律經相容層送出；條件都成立才把這一鍵重排給程式，回傳有沒有攔下（#66）。送出前先取快照：
+    /// 是白名單的鍵而且不是輸入法熱鍵（先看白名單，不在白名單的鍵不列舉熱鍵表）、焦點視窗、view 視窗、
+    /// 焦點視窗的佇列本來沒有 WM_CHAR。送出之後必須全部符合：目標有效而且就是 view（相容層的結果字串排給 view）、
+    /// 組字確實是相容層終止的、焦點沒有跑掉，而且佇列裡真的有排給目標的 WM_CHAR（交給預設處理的程式才有；
+    /// 自己處理的程式當場就收到字，不需要重排）。PostMessage 成功才攔下。
+    fn complete_and_repost(&self, ctx: Option<&ITfContext>, vk: u32, lparam: isize) -> bool {
+        let cuas = self.state.borrow().cuas.clone();
+        let (ctrl, alt, win) = keys::ctrl_alt_win();
+        let eligible = keys::reposts_after_commit(vk, ctrl, alt, win) && !cuas.ime_hotkey(vk);
+        let view = Self::view_window(ctx);
+        let target = cuas.focus();
+        let clean = eligible && !target.0.is_null() && !cuas.has_char(target);
+        let completed = self.complete_via_cuas(ctx, view);
+        let repost = eligible
+            && clean
+            && target == view
+            && completed == Completed::ByCuas
+            && cuas.focus() == target
+            && cuas.has_char(target)
+            && cuas.repost(target, vk, lparam);
+        if repost {
+            zdebug!("重排快捷鍵 vk={} 到 {:#x}", vk, target.0 as usize);
+            self.state.borrow_mut().pending_repost = Some(PendingRepost { vk, lparam, key_down_seen: false });
+        }
+        repost
     }
 
     /// 追蹤右 Shift 與左 Shift 是否為單按與按下的時間；Shift 按下本身一律交給宿主（is_modifier）。
@@ -1531,6 +1589,16 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
                 st.hotkey_tested.forget();
                 st.key_tested.forget();
             }
+            // 重排回來的鍵（#66）：攔下重排之後 TSF 一定先呼叫了這一鍵的 OnKeyDown，所以同一個 (vk, lParam) 的 TestKeyDown
+            // 就是重排的鍵回來了：清掉等待、不吃，交給程式，不再做任何判斷。
+            {
+                let mut st = self.state.borrow_mut();
+                if st.pending_repost.as_ref().is_some_and(|p| p.vk == wparam.0 as u32 && p.lparam == lparam.0) {
+                    st.pending_repost = None;
+                    zdebug!("OnTestKeyDown vk={} 重排回來 -> 不吃", wparam.0);
+                    return Ok(false.into());
+                }
+            }
             if !self.allowed(pic.as_ref()) {
                 return Ok(false.into());
             }
@@ -1541,7 +1609,10 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
                 zdebug!("OnTestKeyDown vk={} -> 切換簡體字", vk);
                 return Ok(true.into());
             }
-            self.commit_before_host_key(pic.as_ref(), vk, lparam.0);
+            if self.commit_before_host_key(pic.as_ref(), vk, lparam.0) {
+                zdebug!("OnTestKeyDown vk={} -> 攔下重排", vk);
+                return Ok(true.into());
+            }
             self.learn_mode(vk);
             self.sync_caps(pic.as_ref(), vk);
             let wants = match self.english_key_policy(pic.as_ref(), vk, lparam.0) {
@@ -1590,6 +1661,14 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
     ) -> windows_core::Result<BOOL> {
         crate::guarded("OnKeyDown", || {
             let vk = wparam.0 as u32;
+            // 攔下重排的鍵（#66）：TestKeyDown 已經送出組字並重排，這一次的 OnKeyDown 只吃下，不再判斷。
+            {
+                let mut st = self.state.borrow_mut();
+                if let Some(p) = st.pending_repost.as_mut().filter(|p| p.vk == vk && !p.key_down_seen) {
+                    p.key_down_seen = true;
+                    return Ok(true.into());
+                }
+            }
             // TestKeyDown 的決定一進來就取走，在 allowed() 提早回傳時也不留給之後的按鍵（keys::Tested）。
             let (tested, key_tested) = {
                 let mut st = self.state.borrow_mut();
@@ -1727,7 +1806,7 @@ impl ITfCompositionSink_Impl for TextService_Impl {
             // 只清外殼狀態，不送取消。
             let by_cuas = {
                 let st = self.state.borrow();
-                matches!(&st.completing, Some(Some(c)) if Some(c) == composition.as_ref())
+                matches!(&st.completing, Some(CompletingState { composition: Some(c), .. }) if Some(c) == composition.as_ref())
             };
             // 應用程式或系統終止了組字（例如滑鼠點到別處）：組字文字留在文件裡，核心放棄本次組字、不學習。
             // 之後的 Enter、方向鍵交還宿主（例如 RichEdit 2.0 讀取 WM_GETTEXT 時會結束組字，#88）。
@@ -1740,6 +1819,11 @@ impl ITfCompositionSink_Impl for TextService_Impl {
                 st.composing = false;
                 st.left_from = None;
                 st.ui.hide();
+                if by_cuas {
+                    if let Some(c) = st.completing.as_mut() {
+                        c.terminated = true;
+                    }
+                }
             }
             self.forget_candidates();
             if by_cuas {

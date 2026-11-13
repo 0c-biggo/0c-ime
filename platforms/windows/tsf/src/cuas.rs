@@ -34,14 +34,11 @@ pub(crate) trait Cuas {
     fn focus(&self) -> HWND;
     /// ImmGetContext(hwnd) + ImmNotifyIME(NI_COMPOSITIONSTR, CPS_COMPLETE)，可能同步回呼外殼。
     fn complete(&self, hwnd: HWND) -> Complete;
-    #[allow(dead_code)] // 重排快捷鍵的後續提交才用（#66）
     /// 程式的訊息佇列裡有沒有給 `hwnd` 的 WM_CHAR。帶 PM_QS_POSTMESSAGE：只看 post 的訊息，
     /// 不分派別的執行緒 SendMessage 過來、還在等的訊息（VM 上驗證過，沒帶時會分派）。
     fn has_char(&self, hwnd: HWND) -> bool;
-    #[allow(dead_code)] // 重排快捷鍵的後續提交才用（#66）
     /// PostMessage(hwnd, WM_KEYDOWN, vk, lparam)：把按鍵排在佇列最後。
     fn repost(&self, hwnd: HWND, vk: u32, lparam: isize) -> bool;
-    #[allow(dead_code)] // 重排快捷鍵的後續提交才用（#66）
     /// 這一鍵是不是系統的輸入法熱鍵：Ctrl+Space，或 ImmGetHotKey 任一登記以 `keys::hotkey_matches` 符合。
     fn ime_hotkey(&self, vk: u32) -> bool;
 }

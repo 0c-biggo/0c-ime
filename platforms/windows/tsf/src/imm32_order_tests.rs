@@ -12,7 +12,7 @@ use crate::cuas::{Complete, Cuas};
 use crate::edit::tests::{host, Doc, Sync};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyboardState, MapVirtualKeyW, SetKeyboardState, MAPVK_VK_TO_VSC, VK_CAPITAL, VK_CONTROL, VK_LCONTROL,
-    VK_SHIFT,
+    VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_SHIFT,
 };
 use std::collections::HashMap;
 use windows::Win32::UI::TextServices::{ITfKeyEventSink, TS_SS_TRANSITORY};
@@ -46,6 +46,26 @@ fn hold_ctrl(down: bool) {
         let v = if down { 0x80 } else { 0 };
         state[VK_CONTROL.0 as usize] = v;
         state[VK_LCONTROL.0 as usize] = v;
+        SetKeyboardState(&state).unwrap();
+    }
+}
+
+/// 一次設定四個修飾鍵（只改本執行緒的鍵盤狀態，GetKeyState 看得到）。
+fn set_mods(ctrl: bool, alt: bool, win: bool, shift: bool) {
+    let mut state = [0u8; 256];
+    unsafe {
+        GetKeyboardState(&mut state).unwrap();
+        for (v, on) in [
+            (VK_CONTROL.0, ctrl),
+            (VK_LCONTROL.0, ctrl),
+            (VK_MENU.0, alt),
+            (VK_LMENU.0, alt),
+            (VK_LWIN.0, win),
+            (VK_SHIFT.0, shift),
+            (VK_LSHIFT.0, shift),
+        ] {
+            state[v as usize] = if on { 0x80 } else { 0 };
+        }
         SetKeyboardState(&state).unwrap();
     }
 }
@@ -94,7 +114,6 @@ enum HostKind {
     /// 自己處理 WM_IME_COMPOSITION，結果字串當場就到。
     SelfHandles,
     /// 交給 DefWindowProc：結果字串由相容層 post 成 WM_CHAR，排在佇列裡。
-    #[allow(dead_code)] // 後續提交相容層的測試才用（#66）
     DefWindowProc,
 }
 
@@ -130,6 +149,12 @@ struct FakeCuas {
     via: RefCell<Vec<String>>,
     /// `result_on_self_end` 等外殼自己結束組字的結果字串。
     late: RefCell<Option<(HWND, String)>>,
+    /// 相容層結束組字時不經 OnCompositionTerminated（像 Deactivate 或重入的 present 那樣自己清掉組字狀態，#66）。
+    silent_end: Cell<bool>,
+    /// 結果字串改排給這個視窗（不是 `complete` 收到的 hwnd）：模擬 view 與焦點視窗不一致時字落在焦點視窗（#66）。
+    deliver_to: Cell<Option<HWND>>,
+    /// 所有排進佇列的訊息，依序（Host 不會清它）：驗證 `Char` 在 `Key` 之前。
+    history: RefCell<Vec<Queued>>,
 }
 
 fn app_hwnd() -> HWND {
@@ -154,6 +179,9 @@ impl FakeCuas {
             handed: RefCell::new(Vec::new()),
             via: RefCell::new(Vec::new()),
             late: RefCell::new(None),
+            silent_end: Cell::new(false),
+            deliver_to: Cell::new(None),
+            history: RefCell::new(Vec::new()),
         })
     }
 
@@ -161,7 +189,10 @@ impl FakeCuas {
         self.via.borrow_mut().push(text.clone());
         match self.kind.get() {
             HostKind::SelfHandles => self.handed.borrow_mut().push(text),
-            HostKind::DefWindowProc => self.queue.borrow_mut().push(Queued::Char { hwnd, text }),
+            HostKind::DefWindowProc => {
+                self.history.borrow_mut().push(Queued::Char { hwnd, text: text.clone() });
+                self.queue.borrow_mut().push(Queued::Char { hwnd, text });
+            }
         }
     }
 }
@@ -172,6 +203,7 @@ impl Cuas for FakeCuas {
     }
 
     fn complete(&self, hwnd: HWND) -> Complete {
+        let hwnd = self.deliver_to.get().unwrap_or(hwnd);
         let text = self.doc.composing_text();
         let service = self.service.borrow().clone().expect("FakeCuas 要先接上外殼");
         let sent = service.state.borrow().session.sent.last().cloned();
@@ -183,7 +215,16 @@ impl Cuas for FakeCuas {
             let sink: ITfThreadMgrEventSink = service.to_interface();
             unsafe { sink.OnSetFocus(None::<&ITfDocumentMgr>, None::<&ITfDocumentMgr>) }.unwrap();
         }
-        if result == Complete::Notified && self.terminates.get() {
+        if result == Complete::Notified && self.terminates.get() && self.silent_end.get() {
+            // 結果字串照送，但外殼的組字狀態是別的路徑清掉的：沒有 OnCompositionTerminated。
+            self.doc.end_composition();
+            if !text.is_empty() {
+                self.deliver(hwnd, text);
+            }
+            let mut st = service.state.borrow_mut();
+            st.composition = None;
+            st.composing = false;
+        } else if result == Complete::Notified && self.terminates.get() {
             let composition = service.state.borrow().composition.clone();
             self.doc.end_composition();
             if !text.is_empty() {
@@ -207,6 +248,7 @@ impl Cuas for FakeCuas {
 
     fn repost(&self, hwnd: HWND, vk: u32, lparam: isize) -> bool {
         if self.repost_ok.get() {
+            self.history.borrow_mut().push(Queued::Key { hwnd, vk, lparam });
             self.queue.borrow_mut().push(Queued::Key { hwnd, vk, lparam });
         }
         self.repost_ok.get()
@@ -277,6 +319,7 @@ impl Host {
         if !self.doc.composing() {
             if let Some((hwnd, text)) = self.cuas.late.borrow_mut().take() {
                 self.cuas.via.borrow_mut().push(text.clone());
+                self.cuas.history.borrow_mut().push(Queued::Char { hwnd, text: text.clone() });
                 self.cuas.queue.borrow_mut().push(Queued::Char { hwnd, text });
             }
         }
@@ -399,7 +442,12 @@ fn open(pipe: &str, static_flags: u32) -> Host {
 
 /// 注音模式（預設）、文件原本是「前」的宿主（#262），用一般的 ZUIN_TEST_PIPE。
 fn open_zhuyin(static_flags: u32) -> Option<Host> {
-    let pipe = std::env::var("ZUIN_TEST_PIPE").ok()?;
+    open_zhuyin_on("ZUIN_TEST_PIPE", static_flags)
+}
+
+/// 同上，引擎的管道名稱取自指定的環境變數（#192 的 ZUIN_TEST_HOTKEY_PIPE 是設定開著簡體字快捷鍵的獨立引擎）。
+fn open_zhuyin_on(env: &str, static_flags: u32) -> Option<Host> {
+    let pipe = std::env::var(env).ok()?;
     let (doc, ctx) = host(Sync::Run);
     doc.static_flags.set(static_flags);
     let service = ComObject::new(TextService::new());
@@ -739,4 +787,240 @@ fn tsf_programs_keep_the_composition_when_ctrl_goes_down() {
     let text = h.app.text();
     assert!(text.starts_with('前') && text.ends_with('，') && text.chars().count() == 3, "{text}");
     assert_eq!(h.app.seen, vec![text]);
+}
+
+/// 交給預設處理的程式（DefWindowProc）、注音組字「ji3」，回傳組字的文字。
+fn composing_in_default_host(h: &mut Host) -> String {
+    plain_keyboard();
+    h.view_is_app();
+    h.cuas.kind.set(HostKind::DefWindowProc);
+    h.zhuyin("ji3");
+    let word = h.doc.composing_text();
+    assert!(h.composing() && !word.is_empty(), "組字中");
+    h.cuas.history.borrow_mut().clear();
+    word
+}
+
+fn scan_of(vk: u32) -> isize {
+    unsafe { MapVirtualKeyW(vk, MAPVK_VK_TO_VSC) as isize }
+}
+
+fn keys_in(h: &Host) -> Vec<Queued> {
+    h.cuas.history.borrow().iter().filter(|q| matches!(q, Queued::Key { .. })).cloned().collect()
+}
+
+#[test]
+fn imm32_default_handling_host_gets_the_key_after_the_text() {
+    // #66：交給 DefWindowProc 的程式（EDIT、WinForms）收到的結果字串是 post 的 WM_CHAR，排在這一鍵之後。
+    // 白名單內的鍵（Ctrl 組合鍵、F1 到 F12 除了 F10）攔下，把同一個 WM_KEYDOWN 再 post 給焦點視窗，排在 WM_CHAR 之後
+    // （spike mode 18 在標準文字框與 WinForms 實測）。重排回來的鍵 TestKeyDown 不吃，快捷鍵作用剛好一次。
+    let cases: Vec<(&str, bool, bool, u32, Act)> = {
+        let mut v = vec![("Ctrl+S", true, false, 0x53, Act::Shortcut), ("Ctrl+Home", true, false, 0x24, Act::Top)];
+        for f in (0x70..=0x7bu32).filter(|f| *f != 0x79) {
+            v.push(("F 鍵", false, false, f, Act::Shortcut));
+        }
+        v.push(("Shift+F5", false, true, 0x74, Act::Shortcut));
+        v.push(("Ctrl+F5", true, false, 0x74, Act::Shortcut));
+        v
+    };
+    let Some(mut h) = open_zhuyin(TS_SS_TRANSITORY) else { return };
+    for (name, ctrl, shift, vk, act) in cases {
+        let word = composing_in_default_host(&mut h);
+        h.app = App::new();
+        set_mods(ctrl, false, false, shift);
+        let scan = scan_of(vk);
+        let eaten = h.press(vk, scan, act);
+        set_mods(false, false, false, false);
+        let tag = format!("{name} vk={vk:#x}");
+        assert!(eaten, "{tag}：TestKeyDown 吃下");
+        assert!(!h.composing(), "{tag}：組字送出");
+        let lparam = 1 | scan << 16;
+        assert_eq!(
+            *h.cuas.history.borrow(),
+            vec![
+                Queued::Char { hwnd: app_hwnd(), text: word.clone() },
+                Queued::Key { hwnd: app_hwnd(), vk, lparam }
+            ],
+            "{tag}：Char 在前、Key 在後，同 vk、同 lParam、目標是焦點視窗"
+        );
+        assert!(h.service.state.borrow().pending_repost.is_none(), "{tag}：重排的鍵回來就清掉");
+        let full = format!("前{word}");
+        assert_eq!(h.app.text(), full, "{tag}");
+        match act {
+            Act::Top => assert_eq!(h.app.caret, 0, "{tag}：字留原處、插入點才到最前"),
+            _ => assert_eq!(h.app.fired, vec![(vk, full)], "{tag}：快捷鍵作用一次、看到完整文字"),
+        }
+        assert_eq!(h.cuas.completions.borrow().len(), 1, "{tag}：只經相容層完成一次");
+        h.cuas.completions.borrow_mut().clear();
+    }
+}
+
+#[test]
+fn imm32_self_handling_host_is_never_reposted() {
+    // #66：自己處理結果字串的程式（Notepad++）當場就收到字，快捷鍵照舊交給它：不吃、不重排。
+    let Some(mut h) = open_zhuyin(TS_SS_TRANSITORY) else { return };
+    for (ctrl, vk, act) in [(true, 0x53u32, Act::Shortcut), (true, 0x24, Act::Top), (false, 0x70, Act::Shortcut), (false, 0x7b, Act::Shortcut)] {
+        let word = composing_in_default_host(&mut h);
+        h.cuas.kind.set(HostKind::SelfHandles);
+        h.app = App::new();
+        set_mods(ctrl, false, false, false);
+        let eaten = h.press(vk, scan_of(vk), act);
+        set_mods(false, false, false, false);
+        assert!(!eaten, "vk={vk:#x}：不吃");
+        assert!(keys_in(&h).is_empty(), "vk={vk:#x}：佇列沒有 Key");
+        assert!(!h.composing());
+        assert_eq!(h.app.text(), format!("前{word}"), "vk={vk:#x}");
+        if !matches!(act, Act::Top) {
+            assert_eq!(h.app.fired, vec![(vk, format!("前{word}"))], "vk={vk:#x}：快捷鍵作用一次、看到完整文字");
+        }
+        h.cuas.completions.borrow_mut().clear();
+    }
+    // 送出前佇列裡只有別的視窗的 Char：只看目標視窗，DefWindowProc 照樣重排。
+    let word = composing_in_default_host(&mut h);
+    let other = HWND(0x2000 as *mut std::ffi::c_void);
+    h.cuas.queue.borrow_mut().push(Queued::Char { hwnd: other, text: "別".to_string() });
+    h.app = App::new();
+    set_mods(true, false, false, false);
+    assert!(h.press(0x53, scan_of(0x53), Act::Shortcut), "別的視窗的 Char 不影響判斷");
+    set_mods(false, false, false, false);
+    assert_eq!(keys_in(&h).len(), 1, "仍然重排");
+    assert_eq!(h.app.fired, vec![(0x53, format!("前{word}"))]);
+    assert_eq!(h.other_chars, vec![(other, "別".to_string())]);
+}
+
+#[test]
+fn imm32_system_and_ime_keys_are_not_reposted() {
+    // #66：F10 與 Alt、Win 組合鍵是系統按鍵（WM_SYSKEYDOWN），重排的一般按鍵訊息重現不了，Ctrl+Alt 是 AltGr，
+    // 輸入法熱鍵（Ctrl+Space）交給系統，Insert、應用程式鍵、多媒體鍵不在白名單：組字照樣送出、不吃、不重排。
+    // (名稱, ctrl, alt, win, vk, 輸入法熱鍵)
+    let cases: [(&str, bool, bool, bool, u32, bool); 9] = [
+        ("F10", false, false, false, 0x79, false),
+        ("Alt+S", false, true, false, 0x53, false),
+        ("Win+S", false, false, true, 0x53, false),
+        ("Ctrl+Alt+Q", true, true, false, 0x51, false),
+        ("Ctrl+Space", true, false, false, 0x20, true),
+        ("Insert", false, false, false, 0x2d, false),
+        ("Apps", false, false, false, 0x5d, false),
+        ("音量加", false, false, false, 0xaf, false),
+        ("播放暫停", false, false, false, 0xb3, false),
+    ];
+    for (name, ctrl, alt, win, vk, hotkey) in cases {
+        let Some(mut h) = open_zhuyin(TS_SS_TRANSITORY) else { return };
+        let word = composing_in_default_host(&mut h);
+        h.cuas.hotkey.set(hotkey);
+        h.app = App::new();
+        set_mods(ctrl, alt, win, false);
+        let eaten = h.press(vk, scan_of(vk), Act::Shortcut);
+        set_mods(false, false, false, false);
+        assert!(!eaten, "{name}：不吃");
+        assert!(keys_in(&h).is_empty(), "{name}：佇列沒有 Key");
+        assert!(!h.composing(), "{name}：組字照樣送出");
+        assert_eq!(h.doc.committed(), format!("前{word}"), "{name}");
+        assert_eq!(h.app.text(), format!("前{word}"), "{name}：字只出現一次");
+        assert_eq!(h.app.fired.len(), 1, "{name}：快捷鍵作用一次");
+        h.cuas.hotkey.set(false);
+        h.cuas.completions.borrow_mut().clear();
+    }
+}
+
+#[test]
+fn imm32_simplified_hotkey_still_toggles() {
+    // #192：設定開著時 Ctrl+Shift+F11 吃下切換簡體字、不送出組字，也不重排（#66 在這之後才判斷）。
+    // 需要 ZUIN_TEST_HOTKEY_PIPE（設定開著簡體字快捷鍵的獨立引擎）；沒設就略過。
+    let Some(mut h) = open_zhuyin_on("ZUIN_TEST_HOTKEY_PIPE", TS_SS_TRANSITORY) else { return };
+    let word = composing_in_default_host(&mut h);
+    for _ in 0..2 {
+        // 按兩次：切換之後再切回來，不改引擎的設定。
+        set_mods(true, false, false, true);
+        let eaten = h.press(0x7a, scan_of(0x7a), Act::Shortcut);
+        set_mods(false, false, false, false);
+        assert!(eaten, "吃下切換");
+        assert!(h.composing(), "組字不送出");
+        assert_eq!(h.doc.composing_text(), word);
+    }
+    assert!(h.cuas.completions.borrow().is_empty(), "沒有經相容層送出");
+    assert!(h.cuas.history.borrow().is_empty(), "也沒有重排");
+    assert!(h.app.fired.is_empty());
+}
+
+#[test]
+fn imm32_any_doubt_falls_back_to_not_eating() {
+    // #66：判斷有疑義就不攔：組字仍送出、字只出現一次、不吃、快捷鍵作用一次、佇列沒有 Key。
+    // 每一種都在 Ctrl+S、DefWindowProc 下，其他條件都成立，只破壞這一條。
+    let far = HWND(0x2000 as *mut std::ffi::c_void);
+    let names = [
+        "PostMessage 失敗",
+        "送出前佇列已有同一視窗的 Char",
+        "focus 與 view 不同",
+        "focus 與 view 不同而且字落在 focus",
+        "focus 與 view 都是 0",
+        "complete 時換焦點",
+        "NoContext",
+        "Failed",
+        "Notified 但沒有終止",
+        "相容層沒經 OnCompositionTerminated 就清掉組字狀態",
+    ];
+    for name in names {
+        let Some(mut h) = open_zhuyin(TS_SS_TRANSITORY) else { return };
+        let word = composing_in_default_host(&mut h);
+        match name {
+            "PostMessage 失敗" => h.cuas.repost_ok.set(false),
+            "送出前佇列已有同一視窗的 Char" => {
+                h.cuas.queue.borrow_mut().push(Queued::Char { hwnd: app_hwnd(), text: "先".to_string() })
+            }
+            "focus 與 view 不同" => h.cuas.focus.set(far),
+            "focus 與 view 不同而且字落在 focus" => {
+                h.cuas.focus.set(far);
+                h.cuas.deliver_to.set(Some(far));
+            }
+            "focus 與 view 都是 0" => {
+                h.cuas.focus.set(HWND::default());
+                h.doc.view.set(Some(HWND::default()));
+            }
+            "complete 時換焦點" => h.cuas.focus_after_complete.set(Some(far)),
+            "NoContext" | "Failed" | "Notified 但沒有終止" => {
+                h.cuas.complete_result.set(if name == "NoContext" { Complete::NoContext } else { Complete::Failed });
+                if name.starts_with("Notified") {
+                    h.cuas.complete_result.set(Complete::Notified);
+                    h.cuas.terminates.set(false);
+                }
+                h.cuas.result_on_self_end.set(true);
+            }
+            _ => h.cuas.silent_end.set(true),
+        }
+        h.app = App::new();
+        set_mods(true, false, false, false);
+        let eaten = h.press(0x53, scan_of(0x53), Act::Shortcut);
+        set_mods(false, false, false, false);
+        assert!(!eaten, "{name}：不吃");
+        assert!(keys_in(&h).is_empty(), "{name}：佇列沒有 Key");
+        assert!(!h.composing(), "{name}：組字仍送出");
+        assert_eq!(h.doc.committed(), format!("前{word}"), "{name}：字只出現一次");
+        let chars: Vec<_> = h.cuas.history.borrow().iter().filter(|q| matches!(q, Queued::Char { text, .. } if *text == word)).cloned().collect();
+        assert!(chars.len() <= 1, "{name}：結果字串不重複：{chars:?}");
+        assert_eq!(h.app.fired.len(), 1, "{name}：快捷鍵作用一次");
+        assert!(h.service.state.borrow().pending_repost.is_none(), "{name}");
+        let sent = h.sent();
+        assert_eq!(sent.iter().filter(|t| *t == "commit").count(), 1, "{name}：引擎只收到一次 commit");
+    }
+}
+
+#[test]
+fn imm32_complete_reports_by_cuas_only_when_cuas_ended_it() {
+    // #66：ByCuas 是觀察到的（OnCompositionTerminated 對上守衛的組字），不是從「組字已結束」推論的。
+    let Some(mut h) = open_zhuyin(TS_SS_TRANSITORY) else { return };
+    plain_keyboard();
+    h.view_is_app();
+    h.zhuyin("ji3");
+    assert_eq!(h.service.complete_via_cuas(Some(&h.ctx), app_hwnd()), Completed::ByCuas, "相容層終止了組字");
+    let Some(mut h) = open_zhuyin(TS_SS_TRANSITORY) else { return };
+    plain_keyboard();
+    h.view_is_app();
+    h.cuas.silent_end.set(true);
+    h.zhuyin("ji3");
+    assert_eq!(
+        h.service.complete_via_cuas(Some(&h.ctx), app_hwnd()),
+        Completed::BySelf,
+        "組字狀態是別的路徑清掉的，不是相容層終止的"
+    );
 }
