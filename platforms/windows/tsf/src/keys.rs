@@ -3,8 +3,8 @@
 //! 只有中文模式的 Ctrl＋標點（#168，見 [`ctrl_punct`]）例外。
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetKeyState, GetKeyboardState, ToUnicode, VK_BACK, VK_CAPITAL, VK_CONTROL,
-    VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F11, VK_HOME, VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LSHIFT,
-    VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR, VK_RCONTROL, VK_RETURN, VK_RIGHT, VK_RMENU, VK_RSHIFT,
+    VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F1, VK_F10, VK_F11, VK_F12,
+    VK_HOME, VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR, VK_RCONTROL, VK_RETURN, VK_RIGHT, VK_RMENU, VK_RSHIFT,
     VK_RWIN, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
 };
 
@@ -35,6 +35,17 @@ pub fn modifier_down() -> bool {
             || GetKeyState(VK_MENU.0 as i32) < 0
             || GetKeyState(VK_LWIN.0 as i32) < 0
             || GetKeyState(VK_RWIN.0 as i32) < 0
+    }
+}
+
+/// Ctrl、Alt、Win（左右任一）目前是否按著（這個執行緒收到按鍵當下的狀態）。
+pub fn ctrl_alt_win() -> (bool, bool, bool) {
+    unsafe {
+        (
+            GetKeyState(VK_CONTROL.0 as i32) < 0,
+            GetKeyState(VK_MENU.0 as i32) < 0,
+            GetKeyState(VK_LWIN.0 as i32) < 0 || GetKeyState(VK_RWIN.0 as i32) < 0,
+        )
     }
 }
 
@@ -164,17 +175,45 @@ pub fn is_lock_or_ime(vk: u32) -> bool {
     matches!(vk, 0x90 | 0x91 | 0x15..=0x1f | 0xe5)
 }
 
-/// Ctrl 剛按下（不是按住不放的自動重複，lParam 第 30 位）：IMM32 程式裡組字中要在這時就送出組字（#262）。
-pub fn ctrl_press(vk: u32, lparam: isize) -> bool {
-    let v = vk as u16;
-    (v == VK_CONTROL.0 || v == VK_LCONTROL.0 || v == VK_RCONTROL.0) && lparam & (1 << 30) == 0
-}
-
 /// 組字中要先送出組字、再交給宿主的按鍵（#106）：Ctrl／Alt／Win 組合鍵（單按修飾鍵本身除外），
 /// 以及轉不成協定按鍵、核心不會處理的鍵（F 鍵、Insert、其他排列的非 ASCII 字元…）。
 /// `protocol` 是 `to_key` 的結果。
 pub fn commits_before_host(vk: u32, modified: bool, protocol: Option<&str>) -> bool {
     !is_modifier(vk) && !is_lock_or_ime(vk) && (modified || protocol.is_none())
+}
+
+/// IMM32 程式裡，組字送出後要把這一鍵重排（再 PostMessage 一次）給程式的按鍵（#66）：
+/// Ctrl 組合鍵（Ctrl 按著、Alt 與 Win 沒按著，修飾鍵本身除外，AltGr 是 Ctrl＋Alt 所以不算），
+/// 以及 F1 到 F12 除了 F10（Alt 與 Win 沒按著，可帶 Ctrl 或 Shift）。
+/// F10 與 Alt 組合鍵是系統按鍵（WM_SYSKEYDOWN），重排的一般按鍵訊息重現不了選單，所以不收。
+/// 呼叫端已先經 `commits_before_host` 篩過，這裡只決定其中哪些要重排。
+pub fn reposts_after_commit(vk: u32, ctrl: bool, alt: bool, win: bool) -> bool {
+    if alt || win || vk == VK_F10.0 as u32 || is_modifier(vk) {
+        return false;
+    }
+    ctrl || (VK_F1.0 as u32..=VK_F12.0 as u32).contains(&vk)
+}
+
+const MOD_ALT: u32 = 0x1;
+const MOD_CONTROL: u32 = 0x2;
+const MOD_SHIFT: u32 = 0x4;
+const MOD_IGNORE_ALL_MODIFIER: u32 = 0x400;
+const MOD_ON_KEYUP: u32 = 0x800;
+#[cfg(test)]
+const MOD_RIGHT: u32 = 0x4000;
+#[cfg(test)]
+const MOD_LEFT: u32 = 0x8000;
+
+/// ImmGetHotKey 登記的輸入法熱鍵（`hk_mods`、`hk_vk`）是否符合目前這一鍵（#66）。
+/// `hk_mods` 的位元（imm.h）：MOD_ALT 0x1、MOD_CONTROL 0x2、MOD_SHIFT 0x4、MOD_LEFT 0x8000、MOD_RIGHT 0x4000
+/// （只表示左右，比對時忽略）、MOD_ON_KEYUP 0x800（放開才觸發，按下時一律不符）、
+/// MOD_IGNORE_ALL_MODIFIER 0x400（只比 vk）。
+pub fn hotkey_matches(hk_mods: u32, hk_vk: u32, vk: u32, ctrl: bool, alt: bool, shift: bool) -> bool {
+    if hk_mods & MOD_ON_KEYUP != 0 || hk_vk != vk {
+        return false;
+    }
+    hk_mods & MOD_IGNORE_ALL_MODIFIER != 0
+        || (hk_mods & MOD_CONTROL != 0, hk_mods & MOD_ALT != 0, hk_mods & MOD_SHIFT != 0) == (ctrl, alt, shift)
 }
 
 /// 組字中（沒有修飾鍵）TestKeyDown 是否要吃，必須和 OnKeyDown 送核心後的結果一致，否則 WPF 會讓按鍵消失。
@@ -480,6 +519,49 @@ pub fn left_shift(vk: u32, lparam: isize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_F13, VK_F4, VK_F5};
+
+    #[test]
+    fn reposts_after_commit_whitelist() {
+        assert!(reposts_after_commit(0x53, true, false, false)); // Ctrl+S
+        assert!(reposts_after_commit(0x24, true, false, false)); // Ctrl+Home
+        assert!(reposts_after_commit(VK_F5.0 as u32, false, false, false)); // F5
+        for vk in VK_F1.0 as u32..=VK_F12.0 as u32 {
+            assert_eq!(reposts_after_commit(vk, false, false, false), vk != VK_F10.0 as u32, "F{} {vk:#x}", vk - VK_F1.0 as u32 + 1);
+        }
+        assert!(!reposts_after_commit(VK_F10.0 as u32, true, false, false), "Ctrl+F10");
+        assert!(!reposts_after_commit(0x53, false, true, false), "Alt+S");
+        assert!(!reposts_after_commit(0x51, true, true, false), "Ctrl+Alt+Q (AltGr)");
+        assert!(!reposts_after_commit(0x53, false, false, true), "Win+S");
+        assert!(!reposts_after_commit(VK_F5.0 as u32, false, false, true), "Win+F5");
+        assert!(!reposts_after_commit(VK_F4.0 as u32, false, true, false), "Alt+F4");
+        assert!(!reposts_after_commit(0x2d, false, false, false), "Insert");
+        assert!(!reposts_after_commit(0x5d, false, false, false), "應用程式鍵");
+        assert!(!reposts_after_commit(VK_F13.0 as u32, false, false, false), "F13");
+        for vk in 0xadu32..=0xb7 {
+            assert!(!reposts_after_commit(vk, false, false, false), "多媒體鍵 {vk:#x}");
+        }
+        assert!(!reposts_after_commit(0x53, false, false, false), "沒有修飾鍵的 S");
+        assert!(!reposts_after_commit(VK_CONTROL.0 as u32, true, false, false), "Ctrl 本身");
+        assert!(!reposts_after_commit(VK_LCONTROL.0 as u32, true, false, false), "左 Ctrl 本身");
+        assert!(reposts_after_commit(VK_F5.0 as u32, true, false, false), "Ctrl+F5");
+    }
+
+    #[test]
+    fn hotkey_matches_registered_table() {
+        assert!(hotkey_matches(MOD_CONTROL, VK_SPACE.0 as u32, VK_SPACE.0 as u32, true, false, false));
+        assert!(!hotkey_matches(MOD_CONTROL, VK_SPACE.0 as u32, VK_SPACE.0 as u32, true, false, true), "多按 Shift");
+        assert!(!hotkey_matches(MOD_CONTROL, VK_SPACE.0 as u32, VK_SPACE.0 as u32, false, false, false), "沒按 Ctrl");
+        assert!(hotkey_matches(MOD_CONTROL | MOD_SHIFT | MOD_LEFT, 0x30, 0x30, true, false, true));
+        assert!(hotkey_matches(MOD_CONTROL | MOD_SHIFT | MOD_RIGHT, 0x30, 0x30, true, false, true));
+        assert!(!hotkey_matches(MOD_SHIFT | MOD_ON_KEYUP, VK_SPACE.0 as u32, VK_SPACE.0 as u32, false, false, true), "放開才觸發");
+        for (c, a, s) in [(false, false, false), (true, false, false), (true, true, true), (false, true, false)] {
+            assert!(hotkey_matches(MOD_IGNORE_ALL_MODIFIER, 0x19, 0x19, c, a, s));
+            assert!(!hotkey_matches(MOD_IGNORE_ALL_MODIFIER, 0x19, VK_SPACE.0 as u32, c, a, s));
+        }
+        assert!(!hotkey_matches(MOD_CONTROL, VK_SPACE.0 as u32, 0x21, true, false, false), "vk 不同");
+    }
+
     #[test]
     fn right_shift_tap_and_chords() {
         const L: u64 = DEFAULT_SHIFT_TAP_MS;
