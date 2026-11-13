@@ -696,6 +696,94 @@ fn imm32_lone_modifiers_keep_the_composition() {
     assert_eq!(h.app.text(), "前");
 }
 
+/// 組字中按 Ctrl+這一鍵，檢查走 #66 的流程：經相容層送出一次，佇列是 Char 在前、Key 在後（同 vk、同 lParam），
+/// 快捷鍵只觸發一次而且觸發時文件已含整段組字。`composed` 是按下之前的組字文字。
+fn assert_ctrl_shortcut_follows_text(h: &mut Host, vk: u32, composed: &str, tag: &str) {
+    h.app = App::new();
+    h.cuas.history.borrow_mut().clear();
+    h.cuas.completions.borrow_mut().clear();
+    h.ctrl_down(false);
+    let scan = scan_of(vk);
+    let eaten = h.ctrl_key(vk, Act::Shortcut);
+    h.ctrl_up();
+    assert!(eaten, "{tag}：TestKeyDown 吃下");
+    assert!(!h.composing(), "{tag}：組字送出");
+    assert_eq!(
+        *h.cuas.history.borrow(),
+        vec![
+            Queued::Char { hwnd: app_hwnd(), text: composed.to_string() },
+            Queued::Key { hwnd: app_hwnd(), vk, lparam: 1 | scan << 16 }
+        ],
+        "{tag}：Char 在前、Key 在後，同 vk、同 lParam"
+    );
+    assert_eq!(h.cuas.completions.borrow().len(), 1, "{tag}：只經相容層完成一次");
+    let full = format!("前{composed}");
+    assert_eq!(h.app.fired, vec![(vk, full.clone())], "{tag}：快捷鍵只觸發一次、看到整段組字");
+    assert_eq!(h.app.text(), full, "{tag}");
+    assert!(pending_cleared(h), "{tag}：重排的鍵回來就清掉");
+}
+
+#[test]
+fn imm32_mixed_english_composition_follows_the_shortcut_rules() {
+    // #66：中英混打（中文模式）的組字含英文字母，仍是一般組字：單按 Ctrl 不送出，Ctrl+S 經相容層送出整段，
+    // 重排在字之後。需要 ZUIN_TEST_MIXED_PIPE（設定開著 mixed_input 的獨立引擎）；沒設就略過。
+    let Some(mut h) = open_zhuyin_on("ZUIN_TEST_MIXED_PIPE", TS_SS_TRANSITORY) else { return };
+    plain_keyboard();
+    h.view_is_app();
+    h.cuas.kind.set(HostKind::DefWindowProc);
+    h.zhuyin("ji3hello");
+    let word = h.doc.composing_text();
+    assert!(h.composing(), "組字中");
+    assert!(word.chars().any(|c| c.is_ascii_alphabetic()), "組字裡有英文字母：{word}");
+    assert!(!h.service.state.borrow().session.english(), "仍是中文模式");
+    assert!(!h.pending(), "不是英文補字的單字");
+    h.cuas.history.borrow_mut().clear();
+
+    assert!(!h.ctrl_down(false), "單按 Ctrl 交給程式");
+    assert!(h.composing(), "單按 Ctrl 不送出混打的組字");
+    h.ctrl_up();
+    assert_eq!(h.doc.composing_text(), word);
+    assert!(h.cuas.completions.borrow().is_empty(), "沒有經相容層送出");
+    assert_eq!(h.app.text(), "前");
+
+    assert_ctrl_shortcut_follows_text(&mut h, 0x53, &word, "Ctrl+S");
+}
+
+#[test]
+fn imm32_composition_kept_by_a_mode_switch_follows_the_shortcut_rules() {
+    // #66：組字中單按 Shift 切到英文模式，組字留著（「你」），再打的字母接進同一段組字，不是英文補字的單字
+    // （english_pending 是 false）。這樣的組字仍走一般流程：單按 Ctrl 不送出，Ctrl+S 與 Ctrl+,（英文模式不算
+    // Ctrl＋標點）經相容層送出，快捷鍵重排在字之後。
+    for (vk, tag) in [(0xBCu32, "Ctrl+,"), (0x53, "Ctrl+S")] {
+        let Some(mut h) = open_zhuyin(TS_SS_TRANSITORY) else { return };
+        plain_keyboard();
+        h.view_is_app();
+        h.cuas.kind.set(HostKind::DefWindowProc);
+        h.zhuyin("su3");
+        assert_eq!(h.doc.composing_text(), "你");
+        // 單按 Shift 切換：按下交給程式、放開才切換
+        assert!(!h.press(0x10, 0x2a, Act::Nothing), "Shift 按下交給程式");
+        h.key_up(0x10, 0x2a);
+        assert!(h.service.state.borrow().session.english(), "單按 Shift 切到英文模式");
+        assert!(h.composing(), "{tag}：切換後組字留著");
+        for c in "ab".chars() {
+            let vk = c.to_ascii_uppercase() as u32;
+            assert!(h.press(vk, scan_of(vk), Act::Char(c)), "字母 {c} 接進組字");
+        }
+        let word = h.doc.composing_text();
+        assert_eq!(word, "你ab", "{tag}");
+        assert!(!h.pending(), "{tag}：不是英文補字的單字");
+        h.cuas.history.borrow_mut().clear();
+
+        assert!(!h.ctrl_down(false), "{tag}：單按 Ctrl 交給程式");
+        h.ctrl_up();
+        assert!(h.composing(), "{tag}：單按 Ctrl 不送出");
+        assert!(h.cuas.completions.borrow().is_empty(), "{tag}：沒有經相容層送出");
+
+        assert_ctrl_shortcut_follows_text(&mut h, vk, &word, tag);
+    }
+}
+
 #[test]
 fn imm32_shortcut_commit_is_learned_and_ordered() {
     // #66 spec〈送出方式〉：引擎先 commit（學習）、組字區換成送出文字，才請相容層完成；相容層終止組字時外殼不送取消，
