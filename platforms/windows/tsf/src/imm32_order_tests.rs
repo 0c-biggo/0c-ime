@@ -177,10 +177,7 @@ impl Cuas for FakeCuas {
         let sent = service.state.borrow().session.sent.last().cloned();
         self.completions.borrow_mut().push((text.clone(), sent));
         let result = self.complete_result.get();
-        if result != Complete::Notified {
-            return result;
-        }
-        if self.terminates.get() {
+        if result == Complete::Notified && self.terminates.get() {
             let composition = service.state.borrow().composition.clone();
             self.doc.end_composition();
             if !text.is_empty() {
@@ -192,6 +189,7 @@ impl Cuas for FakeCuas {
                 unsafe { sink.OnCompositionTerminated(0, &composition) }.unwrap();
             }
         } else if self.result_on_self_end.get() && !text.is_empty() {
+            // NoContext、Failed、不終止的 Notified 都一樣：結果字串等外殼自己結束組字才排進佇列。
             *self.late.borrow_mut() = Some((hwnd, text));
         }
         if let Some(focus) = self.focus_after_complete.get() {
@@ -228,6 +226,8 @@ struct Host {
     /// 這個 App 視窗；給別的視窗的 `Char` 不插進 App，只記在 `other_chars`。
     hwnd: HWND,
     other_chars: Vec<(HWND, String)>,
+    /// 重送給別的視窗的按鍵，不重播進這個 App。
+    other_keys: Vec<(HWND, u32, isize)>,
     /// 每個 vk 最近一次按下時程式自己處理的動作（重送回來的鍵照這個動作）。
     acts: HashMap<u32, Act>,
 }
@@ -259,6 +259,7 @@ impl Host {
     /// 一則按鍵訊息：TestKeyDown →（吃下才）OnKeyDown → 套用結果 → 不吃的鍵由程式處理。
     fn step(&mut self, vk: u32, lparam: isize, act: Act, keydown: bool) -> bool {
         let (w, l) = (WPARAM(vk as usize), LPARAM(lparam));
+        self.cuas.via.borrow_mut().clear(); // 上一則留下的紀錄不得吃掉這一則的差異
         let before = self.doc.committed().chars().count();
         let eaten = unsafe { self.sink.OnTestKeyDown(&self.ctx, w, l) }.unwrap().as_bool();
         if eaten && keydown {
@@ -268,6 +269,13 @@ impl Host {
         // 相容層當場交給程式的結果字串（SelfHandles）：程式在這一鍵之前就收到。
         for text in std::mem::take(&mut *self.cuas.handed.borrow_mut()) {
             self.app.insert(&text);
+        }
+        // 外殼自己結束了組字：結果字串只走佇列（晚到的 Char），文件差異不再插入一次。
+        if !self.doc.composing() {
+            if let Some((hwnd, text)) = self.cuas.late.borrow_mut().take() {
+                self.cuas.via.borrow_mut().push(text.clone());
+                self.cuas.queue.borrow_mut().push(Queued::Char { hwnd, text });
+            }
         }
         let mut result: String = self.doc.committed().chars().skip(before).collect();
         // 經相容層送出的文字已經照它自己的路徑交給程式，不從文件差異重複插入。
@@ -292,12 +300,6 @@ impl Host {
                 self.app.insert(&result);
             }
         }
-        // 外殼自己結束了組字：相容層仍把結果字串排進佇列（晚到的結果字串）。
-        if !self.doc.composing() {
-            if let Some((hwnd, text)) = self.cuas.late.borrow_mut().take() {
-                self.cuas.queue.borrow_mut().push(Queued::Char { hwnd, text });
-            }
-        }
         eaten
     }
     /// 依序排空程式的訊息佇列：給這個視窗的 `Char` 插進 App，`Key` 以同一個 vk、lParam 再走一次 TestKeyDown，
@@ -312,6 +314,7 @@ impl Host {
                 None => break,
                 Some(Queued::Char { hwnd, text }) if hwnd == self.hwnd => self.app.insert(&text),
                 Some(Queued::Char { hwnd, text }) => self.other_chars.push((hwnd, text)),
+                Some(Queued::Key { hwnd, vk, lparam }) if hwnd != self.hwnd => self.other_keys.push((hwnd, vk, lparam)),
                 Some(Queued::Key { vk, lparam, .. }) => {
                     let act = self.acts.get(&vk).copied().unwrap_or(Act::Nothing);
                     self.step(vk, lparam, act, true);
@@ -401,7 +404,7 @@ fn new_host(service: ComObject<TextService>, doc: Rc<Doc>, ctx: ITfContext, stat
     service.state.borrow_mut().cuas = cuas.clone();
     let sink: ITfKeyEventSink = service.to_interface();
     let imm32 = static_flags == TS_SS_TRANSITORY;
-    Host { service, sink, ctx, doc, app: App::new(), imm32, cuas, hwnd: app_hwnd(), other_chars: Vec::new(), acts: HashMap::new() }
+    Host { service, sink, ctx, doc, app: App::new(), imm32, cuas, hwnd: app_hwnd(), other_chars: Vec::new(), other_keys: Vec::new(), acts: HashMap::new() }
 }
 
 /// 本執行緒的系統插入點：IMM32 文字框有焦點時都有，#210 才照常英文補字。
