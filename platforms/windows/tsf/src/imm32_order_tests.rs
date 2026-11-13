@@ -177,6 +177,12 @@ impl Cuas for FakeCuas {
         let sent = service.state.borrow().session.sent.last().cloned();
         self.completions.borrow_mut().push((text.clone(), sent));
         let result = self.complete_result.get();
+        if let Some(focus) = self.focus_after_complete.get() {
+            // 相容層完成組字時焦點跳走：外殼真正的焦點變化入口（OnSetFocus，最後走到 finish）在組字還在時同步被呼叫。
+            self.focus.set(focus);
+            let sink: ITfThreadMgrEventSink = service.to_interface();
+            unsafe { sink.OnSetFocus(None::<&ITfDocumentMgr>, None::<&ITfDocumentMgr>) }.unwrap();
+        }
         if result == Complete::Notified && self.terminates.get() {
             let composition = service.state.borrow().composition.clone();
             self.doc.end_composition();
@@ -191,9 +197,6 @@ impl Cuas for FakeCuas {
         } else if self.result_on_self_end.get() && !text.is_empty() {
             // NoContext、Failed、不終止的 Notified 都一樣：結果字串等外殼自己結束組字才排進佇列。
             *self.late.borrow_mut() = Some((hwnd, text));
-        }
-        if let Some(focus) = self.focus_after_complete.get() {
-            self.focus.set(focus);
         }
         result
     }
@@ -373,6 +376,14 @@ impl Host {
     fn ctrl_up(&mut self) {
         hold_ctrl(false);
     }
+    /// context 的 view 視窗設成 App：經相容層的結果字串才會排給 App（Doc.view 預設是 0，FakeCuas.focus 預設是 App）。
+    fn view_is_app(&self) {
+        self.doc.view.set(Some(self.hwnd));
+    }
+    /// 外殼送給引擎的請求 type，依序。
+    fn sent(&self) -> Vec<String> {
+        self.service.state.borrow().session.sent.clone()
+    }
 }
 
 /// 英文模式、文件原本是「前」的宿主。`static_flags` 是 context 的靜態旗標（IMM32 是 TS_SS_TRANSITORY）。
@@ -515,34 +526,44 @@ fn tsf_programs_still_get_the_key_after_the_word() {
 
 #[test]
 fn imm32_ctrl_shortcut_sees_the_composition() {
-    // #262：IMM32 程式裡注音組字中按 Ctrl+A／Ctrl+S，程式的快捷鍵要看到組字。修正前外殼在 A 的 TestKeyDown 才送出組字，
-    // 結果字串排在程式處理 Ctrl+A 之後：全選（存檔）時「我」還不在文件裡（.14 的 IMM32 RichEdit 得到「我你」）。
-    // 改成 Ctrl 按下時就送出（同微軟注音，訊息紀錄 k0x11 R(result=我) k0x41），結果字串在 A 之前到。
+    // #262、#66：IMM32 程式裡注音組字中按 Ctrl+A／Ctrl+S，程式的快捷鍵要看到組字。修正前外殼在 A 的 TestKeyDown 才送出組字，
+    // 結果字串排在程式處理 Ctrl+A 之後（.14 的 IMM32 RichEdit 得到「我你」）；0.2.9 改成 Ctrl 按下就送出，卻讓單按 Ctrl 也送出。
+    // 現在 Ctrl 單按保留組字，Ctrl+A 的 TestKeyDown 請系統相容層完成組字，結果字串在 A 作用之前到（spike mode 3/18 在 Notepad++ 實測）。
     let Some(mut h) = open_zhuyin(TS_SS_TRANSITORY) else { return };
     plain_keyboard();
+    h.view_is_app();
+    for round in 1..=2usize {
+        h.zhuyin("ji3");
+        let word = h.doc.composing_text();
+        assert!(h.composing() && !word.is_empty(), "組字中");
+        let before = h.app.text();
+        assert!(!h.ctrl_down(false), "Ctrl 本身照舊交給程式");
+        assert!(h.composing(), "單按 Ctrl 不送出組字");
+        assert_eq!(h.cuas.completions.borrow().len(), round - 1, "單按 Ctrl 不經相容層");
+        assert!(!h.ctrl_key(0x41, Act::Shortcut), "Ctrl+A 不吃，交給程式");
+        h.ctrl_up();
+        assert!(!h.composing());
+        assert_eq!(h.cuas.completions.borrow().len(), round, "每次快捷鍵都經相容層完成一次（第 {round} 輪）");
+        assert_eq!(h.cuas.completions.borrow()[round - 1].0, word, "相容層完成時組字區就是送出的文字");
+        let typed = format!("{before}{word}");
+        assert_eq!(h.app.text(), typed);
+        assert_eq!(h.app.fired.len(), round, "快捷鍵作用一次");
+        assert_eq!(h.app.fired[round - 1], (0x41, typed.clone()), "Ctrl+A 看到含組字的全文");
+        assert_eq!(h.doc.committed(), typed);
+    }
+    // 守衛已解除：之後的一般送出（例如焦點移開時的 finish）照常進行，不被當成還在請相容層完成。
     h.zhuyin("ji3");
-    assert!(h.composing());
-    assert_eq!(h.doc.committed(), "前", "組字還沒送出");
-    assert!(!h.ctrl_down(false), "Ctrl 本身照舊交給程式");
-    assert!(!h.composing(), "IMM32 程式裡 Ctrl 按下就送出組字");
-    let typed = h.app.text();
-    assert_ne!(typed, "前");
-    assert!(!h.ctrl_key(0x41, Act::Shortcut), "Ctrl+A 交給程式");
-    h.ctrl_up();
-    assert_eq!(h.app.seen, vec![typed.clone()], "Ctrl+A 看到已送出的組字");
-    assert_eq!(h.doc.committed(), typed);
-    // 按住 Ctrl 的自動重複、沒在組字時的 Ctrl 都照舊交給程式。
-    assert!(!h.ctrl_down(false));
-    assert!(!h.ctrl_down(true));
-    h.ctrl_up();
-    assert_eq!(h.app.text(), typed);
+    h.service.finish(Some(&h.ctx), "commit");
+    assert!(!h.composing(), "離開守衛後 finish 照常送出");
 }
 
 #[test]
 fn imm32_ctrl_home_moves_after_the_composition() {
     // #262：Ctrl+Home 這類移動插入點的組合鍵也一樣：修正前插入點先移到最前面，「我」才插進去，跑到「前」前面。
+    // #66：經相容層完成組字，字留在原處，插入點才到最前。
     let Some(mut h) = open_zhuyin(TS_SS_TRANSITORY) else { return };
     plain_keyboard();
+    h.view_is_app();
     h.zhuyin("ji3");
     h.ctrl_down(false);
     assert!(!h.ctrl_key(0x24, Act::Top));
@@ -550,25 +571,139 @@ fn imm32_ctrl_home_moves_after_the_composition() {
     let text = h.app.text();
     assert!(text.starts_with('前') && text.chars().count() == 2, "組字留在原處：{text}");
     assert_eq!(h.app.caret, 0);
+    assert_eq!(h.cuas.completions.borrow().len(), 1, "經相容層完成");
 }
 
 #[test]
 fn imm32_ctrl_punctuation_after_ctrl_still_types_the_mark() {
-    // #168 的 Ctrl＋標點在 IMM32 程式裡：Ctrl 按下時組字已送出，Ctrl+, 在沒在組字時照舊打出「，」（另起一段組字），
-    // 文字與修正前（插進同一段組字）相同。按住 Ctrl 的自動重複不送出這一段，接著的 Ctrl+. 接在後面。
+    // #168、#66：IMM32 程式裡 Ctrl 單按不送出，Ctrl+, 與 Ctrl+. 插進同一段組字，Enter 一次送出（同新版微軟注音，
+    // 研究紀錄 §11：Ctrl+, 得「你，好」）。按住 Ctrl 的自動重複同樣不送出。
     let Some(mut h) = open_zhuyin(TS_SS_TRANSITORY) else { return };
     plain_keyboard();
+    h.view_is_app();
     h.zhuyin("ji3");
     h.ctrl_down(false);
+    assert!(h.composing(), "單按 Ctrl 不送出");
     assert!(h.ctrl_key(0xBC, Act::Nothing), "Ctrl+, 由輸入法打全形逗號");
     assert!(h.composing());
     assert!(!h.ctrl_down(true), "按住 Ctrl 的自動重複照舊交給程式");
     assert!(h.composing(), "自動重複不送出組字");
     assert!(h.ctrl_key(0xBE, Act::Nothing));
     h.ctrl_up();
+    assert!(h.composing());
+    assert_eq!(h.app.text(), "前", "Enter 之前什麼都沒送出");
+    assert!(h.cuas.completions.borrow().is_empty());
     assert!(h.enter());
     let text = h.app.text();
     assert!(text.starts_with('前') && text.ends_with("，。") && text.chars().count() == 4, "{text}");
+    assert!(h.cuas.completions.borrow().is_empty(), "Enter 由外殼自己送出，不經相容層");
+}
+
+#[test]
+fn imm32_lone_modifiers_keep_the_composition() {
+    // #66：單按 Shift、單按 Alt、單按 Ctrl 都不送出組字（單按 Shift 還要切換中英，不在這裡測）。
+    let Some(mut h) = open_zhuyin(TS_SS_TRANSITORY) else { return };
+    plain_keyboard();
+    h.view_is_app();
+    h.zhuyin("ji3");
+    assert!(!h.press(0x10, 0x2a, Act::Nothing), "Shift 照舊交給程式");
+    assert!(h.composing(), "單按 Shift 不送出");
+    assert!(!h.press(0x12, 0x38, Act::Nothing), "Alt 照舊交給程式");
+    assert!(h.composing(), "單按 Alt 不送出");
+    assert!(!h.ctrl_down(false));
+    assert!(!h.ctrl_down(true));
+    h.ctrl_up();
+    assert!(h.composing(), "單按 Ctrl 與自動重複不送出");
+    assert!(h.cuas.completions.borrow().is_empty());
+    assert_eq!(h.app.text(), "前");
+}
+
+#[test]
+fn imm32_shortcut_commit_is_learned_and_ordered() {
+    // #66 spec〈送出方式〉：引擎先 commit（學習）、組字區換成送出文字，才請相容層完成；相容層終止組字時外殼不送取消，
+    // 否則引擎放棄這次組字、不學習。Session.sent 是外殼與引擎的協定邊界。
+    let Some(mut h) = open_zhuyin(TS_SS_TRANSITORY) else { return };
+    plain_keyboard();
+    h.view_is_app();
+    h.zhuyin("ji3");
+    let word = h.doc.composing_text();
+    // 組字區與引擎送出的文字不同（例如候選預覽）：外殼要先把組字區換成送出文字，相容層才送得對。
+    h.doc.overwrite_composing("預覽");
+    let sent_before = h.sent().len();
+    h.ctrl_down(false);
+    assert!(!h.ctrl_key(0x41, Act::Shortcut));
+    h.ctrl_up();
+    let completions = h.cuas.completions.borrow().clone();
+    assert_eq!(completions, vec![(word, Some("commit".to_string()))], "complete 當下引擎已收到 commit，組字區是送出文字");
+    let sent = h.sent();
+    let after = &sent[sent_before..];
+    assert_eq!(after.iter().filter(|t| *t == "commit").count(), 1, "引擎只收到一次 commit：{after:?}");
+    assert!(!after.iter().any(|t| t == "cancel"), "相容層終止組字不送取消：{after:?}");
+}
+
+#[test]
+fn imm32_shortcut_commits_even_if_cuas_does_not() {
+    // #66 spec〈送出方式〉第 4 點：拿不到輸入法 context、通知失敗、或受理了卻沒終止組字，外殼自己結束組字，字只出現一次。
+    for (result, terminates) in [(Complete::NoContext, true), (Complete::Failed, true), (Complete::Notified, false)] {
+        let Some(mut h) = open_zhuyin(TS_SS_TRANSITORY) else { return };
+        plain_keyboard();
+        h.view_is_app();
+        h.cuas.complete_result.set(result);
+        h.cuas.terminates.set(terminates);
+        h.cuas.result_on_self_end.set(true); // 真實相容層：外殼自己結束組字時結果字串仍會晚到
+        h.zhuyin("ji3");
+        let word = h.doc.composing_text();
+        h.ctrl_down(false);
+        assert!(!h.ctrl_key(0x41, Act::Shortcut), "{result:?}/{terminates}：Ctrl+A 交給程式");
+        h.ctrl_up();
+        assert!(!h.composing(), "{result:?}/{terminates}：外殼自己結束組字");
+        assert_eq!(h.cuas.completions.borrow().len(), 1, "{result:?}/{terminates}");
+        assert_eq!(h.app.text(), format!("前{word}"), "{result:?}/{terminates}：字只出現一次");
+        assert_eq!(h.doc.committed(), format!("前{word}"), "{result:?}/{terminates}");
+        let sent = h.sent();
+        assert_eq!(sent.iter().filter(|t| *t == "commit").count(), 1, "{result:?}/{terminates}：引擎只收到一次 commit：{sent:?}");
+    }
+}
+
+#[test]
+fn imm32_shortcut_with_a_dead_engine_does_not_notify_cuas() {
+    // #66 spec〈送出方式〉第 5 點：引擎沒有回應時退回一般送出，沒有送出文字，所以不通知相容層、不吃鍵、不 panic。
+    let Some(mut h) = open_zhuyin(TS_SS_TRANSITORY) else { return };
+    plain_keyboard();
+    h.view_is_app();
+    h.zhuyin("ji3");
+    h.service
+        .state
+        .borrow_mut()
+        .session
+        .set_client_for_test(crate::ipc::Client::with_pipe(r"\\.\pipe\zuin-test-66-no-such-engine"));
+    h.ctrl_down(false);
+    assert!(!h.ctrl_key(0x41, Act::Shortcut), "不吃鍵，快捷鍵交給程式");
+    h.ctrl_up();
+    assert!(h.cuas.completions.borrow().is_empty(), "引擎沒回應，不呼叫 Cuas::complete");
+    assert_eq!(h.app.fired.len(), 1, "快捷鍵照常作用");
+    assert!(h.sent().iter().any(|t| t == "commit"), "有試著請引擎 commit");
+}
+
+#[test]
+fn imm32_focus_move_during_completion_keeps_the_text() {
+    // #66：相容層完成組字時焦點跳走（OnSetFocus 同步進來）：守衛期間外殼的焦點處理不再 finish、不改文件，
+    // 組字由 complete_via_cuas 收尾。字只出現一次、沒有被空字串蓋掉、引擎只收到一次 commit。
+    let Some(mut h) = open_zhuyin(TS_SS_TRANSITORY) else { return };
+    plain_keyboard();
+    h.view_is_app();
+    h.cuas.focus_after_complete.set(Some(HWND(0x2000 as *mut std::ffi::c_void)));
+    h.zhuyin("ji3");
+    let word = h.doc.composing_text();
+    h.ctrl_down(false);
+    assert!(!h.ctrl_key(0x41, Act::Shortcut));
+    h.ctrl_up();
+    assert!(!h.composing());
+    assert_eq!(h.cuas.completions.borrow().len(), 1);
+    assert_eq!(h.app.text(), format!("前{word}"), "字只出現一次、沒被蓋掉");
+    assert_eq!(h.doc.committed(), format!("前{word}"));
+    let sent = h.sent();
+    assert_eq!(sent.iter().filter(|t| *t == "commit").count(), 1, "引擎只收到一次 commit：{sent:?}");
 }
 
 #[test]

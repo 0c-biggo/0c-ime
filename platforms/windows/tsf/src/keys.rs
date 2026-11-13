@@ -164,12 +164,6 @@ pub fn is_lock_or_ime(vk: u32) -> bool {
     matches!(vk, 0x90 | 0x91 | 0x15..=0x1f | 0xe5)
 }
 
-/// Ctrl 剛按下（不是按住不放的自動重複，lParam 第 30 位）：IMM32 程式裡組字中要在這時就送出組字（#262）。
-pub fn ctrl_press(vk: u32, lparam: isize) -> bool {
-    let v = vk as u16;
-    (v == VK_CONTROL.0 || v == VK_LCONTROL.0 || v == VK_RCONTROL.0) && lparam & (1 << 30) == 0
-}
-
 /// 組字中要先送出組字、再交給宿主的按鍵（#106）：Ctrl／Alt／Win 組合鍵（單按修飾鍵本身除外），
 /// 以及轉不成協定按鍵、核心不會處理的鍵（F 鍵、Insert、其他排列的非 ASCII 字元…）。
 /// `protocol` 是 `to_key` 的結果。

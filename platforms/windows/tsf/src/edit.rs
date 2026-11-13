@@ -592,6 +592,15 @@ pub(crate) mod tests {
         pub(crate) fn composing(&self) -> bool {
             self.live.borrow().is_some()
         }
+        /// 把進行中的組字區文字換成別的內容（測試：組字區與引擎要送出的文字不同時，外殼得先換成送出文字，#66）。
+        pub(crate) fn overwrite_composing(&self, new: &str) {
+            let span = self.live.borrow().clone().expect("要在組字中");
+            let new: Vec<u16> = new.encode_utf16().collect();
+            let mut text = self.text.borrow_mut();
+            let (s, e) = (span.start.get(), span.end.get());
+            text.splice(s..e, new.iter().copied());
+            span.end.set(s + new.len());
+        }
         /// 結束組字、文字留在文件裡成為已提交（系統相容層替程式完成組字，#66）。
         pub(crate) fn end_composition(&self) {
             *self.live.borrow_mut() = None;

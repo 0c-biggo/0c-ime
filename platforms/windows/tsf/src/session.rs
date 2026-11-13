@@ -197,7 +197,6 @@ impl Session {
 
     /// 測試：換掉用戶端（模擬引擎斷線）。
     #[cfg(test)]
-    #[allow(dead_code)] // 後續的測試才用（#66）
     pub(crate) fn set_client_for_test(&mut self, client: Client) {
         self.client = client;
     }

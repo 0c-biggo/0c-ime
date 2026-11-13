@@ -69,6 +69,30 @@ impl Drop for Applying<'_> {
     }
 }
 
+/// 請系統相容層完成組字的期間（#66）：進入時記下那時的組字，離開（含 panic）時解除。
+struct Completing<'a>(&'a RefCell<State>);
+impl<'a> Completing<'a> {
+    fn enter(state: &'a RefCell<State>, composition: Option<ITfComposition>) -> Self {
+        state.borrow_mut().completing = Some(composition);
+        Completing(state)
+    }
+}
+impl Drop for Completing<'_> {
+    fn drop(&mut self) {
+        // 用 try：unwind 中不該再 panic（正常離開時沒有人借用 state）。
+        if let Ok(mut st) = self.0.try_borrow_mut() {
+            st.completing = None;
+        }
+    }
+}
+
+/// `complete_via_cuas` 的結果：組字是相容層終止的，還是外殼自己收尾的。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Completed {
+    ByCuas,
+    BySelf,
+}
+
 struct State {
     thread_mgr: Option<ITfThreadMgr>,
     client_id: u32,
@@ -77,8 +101,10 @@ struct State {
     ending_composition: Rc<Cell<bool>>,
     session: Session,
     /// 系統相容層的操作（#66）；測試換成假的。呼叫前先 clone，呼叫期間不持有 state 的借用（見 cuas.rs）。
-    #[allow(dead_code)]
     cuas: Rc<dyn Cuas>,
+    /// 正在請系統相容層完成組字（Completing 守衛，#66）：記著那時的組字。相容層同步終止的正是這個組字時，
+    /// OnCompositionTerminated 只清外殼狀態、不送取消；期間的焦點變化也不再送出（見 complete_via_cuas）。
+    completing: Option<Option<ITfComposition>>,
     composing: bool,
     attr_atoms: [u32; KINDS.len()],
     eaten: HashSet<u32>, // 吃掉了 key-down 的虛擬鍵，key-up 也要吃掉
@@ -309,6 +335,7 @@ impl TextService {
                 ending_composition: Rc::new(Cell::new(false)),
                 session: Session::new(),
                 cuas: Rc::new(Win32Cuas),
+                completing: None,
                 composing: false,
                 attr_atoms: [0; KINDS.len()],
                 eaten: HashSet::new(),
@@ -926,8 +953,16 @@ impl TextService_Impl {
 
     /// 結束目前組字：commit（失焦、停用）或 cancel（應用程式自行終止組字）。
     fn finish(&self, ctx: Option<&ITfContext>, kind: &str) {
-        let composing = self.state.borrow().composing;
+        let (composing, completing) = {
+            let st = self.state.borrow();
+            (st.composing, st.completing.is_some())
+        };
         if !composing {
+            return;
+        }
+        if completing {
+            // 正在請相容層完成組字（#66）：焦點變化不能在這時送出或改文件，組字由 complete_via_cuas 收尾。
+            zdebug!("相容層完成組字中，略過 {}", kind);
             return;
         }
         let snapshot = self
@@ -936,6 +971,51 @@ impl TextService_Impl {
             .session
             .handle(json!({"type": kind}));
         self.present(ctx, &snapshot);
+    }
+
+    /// context 的 view 視窗（相容層的輸入法 context 以它取得，等於鍵盤焦點視窗，#66 事實 A4）。
+    fn view_window(ctx: Option<&ITfContext>) -> HWND {
+        ctx.and_then(|c| unsafe { c.GetActiveView() }.ok())
+            .and_then(|v| unsafe { v.GetWnd() }.ok())
+            .unwrap_or_default()
+    }
+
+    /// IMM32 程式裡把組字經系統相容層送出（#66）：相容層同步產生結果字串交給程式（自己處理的程式當場收到，
+    /// 交給預設處理的程式則 post 成 WM_CHAR），程式因此能在這一鍵作用前看到。順序：引擎 commit（學習在這裡）→
+    /// 組字區換成送出文字、不結束 → 進入 Completing 守衛 → `Cuas::complete`（會同步回呼外殼，不得持有 state 的借用）→
+    /// 離開守衛 → 還在組字（相容層沒結束）就自己照快照結束。引擎沒回應退回一般送出，也不通知相容層。
+    fn complete_via_cuas(&self, ctx: Option<&ITfContext>, hwnd: HWND) -> Completed {
+        let snapshot = self.state.borrow_mut().session.handle(json!({"type": "commit"}));
+        if !snapshot.ok || snapshot.commit.is_empty() {
+            // 引擎沒回應，或沒有東西可送：沒有可請相容層送出的字串，照一般送出收尾。
+            self.finish(ctx, "commit");
+            return Completed::BySelf;
+        }
+        // 組字區先換成送出的文字（不結束），相容層終止組字時結果字串才等於文件裡的字。
+        let mut shown = snapshot.clone();
+        shown.preedit = vec![crate::session::Segment { text: snapshot.commit.clone(), style: String::new() }];
+        shown.commit = String::new();
+        shown.cursor_utf16 = snapshot.commit.encode_utf16().count();
+        shown.candidates.clear();
+        shown.candidate_notes.clear();
+        shown.candidate_keys.clear();
+        shown.suggestion.clear();
+        shown.reading_hint.clear();
+        shown.notices.clear();
+        self.present(ctx, &shown);
+        let cuas = self.state.borrow().cuas.clone();
+        let composition = self.state.borrow().composition.clone();
+        let result = {
+            let _completing = Completing::enter(&self.state, composition);
+            cuas.complete(hwnd)
+        };
+        zdebug!("經相容層完成組字 view={:#x} focus={:#x} 結果={:?}", hwnd.0 as usize, cuas.focus().0 as usize, result);
+        if self.state.borrow().composing {
+            // 相容層沒有結束組字（沒有輸入法 context、通知失敗、或受理了卻沒終止）：文件裡已是送出文字，自己結束。
+            self.present(ctx, &snapshot);
+            return Completed::BySelf;
+        }
+        Completed::ByCuas
     }
 
     /// 進行中的組字所在的文件。宿主可能把組字搬到別的文件（Excel 的儲存格編輯器，#189），以組字範圍的 context 為準。
@@ -1144,25 +1224,23 @@ impl TextService_Impl {
         if !self.state.borrow().composing {
             return;
         }
-        // IMM32 程式（EDIT、IMM32 模式的 RichEdit、自繪文字框）經系統相容層收到的提交是 WM_IME_COMPOSITION，
-        // 排在程式自己處理這一鍵之後：等到 Ctrl+A、Ctrl+S 的 A、S 才送出，程式先全選、存檔，組字之後才進文件（#262）。
-        // 這類程式在 Ctrl 按下時就送出組字（同微軟注音），結果字串在下一鍵之前到。Ctrl 本身照舊交給程式；
-        // Ctrl＋標點（#168）因此在沒在組字時打出，文字相同。自己接 TSF 的程式照舊，組字留到下一鍵再決定。
-        if keys::ctrl_press(vk, lparam) {
-            let flags = self.state.borrow().activate_flags;
-            if ctx.is_some_and(|c| privacy::imm32_context(c, flags)) {
-                zdebug!("IMM32 程式：Ctrl 按下，先送出組字");
-                self.finish(ctx, "commit");
-            }
-            return;
-        }
         // 要交給引擎的 Ctrl＋標點插進組字區，不先送出組字（#168）。
         if keys::modifier_down() && self.state.borrow_mut().ctrl_punct_key(vk, lparam).is_some() {
             return;
         }
         let protocol = keys::to_key(vk, lparam, false, true); // 只看轉不轉得成協定按鍵，與新鍵名、大小寫無關
         if keys::commits_before_host(vk, keys::modifier_down(), protocol.as_deref()) {
-            self.finish(ctx, "commit");
+            // IMM32 程式（EDIT、IMM32 模式的 RichEdit、自繪文字框）收到的提交是相容層的 WM_IME_COMPOSITION，排在程式自己
+            // 處理這一鍵之後：自己送出的話，Ctrl+A、Ctrl+S 先全選、存檔，組字之後才進文件（#262）。所以這類程式改請相容層
+            // 完成組字，結果字串在這一鍵作用前產生；單按 Ctrl、Shift、Alt 不送出，Ctrl＋標點照舊插進組字區（#66，同新版微軟注音）。
+            // 自己接 TSF 的程式送出當下就在文件裡，照舊自己送出。
+            let flags = self.state.borrow().activate_flags;
+            if ctx.is_some_and(|c| privacy::imm32_context(c, flags)) {
+                zdebug!("IMM32 程式：經相容層送出組字");
+                self.complete_via_cuas(ctx, Self::view_window(ctx));
+            } else {
+                self.finish(ctx, "commit");
+            }
         }
     }
 
@@ -1645,9 +1723,17 @@ impl ITfCompositionSink_Impl for TextService_Impl {
                     return Ok(());
                 }
             }
+            // 外殼自己請相容層完成組字（Completing 守衛，#66）而終止的正是那個組字：引擎已經 commit 並學習，
+            // 只清外殼狀態，不送取消。
+            let by_cuas = {
+                let st = self.state.borrow();
+                matches!(&st.completing, Some(Some(c)) if Some(c) == composition.as_ref())
+            };
             // 應用程式或系統終止了組字（例如滑鼠點到別處）：組字文字留在文件裡，核心放棄本次組字、不學習。
             // 之後的 Enter、方向鍵交還宿主（例如 RichEdit 2.0 讀取 WM_GETTEXT 時會結束組字，#88）。
-            zlog!("組字被宿主終止 exe={}", crate::log::exe_name());
+            if !by_cuas {
+                zlog!("組字被宿主終止 exe={}", crate::log::exe_name());
+            }
             {
                 let mut st = self.state.borrow_mut();
                 st.composition = None;
@@ -1656,6 +1742,10 @@ impl ITfCompositionSink_Impl for TextService_Impl {
                 st.ui.hide();
             }
             self.forget_candidates();
+            if by_cuas {
+                zdebug!("組字由相容層完成，不送取消");
+                return Ok(());
+            }
             let _ = self
                 .state
                 .borrow_mut()
