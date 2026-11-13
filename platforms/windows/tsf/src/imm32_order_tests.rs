@@ -293,10 +293,34 @@ impl Host {
         self.drain();
         eaten
     }
-    #[allow(dead_code)] // 後續的測試才用（#66）
-    /// 對同一則按鍵再呼叫一次 TestKeyDown（不呼叫 OnKeyDown、程式也不再處理）。
-    fn retest(&mut self, vk: u32, scan: isize) -> bool {
-        let eaten = self.step(vk, 1 | scan << 16, Act::Nothing, false);
+    /// 宿主沒先問 TestKeyDown，直接呼叫 OnKeyDown（#66）：沒被吃就由程式處理（動作作用一次），最後排空訊息佇列。
+    /// 回傳 OnKeyDown 的答案。
+    fn press_keydown_only(&mut self, vk: u32, scan: isize, act: Act) -> bool {
+        self.acts.insert(vk, act);
+        let (w, l) = (WPARAM(vk as usize), LPARAM(1 | scan << 16));
+        self.cuas.via.borrow_mut().clear();
+        let before = self.doc.committed().chars().count();
+        let eaten = unsafe { self.sink.OnKeyDown(&self.ctx, w, l) }.unwrap().as_bool();
+        for text in std::mem::take(&mut *self.cuas.handed.borrow_mut()) {
+            self.app.insert(&text);
+        }
+        let mut result: String = self.doc.committed().chars().skip(before).collect();
+        for text in std::mem::take(&mut *self.cuas.via.borrow_mut()) {
+            result = result.replacen(&text, "", 1);
+        }
+        self.app.insert(&result);
+        if !eaten {
+            match act {
+                Act::Char(c) => self.app.insert(&c.to_string()),
+                Act::Left => self.app.caret = self.app.caret.saturating_sub(1),
+                Act::Nothing => {}
+                Act::Shortcut => {
+                    self.app.seen.push(self.app.text());
+                    self.app.fired.push((vk, self.app.text()));
+                }
+                Act::Top => self.app.caret = 0,
+            }
+        }
         self.drain();
         eaten
     }
@@ -736,7 +760,8 @@ fn imm32_shortcut_with_a_dead_engine_does_not_notify_cuas() {
     h.ctrl_up();
     assert!(h.cuas.completions.borrow().is_empty(), "引擎沒回應，不呼叫 Cuas::complete");
     assert_eq!(h.app.fired.len(), 1, "快捷鍵照常作用");
-    assert!(h.sent().iter().any(|t| t == "commit"), "有試著請引擎 commit");
+    let sent = h.sent();
+    assert_eq!(sent.iter().filter(|t| *t == "commit").count(), 1, "只請引擎 commit 一次，不因為沒有東西可送而重送：{sent:?}");
 }
 
 #[test]
@@ -784,6 +809,7 @@ fn tsf_programs_keep_the_composition_when_ctrl_goes_down() {
     h.zhuyin("ji3");
     assert!(!h.ctrl_down(false));
     assert!(h.composing(), "TSF 程式裡單按 Ctrl 不送出組字");
+    assert!(h.cuas.completions.borrow().is_empty(), "TSF 程式不經相容層");
     assert!(h.ctrl_key(0xBC, Act::Nothing), "Ctrl+, 插進組字");
     assert!(h.composing());
     assert_eq!(h.doc.committed(), "前");
@@ -850,6 +876,7 @@ fn imm32_default_handling_host_gets_the_key_after_the_text() {
             "{tag}：Char 在前、Key 在後，同 vk、同 lParam、目標是焦點視窗"
         );
         assert!(h.service.state.borrow().pending_repost.is_none(), "{tag}：重排的鍵回來就清掉");
+        assert!(h.other_keys.is_empty(), "{tag}：重排只給焦點視窗，沒有送給別的視窗");
         let full = format!("前{word}");
         assert_eq!(h.app.text(), full, "{tag}");
         match act {
@@ -1018,7 +1045,7 @@ fn imm32_any_doubt_falls_back_to_not_eating() {
         assert!(!h.composing(), "{name}：組字仍送出");
         assert_eq!(h.doc.committed(), format!("前{word}"), "{name}：字只出現一次");
         let chars: Vec<_> = h.cuas.history.borrow().iter().filter(|q| matches!(q, Queued::Char { text, .. } if *text == word)).cloned().collect();
-        assert!(chars.len() <= 1, "{name}：結果字串不重複：{chars:?}");
+        assert_eq!(chars.len(), 1, "{name}：結果字串剛好一次：{chars:?}");
         assert_eq!(h.app.fired.len(), 1, "{name}：快捷鍵作用一次");
         assert!(h.service.state.borrow().pending_repost.is_none(), "{name}");
         let sent = h.sent();
@@ -1095,8 +1122,7 @@ fn imm32_reposted_key_lives_for_one_press() {
     assert!(!h.service.state.borrow().eaten.contains(&vk), "(c1) 放開不放進 eaten");
 
     // (c2) 重排的鍵沒回來，接著按別的鍵：狀態清掉，下一次 Ctrl+S 照常送出並重排
-    let word = composing_in_default_host(&mut h);
-    h.app = App::new();
+    let _ = composing_in_default_host(&mut h);
     lost_repost(&mut h, vk, scan, Act::Shortcut);
     let word2 = composing_in_default_host(&mut h);
     assert!(pending_cleared(&h), "(c2) 別的鍵清掉等待狀態");
@@ -1112,9 +1138,15 @@ fn imm32_reposted_key_lives_for_one_press() {
         "(c2) 照常送出並重排"
     );
     assert_eq!(h.app.fired, vec![(vk, format!("前{word2}"))], "(c2) 快捷鍵作用一次");
-    let _ = word;
 
-    // (d) 重排回來之前先來同 vk、不同 lParam(自動重複，第 30 位)：狀態清掉，自動重複照常處理
+    // (c3) 重排的鍵沒回來，宿主沒先問 OnTestKeyUp 就直接呼叫 OnKeyUp：狀態清掉，放開不吃
+    let _ = composing_in_default_host(&mut h);
+    lost_repost(&mut h, vk, scan, Act::Shortcut);
+    let up = unsafe { h.sink.OnKeyUp(&h.ctx, WPARAM(vk as usize), LPARAM(1 | scan << 16 | 1 << 30 | 1 << 31)) }.unwrap().as_bool();
+    assert!(pending_cleared(&h), "(c3) 只有 OnKeyUp 也清掉等待狀態");
+    assert!(!up, "(c3) 放開不吃");
+
+    // (d) 重排回來之前先來同 vk、不同 lParam（自動重複，第 30 位）：狀態清掉，自動重複照常處理
     let _ = composing_in_default_host(&mut h);
     lost_repost(&mut h, vk, scan, Act::Shortcut);
     h.cuas.history.borrow_mut().clear();
@@ -1122,6 +1154,27 @@ fn imm32_reposted_key_lives_for_one_press() {
     let repeat = h.press(vk, scan | 1 << 14, Act::Nothing);
     set_mods(false, false, false, false);
     assert!(pending_cleared(&h), "(d) 不同 lParam 的同鍵清掉等待狀態");
-    assert!(!repeat, "(d) 自動重複照常處理(已沒有組字，不吃)");
+    assert!(!repeat, "(d) 自動重複照常處理（已沒有組字，不吃）");
     assert!(keys_in(&h).is_empty(), "(d) 沒有再重排");
+}
+
+#[test]
+fn imm32_keydown_without_testkeydown_never_reposts() {
+    // #66：宿主沒先問 TestKeyDown 就呼叫 OnKeyDown 時，原本的鍵已經要交給程式，所以只經相容層送出組字，不重排
+    // （重排會讓快捷鍵執行兩次，也違反 I1 的假設）。
+    let Some(mut h) = open_zhuyin(TS_SS_TRANSITORY) else { return };
+    let word = composing_in_default_host(&mut h);
+    h.app = App::new();
+    let (vk, scan) = (0x53u32, scan_of(0x53));
+    set_mods(true, false, false, false);
+    let eaten = h.press_keydown_only(vk, scan, Act::Shortcut);
+    set_mods(false, false, false, false);
+    assert!(!eaten, "OnKeyDown 不吃，快捷鍵交給程式");
+    assert_eq!(h.cuas.completions.borrow().len(), 1, "組字經相容層送出一次");
+    assert!(keys_in(&h).is_empty(), "不重排");
+    assert!(h.other_keys.is_empty(), "也沒有重送給別的視窗");
+    assert!(pending_cleared(&h), "沒有留下等待狀態");
+    assert_eq!(h.app.fired.len(), 1, "快捷鍵只作用一次");
+    assert_eq!(h.doc.committed(), format!("前{word}"));
+    assert_eq!(h.app.text(), format!("前{word}"), "字只出現一次");
 }

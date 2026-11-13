@@ -35,7 +35,7 @@ mod session;
 mod ui;
 mod uielement;
 
-/// 共用 ZUIN_TEST_HOTKEY_PIPE 引擎的測試要互斥(#66)：它們會改引擎全域的「輸出簡體字」設定，平行執行會互相看到對方的切換。
+/// 共用 ZUIN_TEST_HOTKEY_PIPE 引擎的測試要互斥（#66）：它們會改引擎全域的「輸出簡體字」設定，平行執行會互相看到對方的切換。
 /// 整個測試期間持有；前一個測試 panic 留下的毒化不影響後面的測試。
 #[cfg(test)]
 pub(crate) fn hotkey_engine_lock() -> std::sync::MutexGuard<'static, ()> {

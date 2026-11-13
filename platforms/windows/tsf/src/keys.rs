@@ -186,17 +186,18 @@ pub fn commits_before_host(vk: u32, modified: bool, protocol: Option<&str>) -> b
 /// Ctrl 組合鍵（Ctrl 按著、Alt 與 Win 沒按著，修飾鍵本身除外，AltGr 是 Ctrl＋Alt 所以不算），
 /// 以及 F1 到 F12 除了 F10（Alt 與 Win 沒按著，可帶 Ctrl 或 Shift）。
 /// F10 與 Alt 組合鍵是系統按鍵（WM_SYSKEYDOWN），重排的一般按鍵訊息重現不了選單，所以不收。
+/// 呼叫端已先經 `commits_before_host` 篩過，這裡只決定其中哪些要重排。
 pub fn reposts_after_commit(vk: u32, ctrl: bool, alt: bool, win: bool) -> bool {
     if alt || win || vk == 0x79 || is_modifier(vk) {
         return false;
     }
-    ctrl || ((0x70..=0x7b).contains(&vk) && vk != 0x79)
+    ctrl || (0x70..=0x7b).contains(&vk)
 }
 
 /// ImmGetHotKey 登記的輸入法熱鍵（`hk_mods`、`hk_vk`）是否符合目前這一鍵（#66）。
 /// `hk_mods` 的位元（imm.h）：MOD_ALT 0x1、MOD_CONTROL 0x2、MOD_SHIFT 0x4、MOD_LEFT 0x8000、MOD_RIGHT 0x4000
 /// （只表示左右，比對時忽略）、MOD_ON_KEYUP 0x800（放開才觸發，按下時一律不符）、
-/// MOD_IGNORE_ALL_MODIFIER 0x400（只比 vk）。F10 與 Alt 是系統按鍵（WM_SYSKEYDOWN），不在重排範圍內。
+/// MOD_IGNORE_ALL_MODIFIER 0x400（只比 vk）。
 pub fn hotkey_matches(hk_mods: u32, hk_vk: u32, vk: u32, ctrl: bool, alt: bool, shift: bool) -> bool {
     const MOD_ALT: u32 = 0x1;
     const MOD_CONTROL: u32 = 0x2;
@@ -535,6 +536,9 @@ mod tests {
             assert!(!reposts_after_commit(vk, false, false, false), "多媒體鍵 {vk:#x}");
         }
         assert!(!reposts_after_commit(0x53, false, false, false), "沒有修飾鍵的 S");
+        assert!(!reposts_after_commit(0x11, true, false, false), "Ctrl 本身");
+        assert!(!reposts_after_commit(0xA2, true, false, false), "左 Ctrl 本身");
+        assert!(reposts_after_commit(0x74, true, false, false), "Ctrl+F5");
     }
 
     #[test]
@@ -557,6 +561,7 @@ mod tests {
         }
         assert!(!hotkey_matches(CTRL, 0x20, 0x21, true, false, false), "vk 不同");
     }
+
     #[test]
     fn right_shift_tap_and_chords() {
         const L: u64 = DEFAULT_SHIFT_TAP_MS;
