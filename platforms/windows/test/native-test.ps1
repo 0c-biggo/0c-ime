@@ -44,7 +44,7 @@ public static class NativeProbe {
  $button.Text='OK'; $button.Dock='Bottom'; $form.Controls.Add($button)
  $box=New-Object Windows.Forms.TextBox
  $box.Multiline=$true; $box.Dock='Fill'; $form.Controls.Add($box); $box.BringToFront()
- # #66：表單先看到按鍵，記下 Ctrl+S、F5 的觸發次數與當下文字框的內容(重排的快捷鍵必須排在送出的字之後，而且只觸發一次)。
+ # #66：表單先看到按鍵，記下 Ctrl+S、F5 的觸發次數與當下文字框的內容（重排的快捷鍵必須排在送出的字之後，而且只觸發一次）。
  $hits=@{S=@();F5=@()}
  $form.KeyPreview=$true
  $form.Add_KeyDown({param($sender,$e)
@@ -87,10 +87,10 @@ public static class NativeProbe {
  $button.Focus() | Out-Null;Pump 500
  $box.Focus() | Out-Null;Pump 300
  Send '{ESC}';Expect '你' 'native_focus_change_commits_composition'
- # #66：IMM32 相容層宿主(原生 EDIT)組字中的快捷鍵與單按 Ctrl。每項只記錄結果，全部跑完才判定，一項紅不遮住其他項。
+ # #66：IMM32 相容層宿主（原生 EDIT）組字中的快捷鍵與單按 Ctrl。每項只記錄結果，全部跑完才判定，一項紅不遮住其他項。
  function Check([bool]$ok,[string]$name,[string]$detail){if($ok){$report.checks+=$name}else{$report.failures+="$name : $detail"}}
- function Reset-Hits{$hits.S=@();$hits.F5=@();$box.Clear();Pump 200}
- # 組字中按 Ctrl+S／F5：處理函式只觸發一次，當下文字框已有剛打的字(重排在送出的字之後；不重排會缺字，重排卻沒吃鍵會觸發兩次)
+ function Reset-Hits{$hits.S=@();$hits.F5=@();Send '{ESC}';$box.Clear();Pump 200}
+ # 組字中按 Ctrl+S／F5：處理函式只觸發一次，當下文字框已有剛打的字（重排在送出的字之後；不重排會缺字，重排卻沒吃鍵會觸發兩次）
  foreach($case in @(@{name='ctrl_s';keys='^s';list='S'},@{name='f5';keys='{F5}';list='F5'})) {
   Reset-Hits
   Send 'su3';Send $case.keys
@@ -113,7 +113,7 @@ public static class NativeProbe {
  # Ctrl＋, 後接著打注音：全形逗號落在兩段字之間，證明進了同一段組字而不是被忽略
  Reset-Hits
  Send 'su3';Send '^,';Send 'cl3';Send '{ENTER}'
- Check ($box.Text -match '^.+，.+$') 'native_ctrl_comma_between_words' "text=[$($box.Text)]"
+ Check ($box.Text -eq '你，好') 'native_ctrl_comma_between_words' "text=[$($box.Text)]"
  $box.Clear();Pump 150
  $report.dll=((Get-Process -Id $PID).Modules | Where-Object ModuleName -eq '0c_tsf.dll' | Select-Object -First 1).FileName
  if($report.dll -ne $ExpectedDLL){throw 'wrong native host DLL'}
