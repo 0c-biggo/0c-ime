@@ -3,8 +3,8 @@
 //! 只有中文模式的 Ctrl＋標點（#168，見 [`ctrl_punct`]）例外。
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetKeyState, GetKeyboardState, ToUnicode, VK_BACK, VK_CAPITAL, VK_CONTROL,
-    VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F1, VK_F10, VK_F11, VK_F12, VK_F13,
-    VK_F4, VK_F5, VK_HOME, VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR, VK_RCONTROL, VK_RETURN, VK_RIGHT, VK_RMENU, VK_RSHIFT,
+    VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F1, VK_F10, VK_F11, VK_F12,
+    VK_HOME, VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR, VK_RCONTROL, VK_RETURN, VK_RIGHT, VK_RMENU, VK_RSHIFT,
     VK_RWIN, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
 };
 
@@ -199,7 +199,9 @@ const MOD_CONTROL: u32 = 0x2;
 const MOD_SHIFT: u32 = 0x4;
 const MOD_IGNORE_ALL_MODIFIER: u32 = 0x400;
 const MOD_ON_KEYUP: u32 = 0x800;
+#[cfg(test)]
 const MOD_RIGHT: u32 = 0x4000;
+#[cfg(test)]
 const MOD_LEFT: u32 = 0x8000;
 
 /// ImmGetHotKey 登記的輸入法熱鍵（`hk_mods`、`hk_vk`）是否符合目前這一鍵（#66）。
@@ -517,6 +519,7 @@ pub fn left_shift(vk: u32, lparam: isize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_F13, VK_F4, VK_F5};
 
     #[test]
     fn reposts_after_commit_whitelist() {
