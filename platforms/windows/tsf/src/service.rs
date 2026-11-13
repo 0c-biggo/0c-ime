@@ -98,7 +98,7 @@ impl Drop for Completing<'_> {
 }
 
 /// 已經攔下、重排給程式的快捷鍵（#66）：重排的鍵回來之前，同一個 (vk, lParam) 的 TestKeyDown 就是它回來了
-/// （TSF 對吃下的鍵一定先呼叫 OnKeyDown，所以不會被當成新的按鍵再問一次）。
+/// （不變量 I1：原本的鍵在重排的鍵回來之前不會再被 TestKeyDown 問一次）。
 struct PendingRepost {
     vk: u32,
     lparam: isize,
@@ -1010,8 +1010,11 @@ impl TextService_Impl {
     fn complete_via_cuas(&self, ctx: Option<&ITfContext>, hwnd: HWND) -> Completed {
         let snapshot = self.state.borrow_mut().session.handle(json!({"type": "commit"}));
         if !snapshot.ok || snapshot.commit.is_empty() {
-            // 引擎沒回應，或沒有東西可送：沒有可請相容層送出的字串，照一般送出收尾。
-            self.finish(ctx, "commit");
+            // 引擎沒回應，或沒有東西可送：沒有可請相容層送出的字串。引擎已經收過 commit，不再重送一次
+            // （引擎卡住時 UI 執行緒會多等一倍），只照快照收尾組字區。
+            if self.state.borrow().composing {
+                self.present(ctx, &snapshot);
+            }
             return Completed::BySelf;
         }
         // 組字區先換成送出的文字（不結束），相容層終止組字時結果字串才等於文件裡的字。
@@ -1250,8 +1253,9 @@ impl TextService_Impl {
     ///
     /// 回傳 true＝IMM32 程式裡已經把這一鍵攔下、重排給程式（#66）：結果字串交給預設處理的程式（EDIT、WinForms）是 post 的
     /// WM_CHAR，排在這一鍵之後，所以組字照樣送出，再把同一個 WM_KEYDOWN post 到焦點視窗、排在 WM_CHAR 之後，呼叫端回答吃下。
-    /// 只有 OnTestKeyDown 用這個值；OnKeyDown 呼叫時組字已結束，一定是 false。
-    fn commit_before_host_key(&self, ctx: Option<&ITfContext>, vk: u32, lparam: isize) -> bool {
+    /// `may_repost` 只有 OnTestKeyDown 傳 true。OnKeyDown 只送出、不重排，一定回 false：宿主沒先問過 TestKeyDown 就呼叫
+    /// OnKeyDown 時，原本的鍵已經要交給程式，重排只會讓快捷鍵執行兩次。
+    fn commit_before_host_key(&self, ctx: Option<&ITfContext>, vk: u32, lparam: isize, may_repost: bool) -> bool {
         if !self.state.borrow().composing {
             return false;
         }
@@ -1268,6 +1272,10 @@ impl TextService_Impl {
             let flags = self.state.borrow().activate_flags;
             if ctx.is_some_and(|c| privacy::imm32_context(c, flags)) {
                 zdebug!("IMM32 程式：經相容層送出組字");
+                if !may_repost {
+                    self.complete_via_cuas(ctx, Self::view_window(ctx));
+                    return false;
+                }
                 return self.complete_and_repost(ctx, vk, lparam);
             }
             self.finish(ctx, "commit");
@@ -1288,13 +1296,17 @@ impl TextService_Impl {
         let target = cuas.focus();
         let clean = eligible && !target.0.is_null() && !cuas.has_char(target);
         let completed = self.complete_via_cuas(ctx, view);
-        let repost = eligible
-            && clean
-            && target == view
-            && completed == Completed::ByCuas
-            && cuas.focus() == target
-            && cuas.has_char(target)
-            && cuas.repost(target, vk, lparam);
+        // 前面的條件不成立就不再往下問（None＝沒問），問過的值存起來給下面的記錄用。
+        let by_cuas = completed == Completed::ByCuas;
+        let focus_same = (eligible && clean && target == view && by_cuas).then(|| cuas.focus() == target);
+        let has_char = (focus_same == Some(true)).then(|| cuas.has_char(target));
+        let repost = has_char == Some(true) && cuas.repost(target, vk, lparam);
+        if eligible && !repost {
+            zdebug!(
+                "不重排 vk={} clean={} target==view:{} ByCuas:{} 焦點未變:{:?} has_char:{:?}",
+                vk, clean, target == view, by_cuas, focus_same, has_char
+            );
+        }
         if repost {
             zdebug!("重排快捷鍵 vk={} 到 {:#x}", vk, target.0 as usize);
             self.state.borrow_mut().pending_repost = Some(PendingRepost { vk, lparam, key_down_seen: false });
@@ -1598,7 +1610,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
                         zdebug!("OnTestKeyDown vk={} 重排回來 -> 不吃", wparam.0);
                         return Ok(false.into());
                     }
-                    // 別的鍵(或自動重複的同一鍵)先到：重排的鍵已經丟了，等待狀態只活過一次按鍵，這一鍵照常處理
+                    // 別的鍵（或自動重複的同一鍵）先到：重排的鍵已經丟了，等待狀態只活過一次按鍵，這一鍵照常處理
                     zdebug!("OnTestKeyDown vk={} 重排的鍵沒回來，清掉等待", p.vk);
                 }
             }
@@ -1612,7 +1624,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
                 zdebug!("OnTestKeyDown vk={} -> 切換簡體字", vk);
                 return Ok(true.into());
             }
-            if self.commit_before_host_key(pic.as_ref(), vk, lparam.0) {
+            if self.commit_before_host_key(pic.as_ref(), vk, lparam.0, true) {
                 zdebug!("OnTestKeyDown vk={} -> 攔下重排", vk);
                 return Ok(true.into());
             }
@@ -1693,7 +1705,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
                 self.state.borrow_mut().eaten.insert(vk);
                 return Ok(true.into());
             }
-            self.commit_before_host_key(pic.as_ref(), vk, lparam.0);
+            self.commit_before_host_key(pic.as_ref(), vk, lparam.0, false);
             self.learn_mode(vk);
             self.sync_caps(pic.as_ref(), vk);
             // TestKeyDown 吃下、沒在組字的注音模式按鍵，最後沒吃成就以原字元補送（type_literal，#216）。
@@ -2188,7 +2200,7 @@ mod shift_tests {
             assert!(!test_up(&sink, &ctx, SHIFT, scan));
             assert_ne!(english(), start);
             // 宿主沒先問、直接 OnKeyDown／OnKeyUp：在 OnKeyUp 切換，放開一樣交給程式。
-            unsafe { sink.OnKeyDown(&ctx, SHIFT, lparam(scan, false)) }.unwrap();
+            assert!(!unsafe { sink.OnKeyDown(&ctx, SHIFT, lparam(scan, false)) }.unwrap().as_bool(), "Shift 按下交給程式");
             assert!(!key_up(&sink, &ctx, SHIFT, scan));
             assert_eq!(english(), start, "{side} Shift 只有 OnKeyUp 也要切換");
         }
