@@ -109,6 +109,9 @@ impl Snapshot {
 
 pub struct Session {
     client: Client,
+    /// 測試用：`handle` 送出的每個請求的 type，依序記下（#66）。
+    #[cfg(test)]
+    pub sent: Vec<String>,
     id: u64,
     generation: u32,
     english: bool,
@@ -192,9 +195,18 @@ impl Session {
         Session::with_client(Client::new())
     }
 
+    /// 測試：換掉用戶端（模擬引擎斷線）。
+    #[cfg(test)]
+    #[allow(dead_code)] // 後續的測試才用（#66）
+    pub(crate) fn set_client_for_test(&mut self, client: Client) {
+        self.client = client;
+    }
+
     pub fn with_client(client: Client) -> Session {
         Session {
             client,
+            #[cfg(test)]
+            sent: Vec::new(),
             id: 0,
             generation: 0,
             english: false,
@@ -545,6 +557,8 @@ impl Session {
         let generation_before = self.client.generation();
         let english_before = self.english;
         let kind = request["type"].as_str().unwrap_or("").to_string();
+        #[cfg(test)]
+        self.sent.push(kind.clone());
         // 欄數不是使用者操作；其他請求都讓下一次切換不再還原注音（#90）。
         let mut cleared = None;
         if kind != "context" && kind != "display" {

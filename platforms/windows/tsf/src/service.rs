@@ -25,6 +25,7 @@ use windows_core::{implement, ComObject, IUnknownImpl, Interface, Ref, BOOL, GUI
 use zuin_win_common::{has_content, notice_expires, UiCandidate, UiMessage, NOTICE_MS};
 
 use crate::candidate::CandidateWindow;
+use crate::cuas::{Cuas, Win32Cuas};
 use crate::displayattr::{AttributeEnum, InputAttribute, KINDS};
 use crate::log::{zdebug, zlog};
 use crate::session::{Session, Snapshot};
@@ -75,6 +76,9 @@ struct State {
     composition: Option<ITfComposition>,
     ending_composition: Rc<Cell<bool>>,
     session: Session,
+    /// 系統相容層的操作（#66）；測試換成假的。呼叫前先 clone，呼叫期間不持有 state 的借用（見 cuas.rs）。
+    #[allow(dead_code)]
+    cuas: Rc<dyn Cuas>,
     composing: bool,
     attr_atoms: [u32; KINDS.len()],
     eaten: HashSet<u32>, // 吃掉了 key-down 的虛擬鍵，key-up 也要吃掉
@@ -304,6 +308,7 @@ impl TextService {
                 composition: None,
                 ending_composition: Rc::new(Cell::new(false)),
                 session: Session::new(),
+                cuas: Rc::new(Win32Cuas),
                 composing: false,
                 attr_atoms: [0; KINDS.len()],
                 eaten: HashSet::new(),

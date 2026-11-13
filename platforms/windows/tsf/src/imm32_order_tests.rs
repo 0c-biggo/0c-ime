@@ -8,11 +8,13 @@
 //! #262：同一個順序讓組字中的 Ctrl 組合鍵（Ctrl+A、Ctrl+S、Ctrl+Home）比組字先作用：外殼在 A 的 TestKeyDown 才送出
 //! 組字，程式先全選／存檔、之後才收到組字。注音組字的測試用一般的 ZUIN_TEST_PIPE。
 use super::*;
+use crate::cuas::{Complete, Cuas};
 use crate::edit::tests::{host, Doc, Sync};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyboardState, MapVirtualKeyW, SetKeyboardState, MAPVK_VK_TO_VSC, VK_CAPITAL, VK_CONTROL, VK_LCONTROL,
     VK_SHIFT,
 };
+use std::collections::HashMap;
 use windows::Win32::UI::TextServices::{ITfKeyEventSink, TS_SS_TRANSITORY};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateCaret, CreateWindowExW, DestroyCaret, DestroyWindow, HMENU, WINDOW_EX_STYLE, WS_POPUP,
@@ -54,9 +56,14 @@ struct App {
     caret: usize,
     /// 程式的快捷鍵（Ctrl+S 存檔、Ctrl+A 全選）作用當下看到的全文（#262）。
     seen: Vec<String>,
+    /// 每個快捷鍵作用一次記一筆：(vk, 當下全文)（#66，重送的快捷鍵要作用剛好一次）。
+    fired: Vec<(u32, String)>,
 }
 
 impl App {
+    fn new() -> App {
+        App { text: "前".chars().collect(), caret: 1, seen: Vec::new(), fired: Vec::new() }
+    }
     fn insert(&mut self, s: &str) {
         for c in s.chars() {
             self.text.insert(self.caret, c);
@@ -81,6 +88,134 @@ enum Act {
     Top,
 }
 
+/// 程式怎麼處理系統相容層送來的結果字串（#66）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum HostKind {
+    /// 自己處理 WM_IME_COMPOSITION，結果字串當場就到。
+    SelfHandles,
+    /// 交給 DefWindowProc：結果字串由相容層 post 成 WM_CHAR，排在佇列裡。
+    #[allow(dead_code)] // 後續提交相容層的測試才用（#66）
+    DefWindowProc,
+}
+
+/// 程式的訊息佇列裡等著的訊息（先進先出）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Queued {
+    Char { hwnd: HWND, text: String },
+    Key { hwnd: HWND, vk: u32, lparam: isize },
+}
+
+/// 假的系統相容層宿主（#66）：先進先出的訊息佇列，加上可設定的行為。`Char` 一律排給 `complete` 收到的那個 hwnd，
+/// 不是當下的 `focus`。`NoContext`／`Failed` 不產生結果字串、也不終止組字。
+struct FakeCuas {
+    doc: Rc<Doc>,
+    /// 外殼本身（取 OnCompositionTerminated 的 sink 與組字）。service 與 cuas 互相持有，測試裡洩漏可以接受。
+    service: RefCell<Option<ComObject<TextService>>>,
+    queue: RefCell<Vec<Queued>>,
+    kind: Cell<HostKind>,
+    focus: Cell<HWND>,
+    complete_result: Cell<Complete>,
+    /// Notified 時相容層是否真的終止組字。
+    terminates: Cell<bool>,
+    repost_ok: Cell<bool>,
+    focus_after_complete: Cell<Option<HWND>>,
+    hotkey: Cell<bool>,
+    /// 外殼自己 EndComposition 時，相容層仍把結果字串排給 `complete` 收到的 hwnd（真實 CUAS 裡 #262 那種晚到的結果字串）。
+    result_on_self_end: Cell<bool>,
+    /// 每次 `complete` 當下文件裡組字區的文字，與外殼最後送給引擎的請求 type。
+    completions: RefCell<Vec<(String, Option<String>)>>,
+    /// `SelfHandles` 當場交給程式、等 Host 插進 App 的結果字串。
+    handed: RefCell<Vec<String>>,
+    /// 經相容層送出的文字：Host 不得再從 `doc.committed()` 的差異重複插入。
+    via: RefCell<Vec<String>>,
+    /// `result_on_self_end` 等外殼自己結束組字的結果字串。
+    late: RefCell<Option<(HWND, String)>>,
+}
+
+fn app_hwnd() -> HWND {
+    HWND(0x1000 as *mut std::ffi::c_void)
+}
+
+impl FakeCuas {
+    fn new(doc: Rc<Doc>) -> Rc<FakeCuas> {
+        Rc::new(FakeCuas {
+            doc,
+            service: RefCell::new(None),
+            queue: RefCell::new(Vec::new()),
+            kind: Cell::new(HostKind::SelfHandles),
+            focus: Cell::new(app_hwnd()),
+            complete_result: Cell::new(Complete::Notified),
+            terminates: Cell::new(true),
+            repost_ok: Cell::new(true),
+            focus_after_complete: Cell::new(None),
+            hotkey: Cell::new(false),
+            result_on_self_end: Cell::new(false),
+            completions: RefCell::new(Vec::new()),
+            handed: RefCell::new(Vec::new()),
+            via: RefCell::new(Vec::new()),
+            late: RefCell::new(None),
+        })
+    }
+
+    fn deliver(&self, hwnd: HWND, text: String) {
+        self.via.borrow_mut().push(text.clone());
+        match self.kind.get() {
+            HostKind::SelfHandles => self.handed.borrow_mut().push(text),
+            HostKind::DefWindowProc => self.queue.borrow_mut().push(Queued::Char { hwnd, text }),
+        }
+    }
+}
+
+impl Cuas for FakeCuas {
+    fn focus(&self) -> HWND {
+        self.focus.get()
+    }
+
+    fn complete(&self, hwnd: HWND) -> Complete {
+        let text = self.doc.composing_text();
+        let service = self.service.borrow().clone().expect("FakeCuas 要先接上外殼");
+        let sent = service.state.borrow().session.sent.last().cloned();
+        self.completions.borrow_mut().push((text.clone(), sent));
+        let result = self.complete_result.get();
+        if result != Complete::Notified {
+            return result;
+        }
+        if self.terminates.get() {
+            let composition = service.state.borrow().composition.clone();
+            self.doc.end_composition();
+            if !text.is_empty() {
+                self.deliver(hwnd, text);
+            }
+            if let Some(composition) = composition {
+                // 同步回呼外殼：這時外殼不得持有 state 的借用。
+                let sink: ITfCompositionSink = service.to_interface();
+                unsafe { sink.OnCompositionTerminated(0, &composition) }.unwrap();
+            }
+        } else if self.result_on_self_end.get() && !text.is_empty() {
+            *self.late.borrow_mut() = Some((hwnd, text));
+        }
+        if let Some(focus) = self.focus_after_complete.get() {
+            self.focus.set(focus);
+        }
+        result
+    }
+
+    fn has_char(&self, hwnd: HWND) -> bool {
+        self.queue.borrow().iter().any(|q| matches!(q, Queued::Char { hwnd: h, .. } if *h == hwnd))
+    }
+
+    fn repost(&self, hwnd: HWND, vk: u32, lparam: isize) -> bool {
+        if self.repost_ok.get() {
+            self.queue.borrow_mut().push(Queued::Key { hwnd, vk, lparam });
+        }
+        self.repost_ok.get()
+    }
+
+    fn ime_hotkey(&self, _vk: u32) -> bool {
+        self.hotkey.get()
+    }
+}
+
 struct Host {
     service: ComObject<TextService>,
     sink: ITfKeyEventSink,
@@ -89,19 +224,56 @@ struct Host {
     app: App,
     /// IMM32：結果字串排在程式自己的訊息之後。false 是自己接 TSF 的程式：送出當下就在文件裡。
     imm32: bool,
+    cuas: Rc<FakeCuas>,
+    /// 這個 App 視窗；給別的視窗的 `Char` 不插進 App，只記在 `other_chars`。
+    hwnd: HWND,
+    other_chars: Vec<(HWND, String)>,
+    /// 每個 vk 最近一次按下時程式自己處理的動作（重送回來的鍵照這個動作）。
+    acts: HashMap<u32, Act>,
 }
 
 impl Host {
-    /// 一次按鍵：TestKeyDown 說不吃就交給程式（OnKeyDown 不會來），說吃才有 OnKeyDown。回傳 TestKeyDown 的答案。
+    /// 一次按鍵：TestKeyDown 說不吃就交給程式（OnKeyDown 不會來），說吃才有 OnKeyDown，
+    /// 最後依序排空程式的訊息佇列（相容層 post 的 WM_CHAR、重送的按鍵）。回傳 TestKeyDown 的答案。
     fn press(&mut self, vk: u32, scan: isize, act: Act) -> bool {
-        let (w, l) = (WPARAM(vk as usize), LPARAM(1 | scan << 16));
+        self.acts.insert(vk, act);
+        let eaten = self.step(vk, 1 | scan << 16, act, true);
+        self.drain();
+        eaten
+    }
+    /// TestKeyDown 吃下之後不呼叫 OnKeyDown（#66：模擬 TSF 沒有接著送 OnKeyDown 的情況）。
+    #[allow(dead_code)] // 後續的測試才用（#66）
+    fn press_without_keydown(&mut self, vk: u32, scan: isize, act: Act) -> bool {
+        self.acts.insert(vk, act);
+        let eaten = self.step(vk, 1 | scan << 16, act, false);
+        self.drain();
+        eaten
+    }
+    #[allow(dead_code)] // 後續的測試才用（#66）
+    /// 對同一則按鍵再呼叫一次 TestKeyDown（不呼叫 OnKeyDown、程式也不再處理）。
+    fn retest(&mut self, vk: u32, scan: isize) -> bool {
+        let eaten = self.step(vk, 1 | scan << 16, Act::Nothing, false);
+        self.drain();
+        eaten
+    }
+    /// 一則按鍵訊息：TestKeyDown →（吃下才）OnKeyDown → 套用結果 → 不吃的鍵由程式處理。
+    fn step(&mut self, vk: u32, lparam: isize, act: Act, keydown: bool) -> bool {
+        let (w, l) = (WPARAM(vk as usize), LPARAM(lparam));
         let before = self.doc.committed().chars().count();
         let eaten = unsafe { self.sink.OnTestKeyDown(&self.ctx, w, l) }.unwrap().as_bool();
-        if eaten {
+        if eaten && keydown {
             let key = unsafe { self.sink.OnKeyDown(&self.ctx, w, l) }.unwrap().as_bool();
             assert!(key, "TestKeyDown 說吃，OnKeyDown 也要吃 vk={vk:#x}");
         }
-        let result: String = self.doc.committed().chars().skip(before).collect();
+        // 相容層當場交給程式的結果字串（SelfHandles）：程式在這一鍵之前就收到。
+        for text in std::mem::take(&mut *self.cuas.handed.borrow_mut()) {
+            self.app.insert(&text);
+        }
+        let mut result: String = self.doc.committed().chars().skip(before).collect();
+        // 經相容層送出的文字已經照它自己的路徑交給程式，不從文件差異重複插入。
+        for text in std::mem::take(&mut *self.cuas.via.borrow_mut()) {
+            result = result.replacen(&text, "", 1);
+        }
         if eaten || !self.imm32 {
             self.app.insert(&result);
         }
@@ -110,14 +282,42 @@ impl Host {
                 Act::Char(c) => self.app.insert(&c.to_string()),
                 Act::Left => self.app.caret = self.app.caret.saturating_sub(1),
                 Act::Nothing => {}
-                Act::Shortcut => self.app.seen.push(self.app.text()),
+                Act::Shortcut => {
+                    self.app.seen.push(self.app.text());
+                    self.app.fired.push((vk, self.app.text()));
+                }
                 Act::Top => self.app.caret = 0,
             }
             if self.imm32 {
                 self.app.insert(&result);
             }
         }
+        // 外殼自己結束了組字：相容層仍把結果字串排進佇列（晚到的結果字串）。
+        if !self.doc.composing() {
+            if let Some((hwnd, text)) = self.cuas.late.borrow_mut().take() {
+                self.cuas.queue.borrow_mut().push(Queued::Char { hwnd, text });
+            }
+        }
         eaten
+    }
+    /// 依序排空程式的訊息佇列：給這個視窗的 `Char` 插進 App，`Key` 以同一個 vk、lParam 再走一次 TestKeyDown，
+    /// 回答不吃才由程式處理（動作作用一次）。
+    fn drain(&mut self) {
+        loop {
+            let next = {
+                let mut queue = self.cuas.queue.borrow_mut();
+                if queue.is_empty() { None } else { Some(queue.remove(0)) }
+            };
+            match next {
+                None => break,
+                Some(Queued::Char { hwnd, text }) if hwnd == self.hwnd => self.app.insert(&text),
+                Some(Queued::Char { hwnd, text }) => self.other_chars.push((hwnd, text)),
+                Some(Queued::Key { vk, lparam, .. }) => {
+                    let act = self.acts.get(&vk).copied().unwrap_or(Act::Nothing);
+                    self.step(vk, lparam, act, true);
+                }
+            }
+        }
     }
     fn letters(&mut self, s: &str) {
         for c in s.chars() {
@@ -180,10 +380,7 @@ fn open(pipe: &str, static_flags: u32) -> Host {
     service.state.borrow_mut().session = Session::with_client(crate::ipc::Client::with_pipe(pipe));
     let english = service.state.borrow_mut().session.handle(json!({"type": "mode", "on": true}));
     assert!(english.ok && english.english_can_start, "測試引擎要開著英文自動補字");
-    let sink: ITfKeyEventSink = service.to_interface();
-    let app = App { text: "前".chars().collect(), caret: 1, seen: Vec::new() };
-    let imm32 = static_flags == TS_SS_TRANSITORY;
-    Host { service, sink, ctx, doc, app, imm32 }
+    new_host(service, doc, ctx, static_flags)
 }
 
 /// 注音模式（預設）、文件原本是「前」的宿主（#262），用一般的 ZUIN_TEST_PIPE。
@@ -194,10 +391,17 @@ fn open_zhuyin(static_flags: u32) -> Option<Host> {
     let service = ComObject::new(TextService::new());
     service.state.borrow_mut().session = Session::with_client(crate::ipc::Client::with_pipe(&pipe));
     assert!(!service.state.borrow_mut().session.english(), "一般的測試引擎是注音模式");
+    Some(new_host(service, doc, ctx, static_flags))
+}
+
+/// 接上假的系統相容層（預設：程式自己處理、相容層受理並終止組字、重送成功、沒有焦點變化、不是輸入法熱鍵）。
+fn new_host(service: ComObject<TextService>, doc: Rc<Doc>, ctx: ITfContext, static_flags: u32) -> Host {
+    let cuas = FakeCuas::new(doc.clone());
+    *cuas.service.borrow_mut() = Some(service.clone());
+    service.state.borrow_mut().cuas = cuas.clone();
     let sink: ITfKeyEventSink = service.to_interface();
-    let app = App { text: "前".chars().collect(), caret: 1, seen: Vec::new() };
     let imm32 = static_flags == TS_SS_TRANSITORY;
-    Some(Host { service, sink, ctx, doc, app, imm32 })
+    Host { service, sink, ctx, doc, app: App::new(), imm32, cuas, hwnd: app_hwnd(), other_chars: Vec::new(), acts: HashMap::new() }
 }
 
 /// 本執行緒的系統插入點：IMM32 文字框有焦點時都有，#210 才照常英文補字。

@@ -575,9 +575,27 @@ pub(crate) mod tests {
         pub(crate) static_flags: Cell<u32>,
         /// 進行中的組字範圍（StartComposition 到 EndComposition）。
         live: RefCell<Option<Rc<Span>>>,
+        /// 指定 view 的視窗（#66）：None 時 GetActiveView 照 `layout`；Some(h) 時一律回一個 view，GetWnd 回 h（可以是 0）。
+        pub(crate) view: Cell<Option<windows::Win32::Foundation::HWND>>,
     }
 
     impl Doc {
+        /// 進行中的組字區文字（沒有組字就是空字串）。
+        pub(crate) fn composing_text(&self) -> String {
+            let text = self.text.borrow();
+            match self.live.borrow().as_ref() {
+                Some(span) => String::from_utf16(&text[span.start.get()..span.end.get()]).unwrap(),
+                None => String::new(),
+            }
+        }
+        /// 有沒有進行中的組字範圍。
+        pub(crate) fn composing(&self) -> bool {
+            self.live.borrow().is_some()
+        }
+        /// 結束組字、文字留在文件裡成為已提交（系統相容層替程式完成組字，#66）。
+        pub(crate) fn end_composition(&self) {
+            *self.live.borrow_mut() = None;
+        }
         /// 已提交的文字：整份文件扣掉進行中的組字。IMM32 程式只看得到這部分（系統相容層的結果字串）。
         pub(crate) fn committed(&self) -> String {
             let text = self.text.borrow();
@@ -793,7 +811,7 @@ pub(crate) mod tests {
         }
         fn GetActiveView(&self) -> windows_core::Result<ITfContextView> {
             match self.doc.layout.get() {
-                Layout::NoView => Err(E_NOTIMPL.into()),
+                Layout::NoView if self.doc.view.get().is_none() => Err(E_NOTIMPL.into()),
                 _ => Ok(ComObject::new(FakeView { doc: self.doc.clone() }).into_interface()),
             }
         }
@@ -909,7 +927,7 @@ pub(crate) mod tests {
             Ok(RECT { left: 50, top: 180, right: 600, bottom: 240 })
         }
         fn GetWnd(&self) -> windows_core::Result<windows::Win32::Foundation::HWND> {
-            Ok(windows::Win32::Foundation::HWND::default())
+            Ok(self.doc.view.get().unwrap_or_default())
         }
     }
 
@@ -940,6 +958,7 @@ pub(crate) mod tests {
             text_args: RefCell::new(Vec::new()),
             static_flags: Cell::new(0),
             live: RefCell::new(None),
+            view: Cell::new(None),
         });
         let ctx = ComObject::new(FakeContext { doc: doc.clone() }).into_interface();
         (doc, ctx)
