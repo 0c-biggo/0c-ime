@@ -606,7 +606,7 @@ fn tsf_programs_still_get_the_key_after_the_word() {
 fn imm32_ctrl_shortcut_sees_the_composition() {
     // #262、#66：IMM32 程式裡注音組字中按 Ctrl+A／Ctrl+S，程式的快捷鍵要看到組字。修正前外殼在 A 的 TestKeyDown 才送出組字，
     // 結果字串排在程式處理 Ctrl+A 之後（.14 的 IMM32 RichEdit 得到「我你」）；0.2.9 改成 Ctrl 按下就送出，卻讓單按 Ctrl 也送出。
-    // 現在 Ctrl 單按保留組字，Ctrl+A 的 TestKeyDown 請系統相容層完成組字，結果字串在 A 作用之前到（spike mode 3/18 在 Notepad++ 實測）。
+    // 現在 Ctrl 單按保留組字，Ctrl+A 的 TestKeyDown 請系統相容層完成組字，結果字串在 A 作用之前到（Notepad++ 實測如此）。
     let Some(mut h) = open_zhuyin(TS_SS_TRANSITORY) else { return };
     plain_keyboard();
     h.view_is_app();
@@ -933,7 +933,7 @@ fn keys_in(h: &Host) -> Vec<Queued> {
 fn imm32_default_handling_host_gets_the_key_after_the_text() {
     // #66：交給 DefWindowProc 的程式（EDIT、WinForms）收到的結果字串是 post 的 WM_CHAR，排在這一鍵之後。
     // 白名單內的鍵（Ctrl 組合鍵、F1 到 F12 除了 F10）攔下，把同一個 WM_KEYDOWN 再 post 給焦點視窗，排在 WM_CHAR 之後
-    // （spike mode 18 在標準文字框與 WinForms 實測）。重排回來的鍵 TestKeyDown 不吃，快捷鍵作用剛好一次。
+    // （標準文字框與 WinForms 實測如此）。重排回來的鍵 TestKeyDown 不吃，快捷鍵作用剛好一次。
     let cases: Vec<(&str, bool, bool, u32, Act)> = {
         let mut v = vec![("Ctrl+S", true, false, 0x53, Act::Shortcut), ("Ctrl+Home", true, false, 0x24, Act::Top)];
         for f in (0x70..=0x7bu32).filter(|f| *f != 0x79) {
@@ -1179,7 +1179,7 @@ fn pending_cleared(h: &Host) -> bool {
 
 #[test]
 fn imm32_reposted_key_lives_for_one_press() {
-    // #66 不變量 I1 的另一半：重排的快捷鍵狀態只活過一次按鍵，之後的輸入不能被它誤判成重排回來的鍵。
+    // #66：重排的快捷鍵狀態只活過一次按鍵，之後的輸入不能被它誤判成重排回來的鍵。
     let (vk, scan) = (0x53u32, scan_of(0x53));
     let lparam = 1 | scan << 16;
     let Some(mut h) = open_zhuyin(TS_SS_TRANSITORY) else { return };
@@ -1249,7 +1249,7 @@ fn imm32_reposted_key_lives_for_one_press() {
 #[test]
 fn imm32_keydown_without_testkeydown_never_reposts() {
     // #66：宿主沒先問 TestKeyDown 就呼叫 OnKeyDown 時，原本的鍵已經要交給程式，所以只經相容層送出組字，不重排
-    // （重排會讓快捷鍵執行兩次，也違反 I1 的假設）。
+    // （重排會讓快捷鍵執行兩次，也違反「TSF 吃下鍵之後不會再問原本那一鍵」的前提）。
     let Some(mut h) = open_zhuyin(TS_SS_TRANSITORY) else { return };
     let word = composing_in_default_host(&mut h);
     h.app = App::new();

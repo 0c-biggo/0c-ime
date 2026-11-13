@@ -98,7 +98,7 @@ impl Drop for Completing<'_> {
 }
 
 /// 已經攔下、重排給程式的快捷鍵（#66）：重排的鍵回來之前，同一個 (vk, lParam) 的 TestKeyDown 就是它回來了
-/// （不變量 I1：原本的鍵在重排的鍵回來之前不會再被 TestKeyDown 問一次）。
+/// （TSF 回答吃下某個鍵之後，在重排的同一個鍵回來之前，不會再對原本那一鍵問一次 TestKeyDown；所以同一個 (vk, lParam) 再出現就是重排回來的鍵）。
 struct PendingRepost {
     vk: u32,
     lparam: isize,
@@ -996,7 +996,7 @@ impl TextService_Impl {
         self.present(ctx, &snapshot);
     }
 
-    /// context 的 view 視窗（相容層的輸入法 context 以它取得，等於鍵盤焦點視窗，#66 事實 A4）。
+    /// context 的 view 視窗（相容層的輸入法 context 以它取得，等於鍵盤焦點視窗，經相容層的 context，view 視窗就是系統的焦點視窗，#66）。
     fn view_window(ctx: Option<&ITfContext>) -> HWND {
         ctx.and_then(|c| unsafe { c.GetActiveView() }.ok())
             .and_then(|v| unsafe { v.GetWnd() }.ok())
@@ -1294,17 +1294,17 @@ impl TextService_Impl {
         let eligible = keys::reposts_after_commit(vk, ctrl, alt, win) && !cuas.ime_hotkey(vk);
         let view = Self::view_window(ctx);
         let target = cuas.focus();
-        let clean = eligible && !target.0.is_null() && !cuas.has_char(target);
+        let queue_had_no_char = eligible && !target.0.is_null() && !cuas.has_char(target);
         let completed = self.complete_via_cuas(ctx, view);
         // 前面的條件不成立就不再往下問（None＝沒問），問過的值存起來給下面的記錄用。
         let by_cuas = completed == Completed::ByCuas;
-        let focus_same = (eligible && clean && target == view && by_cuas).then(|| cuas.focus() == target);
+        let focus_same = (eligible && queue_had_no_char && target == view && by_cuas).then(|| cuas.focus() == target);
         let has_char = (focus_same == Some(true)).then(|| cuas.has_char(target));
         let repost = has_char == Some(true) && cuas.repost(target, vk, lparam);
         if eligible && !repost {
             zdebug!(
-                "不重排 vk={} clean={} target==view:{} ByCuas:{} 焦點未變:{:?} has_char:{:?}",
-                vk, clean, target == view, by_cuas, focus_same, has_char
+                "不重排 vk={} queue_had_no_char={} target==view:{} ByCuas:{} 焦點未變:{:?} has_char:{:?}",
+                vk, queue_had_no_char, target == view, by_cuas, focus_same, has_char
             );
         }
         if repost {

@@ -111,7 +111,7 @@ pub struct Session {
     client: Client,
     /// 測試用：`handle` 送出的每個請求的 type，依序記下（#66）。
     #[cfg(test)]
-    pub sent: Vec<String>,
+    pub(crate) sent: Vec<String>,
     id: u64,
     generation: u32,
     english: bool,

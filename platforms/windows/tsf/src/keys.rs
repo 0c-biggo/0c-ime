@@ -3,8 +3,8 @@
 //! 只有中文模式的 Ctrl＋標點（#168，見 [`ctrl_punct`]）例外。
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetKeyState, GetKeyboardState, ToUnicode, VK_BACK, VK_CAPITAL, VK_CONTROL,
-    VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F11, VK_HOME, VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LSHIFT,
-    VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR, VK_RCONTROL, VK_RETURN, VK_RIGHT, VK_RMENU, VK_RSHIFT,
+    VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F1, VK_F10, VK_F11, VK_F12, VK_F13,
+    VK_F4, VK_F5, VK_HOME, VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR, VK_RCONTROL, VK_RETURN, VK_RIGHT, VK_RMENU, VK_RSHIFT,
     VK_RWIN, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
 };
 
@@ -188,22 +188,25 @@ pub fn commits_before_host(vk: u32, modified: bool, protocol: Option<&str>) -> b
 /// F10 與 Alt 組合鍵是系統按鍵（WM_SYSKEYDOWN），重排的一般按鍵訊息重現不了選單，所以不收。
 /// 呼叫端已先經 `commits_before_host` 篩過，這裡只決定其中哪些要重排。
 pub fn reposts_after_commit(vk: u32, ctrl: bool, alt: bool, win: bool) -> bool {
-    if alt || win || vk == 0x79 || is_modifier(vk) {
+    if alt || win || vk == VK_F10.0 as u32 || is_modifier(vk) {
         return false;
     }
-    ctrl || (0x70..=0x7b).contains(&vk)
+    ctrl || (VK_F1.0 as u32..=VK_F12.0 as u32).contains(&vk)
 }
+
+const MOD_ALT: u32 = 0x1;
+const MOD_CONTROL: u32 = 0x2;
+const MOD_SHIFT: u32 = 0x4;
+const MOD_IGNORE_ALL_MODIFIER: u32 = 0x400;
+const MOD_ON_KEYUP: u32 = 0x800;
+const MOD_RIGHT: u32 = 0x4000;
+const MOD_LEFT: u32 = 0x8000;
 
 /// ImmGetHotKey 登記的輸入法熱鍵（`hk_mods`、`hk_vk`）是否符合目前這一鍵（#66）。
 /// `hk_mods` 的位元（imm.h）：MOD_ALT 0x1、MOD_CONTROL 0x2、MOD_SHIFT 0x4、MOD_LEFT 0x8000、MOD_RIGHT 0x4000
 /// （只表示左右，比對時忽略）、MOD_ON_KEYUP 0x800（放開才觸發，按下時一律不符）、
 /// MOD_IGNORE_ALL_MODIFIER 0x400（只比 vk）。
 pub fn hotkey_matches(hk_mods: u32, hk_vk: u32, vk: u32, ctrl: bool, alt: bool, shift: bool) -> bool {
-    const MOD_ALT: u32 = 0x1;
-    const MOD_CONTROL: u32 = 0x2;
-    const MOD_SHIFT: u32 = 0x4;
-    const MOD_ON_KEYUP: u32 = 0x800;
-    const MOD_IGNORE_ALL_MODIFIER: u32 = 0x400;
     if hk_mods & MOD_ON_KEYUP != 0 || hk_vk != vk {
         return false;
     }
@@ -519,47 +522,41 @@ mod tests {
     fn reposts_after_commit_whitelist() {
         assert!(reposts_after_commit(0x53, true, false, false)); // Ctrl+S
         assert!(reposts_after_commit(0x24, true, false, false)); // Ctrl+Home
-        assert!(reposts_after_commit(0x74, false, false, false)); // F5
-        for vk in 0x70u32..=0x7b {
-            assert_eq!(reposts_after_commit(vk, false, false, false), vk != 0x79, "F{} {vk:#x}", vk - 0x6f);
+        assert!(reposts_after_commit(VK_F5.0 as u32, false, false, false)); // F5
+        for vk in VK_F1.0 as u32..=VK_F12.0 as u32 {
+            assert_eq!(reposts_after_commit(vk, false, false, false), vk != VK_F10.0 as u32, "F{} {vk:#x}", vk - VK_F1.0 as u32 + 1);
         }
-        assert!(!reposts_after_commit(0x79, true, false, false), "Ctrl+F10");
+        assert!(!reposts_after_commit(VK_F10.0 as u32, true, false, false), "Ctrl+F10");
         assert!(!reposts_after_commit(0x53, false, true, false), "Alt+S");
         assert!(!reposts_after_commit(0x51, true, true, false), "Ctrl+Alt+Q (AltGr)");
         assert!(!reposts_after_commit(0x53, false, false, true), "Win+S");
-        assert!(!reposts_after_commit(0x74, false, false, true), "Win+F5");
-        assert!(!reposts_after_commit(0x73, false, true, false), "Alt+F4");
+        assert!(!reposts_after_commit(VK_F5.0 as u32, false, false, true), "Win+F5");
+        assert!(!reposts_after_commit(VK_F4.0 as u32, false, true, false), "Alt+F4");
         assert!(!reposts_after_commit(0x2d, false, false, false), "Insert");
         assert!(!reposts_after_commit(0x5d, false, false, false), "應用程式鍵");
-        assert!(!reposts_after_commit(0x7c, false, false, false), "F13");
+        assert!(!reposts_after_commit(VK_F13.0 as u32, false, false, false), "F13");
         for vk in 0xadu32..=0xb7 {
             assert!(!reposts_after_commit(vk, false, false, false), "多媒體鍵 {vk:#x}");
         }
         assert!(!reposts_after_commit(0x53, false, false, false), "沒有修飾鍵的 S");
-        assert!(!reposts_after_commit(0x11, true, false, false), "Ctrl 本身");
-        assert!(!reposts_after_commit(0xA2, true, false, false), "左 Ctrl 本身");
-        assert!(reposts_after_commit(0x74, true, false, false), "Ctrl+F5");
+        assert!(!reposts_after_commit(VK_CONTROL.0 as u32, true, false, false), "Ctrl 本身");
+        assert!(!reposts_after_commit(VK_LCONTROL.0 as u32, true, false, false), "左 Ctrl 本身");
+        assert!(reposts_after_commit(VK_F5.0 as u32, true, false, false), "Ctrl+F5");
     }
 
     #[test]
     fn hotkey_matches_registered_table() {
-        const CTRL: u32 = 0x2;
-        const SHIFT: u32 = 0x4;
-        const LEFT: u32 = 0x8000;
-        const RIGHT: u32 = 0x4000;
-        const KEYUP: u32 = 0x800;
-        const IGNORE: u32 = 0x400;
-        assert!(hotkey_matches(CTRL, 0x20, 0x20, true, false, false));
-        assert!(!hotkey_matches(CTRL, 0x20, 0x20, true, false, true), "多按 Shift");
-        assert!(!hotkey_matches(CTRL, 0x20, 0x20, false, false, false), "沒按 Ctrl");
-        assert!(hotkey_matches(CTRL | SHIFT | LEFT, 0x30, 0x30, true, false, true));
-        assert!(hotkey_matches(CTRL | SHIFT | RIGHT, 0x30, 0x30, true, false, true));
-        assert!(!hotkey_matches(SHIFT | KEYUP, 0x20, 0x20, false, false, true), "放開才觸發");
+        assert!(hotkey_matches(MOD_CONTROL, VK_SPACE.0 as u32, VK_SPACE.0 as u32, true, false, false));
+        assert!(!hotkey_matches(MOD_CONTROL, VK_SPACE.0 as u32, VK_SPACE.0 as u32, true, false, true), "多按 Shift");
+        assert!(!hotkey_matches(MOD_CONTROL, VK_SPACE.0 as u32, VK_SPACE.0 as u32, false, false, false), "沒按 Ctrl");
+        assert!(hotkey_matches(MOD_CONTROL | MOD_SHIFT | MOD_LEFT, 0x30, 0x30, true, false, true));
+        assert!(hotkey_matches(MOD_CONTROL | MOD_SHIFT | MOD_RIGHT, 0x30, 0x30, true, false, true));
+        assert!(!hotkey_matches(MOD_SHIFT | MOD_ON_KEYUP, VK_SPACE.0 as u32, VK_SPACE.0 as u32, false, false, true), "放開才觸發");
         for (c, a, s) in [(false, false, false), (true, false, false), (true, true, true), (false, true, false)] {
-            assert!(hotkey_matches(IGNORE, 0x19, 0x19, c, a, s));
-            assert!(!hotkey_matches(IGNORE, 0x19, 0x20, c, a, s));
+            assert!(hotkey_matches(MOD_IGNORE_ALL_MODIFIER, 0x19, 0x19, c, a, s));
+            assert!(!hotkey_matches(MOD_IGNORE_ALL_MODIFIER, 0x19, VK_SPACE.0 as u32, c, a, s));
         }
-        assert!(!hotkey_matches(CTRL, 0x20, 0x21, true, false, false), "vk 不同");
+        assert!(!hotkey_matches(MOD_CONTROL, VK_SPACE.0 as u32, 0x21, true, false, false), "vk 不同");
     }
 
     #[test]

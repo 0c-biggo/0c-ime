@@ -35,7 +35,7 @@ pub(crate) trait Cuas {
     /// ImmGetContext(hwnd) + ImmNotifyIME(NI_COMPOSITIONSTR, CPS_COMPLETE)，可能同步回呼外殼。
     fn complete(&self, hwnd: HWND) -> Complete;
     /// 程式的訊息佇列裡有沒有給 `hwnd` 的 WM_CHAR。帶 PM_QS_POSTMESSAGE：只看 post 的訊息，
-    /// 不分派別的執行緒 SendMessage 過來、還在等的訊息（VM 上驗證過，沒帶時會分派）。
+    /// 不分派別的執行緒 SendMessage 過來、還在等的訊息（PM_QS_POSTMESSAGE 讓 PeekMessage 不分派，沒帶時會分派）。
     fn has_char(&self, hwnd: HWND) -> bool;
     /// PostMessage(hwnd, WM_KEYDOWN, vk, lparam)：把按鍵排在佇列最後。
     fn repost(&self, hwnd: HWND, vk: u32, lparam: isize) -> bool;
@@ -164,7 +164,7 @@ mod tests {
         assert!(ctrl_space, "Ctrl+Space 是輸入法開關");
         assert!(!plain_s, "沒有修飾鍵的 S 不是熱鍵");
         if std::env::var("ZUIN_TEST_IME_HOTKEYS").as_deref() == Ok("1") {
-            assert!(!registered.is_empty(), "繁中 VM 至少登記一筆輸入法熱鍵（Ctrl+Shift+0 的 0x104）");
+            assert!(!registered.is_empty(), "繁中 Windows 至少登記一筆輸入法熱鍵（Ctrl+Shift+0 的 0x104）");
         }
     }
 }
