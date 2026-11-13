@@ -996,7 +996,7 @@ impl TextService_Impl {
         self.present(ctx, &snapshot);
     }
 
-    /// context 的 view 視窗（相容層的輸入法 context 以它取得，等於鍵盤焦點視窗，經相容層的 context，view 視窗就是系統的焦點視窗，#66）。
+    /// context 的 view 視窗（相容層的輸入法 context 以它取得；經相容層的 context，它就是系統的鍵盤焦點視窗，#66）。
     fn view_window(ctx: Option<&ITfContext>) -> HWND {
         ctx.and_then(|c| unsafe { c.GetActiveView() }.ok())
             .and_then(|v| unsafe { v.GetWnd() }.ok())
