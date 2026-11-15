@@ -91,20 +91,20 @@ def fetch(url, target, expected):
     if target.exists() and release.digest(target) == expected:
         return target
     print(f"Downloading {url}", flush=True)
-    with tempfile.NamedTemporaryFile(dir=target.parent, prefix=".download-", delete=False) as stream:
-        pending = Path(stream.name)
-        try:
-            h = hashlib.sha256()
-            with urllib.request.urlopen(url, timeout=120) as response:
-                while block := response.read(1 << 20):
-                    stream.write(block)
-                    h.update(block)
-            stream.flush()
-            if h.hexdigest() != expected:
-                raise ValueError(f"SHA-256 mismatch: {target.name}")
-            os.replace(pending, target)
-        finally:
-            pending.unlink(missing_ok=True)
+    stream = tempfile.NamedTemporaryFile(dir=target.parent, prefix=".download-", delete=False)
+    pending = Path(stream.name)
+    try:
+        h = hashlib.sha256()
+        # Windows cannot rename or delete a file that is still open: close the download before moving it.
+        with stream, urllib.request.urlopen(url, timeout=120) as response:
+            while block := response.read(1 << 20):
+                stream.write(block)
+                h.update(block)
+        if h.hexdigest() != expected:
+            raise ValueError(f"SHA-256 mismatch: {target.name}")
+        os.replace(pending, target)
+    finally:
+        pending.unlink(missing_ok=True)
     return target
 
 

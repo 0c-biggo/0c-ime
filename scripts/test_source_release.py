@@ -3,6 +3,7 @@
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import shutil
@@ -476,6 +477,25 @@ class SourceReleaseTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "SHA-256 mismatch"):
                 fetch_assets.download("v0.2.0", cache)
         self.assertEqual(list(cache.glob(".download-*")), [])
+
+    def test_fetch_assets_closes_the_download_before_moving_it(self):
+        # Windows refuses to rename or delete an open file (WinError 32).
+        opened = []
+        real_temp, real_replace = tempfile.NamedTemporaryFile, os.replace
+        def temp(**kwargs):
+            opened.append(real_temp(**kwargs))
+            return opened[-1]
+        def moved(source, target):
+            self.assertTrue(opened and all(stream.closed for stream in opened))
+            real_replace(source, target)
+        target = self.work / "asset.bin"
+        with patch.object(fetch_assets.urllib.request, "urlopen", side_effect=lambda url, timeout: io.BytesIO(b"asset")), \
+             patch.object(fetch_assets.tempfile, "NamedTemporaryFile", side_effect=temp), \
+             patch.object(fetch_assets.os, "replace", side_effect=moved) as replace:
+            fetch_assets.fetch("https://example.invalid/asset.bin", target, hashlib.sha256(b"asset").hexdigest())
+        replace.assert_called_once()
+        self.assertEqual(target.read_bytes(), b"asset")
+        self.assertEqual(list(self.work.glob(".download-*")), [])
 
     def test_fetch_assets_rejects_a_release_with_other_locks(self):
         tarball = self.build()
