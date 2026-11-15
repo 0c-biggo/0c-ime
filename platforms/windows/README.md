@@ -27,6 +27,8 @@ C 執行階段靜態連結（`.cargo/config.toml` 的 `+crt-static`，x64 與 i6
 
 從 Linux 交叉編譯 server 也可以：`GOOS=windows GOARCH=amd64 go build -o build/windows/0c-server.exe ./cmd/0c-server`（沒有 cgo）。
 
+內附神經模型的 `neural\` 不在 Windows 上產生：在 Linux x86-64 上執行 `python3 scripts/prepare_neural.py --platform windows-amd64`，再把輸出目錄複製到 Windows 建置機，原因與步驟見 [神經推論](../neural/README.md#官網可攜套件)。
+
 ## 套件安裝與更新
 
 一般使用者直接雙擊 `*-setup.exe`，依精靈完成安裝或升級；解除安裝入口會出現在 Windows「已安裝的應用程式」。下列 ZIP 命令僅供開發驗證與進階操作。
