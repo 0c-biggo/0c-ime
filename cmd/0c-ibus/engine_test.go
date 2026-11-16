@@ -1123,3 +1123,42 @@ func TestPackageManagedUpdaterFollowsInstalls(t *testing.T) {
 		t.Fatal("官網安裝的 0c-update 不是套件管理員模式")
 	}
 }
+
+// 每 5 秒的狀態查詢不該在內容沒變時重送選單屬性：GNOME Shell 每收到一個 UpdateProperty 就發
+// current-source-changed，觸控模式下會重建整個螢幕鍵盤。
+func TestRefreshMenuSkipsUnchangedProperties(t *testing.T) {
+	e, rec, _ := newTestEngine(t)
+	svc := e.svc
+	svc.refreshMenu()
+	if keys, _ := vocabUpdate(t, rec.take()); keys != "settings,vocab,simplified,update" {
+		t.Fatalf("第一次要全部送出：%s", keys)
+	}
+	svc.refreshMenu()
+	if sig := rec.take(); len(sig) != 0 {
+		t.Fatalf("內容沒變不該重送：%+v", sig)
+	}
+	svc.update = parseStatus(`{"installed":"x","features":{"vocab":true}}`)
+	svc.refreshMenu()
+	if keys, visible := vocabUpdate(t, rec.take()); keys != "settings,vocab,simplified,update" || !visible {
+		t.Fatalf("內容變了要送：%s visible=%v", keys, visible)
+	}
+	// 選單切換「輸出簡體字」已經自己送過這個屬性，下一次查詢不必再送一輪。
+	svc.simplifiedLive = true
+	svc.refreshMenu()
+	rec.take()
+	svc.setSimplified(true, true)
+	rec.take()
+	svc.refreshMenu()
+	if sig := rec.take(); len(sig) != 0 {
+		t.Fatalf("setSimplified 送過後不該重送：%+v", sig)
+	}
+	// 重新啟用（切回靈犀注音）後一定重送一次。
+	if _, err := svc.engineMethod(e, "Enable", nil); err != nil {
+		t.Fatal(err)
+	}
+	rec.take()
+	svc.refreshMenu()
+	if keys, _ := vocabUpdate(t, rec.take()); keys != "settings,vocab,simplified,update" {
+		t.Fatalf("重新啟用後要重送：%s", keys)
+	}
+}
