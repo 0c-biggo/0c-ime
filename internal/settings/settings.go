@@ -97,9 +97,18 @@ type Settings struct {
 	// 沒有對應半形的（『』……——）打鍵帽字元；全形標點改按 Ctrl＋符號。
 	// 預設 false（缺欄位時也是），照舊打全形標點。不屬於輸入習慣風格，任何風格都能單獨開關。
 	ShiftSymbolHalfwidth bool `json:"shift_symbol_halfwidth"`
+	// AllSymbolsHalfwidth：「標點寬度」選「所有符號鍵打半形」（#282）：注音模式所有排列有全形標點的鍵（含未按 Shift 的
+	// [ ] ' \）都打鍵帽上的半形字元，全形標點用 Ctrl＋符號（這時 Ctrl＋標點固定開啟，「不打聲調也能選字」暫停）。
+	// 只在 ShiftSymbolHalfwidth 也是 true 時成立：舊版只認得那一個欄位，讀到的是最接近的「Shift＋符號打半形」；
+	// 舊版把它關掉時，這一欄的殘值不會讓新版變回全部半形（讀取時兩者取 AND）。預設 false（缺欄位時也是）。
+	AllSymbolsHalfwidth bool `json:"all_symbols_halfwidth"`
 	// CJKLatinSpace：送出時在同一次送出的文字裡，漢字與英文字母直接相連的地方補一個半形空格（#273，「用Python寫」送出
 	// 「用 Python 寫」）。預設 false（缺欄位時也是）。不屬於輸入習慣風格，任何風格都能單獨開關。
 	CJKLatinSpace bool `json:"cjk_latin_space"`
+	// ZhuyinErrorHint：打錯注音時提示（#300）。按了聲調但讀音沒有字（模糊音的近音也沒有）時不收這個聲調，注音停住等修改，
+	// Windows、macOS 發出提示音，Linux 在組字區標示；緊接著再按一次同一個聲調照舊原樣留下。只有一個注音符號時不擋。預設 true（缺欄位時也是）。
+	// 中英混打與不打聲調時不作用。不屬於輸入習慣風格，任何風格都能單獨開關。
+	ZhuyinErrorHint bool `json:"zhuyin_error_hint"`
 	// CapsLockEnglish：Caps Lock 開著時直接打英文（#173，Windows、Linux）。預設 false：注音模式不理 Caps Lock（#168）。
 	// 開啟時 Caps Lock 是暫時的英文模式：字母大寫、數字與符號半形，關掉回到原本的模式。macOS 一律如此（#84），不用這一項。
 	CapsLockEnglish bool `json:"caps_lock_english"`
@@ -247,7 +256,7 @@ func (s Settings) FuzzyConfig() fuzzy.Config {
 }
 
 func Default() Settings {
-	s := Settings{Selection: Neural, Punctuation: false, DocumentContext: true, CandidateCursor: defaultCandidateCursor(runtime.GOOS), CandidateLayout: "vertical", EmojiShortcut: "equals", EmojiEqualsFirst: true, EscClear: true, SpaceSelects: true, KeyboardLayout: LayoutStandard, SelectionKeys: SelectDigits, CtrlPunctuation: true,
+	s := Settings{Selection: Neural, Punctuation: false, DocumentContext: true, CandidateCursor: defaultCandidateCursor(runtime.GOOS), CandidateLayout: "vertical", EmojiShortcut: "equals", EmojiEqualsFirst: true, EscClear: true, SpaceSelects: true, KeyboardLayout: LayoutStandard, SelectionKeys: SelectDigits, CtrlPunctuation: true, ZhuyinErrorHint: true,
 		ToggleKey: defaultToggleKey(runtime.GOOS), ModeMemory: defaultModeMemory(runtime.GOOS), StartMode: StartZhuyin}
 	s.LeftShift = s.TogglesLeft() // 舊欄位跟著切換鍵：Windows 預設左右 Shift 時是 true（#206）
 	return s
@@ -367,7 +376,7 @@ func (s *Settings) UnmarshalJSON(b []byte) error {
 	for _, field := range []struct {
 		key string
 		dst *bool
-	}{{"punctuation", &s.Punctuation}, {"document_context", &s.DocumentContext}, {"mixed_input", &s.MixedInput}, {"english_autocomplete", &s.EnglishAutocomplete}, {"left_shift", &s.LeftShift}, {"esc_clear", &s.EscClear}, {"space_selects", &s.SpaceSelects}, {"advance_after_select", &s.AdvanceAfterSelect}, {"emoji_equals_first", &s.EmojiEqualsFirst}, {"output_simplified", &s.OutputSimplified}, {"simplified_hotkey", &s.SimplifiedHotkey}, {"ctrl_punctuation", &s.CtrlPunctuation}, {"shift_symbol_halfwidth", &s.ShiftSymbolHalfwidth}, {"cjk_latin_space", &s.CJKLatinSpace}, {"caps_lock_english", &s.CapsLockEnglish}, {"toneless", &s.Toneless}} {
+	}{{"punctuation", &s.Punctuation}, {"document_context", &s.DocumentContext}, {"mixed_input", &s.MixedInput}, {"english_autocomplete", &s.EnglishAutocomplete}, {"left_shift", &s.LeftShift}, {"esc_clear", &s.EscClear}, {"space_selects", &s.SpaceSelects}, {"advance_after_select", &s.AdvanceAfterSelect}, {"emoji_equals_first", &s.EmojiEqualsFirst}, {"output_simplified", &s.OutputSimplified}, {"simplified_hotkey", &s.SimplifiedHotkey}, {"ctrl_punctuation", &s.CtrlPunctuation}, {"shift_symbol_halfwidth", &s.ShiftSymbolHalfwidth}, {"all_symbols_halfwidth", &s.AllSymbolsHalfwidth}, {"cjk_latin_space", &s.CJKLatinSpace}, {"zhuyin_error_hint", &s.ZhuyinErrorHint}, {"caps_lock_english", &s.CapsLockEnglish}, {"toneless", &s.Toneless}} {
 		if raw, ok := take(field.key); ok {
 			var v bool
 			if json.Unmarshal(raw, &v) == nil {
@@ -377,6 +386,7 @@ func (s *Settings) UnmarshalJSON(b []byte) error {
 			}
 		}
 	}
+	s.AllSymbolsHalfwidth = s.AllSymbolsHalfwidth && s.ShiftSymbolHalfwidth // #282：見欄位說明
 	for _, key := range retiredKeys {
 		take(key) // 已拿掉的鍵：不論值為何都不保留，下次存檔就從檔案消失
 	}
@@ -471,7 +481,7 @@ func (s Settings) MarshalJSON() ([]byte, error) {
 	for _, field := range []struct {
 		key   string
 		value any
-	}{{"selection", s.Selection}, {"punctuation", s.Punctuation}, {"document_context", s.DocumentContext}, {"mixed_input", s.MixedInput}, {"english_autocomplete", s.EnglishAutocomplete}, {"left_shift", s.LeftShift}, {"esc_clear", s.EscClear}, {"space_selects", s.SpaceSelects}, {"candidate_cursor", s.CandidateCursor}, {"advance_after_select", s.AdvanceAfterSelect}, {"candidate_layout", s.CandidateLayout}, {"emoji_shortcut", s.EmojiShortcut}, {"emoji_equals_first", s.EmojiEqualsFirst}, {"keyboard_layout", s.KeyboardLayout}, {"selection_keys", s.SelectionKeys}, {"toggle_key", s.ToggleKey}, {"mode_memory", s.ModeMemory}, {"start_mode", s.StartMode}, {"output_simplified", s.OutputSimplified}, {"simplified_hotkey", s.SimplifiedHotkey}, {"ctrl_punctuation", s.CtrlPunctuation}, {"shift_symbol_halfwidth", s.ShiftSymbolHalfwidth}, {"cjk_latin_space", s.CJKLatinSpace}, {"caps_lock_english", s.CapsLockEnglish}, {"toneless", s.Toneless}} {
+	}{{"selection", s.Selection}, {"punctuation", s.Punctuation}, {"document_context", s.DocumentContext}, {"mixed_input", s.MixedInput}, {"english_autocomplete", s.EnglishAutocomplete}, {"left_shift", s.LeftShift}, {"esc_clear", s.EscClear}, {"space_selects", s.SpaceSelects}, {"candidate_cursor", s.CandidateCursor}, {"advance_after_select", s.AdvanceAfterSelect}, {"candidate_layout", s.CandidateLayout}, {"emoji_shortcut", s.EmojiShortcut}, {"emoji_equals_first", s.EmojiEqualsFirst}, {"keyboard_layout", s.KeyboardLayout}, {"selection_keys", s.SelectionKeys}, {"toggle_key", s.ToggleKey}, {"mode_memory", s.ModeMemory}, {"start_mode", s.StartMode}, {"output_simplified", s.OutputSimplified}, {"simplified_hotkey", s.SimplifiedHotkey}, {"ctrl_punctuation", s.CtrlPunctuation}, {"shift_symbol_halfwidth", s.ShiftSymbolHalfwidth}, {"all_symbols_halfwidth", s.AllSymbolsHalfwidth}, {"cjk_latin_space", s.CJKLatinSpace}, {"zhuyin_error_hint", s.ZhuyinErrorHint}, {"caps_lock_english", s.CapsLockEnglish}, {"toneless", s.Toneless}} {
 		if err := typed(field.key, field.value); err != nil {
 			return nil, err
 		}
@@ -526,7 +536,7 @@ func (s Settings) notes() []string {
 	if s.extra != "" {
 		_ = json.Unmarshal([]byte(s.extra), &kept)
 	}
-	for _, key := range []string{"selection", "punctuation", "document_context", "mixed_input", "english_autocomplete", "left_shift", "esc_clear", "space_selects", "candidate_cursor", "advance_after_select", "candidate_layout", "emoji_shortcut", "emoji_equals_first", "keyboard_layout", "selection_keys", "toggle_key", "mode_memory", "start_mode", "output_simplified", "simplified_hotkey", "ctrl_punctuation", "shift_symbol_halfwidth", "cjk_latin_space", "caps_lock_english", "toneless"} {
+	for _, key := range []string{"selection", "punctuation", "document_context", "mixed_input", "english_autocomplete", "left_shift", "esc_clear", "space_selects", "candidate_cursor", "advance_after_select", "candidate_layout", "emoji_shortcut", "emoji_equals_first", "keyboard_layout", "selection_keys", "toggle_key", "mode_memory", "start_mode", "output_simplified", "simplified_hotkey", "ctrl_punctuation", "shift_symbol_halfwidth", "all_symbols_halfwidth", "cjk_latin_space", "zhuyin_error_hint", "caps_lock_english", "toneless"} {
 		if raw, ok := kept[key]; ok {
 			out = append(out, fmt.Sprintf("%s：本版不認得 %s，暫用預設值，存檔時保留原值", strings.ReplaceAll(key, "_", "-"), raw))
 			delete(kept, key)
@@ -736,9 +746,37 @@ func (s Settings) valueLabels(key string) map[string]string {
 		return map[string]string{ModeNative: modeNativeLabel(runtime.GOOS, s.StartsEnglish()), ModeShared: "全部共用同一個模式"}
 	case "keyboard-layout":
 		return map[string]string{LayoutStandard: "標準", LayoutETen: "倚天 41 鍵", LayoutHsu: "許氏"}
+	case "shift-symbol-halfwidth":
+		return map[string]string{"off": "全形標點", "on": "Shift＋符號打半形", "all": "所有符號鍵打半形"}
 	}
 	return nil
 }
+
+// symbolWidth 是「標點寬度」（shift-symbol-halfwidth）的值：off、on（Shift＋符號打半形，#258）或 all（所有符號鍵打半形，#282）。
+func (s Settings) symbolWidth() string {
+	switch {
+	case s.ShiftSymbolHalfwidth && s.AllSymbolsHalfwidth:
+		return "all"
+	case s.ShiftSymbolHalfwidth:
+		return "on"
+	}
+	return "off"
+}
+
+// 「所有符號鍵打半形」（#282）時 Ctrl＋標點固定開啟（全形標點只剩這條路），聲調選填暫停（半形的 ' 不能再當切字鍵）。
+// 設定檔裡的值不動，換回其他標點寬度就照舊。
+const (
+	allSymbolsCtrlReason     = "所有符號鍵打半形時固定開啟"
+	allSymbolsTonelessReason = "所有符號鍵打半形時關閉"
+)
+
+// EffectiveCtrlPunctuation 是引擎實際用的「Ctrl＋標點打全形」：所有符號鍵打半形時一律開啟（#282）。
+func (s Settings) EffectiveCtrlPunctuation() bool {
+	return s.CtrlPunctuation || s.symbolWidth() == "all"
+}
+
+// EffectiveToneless 是引擎實際用的「不打聲調也能選字」：所有符號鍵打半形時暫停（#282）。
+func (s Settings) EffectiveToneless() bool { return s.Toneless && s.symbolWidth() != "all" }
 
 // disabledReason 回報某一項目前是否因其他設定而不起作用，以及給人讀的原因；空字串表示可用。
 // 中英混打與 = 開 Emoji 選單依標準排列設計，倚天 41 鍵時停用（#83）；許氏的聲調在字母鍵上，也停用混打，
@@ -759,10 +797,17 @@ func (s Settings) disabledReasonOn(goos, key string) string {
 		if s.KeyboardLayout == LayoutHsu && key == "mixed-input" {
 			return "許氏排列時關閉"
 		}
-		if key == "mixed-input" && s.Toneless {
+		if key == "mixed-input" && s.EffectiveToneless() {
 			return "不打聲調時關閉" // 聲調選填與混打二選一（#150）
 		}
+	case "ctrl-punctuation":
+		if s.symbolWidth() == "all" {
+			return allSymbolsCtrlReason
+		}
 	case "toneless":
+		if s.symbolWidth() == "all" {
+			return allSymbolsTonelessReason
+		}
 		// 只在標準排列生效（#150）：倚天 41 鍵的 ' 是 ㄘ、沒有分隔鍵，許氏一個鍵兼聲母、韻母與聲調。
 		switch s.KeyboardLayout {
 		case LayoutETen:
@@ -770,13 +815,34 @@ func (s Settings) disabledReasonOn(goos, key string) string {
 		case LayoutHsu:
 			return "許氏排列時關閉"
 		}
+	case "space-selects":
+		// 混打實際開著時，注音打完的空白一律是空白、↓ 選字（#78），這一項開或關都沒作用（#288）。
+		// 混打本身停用（倚天、許氏、不打聲調、輸入習慣衝突）時引擎不混打，空白鍵選字照常。
+		if s.MixedInput && s.disabledReasonOn(goos, "mixed-input") == "" {
+			return mixedSpaceReason
+		}
 	case "start-mode":
 		if s.startModeLocked(goos) {
 			return startModeLockedReason
 		}
+	case "zhuyin-error-hint":
+		// 聲調選填（#150）與中英混打（#78）有自己處理沒有字的注音的方式，這一項不作用（#300）。
+		// 兩者本身停用（倚天、許氏、所有符號鍵打半形、輸入習慣衝突）時照常；聲調選填開著時混打也停用，原因寫聲調選填。
+		if s.Toneless && s.disabledReasonOn(goos, "toneless") == "" {
+			return "不打聲調時關閉"
+		}
+		if s.MixedInput && s.disabledReasonOn(goos, "mixed-input") == "" {
+			return zhuyinHintMixedReason
+		}
 	}
 	return ""
 }
+
+// zhuyinHintMixedReason：中英混打開著時「打錯注音時提示」不作用（#300）。
+const zhuyinHintMixedReason = "中英混打時關閉"
+
+// mixedSpaceReason：中英混打開著時空白輸入空格、改按 ↓ 選字，空白鍵選字不起作用（#288）。
+const mixedSpaceReason = "中英混打時關閉，按 ↓ 選字"
 
 // startModeLockedReason：不用 Shift 切換時沒有鍵能從英文切回注音，所以固定從注音開始（#184）。
 const startModeLockedReason = "不用 Shift 切換時固定從注音開始"
@@ -794,6 +860,10 @@ func disabledBy(reason string) string {
 		return "toggle-key"
 	case "不打聲調時關閉": // 中英混打（#150）
 		return "toneless"
+	case allSymbolsCtrlReason, allSymbolsTonelessReason: // #282
+		return "shift-symbol-halfwidth"
+	case mixedSpaceReason, zhuyinHintMixedReason: // #288、#300
+		return "mixed-input"
 	}
 	return ""
 }
@@ -853,11 +923,15 @@ func specs() []spec {
 	out = append(out, spec{"toneless", "不打聲調也能選字", tonelessDescription, "off", []string{"on", "off"},
 		func(s Settings) string { return onOff(s.Toneless) }})
 	// #258：放在已有項目之後，0c-update 列出的順序與舊版相同；設定程式另照頁面排在 Ctrl＋標點下面。
-	out = append(out, spec{"shift-symbol-halfwidth", "Shift＋符號打半形", shiftSymbolHalfwidthDescription(runtime.GOOS), "off", []string{"on", "off"},
-		func(s Settings) string { return onOff(s.ShiftSymbolHalfwidth) }})
+	// #282：擴成三選一，鍵名與 on／off 的意思不變，舊的命令與設定檔照舊。
+	out = append(out, spec{"shift-symbol-halfwidth", "標點寬度", shiftSymbolHalfwidthDescription(runtime.GOOS), "off", []string{"off", "on", "all"},
+		func(s Settings) string { return s.symbolWidth() }})
 	// #273：同上放在最後；設定程式排在「Shift＋符號打半形」下面。
 	out = append(out, spec{"cjk-latin-space", "中英文之間自動加空格", cjkLatinSpaceDescription, "off", []string{"on", "off"},
 		func(s Settings) string { return onOff(s.CJKLatinSpace) }})
+	// #300：同上放在最後；設定程式排在「不打聲調也能選字」上面。
+	out = append(out, spec{"zhuyin-error-hint", "打錯注音時提示", zhuyinErrorHintDescription(runtime.GOOS), "on", []string{"on", "off"},
+		func(s Settings) string { return onOff(s.ZhuyinErrorHint) }})
 	for _, p := range fuzzy.Pairs() {
 		out = append(out, spec{"fuzzy-" + p.ID(), "模糊音 " + p.Symbols(), "把近音的字也列進候選，原音仍排在前面；「自動修正」（實驗）會在上下文明顯支持近音時另外自動改字", DefaultFuzzy, []string{"off", "select", "auto"},
 			func(s Settings) string { return s.FuzzyConfig().Mode(p).String() }})
@@ -913,14 +987,28 @@ func toggleKeyDescription(goos string) string {
 const cjkLatinSpaceDescription = "送出時在中文字和英文字母相連的地方補一個半形空格，例如「用Python寫」送出「用 Python 寫」；組字時照打的顯示。" +
 	"已有空格、標點和數字旁不補；只看這次送出的字，跟前面已經送出的字之間不補"
 
-// shiftSymbolHalfwidthDescription：「Shift＋符號打半形」（#258）的說明：打什麼（Shift＋, 是半形逗號，不是 <）、
-// 全形與 < > 改怎麼打、[ ] 不變、微軟參考本來就半形的鍵照風格（#272）。Mac 的 Ctrl 寫 ⌃。
+// zhuyinErrorHintDescription 是「打錯注音時提示」（#300）的說明：什麼時候擋、怎麼提示（Windows、macOS 提示音，
+// Linux 的 Fcitx5、IBus 沒有統一的提示音，標示注音）、故意打注音文的退路、哪些情況不作用。
+func zhuyinErrorHintDescription(goos string) string {
+	hint := "發出提示音"
+	if goos == "linux" {
+		hint = "把停住的注音標示出來"
+	}
+	return "按了聲調，這個注音卻沒有字（例如 ㄅㄩˊ）時，不收這個聲調、注音留著讓你改，並" + hint + "；開了模糊音時近音有字就照常打出。" +
+		"只有一個注音符號（例如 ㄟ、ㄅ＋空白）時照舊直接留下。要故意打 ㄏㄟˊ 這類注音，在同一個地方馬上再按一次同一個聲調就會留下。中英混打和不打聲調時不作用"
+}
+
+// shiftSymbolHalfwidthDescription：「標點寬度」（#258、#282）的說明。「Shift＋符號打半形」打什麼（Shift＋, 是半形逗號，
+// 不是 <）、[ ] 不變、微軟參考本來就半形的鍵照風格（#272）；「所有符號鍵打半形」打按鍵上的字、Ctrl＋標點固定開、
+// 聲調選填暫停；兩者全形都改按 Ctrl＋符號或 ↓。Mac 的 Ctrl 寫 ⌃。
 func shiftSymbolHalfwidthDescription(goos string) string {
 	ctrl := "Ctrl＋"
 	if goos == "darwin" {
 		ctrl = "⌃"
 	}
-	return "注音模式按 Shift＋符號鍵打半形標點，例如 Shift＋, 打半形逗號、Shift＋. 打半形句號、Shift＋9 打 (、Shift＋; 打 :。全形標點改按 " + ctrl + "符號（例如 " + ctrl + ", 打「，」），或在符號上按 ↓ 換；< > 也在 ↓ 裡。[ ] 照舊打「」；標點操作選微軟參考時，< > ? \" 照舊打按鍵上的字"
+	return "注音模式的符號鍵打全形標點或半形符號。「Shift＋符號打半形」：Shift＋, 打半形逗號、Shift＋. 打半形句號、Shift＋9 打 (、Shift＋; 打 :，[ ] 照舊打「」；標點操作選微軟參考時，< > ? \" 照舊打按鍵上的字。" +
+		"「所有符號鍵打半形」：每個符號鍵都打按鍵上的字，例如 Shift＋- 打 _、Shift＋, 打 <、[ 打 [，這時 " + ctrl + "標點固定開啟，「不打聲調也能選字」暫停。" +
+		"半形時全形標點改按 " + ctrl + "符號（例如 " + ctrl + ", 打「，」），或在符號上按 ↓ 換；< > 也在 ↓ 裡"
 }
 
 // ctrlPunctuationDescription：說明會占用哪些程式快速鍵、可以關掉（#168）。Mac 是 Control 鍵（⌃），程式快速鍵多用 ⌘，
@@ -1044,6 +1132,14 @@ func (s Settings) Items() []Item {
 		value, effective := sp.value(s), ""
 		if sp.key == "start-mode" && reason != "" && value != StartZhuyin {
 			effective = StartZhuyin
+		}
+		// #282：Ctrl＋標點固定開啟、聲調選填暫停。設定程式把停用的開關畫成關閉，固定開啟的要帶 effective 才畫成開，
+		// 設定檔本來就是 on 時也要帶。
+		if reason == allSymbolsCtrlReason {
+			effective = "on"
+		}
+		if reason == allSymbolsTonelessReason {
+			effective = "off"
 		}
 		out = append(out, Item{Key: sp.key, Type: "choice", Values: sp.values, Default: sp.def, Value: value, Label: sp.label, Description: sp.description,
 			Disabled: reason != "", DisabledReason: reason, DisabledBy: disabledBy(reason), Effective: effective, ValueLabels: s.valueLabels(sp.key)})
@@ -1171,11 +1267,17 @@ func (s *Settings) set(key, value string) error {
 		s.CtrlPunctuation = value == "on"
 		s.forget("ctrl_punctuation")
 	case "shift-symbol-halfwidth":
-		s.ShiftSymbolHalfwidth = value == "on"
+		// off：全形標點；on：Shift＋符號打半形（#258）；all：所有符號鍵打半形（#282）。
+		s.ShiftSymbolHalfwidth = value != "off"
+		s.AllSymbolsHalfwidth = value == "all"
 		s.forget("shift_symbol_halfwidth")
+		s.forget("all_symbols_halfwidth")
 	case "cjk-latin-space":
 		s.CJKLatinSpace = value == "on"
 		s.forget("cjk_latin_space")
+	case "zhuyin-error-hint":
+		s.ZhuyinErrorHint = value == "on"
+		s.forget("zhuyin_error_hint")
 	case "caps-lock-english":
 		s.CapsLockEnglish = value == "on"
 		s.forget("caps_lock_english")

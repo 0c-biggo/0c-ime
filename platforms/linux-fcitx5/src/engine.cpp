@@ -514,7 +514,7 @@ private:
         auto &panel = ic->inputPanel();
         panel.reset();
         fcitx::Text preedit;
-        const auto layout = zuin::preeditLayout(snap.preedit, snap.cursorByte());
+        const auto layout = zuin::preeditLayout(snap.preedit, snap.cursorByte(), snap.bell);
         for (const auto &run : layout.runs) {
             auto flags = styleOf(run.style);
             if (run.display) { flags |= fcitx::TextFormatFlag::DontCommit; }

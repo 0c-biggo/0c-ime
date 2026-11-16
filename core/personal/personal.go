@@ -15,6 +15,7 @@ import (
 	"github.com/0c-biggo/0c-ime/core/english"
 	"github.com/0c-biggo/0c-ime/core/lexicon"
 	"github.com/0c-biggo/0c-ime/core/lm"
+	"github.com/0c-biggo/0c-ime/core/symbols"
 	"github.com/0c-biggo/0c-ime/core/vocab"
 	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
@@ -53,8 +54,9 @@ func DefaultParams() Params {
 // 0（未記錄）是加入版本號以前的格式，與 1 相同；2 加入 Pronouns；3 加入 English；
 // 4 加入有上限且獨立於詞彙學習的 EmojiRecent；5 加入表情的常用分數 EmojiStats 與上次選用的
 // = 選單分頁 PaletteTab，EmojiRecent 改為保存（含遲滯的）顯示順序，舊版照樣讀得懂（#124）；
-// 6 加入多字詞的手選紀錄 Confirmed（#218，舊檔由留下的更正推回）與中英混打選過的注音文 ZhuyinKeys（#208，舊檔沒有這份紀錄）。
-const StoreFormat = 6
+// 6 加入多字詞的手選紀錄 Confirmed（#218，舊檔由留下的更正推回）與中英混打選過的注音文 ZhuyinKeys（#208，舊檔沒有這份紀錄）；
+// 7 加入符號選單「最近」分頁的順序 SymbolRecent 與常用分數 SymbolStats（#290，舊檔沒有，讀進來是空的）。
+const StoreFormat = 7
 
 // NewerFormatError 表示個人資料由較新版本寫成；呼叫端不得以目前的結構寫回。
 type NewerFormatError struct{ Format int }
@@ -97,6 +99,9 @@ type Store struct {
 	EmojiRecent []string                   // = 選單的表情顯示順序，最多 64 項；不參與文字學習。
 	EmojiStats  map[string]emoji.Stat      // EmojiRecent 各項的常用分數（衰減後次數）
 	PaletteTab  string                     // 上次真的選了東西的 = 選單分頁：emoji、kaomoji 或 phrases
+	// SymbolRecent 是 ` 符號選單「最近」分頁的顯示順序，最多 symbols.MaxRecent 項，只收目錄裡的符號；不參與文字學習（#290）。
+	SymbolRecent []string
+	SymbolStats  map[string]emoji.Stat // SymbolRecent 各項的常用分數，排序規則同表情
 }
 
 func NewStore() *Store {
@@ -134,6 +139,8 @@ func (s *Store) Clone() *Store {
 	c.English = maps.Clone(s.English)
 	c.EmojiRecent = slices.Clone(s.EmojiRecent)
 	c.EmojiStats = maps.Clone(s.EmojiStats)
+	c.SymbolRecent = slices.Clone(s.SymbolRecent)
+	c.SymbolStats = maps.Clone(s.SymbolStats)
 	return &c
 }
 
@@ -166,6 +173,11 @@ func LoadStore(r io.Reader) (*Store, error) {
 		s.EmojiStats = emoji.SeedStats(s.EmojiRecent)
 	}
 	s.EmojiStats = emoji.CleanStats(s.EmojiStats, s.EmojiRecent)
+	s.SymbolRecent = symbols.CleanRecent(s.SymbolRecent)
+	s.SymbolStats = emoji.KeepStats(s.SymbolStats, s.SymbolRecent)
+	if s.SymbolStats == nil && len(s.SymbolRecent) > 0 { // 有順序沒有分數（手改過的檔）：照順序給初始分數
+		s.SymbolStats = emoji.SeedStats(s.SymbolRecent)
+	}
 	return s, nil
 }
 
@@ -198,6 +210,15 @@ type Model struct {
 
 func NewModel(lex lexicon.Source, sys lm.System) *Model {
 	return &Model{Store: NewStore(), LM: sys, Lex: lex, P: DefaultParams()}
+}
+
+// ResetStore 清掉全部學到的資料（設定程式的「清除學習紀錄」，#301），回到剛安裝時的空白個人資料；
+// 自訂詞彙（Vocab）不在 Store 裡，不受影響。依個人資料建的索引一併作廢，Gen 遞增讓 session 重新解碼。
+func (m *Model) ResetStore() {
+	m.Store = NewStore()
+	m.englishIndex, m.englishIndexStore, m.englishIndexBase = nil, nil, nil
+	m.correctionIndex, m.diversityIndex, m.habitIndex = correctionIndex{}, diversityIndex{}, habitIndex{}
+	m.Gen++
 }
 
 // Prob 回傳 P(w | left)：系統機率為先驗、個人計數為觀察的階層式貝氏調適。

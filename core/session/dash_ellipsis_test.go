@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/symbols"
 )
 
 // #118：中文模式 Shift＋6（^）打刪節號「……」、Shift＋-（_）打破折號「——」，兩種排列都一樣；
@@ -133,9 +134,10 @@ func TestEllipsisAndDashEditAsOneSymbol(t *testing.T) {
 }
 
 func TestArrowsAndNewDashesInSymbols(t *testing.T) {
-	s := newSession()
-	key(s, "`")
-	palette := candidateTexts(s)
+	var palette []string
+	for _, tab := range symbols.Tabs {
+		palette = append(palette, tab.Items...)
+	}
 	for _, want := range []string{"……", "⋯⋯", "——", "―", "─", "︿", "＿", "←", "→", "↑", "↓", "…", "⋯", "—", "－", "～", "＆", "ㄅ"} {
 		if !slices.Contains(palette, want) {
 			t.Errorf("符號選單應包含 %q", want)
@@ -148,7 +150,6 @@ func TestArrowsAndNewDashesInSymbols(t *testing.T) {
 		}
 		seen[item] = true
 	}
-	key(s, proto.KeyEscape)
 
 	// 破折號上按 ↓ 有 ← →（同新酷音的 _ 符號組）；箭頭上按 ↓ 換其他方向。
 	for _, arrow := range []string{"←", "→"} {

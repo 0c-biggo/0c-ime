@@ -149,6 +149,9 @@ type Manifest struct {
 	NeutralExpand    float64           `json:"neutral_expand_penalty"`
 	NeutralTolerant  []string          `json:"neutral_tolerant_last"`
 	Files            map[string]string `json:"files"`
+	// TonePolicy 只在 v2 套件出現（zuin-tone-mask-v1），loadManifest 依 rerank.ValidTonePolicy 核對。
+	// 桌面不依它開未知聲調：沒打聲調的段落照統計引擎，請求不帶 tone_known，打了聲調的分數與 v1 套件的做法相同。
+	TonePolicy *rerank.TonePolicy `json:"tone_policy,omitempty"`
 }
 
 // neutralBases 只在套件宣告 neutral_expand_penalty 時啟用候選擴充；清單為一聲（無聲調符號）的基底。
@@ -198,12 +201,16 @@ func fileSHA(path string) (string, error) {
 }
 
 // 套件契約：encoder 不看前文；序列模型只收外殼確認過的自身提交文字（最多 64 字）。
+// v2 是同一個序列模型協定再加逐音節未知聲調（tone_policy），worker 同時收 v1 與 v2。
 var contracts = map[string]string{
-	"zuin-encoder-runtime-v1":  "empty",
-	"zuin-sequence-runtime-v1": "confirmed_left_64",
+	"zuin-encoder-runtime-v1": "empty",
+	rerank.SequenceSchemaV1:   "confirmed_left_64",
+	rerank.SequenceSchemaV2:   "confirmed_left_64",
 }
 
-func validContract(m Manifest) bool { return m.Schema != "" && contracts[m.Schema] == m.ContextPolicy }
+func validContract(m Manifest) bool {
+	return m.Schema != "" && contracts[m.Schema] == m.ContextPolicy && rerank.ValidTonePolicy(m.Schema, m.TonePolicy)
+}
 
 func contextRunes(m Manifest) int {
 	if m.ContextPolicy == "confirmed_left_64" {

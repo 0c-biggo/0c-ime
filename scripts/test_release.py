@@ -8,6 +8,7 @@ import shutil
 import plistlib
 from pathlib import Path
 import stat
+import struct
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -1442,6 +1443,9 @@ class ReleaseTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "切回「靈犀注音」") as caught:
                 installer.require_desktop_stopped()
         self.assertNotIn("登出", str(caught.exception))
+        with patch.object(installer, "user_processes", return_value=[("0c-server", Path("/proc/2"))]):
+            with self.assertRaisesRegex(ValueError, "不能直接移除。"):  # #280：解除安裝時不說「覆蓋」
+                installer.require_desktop_stopped(verb="移除")
         with patch.object(installer, "user_processes", return_value=[]):
             installer.require_desktop_stopped()
 
@@ -1667,6 +1671,17 @@ class ReleaseTests(unittest.TestCase):
         # 0c-mcp（#126）同樣寫入版本資訊並簽章；說明出現在檔案內容與 SmartScreen 報告。
         info = package_windows.version_info("0c-mcp.exe", "0.2.0-dev.1", False)
         self.assertIn(package_windows.DESCRIPTIONS["0c-mcp.exe"].encode("utf-16-le"), info)
+        # 0c-updatew（#289）：排程與通知按鈕執行的啟動器必須是 GUI 子系統（2），主控台程式（3）會閃出視窗。
+        self.assertIn("0c-updatew.exe", package_windows.DESCRIPTIONS)
+
+        def with_subsystem(value):
+            body = bytearray(pe() + bytes(64))
+            struct.pack_into("<H", body, 0x40 + 24 + 68, value)
+            target = self.root / f"subsystem-{value}.exe"
+            target.write_bytes(bytes(body))
+            return target
+        self.assertEqual(package_windows.pe_subsystem(with_subsystem(2)), package_windows.PE_SUBSYSTEM_GUI)
+        self.assertEqual(package_windows.pe_subsystem(with_subsystem(3)), 3)
 
     def test_macos_packaging_checks_the_prebuilt_settings_app(self):
         arm64 = package_macos.MACHO_ARM64 + bytes(40)
@@ -2934,7 +2949,7 @@ Successfully verified: 0c-update.exe
         node = shutil.which("node")
         if not node:
             self.skipTest("沒有 node")
-        for name in ("app.js", "models.js", "vocab.js", "vocab-text.js"):
+        for name in ("app.js", "models.js", "vocab.js", "vocab-text.js", "personal-reset.js"):
             app = Path(__file__).resolve().parents[1] / "platforms/settings/ui" / name
             result = subprocess.run([node, "--check", str(app)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, name + "：" + result.stderr)
@@ -2945,6 +2960,15 @@ Successfully verified: 0c-update.exe
         if not node:
             self.skipTest("沒有 node")
         test = Path(__file__).resolve().parents[1] / "platforms/settings/test/engine_state_test.js"
+        result = subprocess.run([node, "--test", str(test)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_settings_ui_personal_reset(self):
+        # #301「我的詞彙」頁「靈犀學到的」底下的清除學習紀錄：確認文案、0c-update personal reset -json 結果的提示，成功時才通知清單重讀。
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("沒有 node")
+        test = Path(__file__).resolve().parents[1] / "platforms/settings/test/personal_reset_test.js"
         result = subprocess.run([node, "--test", str(test)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
@@ -3140,15 +3164,17 @@ class HFModelsTests(unittest.TestCase):
         lock = json.loads(self.hf.LOCK.read_bytes())
         for role in self.hf.ROLES:
             self.assertEqual(self.hf.model_identity(role, lock["models"][role]["files"]["model.onnx"]["sha256"]), "upstream")
-            self.assertEqual(self.hf.model_identity(role, self.OLD[role]), "equivalent")
             self.assertIsNone(self.hf.model_identity(role, "c" * 64))
+        # 0.2.12 select 換成 d512-cv2-20261111：0.2.2 以前與 0.2.3–0.2.11 內建的 select 都不再是上游，punct 照舊
+        self.assertEqual(self.hf.model_identity("punct", self.OLD["punct"]), "equivalent")
+        self.assertIsNone(self.hf.model_identity("select", self.OLD["select"]))
+        self.assertIsNone(self.hf.model_identity("select", "71af1f0e77b2752cc71cbc04bf19c8e8f2e765662246f766e65a2822bab4e66e"))
         self.assertIsNone(self.hf.model_identity("punct", self.OLD["select"]))  # 不跨角色
         # models.lock 換了 revision：舊的等價紀錄不再適用
-        lock["models"]["select"]["revision"] = "e" * 40
+        lock["models"]["punct"]["revision"] = "e" * 40
         bumped = self.root / "bumped.lock.json"
         bumped.write_text(json.dumps(lock), encoding="utf-8")
-        self.assertIsNone(self.hf.model_identity("select", self.OLD["select"], bumped))
-        self.assertEqual(self.hf.model_identity("punct", self.OLD["punct"], bumped), "equivalent")
+        self.assertIsNone(self.hf.model_identity("punct", self.OLD["punct"], bumped))
         # 等價清單與 Go 編進 0c-update 的是同一份，記的上游與 models.lock 一致
         equivalent = json.loads(self.hf.EQUIVALENT.read_text(encoding="utf-8"))
         real = json.loads(self.hf.LOCK.read_bytes())["models"]

@@ -47,7 +47,9 @@ struct PreeditLayout {
 // 標示看起來就像選取了文字（2026-10-18 使用者在 A/B 截圖中選定括號）。游標照舊停在範圍外側：
 // 範圍左端的游標在【之前，右端的在】之後。
 // cursor 是游標在原本組字（segments 接起來）中的 UTF-8 位元組位置（Snapshot::cursorByte）。
-inline PreeditLayout preeditLayout(const std::vector<Segment> &segments, int cursor) {
+// bell（快照的 bell，#300 打錯注音時提示）：按了聲調但讀音沒有字，Fcitx5 沒有統一的提示音，停住的注音（pending）反白，
+// 下一個快照就恢復成一般的底線。
+inline PreeditLayout preeditLayout(const std::vector<Segment> &segments, int cursor, bool bell = false) {
     static const std::string open = "【", close = "】";
     PreeditLayout out;
     int at = 0, shift = 0;
@@ -58,7 +60,9 @@ inline PreeditLayout preeditLayout(const std::vector<Segment> &segments, int cur
             out.runs.push_back({open, PreeditStyle{}, true});
             if (cursor > at) { shift += static_cast<int>(open.size()); }
         }
-        out.runs.push_back({g.text, preeditStyle(g.style), false});
+        auto style = preeditStyle(g.style);
+        if (bell && g.style == "pending") { style.highlight = true; }
+        out.runs.push_back({g.text, style, false});
         at += static_cast<int>(g.text.size());
         if (marked(i) && !marked(i + 1)) {
             out.runs.push_back({close, PreeditStyle{}, true});

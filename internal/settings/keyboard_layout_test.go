@@ -80,8 +80,9 @@ func TestETenDisablesMixedAndEmojiItems(t *testing.T) {
 		}
 		return out
 	}
-	if d := disabled(s); len(d) != 0 {
-		t.Fatalf("標準排列沒有停用的項目：%v", d)
+	// 標準排列時混打起作用，只有空白鍵選字（#288）與打錯注音時提示（#300）停用；倚天時混打停用，兩者恢復。
+	if d := disabled(s); len(d) != 2 || d["space-selects"] != mixedSpaceReason || d["zhuyin-error-hint"] != zhuyinHintMixedReason {
+		t.Fatalf("標準排列只有空白鍵選字與打錯注音時提示因混打停用：%v", d)
 	}
 	if err := s.Set("keyboard-layout", "eten"); err != nil {
 		t.Fatal(err)
@@ -99,7 +100,7 @@ func TestETenDisablesMixedAndEmojiItems(t *testing.T) {
 	if err := s.Set("keyboard-layout", "standard"); err != nil {
 		t.Fatal(err)
 	}
-	if d := disabled(s); len(d) != 0 || !s.MixedInput || s.EmojiShortcut != "equals" {
+	if d := disabled(s); len(d) != 2 || d["space-selects"] != mixedSpaceReason || d["zhuyin-error-hint"] != zhuyinHintMixedReason || !s.MixedInput || s.EmojiShortcut != "equals" {
 		t.Fatalf("切回標準排列恢復原本的值：%v %+v", d, s)
 	}
 }

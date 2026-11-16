@@ -83,7 +83,7 @@ func Key(syls []Syllable) string {
 // Composer 逐符號組出一個音節。同類別的符號後者取代前者，符合一般注音輸入習慣。
 type Composer struct {
 	slot  [Tone]rune // 以 Class 為索引；Initial..Final
-	order []Class    // 輸入順序，供 Backspace 使用
+	order []Class    // 輸入順序（Empty 用；退格照畫面順序，#309）
 	// keys 是依狀態解讀按鍵的排列（許氏，#183）打出目前符號的按鍵：從空的組音狀態依序重播這些按鍵，
 	// 會得到現在的符號。退格時去掉最後一鍵重播，才能把那一鍵順便改掉的符號（ㄓ→ㄐ）一起還原。
 	// 空字串表示沒有記錄（一鍵一符號的排列，或符號不是由按鍵組成）；任何直接修改符號的操作都清掉它。
@@ -174,16 +174,16 @@ func (c *Composer) Add(r rune) (done Syllable, ok bool) {
 	return "", false
 }
 
-// Backspace 移除最後輸入的符號；沒有符號時回傳 false。
+// Backspace 移除畫面上最後一個符號（韻母 → 介音 → 聲母），跟新酷音、小麥注音一樣；沒有符號時回傳 false。
+// 不照聲母、介音、韻母的順序打時，退掉的是看得到的最後一個，不是最後按的那個（#309）。
 func (c *Composer) Backspace() bool {
-	if c.Empty() {
-		return false
+	for cl := Final; cl >= Initial; cl-- {
+		if c.slot[cl] != 0 {
+			c.Remove(cl)
+			return true
+		}
 	}
-	last := c.order[len(c.order)-1]
-	c.order = c.order[:len(c.order)-1]
-	c.slot[last] = 0
-	c.keys = ""
-	return true
+	return false
 }
 
 // Reset 清空。

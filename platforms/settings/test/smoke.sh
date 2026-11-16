@@ -53,7 +53,7 @@ run_update() { local name=$1; shift; HOME=$(home_of "$name") "$UPDATE_BIN" "$@";
 NAV=11
 tabs() { local n=$1; local keys=(); for _ in $(seq "$n"); do keys+=(Tab); done; xdotool key --delay 120 "${keys[@]}"; }
 
-# SMOKE_ONLY=vocab／models：只跑「我的詞彙」（vocab.sh）或「模型」（models.sh），開發時省時間。
+# SMOKE_ONLY=vocab／models／styles／scroll／personal：只跑「我的詞彙」（vocab.sh）、「模型」（models.sh）等其中一部分，開發時省時間。
 if [ -z "${SMOKE_ONLY:-}" ]; then
 
 # ---- 場景 A：全新安裝，沒有設定檔也沒有引擎 ----
@@ -359,6 +359,8 @@ for _ in range(80):
         ok=value.get('emoji_equals_first') == (mode=='first_on')
     elif mode.startswith('emoji_'):
         ok=value.get('emoji_shortcut') == ('equals' if mode=='emoji_on' else 'off')
+    elif mode.startswith('hint_'):
+        ok=value.get('zhuyin_error_hint') == (mode=='hint_on')
     else:
         expected='select' if mode=='fuzzy_on' else 'off'
         # 模糊音預設 select：維持預設的配對不寫入設定檔，關閉時明確寫 off。
@@ -407,11 +409,19 @@ if window_up; then
   check "Emoji 重新啟用後子選項可再次操作" toggle_value first_off
 else bad "toggles/keyboard 重新開啟失敗"; cat /tmp/app-toggles-keyboard.log; fi
 stop_app
-# 模糊音在「選字」最後：原有 9 項＋7 項選字習慣規則之後（導覽後第 17 個）。
+# 「打錯注音時提示」（#300，預設開）在「選字」的不打聲調後面（導覽後第 10 個）；空白鍵關閉、再開。
+# 模糊音在「選字」最後：原有 10 項＋7 項選字習慣規則之後（導覽後第 18 個）。
 launch toggles candidates
 if window_up; then
   sleep 2.5
-  tabs $((NAV + 17)); xdotool key space
+  tabs $((NAV + 10)); xdotool key space
+  check "預設開啟的打錯注音時提示可以關閉，保留未知設定" toggle_value hint_off
+  sleep 1
+  import -window root "$OUT/zhuyin-error-hint-off.png"
+  xdotool key space
+  check "打錯注音時提示可以重新開啟" toggle_value hint_on
+  sleep 1
+  tabs 8; xdotool key space
   check "預設開啟的模糊音總開關一次關閉四組，保留未知設定" toggle_value fuzzy_off
   sleep 1
   import -window root "$OUT/toggles-fuzzy-off.png"
@@ -506,14 +516,24 @@ if window_up; then
   sleep 3
   check "Ctrl＋標點開關可關閉" grep -q '"ctrl_punctuation": false' "$(settings_of eten)"
   import -window root "$OUT/ctrl-punctuation-off.png"
-  # 再下一項是「Shift＋符號打半形」（#258），預設關閉；空白鍵開啟，再按一次關閉。
-  xdotool key Tab space
+  # 再下一項是「標點寬度」（#258、#282），三選一的單選，預設「全形標點」；→ 依序選 Shift＋符號打半形、所有符號鍵打半形，
+  # ← 兩次回到全形標點。所有符號鍵打半形時上面的 Ctrl＋標點顯示停用（固定開啟），設定檔裡的 false 不動。
+  xdotool key Tab Right
   sleep 3
-  check "Shift＋符號打半形開關可開啟" grep -q '"shift_symbol_halfwidth": true' "$(settings_of eten)"
+  check "標點寬度可選 Shift＋符號打半形" grep -q '"shift_symbol_halfwidth": true' "$(settings_of eten)"
+  check "Shift＋符號打半形不是所有符號鍵" grep -q '"all_symbols_halfwidth": false' "$(settings_of eten)"
   import -window root "$OUT/shift-symbol-halfwidth-on.png"
-  xdotool key space
+  xdotool key Right
   sleep 3
-  check "Shift＋符號打半形開關可關閉" grep -q '"shift_symbol_halfwidth": false' "$(settings_of eten)"
+  check "標點寬度可選所有符號鍵打半形" grep -q '"all_symbols_halfwidth": true' "$(settings_of eten)"
+  check "所有符號鍵打半形不改設定檔的 Ctrl＋標點" grep -q '"ctrl_punctuation": false' "$(settings_of eten)"
+  import -window root "$OUT/all-symbols-halfwidth.png"
+  xdotool key Left
+  sleep 3
+  xdotool key Left
+  sleep 3
+  check "標點寬度可選回全形標點" grep -q '"shift_symbol_halfwidth": false' "$(settings_of eten)"
+  check "全形標點時所有符號鍵也關" grep -q '"all_symbols_halfwidth": false' "$(settings_of eten)"
   # 再下一項是「中英文之間自動加空格」（#273），預設關閉；空白鍵開啟，再按一次關閉。
   xdotool key Tab space
   sleep 3
@@ -605,6 +625,36 @@ if window_up; then
   import -window root "$OUT/toneless-off.png"
 else bad "toneless/candidates 視窗沒有出現"; cat /tmp/app-toneless-candidates.log; fi
 stop_app
+
+# ---- 中英混打（#288）：混打開著時空白一律輸入空格、↓ 選字，空白鍵選字反灰並附原因，連到「中英切換」；關掉混打就恢復 ----
+new_home mixed
+printf '{"schema":1,"mixed_input":true,"space_selects":true}\n' > "$(base_of mixed)/settings.json"
+run_update mixed settings -json > "$OUT/mixed-settings.json"
+check "混打時契約標示空白鍵選字停用、指向混打，值保留 on" python3 - "$OUT/mixed-settings.json" <<'PY_MIXED'
+import json,sys
+items={x['key']:x for x in json.load(open(sys.argv[1]))['items']}
+it=items['space-selects']
+ok=it.get('disabled') and it.get('disabled_reason')=='中英混打時關閉，按 ↓ 選字' and it.get('disabled_by')=='mixed-input'
+ok=ok and it['value']=='on' and not it.get('effective') and not items['mixed-input'].get('disabled')
+sys.exit(0 if ok else 1)
+PY_MIXED
+# 「選字」頁：空白鍵選字反灰（按不到），它下面的「到「中英切換」修改「中英混打（試用）」」是導覽後第 3 個；
+# 按了切到中英切換頁、焦點在混打開關，空白把混打關掉。
+launch mixed candidates
+if window_up; then
+  sleep 2.5
+  import -window root "$OUT/mixed-candidates.png"
+  tabs $((NAV + 3)); xdotool key Return
+  sleep 1.5
+  import -window root "$OUT/mixed-goto-mode.png"
+  xdotool key space
+  sleep 3
+  check "從空白鍵選字跳到混打並關閉，空白鍵選字原值不動" bash -c "grep -q '\"mixed_input\": false' '$(settings_of mixed)' && grep -q '\"space_selects\": true' '$(settings_of mixed)'"
+else bad "mixed/candidates 視窗沒有出現"; cat /tmp/app-mixed-candidates.log; fi
+stop_app
+run_update mixed settings -json > "$OUT/mixed-off-settings.json"
+check "關掉混打後空白鍵選字恢復可改" python3 -c "import json,sys; it=next(x for x in json.load(open(sys.argv[1]))['items'] if x['key']=='space-selects'); sys.exit(1 if it.get('disabled') else 0)" "$OUT/mixed-off-settings.json"
+shoot mixed candidates
 
 # ---- 不用 Shift 切換（#184）：開始時的中英模式固定為注音、反灰並附原因，設定檔的 english 保留；改回用 Shift 照原本的英文 ----
 new_home noshift
@@ -738,6 +788,9 @@ if [ "${SMOKE_ONLY:-styles}" = styles ]; then . "$(dirname "$0")/styles.sh"; fi
 
 # ---- 捲動位置（#268）----
 if [ "${SMOKE_ONLY:-scroll}" = scroll ]; then . "$(dirname "$0")/scroll.sh"; fi
+
+# ---- 清除學習紀錄（#301）----
+if [ "${SMOKE_ONLY:-personal}" = personal ]; then . "$(dirname "$0")/personal.sh"; fi
 
 echo "SMOKE_RESULT=$([ $fail -eq 0 ] && echo PASS || echo FAIL)"
 exit $fail

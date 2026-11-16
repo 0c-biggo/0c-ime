@@ -221,6 +221,15 @@ pub fn models_args(action: &str) -> Result<(Vec<String>, u64), String> {
     Ok((vec!["models".to_string(), action.to_string(), "-json".to_string()], timeout))
 }
 
+/// 「清除學習紀錄」（#301）：只有 reset。0c-update personal reset -json 在引擎執行中時請它清空並存檔，
+/// 遇到不支援的舊引擎會先等它交接（最多 40 秒），所以逾時放寬到 120 秒。
+pub fn personal_args(action: &str) -> Result<(Vec<String>, u64), String> {
+    match action {
+        "reset" => Ok((vec!["personal".to_string(), "reset".to_string(), "-json".to_string()], 120)),
+        _ => Err("未知的學習紀錄動作".to_string()),
+    }
+}
+
 /// 設定視窗本身不離開本機頁面（local_origin），外部網址交給系統瀏覽器；只放行 Hugging Face 的模型頁
 /// （0c-update models status 的 url），字元限制在網址路徑用得到的範圍，不會被當成參數或指令。
 pub fn browser_url(url: &str) -> Result<&str, String> {
@@ -796,6 +805,14 @@ mod tests {
             std::thread::sleep(Duration::from_millis(25));
         }
         assert_eq!(value.unwrap()["got"]["op"], "list");
+    }
+
+    #[test]
+    fn personal_args_only_reset() {
+        assert_eq!(personal_args("reset").unwrap(), (strings(&["personal", "reset", "-json"]), 120));
+        for bad in ["", "status", "reset -json", "-json", "remove"] {
+            assert!(personal_args(bad).is_err(), "{bad:?}");
+        }
     }
 
     #[test]

@@ -81,10 +81,10 @@ func TestEmbeddedLockMatchesUpstream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if l.SHA256 != "59a021df3441fbfa5db32008bde4b9f84e60cd7eb08e68df479c74466585fd39" {
+	if l.SHA256 != "84f5195065b5b4e3124d2af0e09c874b08a0be9eec0db354f61f7e3647adfdb7" {
 		t.Fatalf("models.lock 雜湊 %s", l.SHA256)
 	}
-	if l.Models[RoleSelect].Files["model.onnx"].SHA256 != "71af1f0e77b2752cc71cbc04bf19c8e8f2e765662246f766e65a2822bab4e66e" ||
+	if l.Models[RoleSelect].Files["model.onnx"].SHA256 != "4a80caf18acbaddde10c908dcbf35919908d616e94618cdde71fc3409c969261" ||
 		l.Models[RolePunct].Files["model.onnx"].SHA256 != "4db3ed40df777347d9c455da01285b01de192d4c210c5f7cd9f0646c727880d8" {
 		t.Fatal("models.lock 的權重雜湊不是 Hugging Face 公開版")
 	}
@@ -101,7 +101,8 @@ func TestEmbeddedLockMatchesUpstream(t *testing.T) {
 	}
 }
 
-// equivalent.json：0.2.2 以前官網套件內建的 model.onnx 與 models.lock 等價；models.lock 換了 revision 就不再成立。
+// equivalent.json：0.2.2 以前官網套件內建的 model.onnx 與 models.lock 等價；models.lock 換了 revision 就不再成立
+// （0.2.12 select 換成 d512-cv2-20261111 後，equivalent.json 只剩 punct）。
 func TestEquivalentHashesFollowTheLock(t *testing.T) {
 	l, err := ParseLock(upstream.Lock)
 	if err != nil {
@@ -116,7 +117,8 @@ func TestEquivalentHashesFollowTheLock(t *testing.T) {
 	for _, c := range []struct{ role, sha, want string }{
 		{RoleSelect, l.Models[RoleSelect].Files["model.onnx"].SHA256, MatchUpstream},
 		{RolePunct, l.Models[RolePunct].Files["model.onnx"].SHA256, MatchUpstream},
-		{RoleSelect, oldSelect, MatchEquivalent},
+		{RoleSelect, oldSelect, MatchNone},                                                          // select 換了 revision
+		{RoleSelect, "71af1f0e77b2752cc71cbc04bf19c8e8f2e765662246f766e65a2822bab4e66e", MatchNone}, // 0.2.3–0.2.11 的公開版
 		{RolePunct, oldPunct, MatchEquivalent},
 		{RolePunct, oldSelect, MatchNone}, // 不跨角色
 		{RoleSelect, strings.Repeat("c", 64), MatchNone},
@@ -127,16 +129,16 @@ func TestEquivalentHashesFollowTheLock(t *testing.T) {
 		}
 	}
 	// 沒有等價清單時只認 models.lock 本身
-	if l.Match(RoleSelect, oldSelect, Equivalents{}) != MatchNone {
+	if l.Match(RolePunct, oldPunct, Equivalents{}) != MatchNone {
 		t.Fatal("沒有等價清單也認了舊雜湊")
 	}
 	// 上游換了 revision：舊的等價紀錄不再適用
 	bumped := l
 	bumped.Models = map[string]Model{RoleSelect: l.Models[RoleSelect], RolePunct: l.Models[RolePunct]}
-	m := bumped.Models[RoleSelect]
+	m := bumped.Models[RolePunct]
 	m.Revision = strings.Repeat("e", 40)
-	bumped.Models[RoleSelect] = m
-	if bumped.Match(RoleSelect, oldSelect, eq) != MatchNone || bumped.Match(RolePunct, oldPunct, eq) != MatchEquivalent {
+	bumped.Models[RolePunct] = m
+	if bumped.Match(RolePunct, oldPunct, eq) != MatchNone || l.Match(RolePunct, oldPunct, eq) != MatchEquivalent {
 		t.Fatal("換了 revision 的角色仍認舊雜湊")
 	}
 	if _, err := ParseEquivalents([]byte(`{"schema":1,"models":{"select":{"repository":"r","revision":"abcdef0","model.onnx":"x"}}}`)); err == nil {
@@ -294,8 +296,8 @@ func assertEmpty(t *testing.T, s Store) {
 func TestInstallDownloadsVerifiesAndPairs(t *testing.T) {
 	f := newFixture(t)
 	s := Store{Root: filepath.Join(t.TempDir(), "models")}
-	if need := s.Inspect(f.lock, dictA).Need(); need != "download" {
-		t.Fatalf("need %s", need)
+	if in := s.Inspect(f.lock, dictA); in.Need() != "download" || in.DownloadSize() != f.lock.Size() {
+		t.Fatalf("need %s，要下載 %d／%d", in.Need(), in.DownloadSize(), f.lock.Size())
 	}
 	var phases []string
 	err := s.Install(context.Background(), f.lock, f.pairing(t, dictA), dictA, f.fetcher, func(phase string, done, total int64) {
@@ -312,7 +314,7 @@ func TestInstallDownloadsVerifiesAndPairs(t *testing.T) {
 	if strings.Join(phases, ",") != "downloading,verifying,pairing" {
 		t.Fatalf("階段 %v", phases)
 	}
-	if in := s.Inspect(f.lock, dictA); in.Need() != "none" || !in.Weights {
+	if in := s.Inspect(f.lock, dictA); in.Need() != "none" || !in.Weights || in.DownloadSize() != 0 {
 		t.Fatalf("%+v", in)
 	}
 	for _, role := range Roles {
@@ -421,10 +423,14 @@ func TestRepairAfterDictionaryChangeDoesNotDownload(t *testing.T) {
 	}
 	weights := filepath.Join(s.WeightsDir(RoleSelect, f.lock.Models[RoleSelect].Revision), "model.onnx")
 	before, hits := inode(t, weights), f.hub.hits.Load()
-	if in := s.Inspect(f.lock, dictB); in.Need() != "repair" {
-		t.Fatalf("換字典後 need=%s", in.Need())
+	if in := s.Inspect(f.lock, dictB); in.Need() != "repair" || in.DownloadSize() != 0 {
+		t.Fatalf("換字典後 need=%s，要下載 %d", in.Need(), in.DownloadSize())
 	}
-	if err := s.Install(context.Background(), f.lock, f.pairing(t, dictB), dictB, nil, nil); err != nil {
+	if err := s.Install(context.Background(), f.lock, f.pairing(t, dictB), dictB, nil, func(phase string, done, total int64) {
+		if total != 0 || done != 0 {
+			t.Fatalf("重新配對不下載：進度 %s %d/%d", phase, done, total)
+		}
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if f.hub.hits.Load() != hits {
@@ -471,8 +477,14 @@ func TestModelsLockChangeNeedsRedownload(t *testing.T) {
 	}
 	// 新版只換了選字模型
 	f := newFixture(t, strings.Repeat("9", 40), old.lock.Models[RolePunct].Revision)
-	if need := s.Inspect(f.lock, dictA).Need(); need != "redownload" {
-		t.Fatalf("同字典、新 models.lock：need=%s", need)
+	in := s.Inspect(f.lock, dictA)
+	if in.Need() != "redownload" {
+		t.Fatalf("同字典、新 models.lock：need=%s", in.Need())
+	}
+	// 要下載的只有換了的選字（#306）：沿用的補標點不算進 download_size
+	selectSize := f.lock.Models[RoleSelect].Size()
+	if in.DownloadSize() != selectSize || in.Download[RoleSelect] != selectSize || in.Download[RolePunct] != 0 {
+		t.Fatalf("要下載 %d（%v），應只有選字的 %d", in.DownloadSize(), in.Download, selectSize)
 	}
 	if need := s.Inspect(f.lock, dictB).Need(); need != "redownload" {
 		t.Fatalf("新字典、新 models.lock：need=%s", need)
@@ -492,8 +504,17 @@ func TestModelsLockChangeNeedsRedownload(t *testing.T) {
 	}
 	f.hub.corrupt = ""
 	hits := f.hub.hits.Load()
-	if err := s.Install(context.Background(), f.lock, f.pairing(t, dictB), dictB, f.fetcher, nil); err != nil {
+	var last int64 = -1
+	if err := s.Install(context.Background(), f.lock, f.pairing(t, dictB), dictB, f.fetcher, func(phase string, done, total int64) {
+		if total != selectSize || done > total {
+			t.Fatalf("進度只算要下載的選字：%s %d/%d（應為 %d）", phase, done, total, selectSize)
+		}
+		last = done
+	}); err != nil {
 		t.Fatal(err)
+	}
+	if last != selectSize {
+		t.Fatalf("進度最後是 %d，應為 %d", last, selectSize)
 	}
 	if got := f.hub.hits.Load() - hits; got != int64(len(f.lock.Models[RoleSelect].Files)) {
 		t.Fatalf("沒換的補標點應沿用，實際請求 %d 次", got)

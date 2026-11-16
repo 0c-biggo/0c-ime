@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/0c-biggo/0c-ime/internal/updatew"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -39,6 +40,10 @@ func shellDiagnostics() map[string]any {
 		}
 	}
 	out["install_base"] = basePath()
+	// 背景更新啟動器的退回紀錄：新版 0c-update 連續異常而改用上一版時，從這裡看得到原因與時間。
+	if s, err := updatew.Load(basePath()); err == nil && (s.Stable != "" || len(s.Events) > 0) {
+		out["updater_launcher"] = s
+	}
 	// 最近用過輸入法的程式與輸入法在各程式的判定（#257）：只有程式檔名、時間與判定種類，不含輸入內容。
 	if apps := tsfAppsFromFile(filepath.Join(basePath(), "tsf.log"), time.Now()); apps != nil {
 		out["tsf_log"] = apps

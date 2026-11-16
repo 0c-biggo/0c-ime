@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 use windows::Win32::Foundation::{E_INVALIDARG, HWND, LPARAM, RECT, WPARAM};
+use windows::Win32::System::Diagnostics::Debug::MessageBeep;
 use windows::Win32::System::Variant::{VariantClear, VT_I4};
 use windows::Win32::UI::TextServices::{
     IEnumTfDisplayAttributeInfo, ITfCompartment,
@@ -20,7 +21,7 @@ use windows::Win32::UI::TextServices::{
     ITfThreadMgrEventSink_Impl, ITfUIElementMgr, TfLayoutCode, GUID_COMPARTMENT_KEYBOARD_OPENCLOSE,
     TF_INVALID_COOKIE, TF_LC_DESTROY, TF_TMAE_COMLESS, TF_TMAE_SECUREMODE, TF_TMAE_UIELEMENTENABLEDONLY,
 };
-use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId, MB_OK};
 use windows_core::{implement, ComObject, IUnknownImpl, Interface, Ref, BOOL, GUID};
 use zuin_win_common::{has_content, notice_expires, UiCandidate, UiMessage, NOTICE_MS};
 
@@ -195,6 +196,13 @@ enum FocusChange {
 }
 
 /// `owner`：組字所在的文件（沒在組字時為 None）。泛型只為了能在測試裡用一般型別代替 ITfDocumentMgr。
+/// 打錯注音時提示（#300，快照的 bell）：系統的預設提示音（MB_OK），照使用者的音效配置，關掉系統音效就不響。
+/// 微軟注音舊版拼錯時也是嗶一聲。
+fn bell() {
+    let ok = unsafe { MessageBeep(MB_OK) }.is_ok();
+    zdebug!("bell: MessageBeep ok={ok}");
+}
+
 fn focus_change<T: PartialEq>(focus: Option<&T>, owner: Option<&T>) -> FocusChange {
     match (focus, owner) {
         (_, None) => FocusChange::Left,
@@ -410,6 +418,9 @@ impl TextService_Impl {
     fn present(&self, ctx: Option<&ITfContext>, snapshot: &Snapshot) -> bool {
         let eaten = self.present_in_edit(ctx, snapshot, None);
         self.sync_langbar();
+        if snapshot.bell {
+            bell();
+        }
         eaten
     }
 

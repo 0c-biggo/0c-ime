@@ -108,6 +108,9 @@ var iconsChanged = func() {
 
 func removeSettingsEntry() { _ = settingsapp.RemoveDesktopEntry(settingsapp.DataHome()) }
 
+// restoreSettingsEntry（完整安裝之後）：Linux 照常維護，見 ensureSettingsEntry。
+func restoreSettingsEntry() { ensureSettingsEntry() }
+
 func readOSRelease() string {
 	b, _ := os.ReadFile("/etc/os-release")
 	return string(b)

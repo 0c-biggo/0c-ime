@@ -151,7 +151,7 @@ func serve() string {
 	eng.Fuzzy = config.FuzzyConfig()
 	eng.InputStyle = config.ProfileRules()
 	eng.MixedInput = config.MixedInput
-	eng.Toneless = config.Toneless // #150：開啟時 session 停用混打的自動判斷；health 的 mixed_input 照設定檔回報
+	eng.Toneless = config.EffectiveToneless() // #150：開啟時 session 停用混打的自動判斷；health 的 mixed_input 照設定檔回報。所有符號鍵打半形時暫停（#282）
 	eng.EnglishAutocomplete = config.EnglishAutocomplete
 	eng.CandidateBeforeCursor = config.CandidateCursor == "before"
 	eng.EmojiShortcut = config.EmojiShortcut
@@ -159,9 +159,11 @@ func serve() string {
 	eng.EscKeepComposition = !config.EscClear
 	eng.SpaceInsertsSpace = !config.SpaceSelects
 	eng.AdvanceAfterSelect = config.AdvanceAfterSelect
-	eng.CtrlPunct = config.CtrlPunctuation                 // #168
+	eng.CtrlPunct = config.EffectiveCtrlPunctuation()      // #168；所有符號鍵打半形時固定開（#282）
 	eng.ShiftSymbolHalfwidth = config.ShiftSymbolHalfwidth // #258
+	eng.AllSymbolsHalfwidth = config.AllSymbolsHalfwidth   // #282
 	eng.CJKLatinSpace = config.CJKLatinSpace               // #273
+	eng.ZhuyinErrorHint = config.ZhuyinErrorHint           // #300
 	// #173：Windows、Linux 的設定；macOS 開 Caps Lock 一律切到英文（#84），不看設定檔的值。
 	capsSetting := config.CapsLockEnglish && (settings.CapsLockEnglishSetting(runtime.GOOS) || config.ProfileRules().CapsLetter == "lower")
 	eng.CapsLockEnglish = capsLockRequests(runtime.GOOS, capsSetting)
@@ -417,6 +419,8 @@ func serve() string {
 	srv := &ipc.Server{Engine: eng, Log: lg, VocabDisabled: vocabDisabled, OnVocab: func() { vocabEdited() },
 		OnCommit: func() { schedule.changed(time.Now(), false); remind.markCommitted() },
 		OnForget: func() { schedule.changed(time.Now(), true) }}
+	// 設定程式的「清除學習紀錄」（#301）：清空記憶體裡的個人資料並立刻存檔，不重啟引擎。
+	srv.ResetPersonal = personalReset{mu: &saveMu, eng: eng, path: *user, writable: writable, state: &personalState, schedule: schedule}.run
 	srv.BeforeDrain = func() error {
 		if err := save(); err != nil {
 			return err
@@ -462,8 +466,13 @@ func serve() string {
 		"ctrl_punctuation_keys": proto.CtrlPunctKeys,
 		// #258：Shift＋符號打半形；外殼不用看（沒在組字時交還的鍵已從 idle_keys 拿掉），0c-update 拿它跟設定檔比較。
 		"shift_symbol_halfwidth": fmt.Sprint(eng.ShiftSymbolHalfwidth),
+		// #282：所有符號鍵打半形；外殼不用看（交還的鍵已從 idle_keys 拿掉），0c-update 拿它跟設定檔的標點寬度比較。
+		// 舊引擎沒有這一項，標點寬度選 all 時 0c-update 照舊顯示待套用。
+		"all_symbols_halfwidth": fmt.Sprint(eng.AllSymbolsHalfwidth),
 		// #273：中英文之間自動加空格；外殼不用看（送出的 Commit 已補好），0c-update 拿它跟設定檔比較。
 		"cjk_latin_space": fmt.Sprint(eng.CJKLatinSpace),
+		// #300：打錯注音時提示；外殼不用看（快照的 bell 說這一鍵要提示），0c-update 拿它跟設定檔比較。
+		"zhuyin_error_hint": fmt.Sprint(eng.ZhuyinErrorHint),
 		// #173：引擎認得 caps_lock 請求而且設定「Caps Lock 開著時直接打英文」開著；外殼只在這一項是 true 時回報
 		// Caps Lock 狀態，舊引擎沒有這一項、或設定關閉時，注音模式照舊不理 Caps Lock（#168）。
 		"caps_lock_english": fmt.Sprint(capsSetting),

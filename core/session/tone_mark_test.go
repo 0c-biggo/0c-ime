@@ -136,13 +136,8 @@ func TestToneMarkDownOffersOriginalKeySecond(t *testing.T) {
 	}
 	// 從符號選單選的聲調符號沒有原按鍵，↓ 照舊只列符號組。
 	s = toneMarkSession()
-	key(s, "`")
-	for i, item := range symbolPalette() {
-		if item == "ˇ" {
-			s.Handle(proto.Request{Type: proto.Select, Index: i})
-			break
-		}
-	}
+	keys(s, "`", proto.KeyBackTab) // 注音分頁
+	pickText(t, s, "ˇ")
 	if s.cand != nil || len(s.syls) != 1 {
 		t.Fatalf("符號選單選 ˇ：%q", s.snapshot().Text())
 	}

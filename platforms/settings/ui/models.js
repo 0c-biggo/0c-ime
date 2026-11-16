@@ -30,6 +30,13 @@
     }
   }
 
+  // need=redownload（models.lock 換了）時舊的模型還能不能用（#306）：source=user 表示這份字典的配對還在，引擎照常載入
+  // （neural.Find 只看配對目錄，下載並配對成功才換掉）；引擎回報 fallback 才是真的不能用。source=none 是配對屬於別的
+  // 字典（字典也換了），引擎找不到，用統計選字。
+  function oldModelUsable(status) {
+    return status.source === 'user' && !(status.models || []).some((m) => m.state === 'fallback');
+  }
+
   // 頁首的狀態一句話；bundled 也走這裡（沒有按鈕）。
   function summary(status) {
     if (!status) return { text: '讀取中…', tone: 'muted' };
@@ -37,12 +44,16 @@
     if (status.source === 'bundled') return { text: '隨安裝包內附。', tone: 'ok' };
     if (status.disabled_reason === 'dictionary_mismatch') return { text: DISABLED.dictionary_mismatch, tone: 'warn' };
     if (status.source === 'user') {
-      if (status.need === 'redownload') return { text: '模型有新版，舊的已不能用，需要重新下載。', tone: 'warn' };
+      if (status.need === 'redownload') {
+        return oldModelUsable(status)
+          ? { text: '模型有新版，下載完成前照常使用目前的模型。', tone: 'warn' }
+          : { text: '模型有新版，舊的已不能用，需要重新下載。', tone: 'warn' };
+      }
       if (status.need === 'repair') return { text: '字典已更新，正在重新配對，不必重新下載。', tone: 'warn' };
       return { text: '已安裝。', tone: 'ok' };
     }
     if (!status.can_download) return { text: DISABLED[status.disabled_reason] || '沒有模型，目前使用統計選字。', tone: 'muted' };
-    if (status.need === 'redownload') return { text: '模型有新版，需要重新下載。', tone: 'warn' };
+    if (status.need === 'redownload') return { text: '模型有新版，舊的已不能用，需要重新下載。', tone: 'warn' };
     return { text: '未安裝，目前使用統計選字。', tone: 'muted' };
   }
 
@@ -67,9 +78,10 @@
     return (s.runtime.missing || []).filter((p) => /^[a-z0-9][a-z0-9.+-]*$/.test(p));
   }
 
-  // 下載前要寫明的大小、來源（repo＋revision）與授權。
+  // 下載前要寫明的大小、來源（repo＋revision）與授權。大小是這次實際要下載的（download_size，沿用的模型不算，#306），
+  // 來源列 downloads（要下載的模型與 models.lock 的上游版本）；舊版 0c-update 沒有 downloads 時列 models[]。
   function downloadNote(status) {
-    const models = (status && status.models) || [];
+    const models = (status && (Array.isArray(status.downloads) && status.downloads.length ? status.downloads : status.models)) || [];
     const sources = models.filter((m) => m.repository).map((m) => m.repository + (m.revision ? '（' + shortRev(m.revision) + '）' : ''));
     const licenses = [...new Set(models.map((m) => m.license).filter(Boolean))];
     return aboutMB(status && status.download_size) +
@@ -94,7 +106,10 @@
     return modelLabel(model.state, ROLE_FALLBACK[model.role] || '統計引擎');
   }
 
-  const logic = { summary, actions, runtimeMissing, downloadNote, equivalentNote, shortSha, safeUrl, operationText, percent, mb, aboutMB, stateText };
+  // 刪除後要再用時要下載的大小：兩個模型合計（total_size；舊版 0c-update 沒有時退回 download_size，當時就是合計）。
+  const totalSize = (status) => (status && typeof status.total_size === 'number' ? status.total_size : status && status.download_size);
+
+  const logic = { summary, actions, totalSize, runtimeMissing, downloadNote, equivalentNote, shortSha, safeUrl, operationText, percent, mb, aboutMB, stateText };
   window.ZcModelsLogic = logic;
 
   // ---- 畫面 ----
@@ -245,7 +260,7 @@
       if (buttons.length) root.append(h('div', { class: 'actions model-actions' }, ...buttons));
       if (can.remove && m.removeAsk) {
         root.append(h('div', { class: 'notice' },
-          h('p', {}, '刪除後改用統計選字；要再用得重新下載（' + aboutMB(s.download_size) + '）。'),
+          h('p', {}, '刪除後改用統計選字；要再用得重新下載（' + aboutMB(totalSize(s)) + '）。'),
           h('div', { class: 'actions' },
             h('button', { type: 'button', class: 'primary', 'data-focus': 'models-remove-confirm', onclick: () => act('remove') }, '確認刪除'),
             h('button', { type: 'button', class: 'secondary', 'data-focus': 'models-remove-cancel', onclick: () => { m.removeAsk = false; ctx.render(); focus('models-remove'); } }, '取消'))));

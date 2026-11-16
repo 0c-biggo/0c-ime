@@ -34,3 +34,18 @@ func TestSpaceSelectsSettingContractReportsPendingAndUnknownRuntime(t *testing.T
 	}
 	t.Fatal("設定程式看不到空白鍵選字開關")
 }
+
+// #288：中英混打開著時，空白鍵選字標為停用、指向混打；引擎照設定檔回報 space_selects，不能因停用變成「待套用」。
+func TestSpaceSelectsContractDisabledWhileMixedInput(t *testing.T) {
+	base := t.TempDir()
+	writeSettings(t, base, `{"mixed_input":true,"space_selects":true}`)
+	doc := buildSettingsDoc(base, modelStatusDial(map[string]string{"space_selects": "true", "mixed_input": "true"}, true))
+	it := item(t, doc, "space-selects")
+	if !it.Disabled || it.DisabledBy != "mixed-input" || it.DisabledReason == "" || it.Value != "on" || it.Effective != "" || it.Pending {
+		t.Fatalf("混打時的空白鍵選字：%+v", it)
+	}
+	writeSettings(t, base, `{"mixed_input":false,"space_selects":true}`)
+	if it := item(t, buildSettingsDoc(base, modelStatusDial(nil, false)), "space-selects"); it.Disabled || it.DisabledBy != "" {
+		t.Fatalf("關掉混打後恢復：%+v", it)
+	}
+}

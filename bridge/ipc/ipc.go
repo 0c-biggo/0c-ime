@@ -28,6 +28,9 @@ const (
 	OpApplySettings = "apply_settings" // 等所有輸入框組字完成後套用設定，不因等待逾時取消
 	OpDrain         = "drain"          // 更新交接：沒有組字時存檔並退出，外殼重連時改接新版引擎
 	OpVocab         = "vocab"          // 自訂詞彙管理指令（#122）：Vocab 進、Vocab 出；不需要 session
+	// OpResetPersonal 清除學習紀錄（#301）：清空記憶體裡的個人資料並立刻存檔，不重啟引擎；成功回 OK。
+	// 引擎在 health 回報 personal_reset=true 才認得；舊引擎回「不認得的操作」。
+	OpResetPersonal = "reset_personal"
 )
 
 // Envelope 是薄殼送出的訊息。

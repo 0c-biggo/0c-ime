@@ -52,6 +52,9 @@ pub struct Snapshot {
     pub reading_hint: String,
     /// 送出的文字目前會轉成簡體（output_simplified，#169）。只有回報 output_simplified_live 的引擎才有這一項。
     pub output_simplified: bool,
+    /// 這一鍵被擋下（bell，#300 打錯注音時提示）：按了聲調但讀音沒有字，注音停在組字區。外殼用 MessageBeep 提示；
+    /// 只在擋下的那次快照出現。舊引擎沒有這一項。
+    pub bell: bool,
 }
 
 impl Snapshot {
@@ -718,6 +721,7 @@ fn parse(reply: &Value) -> Snapshot {
     s.caps_english = j["caps_english"].as_bool().unwrap_or(false);
     s.reading_hint = j["reading_hint"]["text"].as_str().unwrap_or("").to_string();
     s.output_simplified = j["output_simplified"].as_bool().unwrap_or(false);
+    s.bell = j["bell"].as_bool().unwrap_or(false);
     if let Some(notices) = j["notices"].as_array() {
         s.notices = notices
             .iter()
@@ -879,6 +883,15 @@ mod parse_tests {
         assert_eq!(old.candidate_keys, vec!["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]);
         let english = parse(&json!({"snapshot": {"mode": "english", "candidates": {"items": [{"id": 0, "text": "hello"}]}}}));
         assert_eq!(english.candidate_keys, vec![""]);
+    }
+
+    // #300：擋下聲調的快照帶 bell，外殼嗶一聲；舊引擎或其他快照沒有這一項。
+    #[test]
+    fn bell_is_parsed() {
+        let s = parse(&json!({"snapshot": {"handled": true, "bell": true,
+            "preedit": [{"text": "ㄅㄩ", "style": "pending"}]}}));
+        assert!(s.bell && s.text() == "ㄅㄩ");
+        assert!(!parse(&json!({"snapshot": {"handled": true}})).bell, "舊引擎沒有 bell");
     }
 
     #[test]

@@ -37,6 +37,22 @@ func secureURL(raw string) error {
 	}
 	return nil
 }
+
+// UserAgent 是查詢索引與下載套件時送出的 User-Agent。0c-update 啟動時設成 UpdaterUserAgent（只有版本與平台，
+// 不帶任何識別碼），伺服器紀錄才看得出有多少使用者停在哪一版；空字串時沿用 Go 的預設值（例如發布工具 0c-release）。
+var UserAgent string
+
+// UpdaterUserAgent 是 0c-update 的 User-Agent：`0c-update/<版本> (<GOOS>; <GOARCH>)`。
+func UpdaterUserAgent(version, goos, goarch string) string {
+	return fmt.Sprintf("0c-update/%s (%s; %s)", version, goos, goarch)
+}
+
+func setUserAgent(request *http.Request) {
+	if UserAgent != "" {
+		request.Header.Set("User-Agent", UserAgent)
+	}
+}
+
 func Client() *http.Client {
 	var transport http.RoundTripper
 	if roots := tlsRoots(); roots != nil {
@@ -59,6 +75,7 @@ func get(ctx context.Context, client *http.Client, address string) (*http.Respon
 	if err != nil {
 		return nil, err
 	}
+	setUserAgent(request)
 	response, err := client.Do(request)
 	if err != nil {
 		return nil, err
@@ -302,6 +319,7 @@ func downloadFrom(ctx context.Context, client *http.Client, asset Asset, f *os.F
 	if err != nil {
 		return offset, etag, permanentError{err}
 	}
+	setUserAgent(request)
 	if offset > 0 {
 		request.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
 		if etag != "" {

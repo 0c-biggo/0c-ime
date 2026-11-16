@@ -3,8 +3,9 @@ import Foundation
 
 var client = TextClient()
 var controller = LingxiInputController(client: client)
-func capsChanged(_ on: Bool) {
-    let event = CGEvent(keyboardEventSource: nil, virtualKey: 57, keyDown: true)!
+// #308：Parsec 等遠端桌面注入的修飾鍵 keyCode 是 0，只有旗標是對的。
+func capsChanged(_ on: Bool, virtualKey: CGKeyCode = 57) {
+    let event = CGEvent(keyboardEventSource: nil, virtualKey: virtualKey, keyDown: true)!
     event.type = .flagsChanged
     event.flags = on ? .maskAlphaShift : []
     _ = controller.handle(NSEvent(cgEvent: event)!, client: client)
@@ -106,9 +107,9 @@ controller.inputControllerWillClose()
 // only this controller's own session decides (shared mode is covered above).
 ControllerTestHost.socketPath = CommandLine.arguments[5]
 var capsHeld = false
-func shiftTap() {
+func shiftTap(virtualKey: CGKeyCode = 60) {
     for flags: CGEventFlags in [.maskShift, []] {
-        let event = CGEvent(keyboardEventSource: nil, virtualKey: 60, keyDown: true)!
+        let event = CGEvent(keyboardEventSource: nil, virtualKey: virtualKey, keyDown: true)!
         event.type = .flagsChanged
         event.flags = capsHeld ? flags.union(.maskAlphaShift) : flags
         // Synthetic events carry no time of their own; the tap rules compare press, release and the last toggle.
@@ -125,7 +126,10 @@ func nativeScenario(_ steps: [String]) -> [String: Any] {
     for step in steps {
         switch step {
         case "shift": shiftTap()
+        case "remote-shift": shiftTap(virtualKey: 0)
         case "caps+": capsHeld = true; capsChanged(true)
+        case "remote-caps+": capsHeld = true; capsChanged(true, virtualKey: 0)
+        case "remote-caps-": capsHeld = false; capsChanged(false, virtualKey: 0)
         default: capsHeld = false; capsChanged(false)
         }
     }
@@ -139,6 +143,10 @@ let nativeCases: [([String], String)] = [
     (["caps+", "shift", "shift", "caps-"], "英"), // switched back to English by hand while Caps was on
     (["shift", "caps+", "shift", "caps-"], "中"), // switched to Zhuyin by hand while Caps was on
     (["caps+", "shift", "caps-"], "中"),
+    // #308：遠端的 Shift、Caps Lock（keyCode 0）跟本機一樣切換。
+    (["remote-shift", "caps+", "caps-"], "英"),
+    (["remote-caps+", "remote-caps-"], "中"),
+    (["remote-caps+", "remote-shift", "remote-shift", "remote-caps-"], "英"),
 ]
 var nativeResults: [[String: Any]] = []
 var nativeOK = true
@@ -147,7 +155,7 @@ for (steps, want) in nativeCases {
     nativeResults.append(result)
     let hints = result["hints"] as? [String] ?? []
     // Every case shows 英 right after Caps turns on (the step before it may be a Shift hint).
-    let capsOnIndex = steps.firstIndex(of: "caps+")!
+    let capsOnIndex = steps.firstIndex { $0.hasSuffix("caps+") }!
     let capsOnHint = hints.count == steps.count && hints[capsOnIndex] == "英"
     nativeOK = nativeOK && capsOnHint && hints.last == want && (result["zhuyin_after"] as? Bool) == (want == "中")
 }
@@ -322,8 +330,82 @@ let floatingResult: [String: Any] = ["first": firstWord, "second": secondWord, "
                                      "electron_inline": electronOK, "electron": electronWord, "electron_bad": electronBad.document,
                                      "electron_bad_sticky": electronBadSticky]
 
-let passed = capsOK && compositionOK && coldOK && englishHintOK && chineseHintOK && coldHintOK && nativeOK && floatingOK
+// #283：沒在組字時按 ` 開的符號表。Office（Word／PowerPoint／Excel）與終端機一類的 App 只在自己有組字（marked text）時
+// 才把方向鍵、Esc 交給輸入法，沒有組字就自己處理（移動游標、叫出上一個指令）。符號表開著時要在 App 裡放一個佔位的組字，
+// 方向鍵才進得到候選窗；關掉或選了符號之後佔位要拿掉，不能在文件裡留下空白。
+final class OfficeClient: IMKTextInput {
+    var document = ""
+    var marked = ""
+    var leaked: [String] = [] // App 自己處理掉的具名鍵
+    var setMarkedCount = 0
+    weak var controller: LingxiInputController?
+    func bundleIdentifier() -> String! { "test.office" }
+    func overrideKeyboard(withKeyboardNamed: String!) {}
+    func insertText(_ text: Any!, replacementRange: NSRange) {
+        document += (text as? String) ?? (text as? NSAttributedString)?.string ?? ""
+        marked = ""
+    }
+    func selectedRange() -> NSRange { NSRange(location: (document as NSString).length, length: 0) }
+    func markedRange() -> NSRange {
+        marked.isEmpty ? NSRange(location: NSNotFound, length: 0)
+            : NSRange(location: (document as NSString).length, length: (marked as NSString).length)
+    }
+    func attributedSubstring(from range: NSRange) -> NSAttributedString! { nil }
+    func attributes(forCharacterIndex: Int, lineHeightRectangle: UnsafeMutablePointer<NSRect>!) -> [AnyHashable: Any]! { [:] }
+    func firstRect(forCharacterRange: NSRange, actualRange: NSRangePointer!) -> NSRect { .zero }
+    func windowLevel() -> Int32 { 0 }
+    func setMarkedText(_ text: Any!, selectionRange: NSRange, replacementRange: NSRange) {
+        marked = (text as? NSAttributedString)?.string ?? (text as? String) ?? ""
+        setMarkedCount += 1
+    }
+    /// 具名鍵（方向鍵、Esc、Enter）沒有組字時 App 自己處理，不問輸入法；有字的鍵一律先問輸入法。
+    func key(_ characters: String, code: UInt16, named: Bool = false) {
+        if named && marked.isEmpty { leaked.append(characters); return }
+        let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil,
+                                     characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)!
+        if controller?.handle(event, client: self) != true, named { leaked.append(characters) }
+    }
+}
+let down = "\u{F701}", right = "\u{F703}"
+var office = OfficeClient()
+controller = LingxiInputController(client: office)
+office.controller = controller
+CandidatePanel.candidates = []
+office.key("`", code: 50)
+let menuMarked = office.marked
+office.key(down, code: 125, named: true)
+office.key(down, code: 125, named: true)
+let highlightAfterDown = CandidatePanel.candidates.last?.highlight
+let markedCountBeforeRight = office.setMarkedCount
+office.key(right, code: 124, named: true)
+let pageAfterRight = CandidatePanel.candidates.last?.page
+let placeholderNotResent = office.setMarkedCount == markedCountBeforeRight // 同樣的佔位不重送（#108 閃爍）
+office.key("\u{1b}", code: 53, named: true)
+let closedClean = office.marked.isEmpty && office.document.isEmpty
+office.key("`", code: 50)
+office.key("1", code: 18)
+let symbolMarked = office.marked
+office.key("\r", code: 36, named: true)
+let symbolCommitted = office.document
+// 符號表開著時點到別處（App 結束組字）與切走輸入法：佔位不能變成文件裡的空白。
+office.key("`", code: 50)
+Thread.sleep(forTimeInterval: FloatingComposition.earlyEnd + 0.1)
+controller.commitComposition(office)
+let clickedAway = office.document == symbolCommitted && office.marked.isEmpty
+office.key("`", code: 50)
+controller.deactivateServer(office)
+let switchedAway = office.document == symbolCommitted && office.marked.isEmpty
+controller.inputControllerWillClose()
+let officeOK = !menuMarked.isEmpty && highlightAfterDown == 2 && pageAfterRight == 1 && placeholderNotResent && closedClean &&
+    symbolMarked == "，" && symbolCommitted == "，" && clickedAway && switchedAway && office.leaked.isEmpty
+let officeResult: [String: Any] = ["menu_marked_length": (menuMarked as NSString).length, "highlight_after_down": highlightAfterDown ?? -1,
+                                   "page_after_right": pageAfterRight ?? -1, "placeholder_not_resent": placeholderNotResent,
+                                   "closed_clean": closedClean, "symbol_marked": symbolMarked, "committed": symbolCommitted,
+                                   "clicked_away": clickedAway, "switched_away": switchedAway, "leaked": office.leaked.count]
+
+let passed = capsOK && compositionOK && coldOK && englishHintOK && chineseHintOK && coldHintOK && nativeOK && floatingOK && officeOK
 let output: [String: Any] = ["passed": passed, "floating": floatingOK, "floating_cases": floatingResult,
+                          "symbol_menu_office": officeOK, "symbol_menu_cases": officeResult,
                           "caps_recovery": capsOK, "composition_preserved_once": compositionOK,
                           "native_caps_restore": nativeOK, "native_cases": nativeResults,
                           "cold_queue": coldOK, "timeout_seconds": elapsed, "steps": results,

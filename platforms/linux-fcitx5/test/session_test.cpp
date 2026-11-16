@@ -257,7 +257,7 @@ int main(int argc, char **argv) {
         (void)!system((std::string("pkill -f '0c-server -socket ") + argv[1] + "'").c_str());
         usleep(300 * 1000);
         snap = s.key("2");
-        CHECK(client.generation() > gen && snap.text() == "『" && snap.commit.empty(), "空白選單也必須可重播");
+        CHECK(client.generation() > gen && snap.text() == "、" && snap.commit.empty(), "空白選單也必須可重播");
         s.key("Escape");
         s.key(".");
         snap = s.key("Down");
@@ -648,6 +648,16 @@ int main(int argc, char **argv) {
         (void)!system((std::string("pkill -f '0c-server -socket ") + argv[1] + "'").c_str());
         usleep(300 * 1000);
         std::ofstream(home + "/settings.json") << R"({})";
+    }
+    {
+        // #300：打錯注音時提示（設定檔沒有這一項時預設開）：ㄅㄩˊ 沒有字，聲調不收、快照帶 bell；緊接著再按 ˊ 原樣留下。
+        zuin::Session s(client, nullptr);
+        zuin::Snapshot snap;
+        for (const char *k : {"1", "m", "6"}) { snap = s.key(k); }
+        CHECK(snap.ok && snap.handled && snap.bell && snap.text() == "ㄅㄩ", "擋下聲調並提示：%s %d", snap.text().c_str(), snap.bell);
+        snap = s.key("6");
+        CHECK(!snap.bell && snap.text() == "ㄅㄩˊ", "再按一次 ˊ 原樣留下：%s", snap.text().c_str());
+        s.key("Escape");
     }
     {
         // #169：選單切換「輸出簡體字」即時生效：另一個輸入框已經在組字區的字照新的設定送出，設定檔跟著寫；

@@ -934,6 +934,30 @@ func lastPreedit(t *testing.T, sig []recorded) (text string, attrs []ibusAttribu
 	return text, attrs, ok
 }
 
+// #300：打錯注音時提示。快照帶 bell 時停住的注音（pending）畫成紅底白字；下一個快照組字相同但沒有 bell，也要重畫回一般底線。
+func TestBellMarksRefusedZhuyin(t *testing.T) {
+	e, rec, _ := newTestEngine(t)
+	snap := snapshot{ok: true}
+	snap.Handled = true
+	snap.Preedit = []proto.Segment{{Text: "我", Style: proto.StyleNormal}, {Text: "ㄅㄩ", Style: proto.StylePending}}
+	snap.Cursor = proto.CursorPos{Rune: 3, UTF16: 3}
+	e.render(snap)
+	rec.take()
+	snap.Bell = true
+	e.render(snap)
+	refused := func(a ibusAttribute) bool { return a.Type == attrBackground && a.Value == refusedBackground }
+	_, attrs, ok := lastPreedit(t, rec.take())
+	if !ok || !slices.ContainsFunc(attrs, func(a ibusAttribute) bool { return refused(a) && a.Start == 1 && a.End == 3 }) ||
+		!slices.ContainsFunc(attrs, func(a ibusAttribute) bool { return a.Type == attrForeground && a.Value == refusedForeground }) {
+		t.Fatalf("組字相同、只多了 bell 也要重畫，停住的注音紅底白字：%v %+v", ok, attrs)
+	}
+	snap.Bell = false
+	e.render(snap)
+	if _, attrs, ok = lastPreedit(t, rec.take()); !ok || slices.ContainsFunc(attrs, refused) {
+		t.Fatalf("下一個快照沒有 bell：重畫回一般樣式：%v %+v", ok, attrs)
+	}
+}
+
 func markedRange(attrs []ibusAttribute) (start, end uint32, ok bool) {
 	for _, a := range attrs {
 		if a.Type == attrBackground && a.Value == markedBackground {

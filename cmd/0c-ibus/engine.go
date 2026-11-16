@@ -193,6 +193,13 @@ const (
 // 讀音（ㄉㄢ）在提示列。
 const readingForeground = 0x8a8a8a
 
+// 打錯注音時提示（#300，快照的 bell）：IBus 沒有統一的提示音，停住的注音畫成紅底白字（GNOME 的錯誤紅），
+// 不支援顏色的前端至少還有底線。只在擋下的那次快照，下一個快照就恢復。
+const (
+	refusedBackground = 0xc01c28
+	refusedForeground = 0xffffff
+)
+
 // preeditAttrs 是一段組字 [start, end)（字元位置）的屬性。
 func preeditAttrs(style string, start, end uint32) []attribute {
 	switch style {
@@ -209,13 +216,17 @@ func preeditAttrs(style string, start, end uint32) []attribute {
 	return []attribute{{attrUnderline, underlineSingle, start, end}}
 }
 
-// preeditAttrList 把組字分段轉成 IBus 的文字屬性（範圍以字元計）。
-func preeditAttrList(segs []proto.Segment) []attribute {
+// preeditAttrList 把組字分段轉成 IBus 的文字屬性（範圍以字元計）。bell 是快照的 bell（#300）：停住的注音（pending）標成紅底。
+func preeditAttrList(segs []proto.Segment, bell bool) []attribute {
 	var attrs []attribute
 	at := uint32(0)
 	for _, g := range segs {
 		n := uint32(utf8.RuneCountInString(g.Text))
-		if n > 0 {
+		switch {
+		case n > 0 && bell && g.Style == proto.StylePending:
+			attrs = append(attrs, attribute{attrUnderline, underlineSingle, at, at + n},
+				attribute{attrBackground, refusedBackground, at, at + n}, attribute{attrForeground, refusedForeground, at, at + n})
+		case n > 0:
 			attrs = append(attrs, preeditAttrs(g.Style, at, at+n)...)
 		}
 		at += n
@@ -239,6 +250,7 @@ type engine struct {
 	preedit   string
 	preCursor uint32
 	preSegs   []proto.Segment
+	preBell   bool // 畫上去的組字是 bell 的標示（#300）；下一個快照沒有 bell 時要重畫成一般樣式
 	aux       string
 	auxRest   string // aux 去掉這次快照的提示之後的內容；切換「輸出簡體字」的提示收起後換回它（#169）
 	table     []string
@@ -447,7 +459,7 @@ func (e *engine) finish(reason string) {
 	if len(e.session.log) > 0 || e.session.recovered != nil || e.preedit != "" || len(e.table) > 0 {
 		e.session.handle(proto.Request{Type: proto.Commit})
 	}
-	e.preedit, e.preCursor, e.preSegs, e.ids = "", 0, nil, nil
+	e.preedit, e.preCursor, e.preSegs, e.preBell, e.ids = "", 0, nil, false, nil
 	e.clearPanel()
 	if reason == "disable" {
 		e.active = false
@@ -509,7 +521,7 @@ func (e *engine) render(snap snapshot) {
 		// （這是原本先清組字要避免的重複）。CommitText 到清組字之間若剛好失焦，就會中。
 		// 把模式降成 CLEAR 就堵住這個空窗：組字照舊顯示（Chromium 仍在組字中），但失焦時只會清掉、不會代為提交。
 		if e.preedit != "" {
-			e.emit("UpdatePreeditText", newText(e.preedit, preeditAttrList(e.preSegs)...), e.preCursor, true, uint32(preeditClear))
+			e.emit("UpdatePreeditText", newText(e.preedit, preeditAttrList(e.preSegs, e.preBell)...), e.preCursor, true, uint32(preeditClear))
 			downgraded = true
 		}
 		before := docText{}
@@ -519,9 +531,9 @@ func (e *engine) render(snap snapshot) {
 		e.context.committed(before, snap.Commit, snap.ContextID)
 		e.emit("CommitText", newText(snap.Commit))
 	}
-	if downgraded || text != e.preedit || cursor != e.preCursor || !slices.Equal(snap.Preedit, e.preSegs) {
-		e.emit("UpdatePreeditText", newText(text, preeditAttrList(snap.Preedit)...), cursor, text != "", uint32(preeditCommit))
-		e.preedit, e.preCursor, e.preSegs = text, cursor, slices.Clone(snap.Preedit)
+	if downgraded || text != e.preedit || cursor != e.preCursor || !slices.Equal(snap.Preedit, e.preSegs) || snap.Bell != e.preBell {
+		e.emit("UpdatePreeditText", newText(text, preeditAttrList(snap.Preedit, snap.Bell)...), cursor, text != "", uint32(preeditCommit))
+		e.preedit, e.preCursor, e.preSegs, e.preBell = text, cursor, slices.Clone(snap.Preedit), snap.Bell
 	}
 	// 通知（例如候選窗的 Shift＋Delete 之後「已從詞庫刪除：…」）是使用者剛做的動作的回饋，只出現在這一次快照，
 	// 優先於候選標題；標題在下一個按鍵就回來。兩者接在同一列會太長，GNOME 的提示列也不換行。

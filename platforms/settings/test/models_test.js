@@ -52,7 +52,7 @@ test('已安裝（個人目錄）：可以刪除，不能下載', () => {
 
 test('上游模型換了：提示重新下載；字典換了只重新配對，不給按鈕', () => {
   const re = status({ source: 'user', need: 'redownload' });
-  assert.match(L.summary(re).text, /需要重新下載/);
+  assert.match(L.summary(re).text, /模型有新版/);
   assert.deepStrictEqual(L.actions(re), { download: true, redownload: true, cancel: false, remove: true });
   const repair = status({ source: 'user', need: 'repair' });
   assert.strictEqual(L.summary(repair).text, '字典已更新，正在重新配對，不必重新下載。');
@@ -106,4 +106,40 @@ test('0.2.2 以前內建的模型（equivalent）：照樣顯示 Hugging Face �
   assert.strictEqual(L.equivalentNote(Object.assign({}, old, { equivalent: false })), null);
   assert.strictEqual(L.equivalentNote(Object.assign({}, old, { url: '' })), null); // 沒有上游資訊時不說
   assert.strictEqual(L.equivalentNote(LOCK[0]), null);
+});
+
+// #306：0.2.12 換了選字模型（#281），系統安裝下載過模型的人升級後 need=redownload。這份字典的配對還在（source=user），
+// 引擎照常用舊的，下載完成前不說「不能用」；download_size 只算選字（補標點沿用），說明也只列選字。
+const SELECT_NEW = { role: 'select', label: '選字', version: 'd512-cv2-20261111', repository: 'Funmula/0c-sequence-d512',
+  revision: '3533e34e0000000000000000000000000000000a', url: 'https://huggingface.co/Funmula/0c-sequence-d512/tree/3533e34e0000000000000000000000000000000a', license: 'MIT', size: 130723137 };
+function staleSelect(state, over) {
+  const installed = LOCK.map((m) => Object.assign({}, m, { state, source: 'user', path: '/home/u/.local/share/zuin/models/5f1c/' + m.role, sha256: 'e'.repeat(64) }));
+  delete installed[0].repository; delete installed[0].revision; delete installed[0].url; delete installed[0].license; delete installed[0].version; // 舊 revision 不附上游資訊
+  return status(Object.assign({ source: 'user', need: 'redownload', download_size: 130723137, total_size: 261307212, downloads: [SELECT_NEW], models: installed }, over));
+}
+
+test('換了選字模型、舊的照常使用：頁首說下載完成前照常使用，大小與來源只算選字', () => {
+  for (const state of ['ready', '', 'loading', 'disabled_by_setting']) {
+    const s = staleSelect(state);
+    assert.deepStrictEqual(L.summary(s), { text: '模型有新版，下載完成前照常使用目前的模型。', tone: 'warn' }, state);
+  }
+  const s = staleSelect('ready');
+  assert.deepStrictEqual(L.actions(s), { download: true, redownload: true, cancel: false, remove: true });
+  assert.strictEqual(L.downloadNote(s), '約 131 MB，從 Hugging Face 下載：Funmula/0c-sequence-d512（3533e34e），授權 MIT。');
+  // 刪除的確認寫的是之後要再用時要下載的大小：兩個模型合計
+  assert.strictEqual(L.aboutMB(L.totalSize(s)), '約 261 MB');
+});
+
+test('舊的模型真的不能用時才說不能用：引擎回報退回，或配對屬於別的字典（source=none）', () => {
+  assert.strictEqual(L.summary(staleSelect('fallback')).text, '模型有新版，舊的已不能用，需要重新下載。');
+  const other = staleSelect('', { source: 'none', models: LOCK });
+  assert.strictEqual(L.summary(other).text, '模型有新版，舊的已不能用，需要重新下載。');
+  assert.strictEqual(L.actions(other).download, true);
+});
+
+test('舊版 0c-update（沒有 downloads、total_size）：照舊列 models[] 的來源，刪除確認用 download_size', () => {
+  const s = status();
+  assert.strictEqual(L.totalSize(s), 262000000);
+  assert.strictEqual(L.downloadNote(Object.assign({}, s, { downloads: [] })), L.downloadNote(s));
+  assert.strictEqual(L.totalSize(status({ total_size: 261307212, download_size: 0, need: 'none', source: 'user' })), 261307212);
 });

@@ -29,8 +29,10 @@ os.environ['ORT_RUNNING_UNIT_TESTS'] = '1'
 
 MAX_FRAME = 65536
 SCHEMA = 'zuin-sequence-runtime-v1'
+SCHEMA_TONE_MASK = 'zuin-sequence-runtime-v2'
 CONTEXT_POLICY = 'confirmed_left_64'
 TONES = {'ˊ': 2, 'ˇ': 3, 'ˋ': 4, '˙': 5}
+TONE_POLICY_SCHEMA = 'zuin-tone-mask-v1'
 MAX_CANDIDATES = 16   # 同 ime rerank.MaxCandidates：打出讀音 8 個＋輕聲擴充最多 8 個
 
 
@@ -48,7 +50,19 @@ def syllable(y, bases):
     return bases[base], tone
 
 
-def prepare(context, reading, candidates, maps, allow_partial=False, text_only=False, neutral_last=False):
+def validate_tone_known(tone_known, count, allow_unknown_tones):
+    """省略遮罩沿用舊協定：沒有聲調符號的讀音是一聲，不是未知。"""
+    if tone_known is None:
+        return [True] * count
+    if not isinstance(tone_known, list) or len(tone_known) != count or any(type(x) is not bool for x in tone_known):
+        raise ValueError('invalid_tone_known')
+    if not allow_unknown_tones and not all(tone_known):
+        raise ValueError('unsupported_unknown_tone')
+    return tone_known
+
+
+def prepare(context, reading, candidates, maps, allow_partial=False, text_only=False, neutral_last=False,
+            tone_known=None, allow_unknown_tones=False):
     """前綴樹輸入：[BOS] 前文 [SEP] 讀音 [OUT] 只出現一次，候選共同開頭共用節點。
 
     每個節點只注意前綴與自己的祖先，位置編號同單獨評分，因此分數等同
@@ -56,9 +70,12 @@ def prepare(context, reading, candidates, maps, allow_partial=False, text_only=F
     text_only=True 時省略讀音 token（text task），只支援單音節且需有前文。
     neutral_last=True 且最後一個音節不是輕聲時，另加一支「最後音節改輕聲」的分支（共用前文與前面讀音）；
     target 列依分支排列（每支 len(candidates) 列），由呼叫端逐候選取最大值。
+    tone_known=False 的音節只在新套件明確支援時以 tone id 0 編碼，保留聲韻母；
+    全批候選共用同一遮罩。未知末音節不另建輕聲分支。
     """
     bases, chars = maps
     n = len(reading)
+    known = validate_tone_known(tone_known, n, allow_unknown_tones)
     if not (n == 1 if text_only else 2 <= n <= 32) or not 2 <= len(candidates) <= MAX_CANDIDATES:
         raise ValueError('unsupported_shape')
     if len({c['text'] for c in candidates}) != len(candidates):
@@ -83,9 +100,11 @@ def prepare(context, reading, candidates, maps, allow_partial=False, text_only=F
         except KeyError as e:
             raise ValueError('unknown_character') from e
     sounds = [] if text_only else [syllable(y, bases) for y in reading]
+    if not text_only:
+        sounds = [(base, tone if keep else 0) for (base, tone), keep in zip(sounds, known)]
     # 讀音最後一個音節之前共用；最後一個音節（與 OUT）依變體分支，各自接一棵候選樹。
     branches = [[(0, 0)]] if text_only else [[sounds[-1], (0, 0)]]
-    if neutral_last and not text_only and sounds[-1][1] != 5:
+    if neutral_last and not text_only and known[-1] and sounds[-1][1] != 5:
         branches.append([(sounds[-1][0], 5), (0, 0)])
     head = [1] + [chars.get(c, 4) for c in context[-64:]] + [2]
     shared = sounds[:-1]
@@ -132,8 +151,17 @@ class Runtime:
             ort.disable_telemetry_events()
         package = Path(package)
         self.manifest = m = json.loads((package / 'manifest.json').read_text())
-        if m['schema'] != SCHEMA or m['context_policy'] != CONTEXT_POLICY or m['dictionary_sha256'] != dictionary:
+        if m['schema'] not in (SCHEMA, SCHEMA_TONE_MASK) or m['context_policy'] != CONTEXT_POLICY \
+                or m['dictionary_sha256'] != dictionary:
             raise ValueError('package_contract_mismatch')
+        self.allow_unknown_tones = m['schema'] == SCHEMA_TONE_MASK
+        if not self.allow_unknown_tones and 'tone_policy' in m:
+            raise ValueError('unsupported_tone_policy')
+        if self.allow_unknown_tones:
+            policy = m.get('tone_policy')
+            if not isinstance(policy, dict) or policy.get('schema') != TONE_POLICY_SCHEMA \
+                    or type(policy.get('unknown_tone_id')) is not int or policy['unknown_tone_id'] != 0:
+                raise ValueError('unsupported_tone_policy')
         for name in ('model.onnx', 'vocab.json'):
             if sha(package / name) != m['files'][name]:
                 raise ValueError('package_hash_mismatch')
@@ -164,13 +192,17 @@ class Runtime:
         if mode not in ('', 'text') or (mode == 'text' and not self.text_mode):
             raise ValueError('unsupported_mode')
         reading, count = request['reading'], len(request['candidates'])
+        # JSON null 不是省略欄位；明確提供時只接受與音節逐項對齊的布林陣列。
+        if 'tone_known' in request and request['tone_known'] is None:
+            raise ValueError('invalid_tone_known')
         last = reading[-1] if reading and isinstance(reading[-1], str) else ''
         if self.neutral_expand:
             neutral = mode == '' and bool(last) and last[-1] != '˙' and (last[:-1] if last[-1] in TONES else last) in self.neutral_bases
         else:
             neutral = mode == '' and last in self.neutral_tolerant
         inputs = prepare(request.get('context', ''), reading, request['candidates'], self.maps, self.allow_partial,
-                         text_only=mode == 'text', neutral_last=neutral)
+                         text_only=mode == 'text', neutral_last=neutral, tone_known=request.get('tone_known'),
+                         allow_unknown_tones=self.allow_unknown_tones)
         raw = self.session.run(['scores'], inputs)[0].astype(float)
         if raw.shape[0] % count or not np.isfinite(raw).all():
             raise ValueError('nonfinite_neural_score')
@@ -192,8 +224,11 @@ def main():
             'reading': [base] * 2, 'candidates': [seg(chars[0] + chars[1]), seg(chars[2] + chars[3])],
             'allow_partial': runtime.allow_partial}
     runtime.score(warm)
-    print(json.dumps({'ready': True, 'schema': SCHEMA, 'model_sha256': runtime.model_sha, 'dictionary_sha256': a.dictionary,
-                      'allow_partial': runtime.allow_partial}), flush=True)
+    ready = {'ready': True, 'schema': runtime.manifest['schema'], 'model_sha256': runtime.model_sha,
+             'dictionary_sha256': a.dictionary, 'allow_partial': runtime.allow_partial}
+    if runtime.allow_unknown_tones:
+        ready['tone_policy'] = runtime.manifest['tone_policy']
+    print(json.dumps(ready), flush=True)
     while True:
         line = sys.stdin.buffer.readline(MAX_FRAME + 1)
         if not line:

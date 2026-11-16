@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/0c-biggo/0c-ime/internal/autoupdate"
+	"github.com/0c-biggo/0c-ime/internal/winshell"
 )
 
 // 引擎服務（#120，Windows）：登入工作 0c-engine-<SID>（dev.56 起）本來就在登入時啟動引擎，不改工作定義
@@ -30,9 +31,7 @@ var startResident = func(base string) error {
 	return startResidentEngine(base, elevatedOK(), taskExists(engineTaskName()), runEngineTask, spawnEngine)
 }
 
-func runEngineTask() error {
-	return quietCommand(schtasksPath(), "/Run", "/TN", engineTaskName()).Run()
-}
+func runEngineTask() error { return winshell.RunTask(engineTaskName()) }
 
 // startResidentEngine 一律先請登入工作啟動引擎，不由呼叫者直接啟動：
 //   - 自動更新工作以 Priority 7 執行，直接啟動的引擎會帶著低 I/O 與記憶體優先順序常駐到登出（startEngine 的註解）；
@@ -86,7 +85,7 @@ func handOverResidentEngine(version string, health func() (map[string]string, bo
 }
 
 func removeEngineService()                 {}
-func startEngineService() bool             { return false } // 交接照舊：有登入工作時 schtasks /Run
+func startEngineService() bool             { return false } // 交接照舊：有登入工作時請它執行（runEngineTask）
 func engineServiceState() (string, string) { return "login_task", "" }
 
 // engineAfterInstall：安裝完成後叫起常駐引擎（macOS 另有處理，見 engine_service_darwin.go）。

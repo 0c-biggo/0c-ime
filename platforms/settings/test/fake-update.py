@@ -12,8 +12,9 @@ cmd/0c-update/api.go 的 apiView 相同；其他指令（status、settings、set
   fake-update.py vocab add-as assistant 詞 讀音   模擬 AI 助手從 API 加詞（版本加一，watch 會看到）
 
 「模型」頁（#180）：設了 FAKE_MODELS 時 models status|download|cancel|remove 由這裡依契約（schema 1）回應：
-  fake-update.py --models STATE bundled|none|downloading|user|redownload|runtime|distribution|dictionary
+  fake-update.py --models STATE bundled|none|downloading|user|redownload|redownload-unusable|runtime|distribution|dictionary
 downloading 的進度固定不動（截圖用）；從 none 按「下載模型」後，每讀一次 status 前進一步：下載 → 核對 → 配對 → 已安裝。
+redownload 是 0.2.12 換了選字模型（#281、#306）：舊的配對照常使用，只要下載選字；redownload-unusable 是引擎回報舊的退回。
 """
 import fcntl
 import json
@@ -474,11 +475,32 @@ def models_missing():
     return [dict(m, state='not_installed', source='', path='', sha256='', equivalent=False) for m in MODEL_LOCK]
 
 
+DOWNLOAD_KEYS = ('role', 'label', 'version', 'repository', 'revision', 'url', 'license')
+
+
+def downloads(lock=MODEL_LOCK):
+    """status 的 downloads：這次要下載的模型（models.lock 的上游版本與要下載的位元組）。"""
+    return [dict({k: m[k] for k in DOWNLOAD_KEYS}, size=m['size']) for m in lock]
+
+
+# 換了 revision 的選字模型（redownload 情境）：本機那一份不是這個 revision，models[] 不附上游資訊。
+SELECT_NEW = dict(MODEL_LOCK[0], version='d512-cv2-20261111', revision='3533e34e9b1f6a0c2d8e7f4a5b6c7d8e9f0a1b2c', size=130723137,
+                  url='https://huggingface.co/Funmula/0c-sequence-d512/tree/3533e34e9b1f6a0c2d8e7f4a5b6c7d8e9f0a1b2c')
+
+
+def models_stale_select(state):
+    out = models_installed('user', state)
+    out[0] = {k: v for k, v in out[0].items() if k not in ('version', 'repository', 'revision', 'url', 'license')}
+    out[0]['sha256'] = 'e1b2c3d4' * 8
+    return out
+
+
 def models_init(path, kind):
     total = sum(m['size'] for m in MODEL_LOCK)
     st = {'schema': 1, 'ok': True, 'dictionary_sha256': '5f1c0a9e' + '7d2b' * 14, 'source': 'none', 'can_download': True, 'disabled_reason': '',
           'runtime': {'ok': True, 'python': '/usr/bin/python3', 'missing': []},
-          'need': 'download', 'download_size': total, 'models': models_missing(), 'operation': None, 'last_error': None}
+          'need': 'download', 'download_size': total, 'total_size': total, 'downloads': downloads(), 'models': models_missing(),
+          'operation': None, 'last_error': None}
     frozen = False
     if kind == 'bundled':
         st.update(source='bundled', can_download=False, disabled_reason='bundled', need='none', models=models_installed('bundled'))
@@ -486,9 +508,10 @@ def models_init(path, kind):
         st['operation'] = {'phase': 'downloading', 'done_bytes': 98566144, 'total_bytes': total, 'started_at': '2026-10-21T08:00:00Z'}
         frozen = True
     elif kind == 'user':
-        st.update(source='user', need='none', models=models_installed('user'))
-    elif kind == 'redownload':
-        st.update(source='user', need='redownload', models=[dict(m, state='fallback') for m in models_installed('user')])
+        st.update(source='user', need='none', download_size=0, downloads=[], models=models_installed('user'))
+    elif kind in ('redownload', 'redownload-unusable'):
+        st.update(source='user', need='redownload', download_size=SELECT_NEW['size'], downloads=downloads([SELECT_NEW]),
+                  models=models_stale_select('ready' if kind == 'redownload' else 'fallback'))
     elif kind == 'runtime':
         st['runtime'] = {'ok': False, 'python': '/usr/bin/python3', 'missing': ['python3-numpy', 'python3-onnxruntime']}
     elif kind == 'distribution':
@@ -516,7 +539,7 @@ def models(args):
         elif op['phase'] == 'verifying':
             op['phase'] = 'pairing'
         else:
-            st.update(operation=None, source='user', need='none', models=models_installed('user'))
+            st.update(operation=None, source='user', need='none', download_size=0, downloads=[], models=models_installed('user'))
     elif action == 'download':
         if not st['can_download']:
             print(json.dumps({'ok': False, 'error': {'code': 'unavailable', 'message': '這個安裝不能下載模型。'}}, ensure_ascii=False))
@@ -536,7 +559,7 @@ def models(args):
         if st['source'] != 'user':
             print(json.dumps({'ok': False, 'error': {'code': 'bundled', 'message': '內建的模型不能刪除。'}}, ensure_ascii=False))
             return 1
-        st.update(source='none', need='download', models=models_missing(), last_error=None)
+        st.update(source='none', need='download', download_size=st['total_size'], downloads=downloads(), models=models_missing(), last_error=None)
     elif action != 'status':
         print(json.dumps({'ok': False, 'error': {'code': 'usage', 'message': '未知的 models 動作'}}, ensure_ascii=False))
         return 2

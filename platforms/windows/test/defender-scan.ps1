@@ -84,7 +84,7 @@ try {
    $files+=[ordered]@{path=$pe.FullName.Substring($extractDir.Length+1);status=[string]$sig.Status
     signer=if($sig.SignerCertificate){$sig.SignerCertificate.Subject}else{''}}
   }
-  $ours=@('0c_tsf.dll','0c-ui.exe','0c-server.exe','0c-update.exe')
+  $ours=@('0c_tsf.dll','0c-ui.exe','0c-server.exe','0c-update.exe','0c-updatew.exe','0c-mcp.exe','0c-settings.exe')
   $report.extracted.pe_files=$files.Count
   $report.extracted.signed=@($files|Where-Object{$_.status -eq 'Valid'}).Count
   $report.extracted.ours=@($files|Where-Object{$ours -contains (Split-Path $_.path -Leaf)})

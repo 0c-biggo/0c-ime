@@ -91,8 +91,10 @@ func listSettings(w io.Writer, r settings.Report, path string) {
 	fmt.Fprintf(w, "simplified-hotkey=%s（按 %s 切換輸出簡體字；關閉時這個鍵交給應用程式）\n", onOff(s.SimplifiedHotkey), settings.SimplifiedHotkeyLabel(runtime.GOOS))
 	fmt.Fprintf(w, "selection-keys=%s（選字鍵：1234567890、1234qweras 或 asdfghjkl;；換成字母時數字仍照位置選字）\n", s.SelectionKeys)
 	fmt.Fprintf(w, "ctrl-punctuation=%s（注音模式按 Ctrl＋, . ' ; 與 Ctrl＋Shift＋/ 1 ; 9 0 打全形標點；關閉時交給應用程式）\n", onOff(s.CtrlPunctuation))
-	fmt.Fprintf(w, "shift-symbol-halfwidth=%s（注音模式按 Shift＋符號鍵打半形標點，例如 Shift＋, 打 ,、Shift＋9 打 (；全形與 < > 改按 Ctrl＋符號或 ↓；[ ] 照舊打「」）\n", onOff(s.ShiftSymbolHalfwidth))
+	symbolWidth, _ := s.Value("shift-symbol-halfwidth")
+	fmt.Fprintf(w, "shift-symbol-halfwidth=%s（標點寬度：off 全形標點；on Shift＋符號打半形，例如 Shift＋, 打 ,、Shift＋9 打 (，[ ] 照舊打「」；all 所有符號鍵打按鍵上的字，例如 Shift＋- 打 _、[ 打 [，這時 Ctrl＋標點固定開、聲調選填暫停。全形改按 Ctrl＋符號或 ↓）\n", symbolWidth)
 	fmt.Fprintf(w, "cjk-latin-space=%s（送出時在中文字和英文字母相連處補半形空格，例如「用Python寫」送出「用 Python 寫」；已有空格、標點與數字旁不補，也不跟前面已送出的字補）\n", onOff(s.CJKLatinSpace))
+	fmt.Fprintf(w, "zhuyin-error-hint=%s（打錯注音時提示：按了聲調但讀音沒有字時不收聲調、注音留著修改並提示；緊接著再按同一個聲調照舊留下注音；中英混打與不打聲調時不作用）\n", onOff(s.ZhuyinErrorHint))
 	if settings.CapsLockEnglishSetting(runtime.GOOS) {
 		fmt.Fprintf(w, "caps-lock-english=%s（Caps Lock 開著時直接打英文：字母大寫、數字與符號半形，關掉回到注音；關閉時注音模式不理 Caps Lock）\n", onOff(s.CapsLockEnglish))
 	}
@@ -190,7 +192,7 @@ func onOff(v bool) string {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("用法：0c-update status|settings|profile|set|models|vocab|api|open-settings|engine|auto|finish|mode|pause|resume|snooze|schedule|verify|check|download|download-now|apply|install|rollback|uninstall [選項]")
+		return fmt.Errorf("用法：0c-update status|settings|profile|set|models|vocab|api|personal|open-settings|engine|auto|finish|mode|pause|resume|snooze|schedule|verify|check|download|download-now|apply|install|rollback|uninstall [選項]")
 	}
 	action := args[0]
 	// macOS 以 root 執行時（sudo installer、MDM）改以登入的使用者身分重新執行，成功時不會返回（#198）
@@ -217,6 +219,8 @@ func run(args []string) error {
 		return modelsCommand(args[1:])
 	case "vocab": // 自訂詞彙（#122）
 		return vocabCommand(args[1:])
+	case "personal": // 清除學習紀錄（#301）
+		return personalCommand(args[1:])
 	case "api": // AI 助手的本機 API（#126）
 		return apiCommand(args[1:])
 	case "open-settings":
@@ -342,13 +346,12 @@ func run(args []string) error {
 		if err := uninstall(); err != nil {
 			return err
 		}
-		if err := removeSchedule(); err != nil {
-			return err
-		}
+		// 排程沒移除時照樣請引擎結束、清掉穩定副本，最後再回報錯誤（Windows 的排程刪除改為照實回報，#284）。
+		scheduleErr := removeSchedule()
 		removeResidentEngine()
 		// 排程使用的穩定副本；正在執行時（Windows）刪不掉就留著，重新安裝時會被取代。
 		_ = os.RemoveAll(filepath.Join(basePath(), "bin"))
-		return nil
+		return scheduleErr
 	case "install", "verify":
 		if *online {
 			if action != "install" {
@@ -490,10 +493,7 @@ func main() {
 	}
 	launchPrune() // 安裝、回復、解除安裝成功過才有；其餘步驟都做完了，最後才啟動（#179）
 	flush()
-	if errors.Is(err, errOtherAccount) {
-		os.Exit(otherAccountExit) // 安裝程式靠這個結束碼擋下安裝（#199）
-	}
-	if err != nil {
-		os.Exit(1)
+	if code := exitCodeFor(os.Args[1:], err); code != 0 {
+		os.Exit(code)
 	}
 }

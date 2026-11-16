@@ -102,24 +102,27 @@ final class LingxiInputController: IMKInputController {
     }
 
     private func handleFlags(_ event: NSEvent, client: IMKTextInput) -> Bool {
-        let capsLockKey: UInt16 = 57, leftShiftKey: UInt16 = 56, rightShiftKey: UInt16 = 60
-        if event.keyCode == capsLockKey {
+        let key = FlagsKey.of(keyCode: event.keyCode, capsLock: event.modifierFlags.contains(.capsLock), capsMode: capsMode)
+        if key == .capsLock {
             syncCaps(event.modifierFlags.contains(.capsLock), client: client, showHint: true)
             return false
         }
-        guard event.keyCode == rightShiftKey || event.keyCode == leftShiftKey else {
+        guard key != .other else {
             rightShift.reset()
             leftShift.reset()
             return false
         }
+        // 遠端桌面送來的 Shift 分不出左右：「中英切換」開了右 Shift 就當右側，否則當左側，開了哪一側都能切換（#308）。
+        let left = key == .remoteShift ? !session.shiftToggles(left: false) : key == .leftShift
         // 另一側 Shift 的變化讓這一側不再是單按。
-        let left = event.keyCode == leftShiftKey
         if left { rightShift.reset() } else { leftShift.reset() }
         let modified = !event.modifierFlags.intersection([.command, .control, .option]).isEmpty
         let pressed = event.modifierFlags.contains(.shift)
         let limit = session.shiftTapLimit
         // 這一側 Shift 此刻實際上是否按著；Chromium 晚到的重複按下送來時鍵早已放開（#148）。
-        let held = !pressed || CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(event.keyCode))
+        // 遠端注入的事件沒有 Shift 的 keyCode，改看系統的修飾鍵狀態。
+        let held = !pressed || (key == .remoteShift ? CGEventSource.flagsState(.combinedSessionState).contains(.maskShift)
+                                                    : CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(event.keyCode)))
         let at = RightShiftTap.eventTime(timestamp: event.timestamp, now: ProcessInfo.processInfo.systemUptime,
                                          sinceLastModifierChange: CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .flagsChanged))
         let toggle = left ? leftShift.flags(pressed: pressed, modified: modified, at: at, limit: limit, held: held)
@@ -433,6 +436,7 @@ final class LingxiInputController: IMKInputController {
                                                english: snapshot?.mode == "english",
                                                pending: snapshot?.englishPending == true) else { return false }
         let caps = capsMode, viaMode = capsViaMode
+        let placeholder = placeholderShown // 下面重設會清掉記錄；App 裡的佔位（#283）要跟著拿掉
         // Caps Lock 帶來的英文（#219）在新 session 用 caps_lock 還原，關掉 Caps Lock 才會回到開啟前的模式。
         let restore = snapshot?.capsEnglish == true ? Request(type: "caps_lock", on: true) : Request(type: "mode", on: true)
         dropQueued()
@@ -446,8 +450,11 @@ final class LingxiInputController: IMKInputController {
         queued.append(restore)
         let wasRendering = rendering
         rendering = true
-        if !text.isEmpty {
-            let deliver = { client.insertText(text, replacementRange: self.replacement) }
+        if !text.isEmpty || placeholder {
+            let deliver = {
+                if text.isEmpty { self.clearMarkedText(client) }
+                else { client.insertText(text, replacementRange: self.replacement) }
+            }
             if queued.isProcessing { queued.present(deliver) }
             else { queued.perform { queued.present(deliver) } }
         }
@@ -526,6 +533,15 @@ final class LingxiInputController: IMKInputController {
         }
     }
 
+    /// App 裡的組字只是候選窗開著時的佔位（#283），不是引擎的文字：結束時拿掉，不能當成文字送出。
+    private var placeholderShown: Bool { shownMarked != nil && snapshot?.text.isEmpty != false }
+
+    private func clearMarkedText(_ client: IMKTextInput) {
+        shownMarked = nil
+        client.setMarkedText(NSAttributedString(string: ""), selectionRange: NSRange(location: 0, length: 0),
+                             replacementRange: replacement)
+    }
+
     /// 引擎無法使用：畫面上的組字照原樣留成文字，按鍵交還 App；下一個按鍵開新的 session。
     private func fail(_ error: Error, client: IMKTextInput) -> Bool {
         dropQueued()
@@ -538,6 +554,8 @@ final class LingxiInputController: IMKInputController {
         rendering = true
         if let text = snapshot?.text, !text.isEmpty {
             client.insertText(text, replacementRange: replacement)
+        } else if placeholderShown {
+            clearMarkedText(client) // 候選窗開著時的佔位（#283）不能留在 App 裡
         }
         snapshot = nil
         pendingContext = nil
@@ -577,10 +595,15 @@ final class LingxiInputController: IMKInputController {
         rendering = true
         defer { rendering = false }
         let generation = queued.cancellationGeneration
-        let hadMarkedText = !(snapshot?.text.isEmpty ?? true)
+        // App 裡有組字：引擎的組字，或候選窗開著時的佔位（#283，引擎那邊沒有文字）。
+        let hadMarkedText = !(snapshot?.text.isEmpty ?? true) || shownMarked != nil
         let wasComposing = snapshot?.composing == true
         snapshot = next
         EngineSession.note(next) // 「輸出簡體字」在別處切換後跟上（#169）
+        if next.bell == true {
+            NSSound.beep() // 打錯注音時提示（#300）：系統的提示音（NSBeep），照使用者的音效設定
+            NSLog("0c: bell")
+        }
         if !wasComposing, next.composing {
             var line: NSRect?, caret: Int?
             if floating.needsField {
@@ -618,8 +641,10 @@ final class LingxiInputController: IMKInputController {
             floating.textInserted(at: now)
             guard queued.cancellationGeneration == generation else { return }
         }
-        let marked = MarkedText.attributed(next.preedit ?? [])
-        let shown = MarkedText.Shown(text: marked, cursor: min(max(0, next.cursor.utf16), marked.length))
+        // 沒有組字但候選窗開著（沒在打字時按 ` 開的符號表等）時交給 App 一個佔位組字（#283）：Office 與終端機一類的 App
+        // 沒有組字時方向鍵、Esc 不經過輸入法。
+        let shown = MarkedText.presented(next.preedit ?? [], cursor: next.cursor.utf16, candidates: next.candidates != nil)
+        let marked = shown.text
         if floating.floating {
             shownMarked = nil // 浮動組字（#84）：組字畫在面板，App 裡不放組字，也不送空的組字
         } else if marked.length > 0 || (hadMarkedText && (next.commit ?? "").isEmpty),

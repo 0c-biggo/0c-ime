@@ -387,6 +387,7 @@ Snapshot Session::parse(const nlohmann::json &reply) {
     s.englishPending = j.value("english_pending", false);
     s.capsLock = j.value("caps_lock", false);
     s.outputSimplified = j.value("output_simplified", false);
+    s.bell = j.value("bell", false);
     if (j.contains("preedit")) {
         for (const auto &g : j["preedit"]) {
             s.preedit.push_back({g.value("text", ""), g.value("style", "normal")});

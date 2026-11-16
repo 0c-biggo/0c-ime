@@ -229,6 +229,29 @@ func TestPrepareCoreCopiesMCPAndRecordsItsHash(t *testing.T) {
 	}
 }
 
+// 0c-updatew（#289，Windows 排程用的無主控台啟動器）同樣是選用成員：複製並記錄雜湊，切換後由它換上穩定副本。
+func TestPrepareCoreCopiesLauncherAndRecordsItsHash(t *testing.T) {
+	withLauncher := CoreLayout{Server: "bin/0c-server", Update: "bin/0c-update", Launcher: "bin/0c-updatew"}
+	archive, sum := linuxArchiveWith(t, "0.2.0-dev.1", false, map[string]string{"bin/0c-updatew": "launcher"})
+	target := Target{Version: "0.2.0-dev.1", Kind: "core", SHA256: sum}
+	want := sha256.Sum256([]byte("launcher"))
+	base := t.TempDir()
+	dir, err := PrepareCore(base, "", archive, target, "linux", "amd64", withLauncher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hashes, err := enginedir.ReadFiles(filepath.Join(base, dir)); err != nil || hashes["0c-updatew"] != hex.EncodeToString(want[:]) {
+		t.Fatalf("應記錄 0c-updatew 的雜湊：%v %v", hashes, err)
+	}
+	old := t.TempDir()
+	if dir, err = PrepareCore(old, "", archive, target, "linux", "amd64", linuxCore); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(old, dir, "0c-updatew")); err == nil {
+		t.Fatal("不認得 0c-updatew 的佈局不得複製它")
+	}
+}
+
 func TestReadFilesIsNilForDirectoriesPreparedByOlderUpdaters(t *testing.T) {
 	if hashes, err := enginedir.ReadFiles(t.TempDir()); hashes != nil || err != nil {
 		t.Fatalf("%v %v", hashes, err)

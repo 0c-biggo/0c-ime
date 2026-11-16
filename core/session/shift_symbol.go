@@ -21,7 +21,8 @@ const shiftedSymbols = "~!@#$%^&*()_+{}|:\"<>?"
 // 跟沒開時的全形標點一樣：組字中插在游標處、留在組字區。沒在組字時，半形就是鍵帽字元的交還應用程式
 // （同 @ #，引擎的 idle_keys 也拿掉它們），不是的（< > "）由核心直接送出半形。
 func (s *Session) halfwidthShift(k string) bool {
-	if !s.ShiftSymbolHalfwidth || s.fullWidth || s.english || len(k) != 1 || !strings.Contains(shiftedSymbols, k) {
+	// 「所有符號鍵打半形」（#282）在 allSymbolsKey 處理；全形時兩者都不作用。
+	if !s.ShiftSymbolHalfwidth || s.AllSymbolsHalfwidth || s.fullWidth || s.english || len(k) != 1 || !strings.Contains(shiftedSymbols, k) {
 		return false
 	}
 	if s.InputStyle.Punctuation == "microsoft" && microsoftRawPunctuation(k) {
@@ -52,8 +53,10 @@ func (s *Session) halfwidthAlternative(k, p string) bool {
 
 // insertHalfwidthShift 在游標處插入 Shift 符號鍵 k 的半形；↓ 第二項是這一鍵原本打的全形標點 p，
 // 鍵帽字元跟半形不同時（< > "）排在後面，< > 仍打得到。同組符號已經列了的不重複（& 的「＆」、^ 的「……」）。
-func (s *Session) insertHalfwidthShift(k, p string) {
-	half := halfwidthPunct(p, k)
+func (s *Session) insertHalfwidthShift(k, p string) { s.insertHalfwidth(halfwidthPunct(p, k), k, p) }
+
+// insertHalfwidth 在游標處插入標點鍵 k 的半形 half，↓ 列出這一鍵原本的全形標點 p 與鍵帽字元 k（同組已列的不重複）。
+func (s *Session) insertHalfwidth(half, k, p string) {
 	s.insertLiteral(half)
 	known := symbolAlternatives(half)
 	var alts []string

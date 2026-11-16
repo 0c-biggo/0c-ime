@@ -560,3 +560,79 @@ func TestZhuyinHabitFollowsNeuralDisplay(t *testing.T) {
 		t.Fatalf("畫面上是我，窩的紀錄不套用：%q", got)
 	}
 }
+
+// #303：神經選字把前字換成「窩」時，在鍵接空白出的中文字（t␣ 吃、-␣ 兒）↓ 選原樣注音，前面的字不換回統計首選「我」；
+// 在換出來的注音上 ↓ 選回原按鍵也一樣。
+func TestZhuyinHabitPickOverCharKeepsNeuralDisplay(t *testing.T) {
+	neural := func(m *personal.Model) *Session {
+		s := zhuyinHabitSession(m)
+		s.Opt.PrefixAware = false
+		s.Rerank = rerank.Options{Weight: 1, Scorer: rankFunc(func(r rerank.Request) ([]float64, error) {
+			scores := make([]float64, len(r.Candidates))
+			for i, c := range r.Candidates {
+				if strings.Contains(c.Text, "窩") {
+					scores[i] = 1000
+				}
+			}
+			return scores, nil
+		})}
+		return s
+	}
+	for _, c := range []struct{ keys, typed, symbol, picked, key string }{
+		{"5p ji3t ", "真窩吃", "ㄔ", "真窩ㄔ", "t "},
+		{"5p ji3- ", "真窩兒", "ㄦ", "真窩ㄦ", "- "},
+	} {
+		m := zhuyinHabitModel()
+		s := neural(m)
+		if snap := typeRaw(s, c.keys); snap.Text() != c.typed {
+			t.Fatalf("%q 神經把我換成窩：%q", c.keys, snap.Text())
+		}
+		if snap := downPick(t, s, 2, c.symbol); snap.Text() != c.picked {
+			t.Errorf("%q 選 %s 不改前面的字：%q", c.keys, c.symbol, snap.Text())
+		}
+		if snap := downPick(t, s, 2, c.key); !strings.HasPrefix(snap.Text(), "真窩") {
+			t.Errorf("%q 選回原按鍵不改前面的字：%q", c.keys, snap.Text())
+		}
+		key(s, proto.KeyEscape)
+
+		s = neural(m)
+		typeRaw(s, c.keys)
+		downPick(t, s, 2, c.symbol)
+		key(s, proto.KeyEnter)
+		if !m.ZhuyinKeyPicked("窩", c.symbol) || m.ZhuyinKeyPicked("我", c.symbol) {
+			t.Errorf("%q 記的是畫面上的字：%v", c.keys, m.Store.ZhuyinKeys)
+		}
+
+		// 同一個原因：在出來的字上直接選回原按鍵。
+		s = neural(zhuyinHabitModel())
+		typeRaw(s, c.keys)
+		if snap := downPick(t, s, 2, c.key); snap.Text() != "真窩"+c.key {
+			t.Errorf("%q 在字上選回原按鍵不改前面的字：%q", c.keys, snap.Text())
+		}
+	}
+
+	// 原樣注音換聲調（c␣ 的 ㄏ ↓ ㄏˋ）也不改前面的字。
+	s := neural(zhuyinHabitModel())
+	if snap := typeRaw(s, "5p ji3c "); snap.Text() != "真窩ㄏ" {
+		t.Fatalf("真窩ㄏ：%q", snap.Text())
+	}
+	if snap := downPick(t, s, 2, "ㄏˋ"); snap.Text() != "真窩ㄏˋ" {
+		t.Errorf("換聲調不改前面的字：%q", snap.Text())
+	}
+
+	// 換掉的字在神經選的詞裡（窩兒）：詞的另一半留著。
+	lex, sys := lexicon.NewMem(), lm.NewMem()
+	for _, e := range []struct{ w, r string }{{"真", "ㄓㄣ"}, {"我", "ㄨㄛˇ"}, {"窩", "ㄨㄛˇ"}, {"兒", "ㄦ"}, {"窩兒", "ㄨㄛˇ ㄦ"}} {
+		lex.Add(lexicon.Entry{Surface: e.w, Reading: zhuyin.ParseReading(e.r), PRW: 1})
+		sys.SetUni(e.w, 1e-3)
+	}
+	sys.SetUni("窩", 1e-5)
+	sys.SetUni("窩兒", 1e-6)
+	s = neural(personal.NewModel(lex, sys))
+	if snap := typeRaw(s, "5p ji3- "); snap.Text() != "真窩兒" {
+		t.Fatalf("真窩兒：%q", snap.Text())
+	}
+	if snap := downPick(t, s, 2, "ㄦ"); snap.Text() != "真窩ㄦ" {
+		t.Errorf("詞裡的字換成注音：%q", snap.Text())
+	}
+}

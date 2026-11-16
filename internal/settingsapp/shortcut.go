@@ -37,22 +37,17 @@ type ShortcutSpec struct {
 	Icon   string `json:"icon"`
 }
 
-// ShortcutScript 以環境變數取得內容，所以路徑裡的引號、空白或中文都不必跳脫。
-const ShortcutScript = `$ErrorActionPreference = 'Stop'
-$shell = New-Object -ComObject WScript.Shell
-$link = $shell.CreateShortcut($env:ZC_LNK_PATH)
-$link.TargetPath = $env:ZC_LNK_TARGET
-$link.Arguments = $env:ZC_LNK_ARGS
-$link.WorkingDirectory = $env:ZC_LNK_DIR
-$link.IconLocation = $env:ZC_LNK_ICON + ',0'
-$link.Description = '設定靈犀注音輸入法'
-$link.Save()
-`
+// ShortcutDescription 是捷徑的說明（滑鼠停留時的提示）。
+const ShortcutDescription = "設定靈犀注音輸入法"
 
-// NewShortcutSpec 組出捷徑：以 conhost --headless 執行穩定的 0c-update（與自動更新排程相同的做法），
-// 命令列程式不會閃出主控台視窗。路徑含引號時無法安全地放進引數，直接拒絕。
-func NewShortcutSpec(startMenu, base, conhost, stableUpdater string) (ShortcutSpec, error) {
-	for _, p := range []string{startMenu, base, conhost, stableUpdater} {
+// NewShortcutSpec 組出捷徑：直接指向個人資料目錄 bin 裡設定程式的穩定副本（GUI 程式，不會出現主控台視窗），
+// 不帶參數。路徑不隨版本變動，所以捷徑只在第一次安裝、從舊樣式換新時寫一次。
+//
+// #284：先前的捷徑是 conhost.exe --headless "<0c-update.exe>" open-settings，「捷徑經 conhost 隱藏視窗啟動另一個
+// 程式」正是惡意 LNK 的常見手法，Symantec Endpoint Protection 以 Scr.Malcode!gen 隔離。其他輸入法（新酷音
+// windows-chewing-tsf 的 ChewingPreferences.exe、PIME 的 pythonw.exe）也都直接指向不開主控台的程式。
+func NewShortcutSpec(startMenu, base, settings string) (ShortcutSpec, error) {
+	for _, p := range []string{startMenu, base, settings} {
 		if !filepath.IsAbs(p) || strings.ContainsRune(p, '"') {
 			return ShortcutSpec{}, fmt.Errorf("需要不含引號的絕對路徑：%q", p)
 		}
@@ -60,18 +55,32 @@ func NewShortcutSpec(startMenu, base, conhost, stableUpdater string) (ShortcutSp
 	return ShortcutSpec{
 		Schema: 1,
 		Path:   filepath.Join(startMenu, ShortcutFolder, ShortcutName),
-		Target: conhost,
-		Args:   fmt.Sprintf(`--headless "%s" open-settings`, stableUpdater),
-		Dir:    base,
+		Target: settings,
+		Dir:    filepath.Dir(settings),
 		Icon:   filepath.Join(base, filepath.FromSlash(ShortcutIcon)),
 	}, nil
 }
 
+// Recorded：標記檔記錄的就是這個 spec，也就是這個捷徑我們已經建過。
+func Recorded(base string, spec ShortcutSpec) bool {
+	old, err := readMarker(filepath.Join(base, ShortcutMarker))
+	return err == nil && old == spec
+}
+
+// Withdrawn：這個捷徑我們建過，之後被使用者或防毒軟體移除了。這時除了重新安裝（restore）都不再建立，
+// 否則每次自動更新排程都重建一次，防毒軟體就每 15 分鐘跳一次通知（#284）。
+func Withdrawn(base string, spec ShortcutSpec) bool {
+	return Recorded(base, spec) && !exists(spec.Path)
+}
+
 // EnsureShortcut 讓捷徑與 spec 一致；內容沒變、捷徑與圖示都還在時什麼都不做（回傳 false）。
-// create 實際建立 .lnk，由平台提供，測試以假的取代。
-func EnsureShortcut(base string, spec ShortcutSpec, create func(ShortcutSpec) error) (bool, error) {
+// 內容沒變而捷徑不見了（Withdrawn）只在 restore（完整安裝）時補回。create 實際建立 .lnk，由平台提供，測試以假的取代。
+func EnsureShortcut(base string, spec ShortcutSpec, restore bool, create func(ShortcutSpec) error) (bool, error) {
 	marker := filepath.Join(base, ShortcutMarker)
 	old, oldErr := readMarker(marker)
+	if oldErr == nil && old == spec && !exists(spec.Path) && !restore {
+		return false, nil
+	}
 	if oldErr == nil && old == spec && exists(spec.Path) && exists(spec.Icon) {
 		return false, nil
 	}
@@ -98,6 +107,19 @@ func EnsureShortcut(base string, spec ShortcutSpec, create func(ShortcutSpec) er
 		return false, err
 	}
 	return true, os.WriteFile(marker, append(b, '\n'), 0o600)
+}
+
+// WithdrawShortcut 只移除標記檔記錄的捷徑、保留標記檔：捷徑指向的穩定副本不見了（被防毒軟體隔離）時，
+// 不留下點了會出錯的捷徑，之後也照 Withdrawn 不再自動重建。
+func WithdrawShortcut(base string) error {
+	spec, err := readMarker(filepath.Join(base, ShortcutMarker))
+	if err != nil {
+		return nil
+	}
+	if err := os.Remove(spec.Path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // RemoveShortcut 移除先前建立的捷徑（依標記檔）；沒有標記檔就什麼都不動，所以不會刪到使用者自己建立的檔案。

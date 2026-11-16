@@ -32,6 +32,9 @@ type CoreLayout struct {
 	// MCP 是 AI 工具用的轉接 0c-mcp（選用，#126）。Windows 切換後由它換上 bin\0c-mcp.exe 的穩定副本；
 	// 舊版更新器同樣略過它。
 	MCP string
+	// Launcher 是 Windows 排程與通知按鈕執行的無主控台啟動器 0c-updatew（選用，#289）；切換後由新版換上
+	// bin\0c-updatew.exe 的穩定副本。舊版更新器同樣略過它。
+	Launcher string
 }
 
 // PrepareCore 從已核對雜湊的壓縮包準備核心版本目錄 versions/<版本>-c-<雜湊>：引擎、配對字典與神經模型。
@@ -86,6 +89,8 @@ func PrepareCore(base, scratch, archive string, t Target, goos, arch string, lay
 			target = enginedir.SettingsExecutable()
 		case layout.MCP != "" && name == layout.MCP:
 			target = filepath.Base(layout.MCP)
+		case layout.Launcher != "" && name == layout.Launcher:
+			target = filepath.Base(layout.Launcher)
 		case strings.HasPrefix(name, "data/"), strings.HasPrefix(name, "neural/"):
 			target = name
 		default:

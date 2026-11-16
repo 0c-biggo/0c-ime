@@ -5,6 +5,7 @@ import (
 
 	"github.com/0c-biggo/0c-ime/core/decode"
 	"github.com/0c-biggo/0c-ime/core/fuzzy"
+	"github.com/0c-biggo/0c-ime/core/input"
 	"github.com/0c-biggo/0c-ime/core/personal"
 	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
@@ -249,11 +250,69 @@ func (s *Session) openSyllableLiteral(p pendingLiteral) {
 	if keys != "" {
 		items = slices.Insert(items, 1, keys)
 	}
+	// 音節自己有字時（選過的注音文讓 5␣ 出 ㄓ、t␣ 出 ㄔ，或從這裡換成有字的 ㄓˋ，#296），各聲調後面接著列這個讀音的字，
+	// 選了換回一般的字（selectSyllableChar）；不列的話這格只剩原按鍵可選，回不到平常出的「之」。
+	from := len(items)
+	items = append(items, s.syllableChars(syl, p.start)...)
 	s.openSymbols(items, p.start, p.end()+p.mark()-p.start, false)
 	s.cand.syllable = &p
+	if len(items) > from {
+		s.cand.chars = from
+	}
 	if keys != "" {
 		s.cand.keyLiterals = map[int]string{1: keys}
 	}
+}
+
+// syllableChars 依 at 前一個字的語境排序，列出完整音節 syl 自己的字；只能當詞頭（#107）或沒打聲調的（#150）沒有。
+func (s *Session) syllableChars(syl zhuyin.Syllable, at int) []string {
+	if syl.Untoned() || len(s.model.Source().Exact([]zhuyin.Syllable{syl})) == 0 {
+		return nil
+	}
+	left, _ := s.zhuyinLeft(at)
+	dec := &decode.Decoder{Lex: s.model.Source(), Score: s.model}
+	var out []string
+	for _, c := range dec.Candidates(input.Exact{}.Expand([]zhuyin.Syllable{syl}), 0, 1, left, nil) {
+		out = append(out, c.Entry.Surface)
+	}
+	return out
+}
+
+// selectSyllableChar 把原樣音節換回一般音節並鎖定選的字 word，原按鍵（5␣）照舊記在這格，↓ 第二項仍是它。
+// 這格是選過的注音文時，選了字就是不要注音：提交時跟選回原按鍵一樣讓紀錄消失（zhuyinKeyDeclined）。
+func (s *Session) selectSyllableChar(p pendingLiteral, start, length int, word string) {
+	keys := s.mixedKeys[start]
+	declined := false
+	if sym, ok := s.keySymbol(keys[:min(1, len(keys))]); ok && len(keys) == 2 && keys[1] == ' ' && p.syllable() == zhuyin.Syllable(string(sym)) {
+		declined = true
+	}
+	// 畫面上其他字照舊（神經選過的字不換回統計首選）：拿掉這格的字面後，後面的位置往前移。
+	var shown []decode.Seg
+	for _, g := range s.path {
+		switch {
+		case g.End <= start:
+			shown = append(shown, g)
+		case g.Start >= start+length:
+			g.Start, g.End = g.Start-length+1, g.End-length+1
+			shown = append(shown, g)
+		}
+	}
+	auto := slices.Clone(s.autoLog)
+	s.cursor = start + length
+	for range length {
+		s.eraseBeforeCursor()
+	}
+	if keys != "" {
+		s.insertMixedReading(p.syllable(), keys)
+	} else {
+		s.insert(p.syllable())
+	}
+	if declined {
+		s.markZhuyinKey(start, zhuyinKeyDeclined)
+	}
+	s.locks[start] = decode.Lock{Word: word, Len: 1}
+	s.cand = nil
+	s.refreshSelection(shown, auto, decode.Seg{Word: word, Start: start, End: start + 1})
 }
 
 // pendingStash 是切到英文時清掉的未打完注音（#90），包含中英混打尚未定案、畫面顯示成注音的按鍵。

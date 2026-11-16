@@ -3,6 +3,7 @@
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import shutil
@@ -41,6 +42,8 @@ def fixture_dictionary(directory):
 
 
 class SourceReleaseTests(unittest.TestCase):
+    SELECT_SCHEMA = "zuin-sequence-runtime-v2"
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -58,7 +61,7 @@ class SourceReleaseTests(unittest.TestCase):
                        "vocab.json": release.json_bytes({"characters": ["test"], "bases": [],
                                                          "dictionary_sha256": "a" * 64}),
                        "LICENSE": b"MIT test fixture", "README.md": b"Test model card"}
-            manifest = {"schema": "zuin-sequence-runtime-v1" if role == "select" else "zuin-punct-runtime-v1",
+            manifest = {"schema": self.SELECT_SCHEMA if role == "select" else "zuin-punct-runtime-v1",
                         "files": {name: hashlib.sha256(content[name]).hexdigest()
                                   for name in ("model.onnx", "vocab.json")}}
             if role == "select":
@@ -477,6 +480,25 @@ class SourceReleaseTests(unittest.TestCase):
                 fetch_assets.download("v0.2.0", cache)
         self.assertEqual(list(cache.glob(".download-*")), [])
 
+    def test_fetch_assets_closes_the_download_before_moving_it(self):
+        # Windows refuses to rename or delete an open file (WinError 32).
+        opened = []
+        real_temp, real_replace = tempfile.NamedTemporaryFile, os.replace
+        def temp(**kwargs):
+            opened.append(real_temp(**kwargs))
+            return opened[-1]
+        def moved(source, target):
+            self.assertTrue(opened and all(stream.closed for stream in opened))
+            real_replace(source, target)
+        target = self.work / "asset.bin"
+        with patch.object(fetch_assets.urllib.request, "urlopen", side_effect=lambda url, timeout: io.BytesIO(b"asset")), \
+             patch.object(fetch_assets.tempfile, "NamedTemporaryFile", side_effect=temp), \
+             patch.object(fetch_assets.os, "replace", side_effect=moved) as replace:
+            fetch_assets.fetch("https://example.invalid/asset.bin", target, hashlib.sha256(b"asset").hexdigest())
+        replace.assert_called_once()
+        self.assertEqual(target.read_bytes(), b"asset")
+        self.assertEqual(list(self.work.glob(".download-*")), [])
+
     def test_fetch_assets_rejects_a_release_with_other_locks(self):
         tarball = self.build()
         root = self.source_tree("checkout")
@@ -499,6 +521,11 @@ class SourceReleaseTests(unittest.TestCase):
             archive.addfile(tarfile.TarInfo("../outside"), io.BytesIO())
         with self.assertRaisesRegex(ValueError, "invalid"):
             release.verify(bad)
+
+
+class SourceReleaseV1SelectTests(SourceReleaseTests):
+    """Releases through 0.2.11 ship a v1 selection package; they must keep building and verifying."""
+    SELECT_SCHEMA = "zuin-sequence-runtime-v1"
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 {
   "dictionary_manifest_sha256": "4e4c4cdf7681b48de2004927745c2adc03f53b0c7b776e9258c39a7f5b0f4075",
-  "models_lock_sha256": "59a021df3441fbfa5db32008bde4b9f84e60cd7eb08e68df479c74466585fd39",
+  "models_lock_sha256": "84f5195065b5b4e3124d2af0e09c874b08a0be9eec0db354f61f7e3647adfdb7",
   "packages": {
     "punct": {
       "manifest.json": {
@@ -14,8 +14,8 @@
     },
     "select": {
       "manifest.json": {
-        "sha256": "111e5168a6e45a84c6f0c80dacec4ab2845dbe5c66fd5e09365085cb0f809892",
-        "size": 1081
+        "sha256": "abe80086968926c983d93c1c876a4ad9bb857e2efd208a4ace570a5a8fabf4fc",
+        "size": 1165
       },
       "vocab.json": {
         "sha256": "b52cc62a989f30a5c08e85985c6d5bcc84e8d987289cc5d56ffcd0ff934fd7b3",

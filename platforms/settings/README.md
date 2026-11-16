@@ -9,8 +9,8 @@
 | `src/updater.rs` | 找出並啟動 `0c-update`、逾時、解析 JSON、匯出摘要；附單元測試 |
 | `src/main.rs` | 指令白名單、視窗、單一實例 |
 | `src/watch.rs` | 「我的詞彙」的即時同步：常駐 `0c-update vocab watch`、轉成 `vocab-changed` 事件、意外結束時重新連上 |
-| `ui/` | `index.html`、`app.css`、`app.js`；設定項目依契約動態產生。`vocab.js` 是「我的詞彙」頁，`models.js` 是「模型」頁，`input-styles.js` 是「輸入習慣」頁，`update-mode.js` 是更新方式的顯示名稱與說明 |
-| `test/` | `smoke.sh`（容器 Xvfb 冒煙測試）、`vocab.sh`（我的詞彙）、`models.sh`（模型）、`styles.sh`（輸入習慣）、`scroll.sh`（背景更新保留捲動位置，#268）、`fake-update.py`（測試用的 0c-update 替身，只模擬 vocab、api 與 models）、`*_test.js`（`node --test`，不碰畫面的判斷）、`scroll_position_test.py`（Playwright 在 Chromium 與 WebKit 跑真的頁面，各缺一個就跳過） |
+| `ui/` | `index.html`、`app.css`、`app.js`；設定項目依契約動態產生。`vocab.js` 是「我的詞彙」頁，`models.js` 是「模型」頁，`personal-reset.js` 是「我的詞彙」頁「靈犀學到的」底下的「清除學習紀錄」，`input-styles.js` 是「輸入習慣」頁，`update-mode.js` 是更新方式的顯示名稱與說明 |
+| `test/` | `smoke.sh`（容器 Xvfb 冒煙測試）、`vocab.sh`（我的詞彙）、`models.sh`（模型）、`styles.sh`（輸入習慣）、`scroll.sh`（背景更新保留捲動位置，#268）、`personal.sh`（清除學習紀錄，#301）、`fake-update.py`（測試用的 0c-update 替身，只模擬 vocab、api 與 models）、`*_test.js`（`node --test`，不碰畫面的判斷）、`scroll_position_test.py`（Playwright 在 Chromium 與 WebKit 跑真的頁面，各缺一個就跳過） |
 | `build.rs`、`capabilities/main.json` | 只有 `build.rs` 列出的指令能被前端呼叫，capability 只授權這些指令與事件監聽 |
 | `tauri.linux.conf.json` | Linux 的 identifier 改為 `com.biggo.zc.settings`：外掛用它組 D-Bus 服務名，而服務名的每一段不能以數字開頭，`com.biggo.0c.settings` 會讓程式一啟動就 panic。macOS 與 Windows 維持 `com.biggo.0c.settings` |
 | `tauri.conf.json` | CSP：`default-src 'none'; script-src 'self'; style-src 'self'`；不載入任何遠端內容 |
@@ -31,7 +31,7 @@ Rust 的 `profile_command(action,id,name)` 只允許 `select`、`copy`、`rename
 |---|---|
 | 中英切換（`mode`） | 中英切換鍵、開始時的中英模式、切換視窗後的中英模式、中英混打、英文模式自動補字、Caps Lock 開著時直接打英文（Windows、Linux） |
 | 選字（`candidates`） | 選字方式（神經選字）、依前文選字、空白鍵選字、修改字詞的位置、選字後游標移到下一個字、選字排列、選字鍵、按 Esc 清除整段組字，另一張卡是模糊音總開關 |
-| 鍵盤與符號（`keyboard`） | 鍵盤排列、Ctrl＋標點打全形、Shift＋符號打半形、提交時補標點（Beta）、Emoji 選單（子選項「將 = 放在第一項」） |
+| 鍵盤與符號（`keyboard`） | 鍵盤排列、Ctrl＋標點打全形、標點寬度、提交時補標點（Beta）、Emoji 選單（子選項「將 = 放在第一項」） |
 
 側欄順序：總覽、中英切換、選字、鍵盤與符號、輸出設定、我的詞彙、模型、更新、問題排解、關於。「輸出設定」（`output`）照舊獨立。契約裡不在任何一頁的新項目（較新的 0c-update 才有）畫在「選字」最後，所以新增設定不必先改畫面；要放別頁再加進 `INPUT_PAGES`。舊的頁名 `input`（0.2.5 以前的 `0c-update open-settings input`、說明文件）照樣接受，畫面導到側欄第一頁「中英切換」（`PAGE_ALIAS`；Go 與 Rust 的白名單也保留它，舊版設定程式照舊開輸入設定）。三份頁名清單由 `internal/settingsapp` 的 `TestPageNamesMatchTheSettingsApp` 核對。總覽的「有設定已儲存、尚未套用」帶到第一個尚未套用的項目所在的那一頁。
 
@@ -45,7 +45,7 @@ Emoji 選單以一個開關控制（`emoji-shortcut`：off／equals），預設�
 
 - **我加的詞**：頂端是搜尋與新增列。打字時（組字結束後 250 毫秒）查 `annotate`，每個字一格讀音：破音字是黃色下拉選單，查不到的字自己填注音；Enter 加入。英文詞（`ls`、`kubectl`，#146）不查讀音，直接 Enter 加入，清單上讀音的位置標示「英文」、沒有排名。一次貼上多行變成預覽清單（不是漢字也不是英文詞的行不能勾），勾選後一起加入（超過 500 個分批送，整批復原）；「詞＋Tab＋讀音」的行照那個讀音加，不重查。每列：詞、讀音（點了改，可加到 4 個讀音，送出時附 `expect`）、排名徽章（`rank`：首選／第 N 個／第 N 頁，滑過顯示前面是哪個詞）、來源與時間、刪除。超過 1,000 筆分頁，搜尋交給引擎（`list` 的 `query`）。
 - **匯出、匯入**（#255）：標題列右邊兩個按鈕。「匯出」把我加的詞與我的片語存成文字檔（`ui/vocab-text.js` 組字串，Rust 的 `export_vocab` 寫到下載資料夾），頁首顯示路徑。「匯入」開 WebView 的檔案對話框（`<input type="file">`），讀進來和貼上多行同一個預覽：上方是摘要（已經有的略過幾個、幾行不能加）與「加入勾選的…」，清單超過 12 列時在框內捲動，片語列在詞下面。格式與合併規則見 [`ui/vocab-text.js`](ui/vocab-text.js)。
-- **靈犀學到的**（#182）：`learned` 清單，`kind` 顯示成「常一起用」（`phrase`）或「你選過的寫法」（`reading`），不顯示次數；頂端說明三個動作，每列有勾選框與「保留」（`keep`）、「移除」（`unlearn`）、「不再學」（`forget`），已是自訂詞的顯示「已在我加的詞」、不能勾。勾選列有全選（部分勾選時半勾）與三個批次按鈕，一次送一個指令。移除、不再學、恢復學習之後先拿掉那幾列，底部提示附「復原」（`learned-undo`），焦點交給它；保留是自訂詞的批次，照舊從「最近變更」也能復原。`forgotten_count` 大於 0 時右上角出現「不再學的詞（N）」，打開是另一個清單（`forgotten`），每列與批次都能「恢復學習」（`relearn`），「‹ 靈犀學到的」返回；全部恢復後自動返回、入口消失。
+- **靈犀學到的**（#182）：`learned` 清單，`kind` 顯示成「常一起用」（`phrase`）或「你選過的寫法」（`reading`），不顯示次數；頂端說明三個動作，每列有勾選框與「保留」（`keep`）、「移除」（`unlearn`）、「不再學」（`forget`），已是自訂詞的顯示「已在我加的詞」、不能勾。勾選列有全選（部分勾選時半勾）與三個批次按鈕，一次送一個指令。移除、不再學、恢復學習之後先拿掉那幾列，底部提示附「復原」（`learned-undo`），焦點交給它；保留是自訂詞的批次，照舊從「最近變更」也能復原。`forgotten_count` 大於 0 時右上角出現「不再學的詞（N）」，打開是另一個清單（`forgotten`），每列與批次都能「恢復學習」（`relearn`），「‹ 靈犀學到的」返回；全部恢復後自動返回、入口消失。清單最後是「清除學習紀錄」（#301，見下面一節；「不再學的詞」裡不顯示）。
 - **我的片語**：新增（Ctrl／⌘＋Enter）、刪除、↑↓ 或拖曳把手排序（`phrase-move`）。拖曳用指標事件，不用 HTML5 拖放（各平台 WebView 的拖放處理不一致）。
 - **最近變更**：最近 5 批（可展開全部）：時間、誰（你／AI 助手／打字時／學到的）、摘要、復原；點摘要看明細。
 - **讓 AI 幫你加詞**（頁面最下方，預設收合）：開關旁一行「AI 助手讀得到你加的詞」；token 預設遮住，可顯示、複製、重新產生（先確認「已設定的 AI 工具要重新貼上設定」），列出建立與最後使用時間；「你用哪個 AI 工具？」只顯示選到的那段範例（網址、token、`0c-mcp` 路徑自動填好，未顯示 token 時範例裡也遮住，「複製」一律複製完整內容，含 token 的註明不要分享）；「測試連線」。埠被占用時可以換埠。
@@ -72,6 +72,14 @@ UI 測試：`python3 scripts/test_settings_ui.py --settings <輸出>/0c-settings
 | `open_url` | `url` | 交給系統瀏覽器（Linux `xdg-open`、macOS `open`、Windows `rundll32 url.dll,FileProtocolHandler`）；只放行 `https://huggingface.co/` 開頭、路徑只有英數與 `/._-` 的網址。設定視窗本身照舊不離開本機頁面 |
 
 UI 測試：`python3 scripts/test_settings_ui.py --settings <輸出>/0c-settings [--only models]`，`fake-update.py --models` 依契約模擬內建、未安裝、下載中、已安裝、需要重新下載、缺推論元件、發行版關閉下載、字典不在配對清單上；外部網址交給 PATH 上假的 `xdg-open` 記下來。
+
+## 清除學習紀錄（#301）
+
+「我的詞彙」頁「靈犀學到的」分頁的最後一張卡：在學到的詞清單（含勾選列與批次按鈕）之後，「不再學的詞」子清單裡不顯示。`settings -json` 的 `features.personal_reset` 為真（0.2.12 起的 `0c-update`）才出現；引擎沒在跑、清單讀不到時照樣顯示（由 `0c-update` 直接刪檔）。「我的詞彙」要 `features.vocab` 為真才有（0.2.0 起恆為真）；為假的舊版 `0c-update` 也沒有 `personal_reset`，不另找地方放。不是開關：按「清除…」先在卡片下方確認（說明清除後選字回到剛安裝時的樣子、無法復原、你加的詞與片語不受影響；焦點先在「取消」），按「確認清除」才呼叫 Rust 的 `personal_command`（只允許 `reset`，對應 `0c-update personal reset -json`，逾時 120 秒）。成功後提示並把卡片說明換成「已清除學習紀錄…」，「靈犀學到的」先清空畫面、收起學到的詞的「復原」提示（引擎裡的復原複本也清掉了），再向引擎重讀 `learned`：清單變空、「不再學的詞（N）」入口消失；`busy` 提示稍後再試，其他錯誤顯示 `message`，都不動清單。引擎在不在跑、要刪哪些備份都由 Go 處理，輸出格式見 `cmd/0c-update/personal.go` 的 `personalResetResult`。
+
+「我的詞彙」的 DOM 只建一次，這張卡放在清單旁的固定容器（`vocab.js` 的 `el.reset`），由 `personal-reset.js` 自己重畫：清單重新整理時確認不會被收掉，清單重畫保留焦點（`data-k`）也認得這幾個按鈕。
+
+UI 測試：`python3 scripts/test_settings_ui.py --settings <輸出>/0c-settings --only personal`，用真的 `0c-update` 與 `0c-server`（`testdata/toy`），設定程式呼叫的 `0c-update` 外面包一層記錄參數：「選字」頁沒有這張卡；取消不動作；引擎沒在跑時刪掉 `user.json` 與 Linux／Windows 形式的備份、`vocab.json` 保留；引擎在跑時 `user.json` 立刻變成空白的個人資料、引擎不結束，之後 SIGTERM 結束也不寫回；清除後畫面重讀 `learned`，學到的詞與「不再學的詞（1）」入口消失（分頁標籤的下一個控制項就是「清除…」，再清一次不會按到任何一列）。`test/personal_reset_test.js` 驗證確認文案、結果提示，以及只有成功時才通知「靈犀學到的」重讀。
 
 ## 建置
 
@@ -124,7 +132,7 @@ Windows 完整更新視窗驗收另有 `test/settings-update-test.ps1`：在沒�
 
 輸入設定的「按 Esc 清除整段組字」（`esc-clear`，`settings.json` 的 `esc_clear`）預設開啟，與多數注音輸入法相同。不論開關，Esc 都先清除還沒打完的注音；開啟時再按一次清除整段，關閉時保留已組好的字。引擎讀設定，套用（引擎重啟）後生效，外殼不必改。
 
-輸入設定的「空白鍵選字」（`space-selects`，`settings.json` 的 `space_selects`）預設開啟：注音打完按空白開候選。關閉後注音打完按空白在游標處輸入空格，改用 ↓ 選字；注音打到一半時空白仍是一聲，候選開著時空白仍換頁（#107、#110）。中英混打開啟時本來就是如此，不受這個設定影響。引擎讀設定，套用（引擎重啟）後生效，外殼不必改。
+輸入設定的「空白鍵選字」（`space-selects`，`settings.json` 的 `space_selects`）預設開啟：注音打完按空白開候選。關閉後注音打完按空白在游標處輸入空格，改用 ↓ 選字；注音打到一半時空白仍是一聲，候選開著時空白仍換頁（#107、#110）。中英混打開啟時本來就是如此，不受這個設定影響，所以這時這一項反灰、寫「中英混打時關閉，按 ↓ 選字」，並附到「中英切換」修改混打的連結（#288）；設定檔的值不動，關掉混打就照舊。引擎讀設定，套用（引擎重啟）後生效，外殼不必改。
 
 輸入設定的「選字鍵」（`selection-keys`，`settings.json` 的 `selection_keys`）三選一：`1234567890`（預設，舊設定檔沒有欄位時也是）、`1234qweras`、`asdfghjkl;`，不開放自訂（#112）。候選窗依序用那一排鍵選第 1–10 個字，鍵標由引擎隨候選送給外殼；換成字母鍵時數字 1–0 仍照位置選字（舊外殼、自己畫候選窗的程式只顯示數字也能選）。沒有候選窗時這些鍵照舊是注音鍵。畫在「選字」頁、選字排列之後（#207）。引擎讀設定，套用（引擎重啟）後生效。
 
@@ -132,9 +140,11 @@ Windows 完整更新視窗驗收另有 `test/settings-update-test.ps1`：在沒�
 
 輸入設定的「Ctrl＋標點打全形」（`ctrl-punctuation`，`settings.json` 的 `ctrl_punctuation`）預設開啟，放在「鍵盤與符號」頁、鍵盤排列之後（#207）。開啟時注音模式按 Ctrl＋, . ' ; 與 Ctrl＋Shift＋/ 1 ; 9 0 打全形的 ，。、；？！：（）（#231）；說明寫出會占用 VS Code 的 Ctrl＋, 、Ctrl＋. 、Excel 的 Ctrl＋Shift＋; 9、Konsole 的 Ctrl＋Shift＋9 0 等快速鍵，要保留時可以關掉；Windows 另寫明系統預設把 Ctrl＋Shift＋0 留給切換輸入法、這一鍵打不出「）」。關閉後這些鍵同其他快捷鍵交給應用程式（#168）。引擎讀設定，套用（引擎重啟）後生效；外殼依 health 的 `ctrl_punctuation` 決定要不要送這些鍵。
 
-「Shift＋符號打半形」（`shift-symbol-halfwidth`，`settings.json` 的 `shift_symbol_halfwidth`，#258）預設關閉，排在 Ctrl＋標點打全形之後：兩項是一對，Shift 打半形、Ctrl 打全形。開啟時注音模式按 Shift＋符號鍵打半形標點（Shift＋, 是半形逗號、Shift＋9 是 `(`；< > 在 ↓ 裡），未按 Shift 的 [ ] 照舊打「」。不屬於輸入習慣風格，選用內建風格時也能開關。引擎讀設定，套用後生效。
+「標點寬度」（`shift-symbol-halfwidth`，`settings.json` 的 `shift_symbol_halfwidth` 與 `all_symbols_halfwidth`，#258、#282）三選一，預設「全形標點」，排在 Ctrl＋標點打全形之後：半形用 Shift 或所有符號鍵、全形用 Ctrl。「Shift＋符號打半形」時注音模式按 Shift＋符號鍵打半形標點（Shift＋, 是半形逗號、Shift＋9 是 `(`；< > 在 ↓ 裡），未按 Shift 的 [ ] 照舊打「」；「所有符號鍵打半形」時每個符號鍵都打按鍵上的字（Shift＋- 是 `_`、[ 是 `[`），這時 Ctrl＋標點固定開啟、不打聲調也能選字暫停（兩項顯示停用並帶回這一項）。三個選項畫成單選。不屬於輸入習慣風格，選用內建風格時也能開關。引擎讀設定，套用後生效。
 
 「中英文之間自動加空格」（`cjk-latin-space`，`settings.json` 的 `cjk_latin_space`，#273）預設關閉，排在「Shift＋符號打半形」之後。開啟時送出的文字裡，中文字和英文字母直接相連處補一個半形空格（「用Python寫」送出「用 Python 寫」）；組字區照打的顯示，已有空格、標點與數字旁不補，只看這一次送出的字。不屬於輸入習慣風格。引擎讀設定，套用後生效。
+
+「打錯注音時提示」（`zhuyin-error-hint`，`settings.json` 的 `zhuyin_error_hint`，#300）預設開啟，排在「選字」頁的「不打聲調也能選字」之後。按了聲調但讀音沒有字時不收聲調、注音停住並提示（Windows、macOS 提示音，Linux 標示注音），緊接著再按一次同一個聲調照舊留下注音；只有一個注音符號（ㄟ、ㄅ＋空白）照舊直接留下。中英混打或不打聲調開著時反灰並附原因。不屬於輸入習慣風格。引擎讀設定，套用後生效。
 
 輸入設定的「Caps Lock 開著時直接打英文」（`caps-lock-english`，`settings.json` 的 `caps_lock_english`）預設關閉，放在「中英切換」頁最後（#207），只有 Windows、Linux 有：macOS 開 Caps Lock 一律切到英文大寫（#84），`0c-update settings` 不列這一項，設定程式就不顯示。開啟時 Caps Lock 是暫時的英文模式（字母大寫、數字與符號半形，正在打的字先送出，關掉回到注音；先用 Shift 切到英文時只改大小寫）；關閉時注音模式不理 Caps Lock（#173、#168）。引擎讀設定，套用（引擎重啟）後生效；外殼依 health／open 的 `caps_lock_english` 決定要不要回報 Caps Lock 狀態。
 

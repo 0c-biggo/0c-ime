@@ -233,7 +233,8 @@ try {
         Start-Sleep 3
         Screenshot 'consent-toast-button.png'
         $cmd = (Get-ItemProperty 'Registry::HKEY_CURRENT_USER\Software\Classes\zc-update\shell\open\command').'(default)'
-        Check ($cmd -like '*conhost.exe*--headless*0c-update.exe*protocol*') 'protocol_registered' $cmd
+        # #289：協定直接執行 GUI 啟動器 bin\0c-updatew.exe，不經 conhost --headless。
+        Check ($cmd -like '*\bin\0c-updatew.exe*protocol*' -and $cmd -notlike '*conhost*') 'protocol_registered' $cmd
         Check ((Health).version -eq $fa.version) 'nothing_installed_before_button'
         $target = (State).target
         $query = 'version=' + [uri]::EscapeDataString($target.version) + '&sha256=' + $target.sha256

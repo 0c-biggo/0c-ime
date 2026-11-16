@@ -48,7 +48,7 @@ func engineServiceState() (string, string) {
 // 的指示 pkill 之後再執行，中間只要排程跑過一次，安裝器就又說「正在使用中」。外殼還在執行時
 // 不動，照舊由安裝器請使用者先結束輸入法。
 func drainEngineForInstaller() {
-	if !engineRunning() {
+	if !engineAccepting() {
 		return
 	}
 	if pids, err := inputProcesses("fcitx5", "0c-ibus"); err != nil || len(pids) > 0 {
@@ -58,6 +58,31 @@ func drainEngineForInstaller() {
 	defer cancel()
 	if err := autoupdate.Drain(ctx, dialEngine, 15*time.Second); err == nil {
 		waitServersStopped(ctx)
+	}
+}
+
+// 測試替換用。
+var (
+	engineStartWait    = 5 * time.Second
+	engineProcessAlive = func() bool {
+		pids, err := inputProcesses("0c-server", "zuin-server")
+		return err == nil && len(pids) > 0
+	}
+)
+
+// engineAccepting：引擎能連線就是 true。行程已經在、還沒開始接受連線時（安裝後的步驟或排程剛把它叫起，
+// .13 實測約 0.3 秒）等它就緒，最多 engineStartWait：裝好馬上解除安裝時，交接這一步原本會因為連不上而略過，
+// 安裝器接著看到 0c-server 行程，就說「正在使用中」擋下（#280）。沒有引擎行程時不等。
+func engineAccepting() bool {
+	deadline := time.Now().Add(engineStartWait)
+	for {
+		if engineRunning() {
+			return true
+		}
+		if !engineProcessAlive() || time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 

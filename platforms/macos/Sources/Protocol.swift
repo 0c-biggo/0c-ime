@@ -63,8 +63,11 @@ struct Snapshot: Decodable {
     var readingHint: ReadingHint? = nil
     /// 送出的文字目前會轉成簡體（#169）；只有回報 output_simplified_live 的引擎才有這一項，舊引擎缺欄位。
     var outputSimplified: Bool? = nil
+    /// 這一鍵被擋下（#300 打錯注音時提示：按了聲調但讀音沒有字，注音停在組字區）；外殼用 NSBeep 提示。
+    /// 只在擋下的那次快照出現，舊引擎缺欄位。
+    var bell: Bool? = nil
     enum CodingKeys: String, CodingKey {
-        case handled, commit, preedit, cursor, suggestion, candidates, mode, notices
+        case handled, commit, preedit, cursor, suggestion, candidates, mode, notices, bell
         case readingHint = "reading_hint"
         case outputSimplified = "output_simplified"
         case englishPending = "english_pending"

@@ -78,6 +78,19 @@ type modelView struct {
 	Equivalent bool `json:"equivalent"`
 }
 
+// modelDownload 是 models download 這次要從 Hugging Face 下載的一個模型（status 的 downloads，#306）：models.lock 記的
+// 上游版本與要下載的位元組。models[] 描述本機的模型，換了 revision 時本機那一份不附上游資訊，下載前的說明看這裡。
+type modelDownload struct {
+	Role       string `json:"role"`
+	Label      string `json:"label"`
+	Version    string `json:"version"`
+	Repository string `json:"repository"`
+	Revision   string `json:"revision"`
+	URL        string `json:"url"`
+	License    string `json:"license"`
+	Size       int64  `json:"size"`
+}
+
 type modelsOperation struct {
 	Phase     string    `json:"phase"`
 	DoneBytes int64     `json:"done_bytes"`
@@ -85,6 +98,9 @@ type modelsOperation struct {
 	StartedAt time.Time `json:"started_at"`
 }
 
+// modelsStatus 是 models status -json（docs/settings-contract.md 的「模型」）。DownloadSize 是 models download 這次
+// 實際要下載的位元組（#306：已有、大小相符的權重不算，例如換了選字模型時沿用的補標點），Downloads 是這些位元組屬於
+// 哪幾個模型；TotalSize 是兩個模型的總位元組（models.lock），刪除後要再用時要下載的大小。
 type modelsStatus struct {
 	Schema         int               `json:"schema"`
 	OK             bool              `json:"ok"`
@@ -94,6 +110,8 @@ type modelsStatus struct {
 	Runtime        modelsRuntime     `json:"runtime"`
 	Need           string            `json:"need"`
 	DownloadSize   int64             `json:"download_size"`
+	TotalSize      int64             `json:"total_size"`
+	Downloads      []modelDownload   `json:"downloads"`
 	Models         []modelView       `json:"models"`
 	Operation      *modelsOperation  `json:"operation"`
 	LastError      *models.LastError `json:"last_error"`
@@ -189,8 +207,8 @@ func (e modelsEnv) status() (modelsStatus, error) {
 	if err != nil {
 		return modelsStatus{}, err
 	}
-	st := modelsStatus{Schema: contractSchema, OK: true, Source: snap.source, Need: snap.inspect.Need(), DownloadSize: snap.lock.Size(),
-		Dictionary: snap.dictionary, Runtime: modelsRuntime{Missing: []string{}}}
+	st := modelsStatus{Schema: contractSchema, OK: true, Source: snap.source, Need: snap.inspect.Need(), DownloadSize: snap.inspect.DownloadSize(),
+		TotalSize: snap.lock.Size(), Dictionary: snap.dictionary, Runtime: modelsRuntime{Missing: []string{}}}
 	switch {
 	case e.goos != "linux":
 		st.DisabledReason = modelsDisabledPlatform
@@ -212,6 +230,14 @@ func (e modelsEnv) status() (modelsStatus, error) {
 	if m := modelStatus(e.dial); m["state"] == "running" {
 		engine[models.RoleSelect], _ = m["selection_state"].(string)
 		engine[models.RolePunct], _ = m["punctuation_state"].(string)
+	}
+	st.Downloads = []modelDownload{}
+	for _, role := range models.Roles {
+		if n := snap.inspect.Download[role]; n > 0 {
+			m := snap.lock.Models[role]
+			st.Downloads = append(st.Downloads, modelDownload{Role: role, Label: models.Label(role), Version: m.Version, Repository: m.Repository,
+				Revision: m.Revision, URL: m.URL(), License: m.License, Size: n})
+		}
 	}
 	for _, role := range models.Roles {
 		m := snap.lock.Models[role]
@@ -442,7 +468,8 @@ func (e modelsEnv) download(ctx context.Context, out io.Writer) error {
 		return err
 	}
 	store.SetLastError(nil, e.now())
-	op := models.Operation{PID: os.Getpid(), Phase: "downloading", Total: snap.lock.Size(), StartedAt: e.now().UTC().Truncate(time.Second)}
+	need := snap.inspect.DownloadSize()
+	op := models.Operation{PID: os.Getpid(), Phase: "downloading", Total: need, StartedAt: e.now().UTC().Truncate(time.Second)}
 	store.WriteOperation(op)
 	defer store.ClearOperation()
 
@@ -452,9 +479,9 @@ func (e modelsEnv) download(ctx context.Context, out io.Writer) error {
 		store.SetLastError(err, e.now())
 		return models.AsError(err)
 	}
-	if !snap.inspect.Weights {
-		if free, ok := freeSpace(store.Root); ok && free < uint64(snap.lock.Size())+16<<20 {
-			return fail(modelsError(models.CodeDiskFull, fmt.Sprintf("磁碟空間不足：模型約需 %d MB", mb(snap.lock.Size()))))
+	if need > 0 { // 沿用的權重以硬連結放進配對目錄，不多佔空間
+		if free, ok := freeSpace(store.Root); ok && free < uint64(need)+16<<20 {
+			return fail(modelsError(models.CodeDiskFull, fmt.Sprintf("磁碟空間不足：模型約需 %d MB", mb(need))))
 		}
 	}
 	lockFile := filepath.Join(e.base, "update", modelsLockName)
@@ -705,8 +732,11 @@ func printModels(w io.Writer, st modelsStatus) {
 	switch {
 	case st.CanDownload && st.Need == "download":
 		fmt.Fprintf(w, "可以下載（約 %d MB）：0c-update models download\n", mb(st.DownloadSize))
+	case st.CanDownload && st.Need == "redownload" && st.Source == neural.SourceUser:
+		// 這份字典的配對還在，引擎照常載入（neural.Find 不看 paired.json）；下載並配對成功才換掉（#306）。
+		fmt.Fprintf(w, "上游模型已更新，下載完成前照常使用目前的模型；重新下載（約 %d MB）：0c-update models download\n", mb(st.DownloadSize))
 	case st.CanDownload && st.Need == "redownload":
-		fmt.Fprintln(w, "上游模型已更新，請重新下載：0c-update models download")
+		fmt.Fprintf(w, "上游模型已更新，舊的模型已不能用；重新下載（約 %d MB）：0c-update models download\n", mb(st.DownloadSize))
 	case st.Need == "repair":
 		fmt.Fprintln(w, "字典已更新，下次引擎啟動時會在本機重新配對")
 	case !st.CanDownload && st.DisabledReason != modelsDisabledBundled:

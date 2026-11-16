@@ -3,7 +3,6 @@
 package main
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"time"
@@ -45,26 +44,30 @@ func consoleAttached() bool {
 	return windows.GetConsoleMode(windows.Handle(os.Stderr.Fd()), &mode) == nil
 }
 
-// ensureSettingsEntry 讓開始功能表的「靈犀注音設定」與這個安裝一致：有可啟動的設定程式才建立，確定沒有
-// 才移除（設定程式被改過時留著，點下去才看得到「無法通過核對」的說明）。項目指向穩定的 0c-update，
-// 不指向某個版本的檔案。
-func ensureSettingsEntry() {
+// ensureSettingsEntry 讓開始功能表的「靈犀注音設定（0c）」與這個安裝一致：有可啟動的設定程式才建立，確定沒有
+// 才移除（設定程式被改過時留著）。捷徑指向 bin\ 裡設定程式的穩定副本，不指向某個版本的檔案，也不經 conhost；
+// 規則見 start_menu_entry.go（#284）。
+func ensureSettingsEntry() { windowsSettingsEntry(false) }
+
+// restoreSettingsEntry：完整安裝之後，使用者或防毒軟體移除過的捷徑也補回。
+func restoreSettingsEntry() { windowsSettingsEntry(true) }
+
+func windowsSettingsEntry(restore bool) {
 	if os.Getenv("ZC_NO_SCHEDULE") != "" { // 測試環境不碰真實的開始功能表
 		return
 	}
 	base := basePath()
-	installed, hash := installedFromReceipt(receiptPath(), base, enginedir.SettingsExecutable())
-	if _, err := settingsapp.Locate(base, installed, hash); errors.Is(err, settingsapp.ErrNotFound) {
-		_ = settingsapp.RemoveShortcut(base)
-		return
-	} else if err != nil {
-		return
-	}
-	stable := stableUpdater(base)
-	if st, err := os.Stat(stable); err != nil || !st.Mode().IsRegular() {
-		return
-	}
-	_, _ = settingsapp.EnsureStartMenuShortcut(base, stable)
+	startMenuEntry{
+		base:      base,
+		restore:   restore,
+		installed: installedVersion,
+		locate:    func() (string, string, error) { return currentSettings(base, receiptPath()) },
+		spec:      func(stable string) (settingsapp.ShortcutSpec, error) { return settingsapp.StartMenuSpec(base, stable) },
+		ensure: func(spec settingsapp.ShortcutSpec, restore bool) (bool, error) {
+			return settingsapp.EnsureStartMenuShortcut(base, spec, restore)
+		},
+	}.sync()
 }
 
-func removeSettingsEntry() { _ = settingsapp.RemoveShortcut(basePath()) }
+// removeSettingsEntry（解除安裝）：移除捷徑、標記檔與設定程式的穩定副本。
+func removeSettingsEntry() { startMenuEntry{base: basePath()}.remove() }

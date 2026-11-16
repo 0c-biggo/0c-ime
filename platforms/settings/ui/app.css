@@ -232,6 +232,7 @@ button.icon {
 @keyframes vflash { 0%, 30% { background: var(--accent-soft); } 100% { background: transparent; } }
 .vempty { padding: 14px 18px; }
 .vempty p { margin: 0; }
+.vreset { margin-top: 24px; }
 .vfound { margin: 0 0 6px; font-size: 13px; }
 .pager { display: flex; align-items: center; justify-content: center; gap: 14px; margin: 4px 0 14px; }
 .vpaste { padding: 10px 18px; }
