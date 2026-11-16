@@ -175,7 +175,11 @@ window.ZcVocab = function (ctx) {
       learned: h('div', { role: 'tabpanel', id: 'vpanel-learned', 'aria-labelledby': 'vtab-learned' }),
       phrases: h('div', { role: 'tabpanel', id: 'vpanel-phrases', 'aria-labelledby': 'vtab-phrases' }),
     };
-    el.learned = el.panels.learned;
+    // 清單（el.learned）重畫時整塊清掉；底下的「清除學習紀錄」（#301，personal-reset.js）放在另一個固定容器，
+    // 確認到一半時清單重新整理（視窗取得焦點、引擎回應）也不會被收掉。
+    el.learned = h('div', {});
+    el.reset = h('div', { class: 'vreset', hidden: true });
+    el.panels.learned.append(el.learned, el.reset);
     el.phraseInput = h('textarea', {
       class: 'vphrase', rows: '2', placeholder: '輸入一則片語，例如地址、簽名或常用句子', 'aria-label': '新增片語',
       onkeydown: (event) => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.isComposing) { event.preventDefault(); addPhrase(); } },
@@ -909,6 +913,7 @@ window.ZcVocab = function (ctx) {
   function drawLearned() { keepFocus(el.learned, drawLearnedNow); }
   function drawLearnedNow() {
     clear(el.learned);
+    drawReset();
     if (v.learnedView === 'forgotten') { drawForgottenNow(); return; }
     // 沒有任何不再學的詞時不顯示入口（#182 負責人決定）。
     const link = v.forgottenCount > 0 && !v.learnedError
@@ -968,6 +973,30 @@ window.ZcVocab = function (ctx) {
         rowCheck(word, sel, false),
         h('div', { class: 'vword' }, word),
         h('button', { type: 'button', class: 'secondary small', 'data-k': 'relearn:' + word, 'aria-label': '恢復學習「' + word + '」', onclick: () => learnedAction('relearn', [word]) }, '恢復學習')))));
+  }
+
+  // 「清除學習紀錄」（#301）：只在「靈犀學到的」清單底下（不在「不再學的詞」裡），features.personal_reset 為真時出現。
+  // 引擎沒在跑、清單讀不到時照樣顯示：沒在跑時由 0c-update 直接刪檔。
+  function drawReset() {
+    if (!el.reset || !ctx.personalReset) return;
+    const on = !!ctx.personalResetEnabled() && v.learnedView === 'learned';
+    el.reset.hidden = !on;
+    if (on) ctx.personalReset.mount(el.reset);
+  }
+
+  // 清除成功：學到的詞、不再學的詞都清空了，先把畫面清空再向引擎重新讀一次；
+  // 引擎裡的復原複本也清掉了，底部提示的「復原」（學到的詞的移除、不再學、恢復學習）收起來。
+  function afterReset() {
+    v.learned = v.learned ? [] : null;
+    v.forgotten = null;
+    v.forgottenCount = 0;
+    v.learnedSel.clear();
+    v.forgottenSel.clear();
+    v.learnedView = 'learned';
+    if (v.undo && typeof v.undo.action === 'function') hideUndo();
+    if (!el.learned) return;
+    drawLearned();
+    loadLearned();
   }
 
   const LEARNED_DONE = {
@@ -1408,6 +1437,7 @@ window.ZcVocab = function (ctx) {
       // 引擎剛啟動（狀態每 15 秒更新一次）：重新抓一次，排名徽章與學到的詞跟著出現。
       if (v.engineDown === true && ctx.engineRunning() === true) { v.engineDown = null; reload(); }
       drawNotices();
+      drawReset(); // features.personal_reset 可能在頁面建好之後才讀到
     },
     setActive(on) {
       v.active = on;
@@ -1417,6 +1447,7 @@ window.ZcVocab = function (ctx) {
     visibility() { syncWatch(); if (!document.hidden && v.active && v.loaded) reload(); },
     focus() { if (v.active && v.tab === 'learned') loadLearned(); },
     onChanged,
+    afterReset,
     refreshOverview,
     overviewText,
   };

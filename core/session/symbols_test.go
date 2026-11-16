@@ -5,6 +5,7 @@ import (
 
 	"github.com/0c-biggo/0c-ime/core/lm"
 	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/symbols"
 )
 
 func pickText(t *testing.T, s *Session, text string) proto.Snapshot {
@@ -14,7 +15,7 @@ func pickText(t *testing.T, s *Session, text string) proto.Snapshot {
 	}
 	for id, c := range s.cand.items {
 		if c.Entry.Surface == text {
-			return s.Handle(proto.Request{Type: proto.Select, Index: id})
+			return s.Handle(proto.Request{Type: proto.Select, Index: s.candidateID(id)})
 		}
 	}
 	t.Fatalf("沒有候選 %q", text)
@@ -85,12 +86,7 @@ func TestQuestionMarkGroupOffersSlash(t *testing.T) {
 			t.Fatalf("Enter 應提交 %q：%+v", want, snap)
 		}
 	}
-	palette := symbolPalette()
-	found := false
-	for _, item := range palette {
-		found = found || item == "／"
-	}
-	if !found {
+	if !symbols.Contains("／") {
 		t.Fatal("符號選單應列出全形斜線")
 	}
 }
@@ -178,7 +174,7 @@ func TestSymbolPaletteAndCancel(t *testing.T) {
 		t.Fatalf("反引號應開符號選單：%+v", snap)
 	}
 	key(s, proto.KeyPageDown)
-	key(s, proto.KeyUp)
+	key(s, proto.KeyBackTab) // 注音是最後一個分頁（#290）
 	if snap = pickText(t, s, "ㄡ"); snap.Text() != "ㄡ" || snap.Commit != "" {
 		t.Fatalf("符號選單應包含注音：%+v", snap)
 	}

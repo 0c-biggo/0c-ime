@@ -2,6 +2,44 @@
 
 每個版本的「公開摘要」與 [官網更新紀錄](https://0c.biggo.com/updates/) 相同；「原始碼套件」記錄 Release 完整 tarball 的內容變化。
 
+## 0.2.12（2026-11-16，public-beta）
+
+### 公開摘要
+
+- 神經選字換成新模型：用更多文字重新訓練，模型大小與打字速度不變，全聲調打字時整句全對的比例提高約 0.5 個百分點。用系統套件安裝、自己下載過模型的使用者，設定程式「模型」頁會提示重新下載（約 131 MB），下載完成前照常使用舊模型。
+- 新設定「打錯注音時提示」（選字頁，預設開啟）：按了聲調，這個注音卻沒有字（例如 ㄅㄩˊ）時，不收這個聲調，注音留著讓你改；Windows 和 Mac 會發出提示音，Linux 會把注音標示出來。開了模糊音時近音有字就照常打出。只有一個注音符號時（例如「ㄟ你在哪裡」的 ㄟ、ㄅ＋空白）照舊直接留下，不提示；要故意打 ㄏㄟˊ 這類注音，在同一個地方馬上再按一次同一個聲調就會留下。中英混打和不打聲調時不作用。
+- 設定程式「我的詞彙」的「靈犀學到的」新增「清除學習紀錄」：按下並確認後，選字回到剛安裝時的樣子，不必結束輸入法；你加的詞與片語不受影響。
+- 符號選單（數字 1 左邊的鍵）分成標點、括號引號、數學、箭頭、圖形、編號、注音幾頁，按 Tab／Shift＋Tab 換頁；用過的符號會出現在第一頁「最近」。組字中游標停在符號上按 ↑，會直接開在那個符號的分頁，選了就換掉。
+- 「Shift＋符號打半形」改成「標點寬度」三選一：全形標點（預設）、Shift＋符號打半形、所有符號鍵打半形。選「所有符號鍵打半形」時，每個符號鍵都打鍵帽上的半形字元，Shift＋- 就是底線，全形標點改用 Ctrl＋符號或 ↓。
+- 中英混打：在句首選過一次原樣注音（例如「之」換成 ㄓ）之後，每段開頭打 5 加空白都只出 ㄓ、也選不回「之」。現在句首本來就會出字的鍵不再記成習慣，已經記下的也不再套用，更新後直接回到「之」；在其他中文後面選過的注音照樣記得。
+- 中英混打開著神經選字時，在候選裡把字換成注音或原按鍵，前面被神經選字改過的字（例如「窩」）不再變回原本的首選（「我」）。
+- 組字中按 Backspace 改成從畫面上最後一個注音往前刪：不照聲母、介音、韻母的順序打時（例如 ㄨ ㄢ ㄓ，畫面是 ㄓㄨㄢ），第一下刪的是 ㄢ，不再是最後按的 ㄓ。照順序打的人沒有差別。
+- 設定程式：中英混打開著時，「空白鍵選字」會顯示停用並說明原因（混打時空白一律是空格，選字按 ↓），並可直接跳到中英混打的設定。
+- Windows：在 Notepad++、LINE 這類程式裡，組字中單按 Ctrl 或 Ctrl＋滾輪縮放不再把字送出；按 Ctrl＋S 這類快捷鍵時，組字會先進文件再執行快捷鍵，存檔存得到最後打的字。
+- Windows：開始功能表的「靈犀注音設定」捷徑、自動更新與登入排程、通知按鈕都不再經過隱藏的主控台視窗啟動，避免被防毒或端點防護誤判成惡意程式；刪掉的捷徑不會再自己長回來，解除安裝後也不會留下排程。由舊版自動更新上來的，捷徑馬上改好，排程與通知按鈕在下一次更新後才換成新的方式。
+- Windows：自動更新更可靠。更新程式保留上一版當備援，新版更新程式連續失敗時自動改用上一版，避免某一版出問題後就再也更新不了。
+- Mac：用 Parsec 這類遠端桌面連進來時，單按 Shift 可以切換中英了（遠端單按 Caps Lock 也一樣）。
+- Mac：在 Word、PowerPoint、Excel 與終端機裡，沒在打字時按數字 1 左邊的鍵開的符號表（或 = 開的 Emoji 選單），可以用方向鍵、Esc、Enter 操作，不再被 App 拿去移動游標。
+- Linux：裝完立刻解除安裝不再失敗；錯誤訊息改成「解除安裝失敗」，不再寫成「安裝失敗」。
+
+### 原始碼套件
+
+- 選字模型（#281）：`models/models.lock.json` 的 select 改為 d512-cv2-20261111（Hugging Face `Funmula/0c-sequence-d512` revision `3533e34e`，`model.onnx` `4a80caf1…`，130,723,137 bytes）；結構同為 D512／8 層，`vocab.json` 不變，補標點不換。套件是 `zuin-sequence-runtime-v2`（manifest 的 `tone_policy`），`platforms/neural/runtime/sequence_runtime.py` 同時收 v1 與 v2，桌面的未知聲調維持關閉。內附字典沒換，manifest 仍是 `4e4c4cdf…`；`models/pairing.lock.json` 依新的 models.lock（`84f51950…`）重新配對，select 的 manifest 為 `abe80086…`，punct 照舊 `3b3d77b7…`。`models/equivalent.json` 拿掉 select 的舊對照。
+- 模型下載（#306）：`0c-update models status -json` 的 `download_size` 改成這次實際要下載的位元組，另加 `total_size` 與 `downloads`；只換選字模型時，設定程式「模型」頁說明下載完成前照常使用目前的模型，進度與磁碟空間檢查只算要下載的檔案。
+- 打錯注音時提示（#300，GitHub #68）：新設定 `zhuyin-error-hint`（預設開）。原本要原樣留下的音節，讀音本身沒有字、不是詞頭、接不上前面的字、也沒有近音時，不收聲調，注音停在暫存，快照帶 `bell`；只有一個符號的注音照舊原樣留下，在同一處再按同一個聲調也照舊留下。Windows 呼叫 `MessageBeep`、macOS 呼叫 `NSBeep`，Fcitx5 反白、IBus 以紅底標示停住的注音。
+- 清除學習紀錄（#301）：新指令 `0c-update personal reset`。引擎在跑時以 IPC `reset_personal` 清空並立刻寫回 `user.json`（不重啟）；沒在跑時在寫入者鎖內刪檔；升級前的個人詞庫備份一併刪除，`vocab.json` 保留。設定程式依 `features.personal_reset` 在「我的詞彙」→「靈犀學到的」底下顯示卡片。
+- 符號選單分頁（#290）：新增 `core/symbols`，每個符號只在一頁，Tab／Shift＋Tab 換頁，第一頁是最近用過的符號。**`user.json` 的 StoreFormat 升為 7**（`SymbolRecent`、`SymbolStats`）；0.2.11 以前讀到新格式時照常輸入、不讀入也不寫回。
+- 標點寬度（#282）：`shift-symbol-halfwidth` 加第三個值 `all`（存成 `shift_symbol_halfwidth: true` 與 `all_symbols_halfwidth: true`，舊版讀成 on）：符號鍵打鍵帽上的半形字元，↓ 第二項是全形，Ctrl＋標點固定開。
+- 中英混打（#296、#303）：原樣音節自己有字時，↓ 在各聲調後列出這個讀音的字；句首本來就出字的鍵（5␣ 之、t␣ 吃）選原樣注音時不再記成習慣，`user.json` 裡已有的這類紀錄在句首不套用。開神經選字時把字換成原樣注音或原按鍵，其他字照畫面保留，不再重新解碼。
+- 注音（#309，GitHub #70）：`zhuyin.Composer.Backspace` 照畫面順序退（韻母 → 介音 → 聲母），不再照輸入順序；許氏鍵盤照舊。
+- 設定程式（#288）：中英混打作用中時 `space-selects` 顯示停用（`disabled_by: mixed-input`），設定檔的值不動。
+- Windows（#284、#289）：排程與 `zc-update:` 協定改由新的 GUI 啟動器 `cmd/0c-updatew` 執行，不再經過 `conhost --headless`；通知與開始功能表捷徑在程式內建立，不再用編碼過的 PowerShell；排程以 ITaskService 管理，定義相同時不重寫。更新時保留上一版 `bin\0c-update.prev.exe`，穩定副本連續三次失敗時啟動器改跑上一版；`0c-update` 預期中的暫時失敗回 75，並送出帶版本的 User-Agent。
+- Windows（GitHub #66、PR #69）：IMM32 程式經相容層時，組字中單按 Ctrl 不送出；快捷鍵時先送出組字，再在文字之後重排按鍵。這部分已隨 PR #69 併入 main。
+- macOS（#308，GitHub #71）：遠端桌面注入、鍵碼為 0 的修飾鍵改從旗標推回 Shift／Caps Lock。（#283）候選窗開著而沒有組字時放一個佔位的 marked text，讓 Office 與終端機把方向鍵、Esc、Enter 交給輸入法。
+- Linux（#280）：解除安裝前等剛啟動的引擎就緒（最多 5 秒）；`install.py` 的錯誤訊息依動作區分。
+- `scripts/source_release.py`：選字模型套件接受 `zuin-sequence-runtime-v2`，0.2.11 以前的 v1 套件照舊可驗證。
+- `scripts/fetch_assets.py`：下載完成後先關閉暫存檔再搬到目的地，Windows 上不再出現 WinError 32。`platforms/neural/README.md` 與 `platforms/windows/README.md` 說明 Windows 的 `neural/` 要在 Linux 上以 `scripts/prepare_neural.py --platform windows-amd64` 準備。
+
 ## 0.2.11（2026-11-11，public-beta）
 
 ### 公開摘要

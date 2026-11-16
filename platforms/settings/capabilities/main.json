@@ -20,6 +20,7 @@
     "allow-vocab-unwatch",
     "allow-models-command",
     "allow-open-url",
+    "allow-personal-command",
     "core:event:allow-listen",
     "core:event:allow-unlisten"
   ]

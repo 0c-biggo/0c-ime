@@ -57,9 +57,11 @@ func fileSDDL(t *testing.T, file string) string {
 }
 
 // 登入時立即（不延遲）以穩定副本執行 engine；優先順序一般，路徑含空白時正確引號。
+// 啟動器 bin\0c-updatew.exe 在時直接執行它（#289）；還沒有時退回 conhost --headless。
 func TestEngineTaskStartsEngineAtLogon(t *testing.T) {
-	stable := `C:\Users\A B\AppData\Local\Zuin\bin\0c-update.exe`
-	task := engineTaskXML(`PC\A B`, "S-1-5-21-1", `C:\Windows\System32\conhost.exe`, stable)
+	base := filepath.Join(t.TempDir(), "A B", "Zuin")
+	writeFile(t, stableUpdater(base), "updater")
+	task := engineTaskXML(`PC\A B`, "S-1-5-21-1", base)
 	var parsed struct {
 		Triggers struct {
 			Logon []struct {
@@ -88,35 +90,46 @@ func TestEngineTaskStartsEngineAtLogon(t *testing.T) {
 	if parsed.Settings.Priority != 4 || parsed.Settings.Multiple != "IgnoreNew" {
 		t.Fatalf("排程設定不正確：%+v", parsed.Settings)
 	}
-	if parsed.Exec.Command != `C:\Windows\System32\conhost.exe` || parsed.Exec.Arguments != `--headless "`+stable+`" engine` {
-		t.Fatalf("動作不正確：%+v", parsed.Exec)
+	conhost := filepath.Join(os.Getenv("SystemRoot"), `System32\conhost.exe`)
+	if parsed.Exec.Command != conhost || parsed.Exec.Arguments != `--headless "`+stableUpdater(base)+`" engine` {
+		t.Fatalf("沒有啟動器時的動作不正確：%+v", parsed.Exec)
+	}
+	writeFile(t, stableLauncher(base), "launcher")
+	command, args := taskExec(t, engineTaskXML(`PC\A B`, "S-1-5-21-1", base))
+	if command != stableLauncher(base) || args != "engine" {
+		t.Fatalf("有啟動器時應直接執行它：%q %q", command, args)
 	}
 }
 
-// #120：自動更新與安裝程式叫起引擎時都經過登入工作；系統管理員不直接啟動引擎。
-func TestStartResidentEngineGoesThroughLoginTask(t *testing.T) {
-	failed := func() error { return os.ErrPermission }
-	ok := func() error { return nil }
-	for _, c := range []struct {
-		name            string
-		elevated, task  bool
-		run             func() error
-		wantRun, wantSp bool
-		wantErr         bool
-	}{
-		{"user with task", false, true, ok, true, false, false},
-		{"user task fails", false, true, failed, true, true, false},
-		{"user without task", false, false, ok, false, true, false},
-		{"admin with task", true, true, ok, true, false, false},
-		{"admin task fails", true, true, failed, true, false, true},
-		{"admin without task", true, false, ok, false, false, true},
-	} {
-		ran, spawned := false, false
-		err := startResidentEngine(`C:\base`, c.elevated, c.task,
-			func() error { ran = true; return c.run() },
-			func(string) error { spawned = true; return nil })
-		if ran != c.wantRun || spawned != c.wantSp || (err != nil) != c.wantErr {
-			t.Errorf("%s：run=%v spawn=%v err=%v", c.name, ran, spawned, err)
-		}
+// taskExec 取出排程定義的動作（命令與參數）。
+func taskExec(t *testing.T, task string) (string, string) {
+	t.Helper()
+	var parsed struct {
+		Exec struct {
+			Command   string `xml:"Command"`
+			Arguments string `xml:"Arguments"`
+		} `xml:"Actions>Exec"`
+	}
+	if err := xml.Unmarshal([]byte(strings.Replace(task, `encoding="UTF-16"`, `encoding="UTF-8"`, 1)), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	return parsed.Exec.Command, parsed.Exec.Arguments
+}
+
+// #289：自動更新排程同樣經啟動器執行 auto，不經 conhost --headless；沒有啟動器時退回舊樣式，排程不會失效。
+func TestUpdateTaskRunsTheLauncher(t *testing.T) {
+	base := filepath.Join(t.TempDir(), "Zuin")
+	writeFile(t, stableUpdater(base), "updater")
+	command, args := taskExec(t, updateTaskXML(`PC\A`, "S-1-5-21-1", base))
+	if !strings.EqualFold(filepath.Base(command), "conhost.exe") || args != "--headless "+stableUpdater(base)+" auto" {
+		t.Fatalf("沒有啟動器：%q %q", command, args)
+	}
+	writeFile(t, stableLauncher(base), "launcher")
+	command, args = taskExec(t, updateTaskXML(`PC\A`, "S-1-5-21-1", base))
+	if command != stableLauncher(base) || args != "auto" {
+		t.Fatalf("有啟動器：%q %q", command, args)
+	}
+	if strings.Contains(updateTaskXML(`PC\A`, "S-1-5-21-1", base), "conhost") {
+		t.Fatal("有啟動器時排程定義不得出現 conhost")
 	}
 }

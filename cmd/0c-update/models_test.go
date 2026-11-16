@@ -33,6 +33,7 @@ func hexSum(b []byte) string {
 type modelsFixture struct {
 	env      modelsEnv
 	hits     *int
+	files    map[string][]byte // 假 Hugging Face 上的檔案（/<repo>/resolve/<revision>/<name>）
 	reloads  int
 	notices  int
 	noticeOK bool
@@ -108,7 +109,7 @@ func newModelsFixture(t *testing.T) *modelsFixture {
 	t.Cleanup(srv.Close)
 	t.Setenv(modelsMirrorEnv, srv.URL)
 
-	f := &modelsFixture{hits: &hits, noticeOK: true}
+	f := &modelsFixture{hits: &hits, files: files, noticeOK: true}
 	f.env = modelsEnv{base: base, data: data, goos: "linux", lock: raw, dial: noEngine,
 		runtimeCheck:         func(string) []string { return []string{"python3-onnxruntime"} },
 		distributionDisabled: func(string) bool { return false }, settingsMissing: func() bool { return false }, now: time.Now}
@@ -164,6 +165,12 @@ func TestModelsStatusWithoutModels(t *testing.T) {
 	if st.Source != "none" || !st.CanDownload || st.DisabledReason != "" || st.Need != "download" || st.Operation != nil || st.LastError != nil {
 		t.Fatalf("%+v", st)
 	}
+	if l, _ := models.ParseLock(f.env.lock); st.DownloadSize != l.Size() || st.TotalSize != l.Size() {
+		t.Fatalf("沒有模型時兩個都要下載：download_size %d total_size %d，應為 %d", st.DownloadSize, st.TotalSize, l.Size())
+	}
+	if len(st.Downloads) != 2 || st.Downloads[0].Role != "select" || st.Downloads[1].Role != "punct" {
+		t.Fatalf("downloads %+v", st.Downloads)
+	}
 	if st.Runtime.OK || strings.Join(st.Runtime.Missing, ",") != "python3-onnxruntime" {
 		t.Fatalf("runtime %+v", st.Runtime)
 	}
@@ -180,7 +187,7 @@ func TestModelsStatusWithoutModels(t *testing.T) {
 	b, _ := json.Marshal(st)
 	var doc map[string]any
 	json.Unmarshal(b, &doc)
-	for _, k := range []string{"schema", "source", "can_download", "disabled_reason", "runtime", "need", "download_size", "models", "operation", "last_error"} {
+	for _, k := range []string{"schema", "source", "can_download", "disabled_reason", "runtime", "need", "download_size", "total_size", "downloads", "models", "operation", "last_error"} {
 		if _, ok := doc[k]; !ok {
 			t.Fatalf("缺少 %s：%s", k, b)
 		}
@@ -248,17 +255,29 @@ func TestModelsStatusBundled(t *testing.T) {
 	}
 }
 
-// 官網套件內建的模型：0.2.3 起是 Hugging Face 原檔（71af1f0e／4db3ed40），0.2.2 以前是權重相同的內部匯出
-// （cef689f1／2d98c7c6，models/equivalent.json）。兩種都附上 Hugging Face 的資訊；舊的另標 equivalent。
+// 官網套件內建的模型：0.2.12 起 select 是 d512-cv2-20261111（4a80caf1），punct 從 0.2.3 起是 Hugging Face 原檔（4db3ed40）；
+// 0.2.2 以前是權重相同的內部匯出（cef689f1／2d98c7c6，models/equivalent.json）。跟 models.lock 相同或等價的附上
+// Hugging Face 的資訊，等價的另標 equivalent；select 換了 revision 後，舊版的 select（71af1f0e、cef689f1）不再附。
 func TestModelsStatusBundledAcceptsBothShippedHashes(t *testing.T) {
+	const (
+		selectNow = "4a80caf18acbaddde10c908dcbf35919908d616e94618cdde71fc3409c969261"
+		selectHF  = "71af1f0e77b2752cc71cbc04bf19c8e8f2e765662246f766e65a2822bab4e66e"
+		selectOld = "cef689f1e706537e54eaed4241a776f1ea41b4cad2b504061d1e27cd0c1ca342"
+		punctHF   = "4db3ed40df777347d9c455da01285b01de192d4c210c5f7cd9f0646c727880d8"
+		punctOld  = "2d98c7c6c75dc9d46081e967dbd2fccef67f73a1ed9b2da44d7e02002e760cf5"
+		upstreamM = "upstream"
+		equivM    = "equivalent"
+		noneM     = ""
+	)
 	cases := []struct {
-		name               string
-		select_, punct     string
-		equivalent, hasURL bool
+		name            string
+		select_, punct  string
+		selectM, punctM string
 	}{
-		{"Hugging Face 原檔", "71af1f0e77b2752cc71cbc04bf19c8e8f2e765662246f766e65a2822bab4e66e", "4db3ed40df777347d9c455da01285b01de192d4c210c5f7cd9f0646c727880d8", false, true},
-		{"0.2.2 以前的內部匯出", "cef689f1e706537e54eaed4241a776f1ea41b4cad2b504061d1e27cd0c1ca342", "2d98c7c6c75dc9d46081e967dbd2fccef67f73a1ed9b2da44d7e02002e760cf5", true, true},
-		{"其他模型", strings.Repeat("c", 64), strings.Repeat("d", 64), false, false},
+		{"Hugging Face 原檔", selectNow, punctHF, upstreamM, upstreamM},
+		{"0.2.3–0.2.11 的套件", selectHF, punctHF, noneM, upstreamM},
+		{"0.2.2 以前的內部匯出", selectOld, punctOld, noneM, equivM},
+		{"其他模型", strings.Repeat("c", 64), strings.Repeat("d", 64), noneM, noneM},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -275,21 +294,21 @@ func TestModelsStatusBundledAcceptsBothShippedHashes(t *testing.T) {
 				t.Fatalf("%+v", st)
 			}
 			for _, m := range st.Models {
-				want := l.Models[m.Role]
-				if !c.hasURL {
+				want, match := l.Models[m.Role], map[string]string{models.RoleSelect: c.selectM, models.RolePunct: c.punctM}[m.Role]
+				if match == noneM {
 					if m.URL != "" || m.Repository != "" || m.Version != "" || m.Equivalent {
 						t.Fatalf("不是上游的模型不附網址：%+v", m)
 					}
 					continue
 				}
 				if m.URL != want.URL() || m.Repository != want.Repository || m.Revision != want.Revision || m.License != "MIT" ||
-					m.Version != want.Version || m.Equivalent != c.equivalent {
+					m.Version != want.Version || m.Equivalent != (match == equivM) {
 					t.Fatalf("%+v", m)
 				}
 			}
 			var out bytes.Buffer
 			printModels(&out, st)
-			if strings.Contains(out.String(), "權重與公開版相同") != c.equivalent {
+			if strings.Contains(out.String(), "權重與公開版相同") != (c.punctM == equivM) {
 				t.Fatalf("文字輸出：%s", out.String())
 			}
 		})
@@ -382,8 +401,15 @@ func TestModelsRemindAfterModelUpgradeOnlyFlagsRedownload(t *testing.T) {
 	f.env.lock, _ = json.MarshalIndent(lock, "", "  ")
 	writeModelFile(t, filepath.Join(f.env.data, "manifest.json"), []byte(`{"dictionary":"c"}`+"\n"))
 	f.writePairing(t)
-	if st := f.status(t); st.Need != "redownload" || !st.CanDownload {
+	st := f.status(t)
+	if st.Need != "redownload" || !st.CanDownload || st.Source != "none" {
 		t.Fatalf("%+v", st)
+	}
+	// 字典也換了：舊的配對是別的字典的，引擎找不到，用統計選字（#306 的文字只在這時說不能用）
+	var out bytes.Buffer
+	printModels(&out, st)
+	if !strings.Contains(out.String(), "舊的模型已不能用") || strings.Contains(out.String(), "照常使用") {
+		t.Fatalf("文字輸出：%s", out.String())
 	}
 	if err := f.env.remind(true); err != nil {
 		t.Fatal(err)
@@ -393,6 +419,76 @@ func TestModelsRemindAfterModelUpgradeOnlyFlagsRedownload(t *testing.T) {
 	}
 	if models.EngineShouldCheck(f.env.base, f.env.dictionary(), time.Now().Add(1000*time.Hour)) {
 		t.Fatal("引擎不應再為這份字典叫 remind")
+	}
+}
+
+// bumpSelect 模擬新版只換了選字模型（#281 換 select 的 revision）：models.lock 的選字指向新的 revision，
+// 假 Hugging Face 也放上那一份；補標點不變。新套件帶著新的 pairing.lock。
+func (f *modelsFixture) bumpSelect(t *testing.T, revision string) {
+	t.Helper()
+	var lock map[string]any
+	json.Unmarshal(f.env.lock, &lock)
+	sel := lock["models"].(map[string]any)["select"].(map[string]any)
+	old := sel["revision"].(string)
+	sel["revision"] = revision
+	f.env.lock, _ = json.MarshalIndent(lock, "", "  ")
+	for p, b := range f.files {
+		if prefix := "/" + sel["repository"].(string) + "/resolve/" + old + "/"; strings.HasPrefix(p, prefix) {
+			f.files["/"+sel["repository"].(string)+"/resolve/"+revision+"/"+strings.TrimPrefix(p, prefix)] = b
+		}
+	}
+	f.writePairing(t)
+}
+
+// #306：系統安裝下載過模型，升級後只換了選字模型（字典沒換）。這份字典的配對還在、引擎照常用舊的；download_size 只算
+// 選字（補標點沿用），文字輸出寫下載完成前照常使用；下載只抓選字的檔案，完成後沒有要下載的。
+func TestModelsRedownloadOnlyMissingSelect(t *testing.T) {
+	f := newModelsFixture(t)
+	if err := f.env.download(context.Background(), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	f.bumpSelect(t, strings.Repeat("9", 40))
+	l, _ := models.ParseLock(f.env.lock)
+	selectSize := l.Models[models.RoleSelect].Size()
+	st := f.status(t)
+	if st.Source != "user" || st.Need != "redownload" || !st.CanDownload {
+		t.Fatalf("%+v", st)
+	}
+	if st.DownloadSize != selectSize || st.TotalSize != l.Size() {
+		t.Fatalf("download_size %d total_size %d，應為選字的 %d、合計 %d", st.DownloadSize, st.TotalSize, selectSize, l.Size())
+	}
+	// 要下載的只有選字，附 models.lock 的上游資訊（真的換模型時本機那一份不是這個 revision，models[] 不附上游資訊，
+	// 下載前的說明要看這裡）
+	if len(st.Downloads) != 1 || st.Downloads[0].Role != "select" || st.Downloads[0].Size != selectSize ||
+		st.Downloads[0].Revision != strings.Repeat("9", 40) || st.Downloads[0].Repository != l.Models["select"].Repository || st.Downloads[0].License != "MIT" {
+		t.Fatalf("downloads %+v", st.Downloads)
+	}
+	var out bytes.Buffer
+	printModels(&out, st)
+	if want := fmt.Sprintf("下載完成前照常使用目前的模型；重新下載（約 %d MB）", mb(selectSize)); !strings.Contains(out.String(), want) || strings.Contains(out.String(), "不能用") {
+		t.Fatalf("文字輸出應有「%s」：%s", want, out.String())
+	}
+	// -json 的欄位
+	b, _ := json.Marshal(st)
+	var doc struct {
+		DownloadSize int64 `json:"download_size"`
+		Downloads    []struct {
+			Role string `json:"role"`
+			Size int64  `json:"size"`
+		} `json:"downloads"`
+	}
+	if json.Unmarshal(b, &doc) != nil || doc.DownloadSize != selectSize || len(doc.Downloads) != 1 || doc.Downloads[0].Role != "select" || doc.Downloads[0].Size != selectSize {
+		t.Fatalf("%s", b)
+	}
+	hits := *f.hits
+	if err := f.env.download(context.Background(), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if got := *f.hits - hits; got != len(l.Models[models.RoleSelect].Files) {
+		t.Fatalf("只下載選字的 %d 個檔案，實際請求 %d 次", len(l.Models[models.RoleSelect].Files), got)
+	}
+	if st := f.status(t); st.Source != "user" || st.Need != "none" || st.DownloadSize != 0 || st.TotalSize != l.Size() || len(st.Downloads) != 0 {
+		t.Fatalf("下載後：%+v", st)
 	}
 }
 

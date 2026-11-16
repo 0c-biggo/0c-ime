@@ -85,12 +85,12 @@ func TestPendingLiteralRestorationDoesNotUndoEdits(t *testing.T) {
 
 func TestPendingLiteralKeepsOriginalBackspaceOrder(t *testing.T) {
 	s := newSession()
-	key(s, "i") // 先 ㄛ，再 ㄨ，退格應刪最後輸入的 ㄨ。
+	key(s, "i") // 先 ㄛ，再 ㄨ（畫面 ㄨㄛ），退格照畫面順序刪 ㄛ（#309）。
 	key(s, "j")
 	key(s, "A")
 	key(s, proto.KeyBackspace)
-	if snap := key(s, proto.KeyBackspace); snap.Text() != "ㄛ" {
-		t.Fatalf("撤銷英數插入後應恢復組音退格順序：%+v", snap)
+	if snap := key(s, proto.KeyBackspace); snap.Text() != "ㄨ" {
+		t.Fatalf("撤銷英數插入後應恢復組音，退格刪畫面上最後的 ㄛ：%+v", snap)
 	}
 }
 

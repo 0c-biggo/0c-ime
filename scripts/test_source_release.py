@@ -42,6 +42,8 @@ def fixture_dictionary(directory):
 
 
 class SourceReleaseTests(unittest.TestCase):
+    SELECT_SCHEMA = "zuin-sequence-runtime-v2"
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -59,7 +61,7 @@ class SourceReleaseTests(unittest.TestCase):
                        "vocab.json": release.json_bytes({"characters": ["test"], "bases": [],
                                                          "dictionary_sha256": "a" * 64}),
                        "LICENSE": b"MIT test fixture", "README.md": b"Test model card"}
-            manifest = {"schema": "zuin-sequence-runtime-v1" if role == "select" else "zuin-punct-runtime-v1",
+            manifest = {"schema": self.SELECT_SCHEMA if role == "select" else "zuin-punct-runtime-v1",
                         "files": {name: hashlib.sha256(content[name]).hexdigest()
                                   for name in ("model.onnx", "vocab.json")}}
             if role == "select":
@@ -519,6 +521,11 @@ class SourceReleaseTests(unittest.TestCase):
             archive.addfile(tarfile.TarInfo("../outside"), io.BytesIO())
         with self.assertRaisesRegex(ValueError, "invalid"):
             release.verify(bad)
+
+
+class SourceReleaseV1SelectTests(SourceReleaseTests):
+    """Releases through 0.2.11 ship a v1 selection package; they must keep building and verifying."""
+    SELECT_SCHEMA = "zuin-sequence-runtime-v1"
 
 
 if __name__ == "__main__":

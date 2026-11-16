@@ -49,6 +49,20 @@ def check_pe(path, machine="x64"):
             raise ValueError(f"需要 Windows {machine} PE：{path}")
 
 
+PE_SUBSYSTEM_GUI = 2
+
+
+def pe_subsystem(path):
+    """PE 選用標頭的 Subsystem 欄位（2 是 GUI、3 是主控台）；32／64 位元的位移相同。"""
+    data = regular(path).read_bytes()
+    if data[:2] != b"MZ":
+        raise ValueError(f"不是 Windows PE 執行檔：{path}")
+    pe = struct.unpack_from("<I", data, 0x3C)[0]
+    if data[pe:pe + 4] != b"PE\0\0":
+        raise ValueError(f"PE 標頭不完整：{path}")
+    return struct.unpack_from("<H", data, pe + 24 + 68)[0]
+
+
 def pe_imports(path):
     """PE 匯入表與延遲載入表列出的 DLL 名稱，依出現順序；不在 Windows 上也能讀（只解析檔案）。"""
     data = regular(path).read_bytes()
@@ -123,6 +137,7 @@ DESCRIPTIONS = {
     "0c-update.exe": "靈犀注音安裝與更新工具",
     "0c-settings.exe": "靈犀注音設定程式",
     "0c-mcp.exe": "靈犀注音 AI 工具轉接（MCP）",
+    "0c-updatew.exe": "靈犀注音背景更新啟動器",
 }
 
 
@@ -317,9 +332,15 @@ def build(args):
             subprocess.run([args.go, "build", "-trimpath", *tags, "-ldflags", f"-X main.buildVersion={server_version(args, binary)}",
                             "-o", str(stage / (binary + ".exe")), f"./cmd/{binary}"],
                            cwd=ROOT, env=env, check=True)
+        # 0c-updatew：排程與通知按鈕執行的啟動器（#289），GUI 子系統、沒有主控台，取代 conhost --headless。
+        subprocess.run([args.go, "build", "-trimpath", "-ldflags", "-H windowsgui", "-o", str(stage / "0c-updatew.exe"),
+                        "./cmd/0c-updatew"], cwd=ROOT, env=env, check=True)
+        if pe_subsystem(stage / "0c-updatew.exe") != PE_SUBSYSTEM_GUI:
+            raise ValueError("0c-updatew.exe 必須是 GUI 子系統，否則排程會閃出主控台視窗")
         if settings:
             copy(settings, "0c-settings.exe")
-        ours = [stage / b for b in ("0c_tsf.dll", "0c-ui.exe", "0c-server.exe", "0c-update.exe", "0c-mcp.exe") + (("0c-settings.exe",) if settings else ())]
+        ours = [stage / b for b in ("0c_tsf.dll", "0c-ui.exe", "0c-server.exe", "0c-update.exe", "0c-mcp.exe", "0c-updatew.exe")
+                + (("0c-settings.exe",) if settings else ())]
         for binary in ours:
             check_pe(binary)
         check_pe(stage / DLL32, "x86")

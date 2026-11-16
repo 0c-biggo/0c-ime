@@ -30,6 +30,19 @@ enum MarkedText {
         return marked
     }
 
+    /// 候選窗開著、卻沒有組字時（沒在打字時按 ` 開的符號表、Emoji 選單，#283）交給 App 的佔位組字：一個帶底線的半形空白。
+    /// Office（Word、PowerPoint、Excel）與終端機一類的 App 只在自己有組字時才把方向鍵、Esc、Enter 交給輸入法，
+    /// 沒有組字就自己處理（移動游標、叫出上一個指令），候選窗只剩空白鍵翻頁。威注音（vChewing）也是放同樣的佔位。
+    /// 選了符號就換成真正的組字；關掉或送出時跟一般組字一樣拿掉，不會留在文件裡。
+    static let placeholder = NSAttributedString(string: " ", attributes: [.underlineStyle: NSUnderlineStyle.single.rawValue])
+
+    /// 這一次要交給 App 的組字：引擎的組字；沒有組字但候選窗開著時是佔位（游標在佔位前面，也就是符號會插入的地方）。
+    static func presented(_ segments: [Snapshot.Segment], cursor: Int, candidates: Bool) -> Shown {
+        let text = attributed(segments)
+        if text.length == 0, candidates { return Shown(text: placeholder, cursor: 0) }
+        return Shown(text: text, cursor: min(max(0, cursor), text.length))
+    }
+
     /// 讀音數字的灰色：固定的灰（不用動態系統色，跨行程交給 App 時不會解析成別的外觀），淺色、深色背景都看得到。
     static let readingColor = NSColor(calibratedWhite: 0.55, alpha: 1)
 

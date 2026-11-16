@@ -67,7 +67,7 @@ func TestShiftSymbolHalfwidthDefaultsOffAndPersists(t *testing.T) {
 	}
 	for _, it := range Default().Items() {
 		if it.Key == "shift-symbol-halfwidth" {
-			if it.Value != "off" || it.Default != "off" || it.Label != "Shift＋符號打半形" || it.Locked {
+			if it.Value != "off" || it.Default != "off" || it.Label != "標點寬度" || it.Locked {
 				t.Fatalf("設定程式的項目：%+v", it)
 			}
 			return

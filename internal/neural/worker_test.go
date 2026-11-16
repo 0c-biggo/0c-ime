@@ -124,6 +124,41 @@ func TestContractsAndContextPolicy(t *testing.T) {
 	}
 }
 
+// v2 套件（#281）要帶合法的 tone_policy 才載入；v1 不能帶。桌面的請求沒有 tone_known，打了聲調的段落照常評分。
+func TestSequenceV2TonePolicy(t *testing.T) {
+	zero, one := 0, 1
+	mask := func(id *int) *rerank.TonePolicy { return &rerank.TonePolicy{Schema: rerank.ToneMaskSchema, UnknownToneID: id} }
+	for _, c := range []struct {
+		name   string
+		schema string
+		policy *rerank.TonePolicy
+		ok     bool
+	}{
+		{"v1", rerank.SequenceSchemaV1, nil, true},
+		{"v1 with policy", rerank.SequenceSchemaV1, mask(&zero), false},
+		{"v2", rerank.SequenceSchemaV2, mask(&zero), true},
+		{"v2 without policy", rerank.SequenceSchemaV2, nil, false},
+		{"v2 policy without id", rerank.SequenceSchemaV2, mask(nil), false},
+		{"v2 policy id 1", rerank.SequenceSchemaV2, mask(&one), false},
+		{"v2 other policy", rerank.SequenceSchemaV2, &rerank.TonePolicy{Schema: "other", UnknownToneID: &zero}, false},
+		{"encoder with policy", "zuin-encoder-runtime-v1", mask(&zero), false},
+	} {
+		policy := "empty"
+		if strings.HasPrefix(c.schema, "zuin-sequence-") {
+			policy = "confirmed_left_64"
+		}
+		m := Manifest{Schema: c.schema, ContextPolicy: policy, TonePolicy: c.policy}
+		if validContract(m) != c.ok {
+			t.Errorf("%s: validContract = %v", c.name, !c.ok)
+		}
+	}
+	var m Manifest
+	raw := `{"schema":"zuin-sequence-runtime-v2","context_policy":"confirmed_left_64","tone_policy":{"schema":"zuin-tone-mask-v1","unknown_tone_id":0}}`
+	if err := json.Unmarshal([]byte(raw), &m); err != nil || !validContract(m) || contextRunes(m) != rerank.MaxContextRunes {
+		t.Fatalf("v2 manifest: %v %+v", err, m)
+	}
+}
+
 func request() rerank.Request {
 	return rerank.Request{Revision: 7, Reading: zhuyin.ParseReading("ㄐㄧㄚˇ ㄧˇ"), Candidates: []decode.Hypothesis{
 		{Text: "甲乙", LogScore: -2, Segments: []decode.Seg{{Word: "甲乙", Start: 0, End: 2}}},

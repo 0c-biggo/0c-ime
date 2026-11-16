@@ -3,8 +3,8 @@
   "models": {
     "select": {
       "repository": "Funmula/0c-sequence-d512",
-      "revision": "df4b9f04f8aee1dd34dcb246ac2b83c4ab3d14a9",
-      "version": "d512-pf512-20260926",
+      "revision": "3533e34ef25896afeacc928d136ba7f35783bba7",
+      "version": "d512-cv2-20261111",
       "license": "MIT",
       "files": {
         "LICENSE": {
@@ -12,16 +12,16 @@
           "size": 1077
         },
         "README.md": {
-          "sha256": "5c4ac2d0f742b623c3bc65d02608918b720f6daf4962597aecb4aac9684d0c94",
-          "size": 6911
+          "sha256": "c1cda3b9ab51321317bfafc12a634b404ca393611cdbc97ac0c98b229648a027",
+          "size": 8365
         },
         "manifest.json": {
-          "sha256": "f8d737cf44e9ff8f90e7108f1e9df4fece0cdcae254e050968fc6ef723ee1976",
-          "size": 1081
+          "sha256": "6545fed2d7092aec70f929c2fce8360e1456778e99f6eeadc9d8299e5ad91763",
+          "size": 1165
         },
         "model.onnx": {
-          "sha256": "71af1f0e77b2752cc71cbc04bf19c8e8f2e765662246f766e65a2822bab4e66e",
-          "size": 130723134
+          "sha256": "4a80caf18acbaddde10c908dcbf35919908d616e94618cdde71fc3409c969261",
+          "size": 130723137
         },
         "vocab.json": {
           "sha256": "556dffaffbf4c05211a846dcee55ef735cea68c5754f9bffcc6f9588124172b3",

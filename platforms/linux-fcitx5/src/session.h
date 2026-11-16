@@ -43,6 +43,9 @@ struct Snapshot {
     bool capsLock = false; // 引擎記得的 Caps Lock 狀態（caps_lock，#173）
     // 送出的文字目前會轉成簡體（output_simplified，#169）。只有回報 output_simplified_live 的引擎才有這一項。
     bool outputSimplified = false;
+    // 這一鍵被擋下（bell，#300 打錯注音時提示）：按了聲調但讀音沒有字，注音停在組字區。Fcitx5 沒有統一的提示音，
+    // 把這次快照裡停住的注音（pending）反白（preeditLayout）。只在擋下的那次快照出現，舊引擎沒有這一項。
+    bool bell = false;
     uint64_t traceSequence = 0;
     uint64_t contextID = 0;
     bool reconnected = false;

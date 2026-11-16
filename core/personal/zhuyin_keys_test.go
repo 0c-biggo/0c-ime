@@ -157,9 +157,9 @@ func TestZhuyinKeysPrune(t *testing.T) {
 	}
 }
 
-// 格式 6 還沒發布，欄位併進去不再升版：舊檔沒有這份紀錄，讀進來是空的、可以寫；存檔來回一致。
+// 這個欄位併進格式 6：舊檔沒有這份紀錄，讀進來是空的、可以寫；存檔來回一致。
 func TestZhuyinKeysStoreFormat(t *testing.T) {
-	if StoreFormat != 6 {
+	if StoreFormat < 6 {
 		t.Fatalf("這個欄位併進格式 6：%d", StoreFormat)
 	}
 	for _, src := range []string{`{"Format":5}`, `{"Format":6}`, `{"Format":6,"ZhuyinKeys":null}`, `{}`} {

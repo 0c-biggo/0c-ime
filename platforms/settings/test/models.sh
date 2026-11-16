@@ -8,7 +8,7 @@ MFAKE=/src/platforms/settings/test/fake-update.py
 mwin() { xdotool search --onlyvisible --name '靈犀注音設定' | head -1; }
 mshot() { import -window "$(mwin)" "$OUT/$1.png"; }
 mtabs() { local keys=(); for _ in $(seq "$1"); do keys+=(Tab); done; xdotool key --delay 120 "${keys[@]}"; }
-models_home() { # 場景 初始狀態（bundled|none|downloading|user|redownload|runtime|distribution）
+models_home() { # 場景 初始狀態（bundled|none|downloading|user|redownload|redownload-unusable|runtime|distribution|dictionary）
   new_home "$1"
   python3 "$MFAKE" --init "$(home_of "$1")/fake-vocab.json" empty
   python3 "$MFAKE" --models "$(home_of "$1")/fake-models.json" "$2"
@@ -105,8 +105,8 @@ if window_up; then
 else bad "muser/models 視窗沒有出現"; cat /tmp/app-muser-models.log; fi
 stop_app
 
-# ---- 需要重新下載、缺推論元件、發行版關閉下載、字典不在配對清單上：截圖 ----
-for kind in redownload runtime distribution dictionary; do
+# ---- 需要重新下載（舊的照常使用／已不能用，#306）、缺推論元件、發行版關閉下載、字典不在配對清單上：截圖 ----
+for kind in redownload redownload-unusable runtime distribution dictionary; do
   models_home "m$kind" "$kind"
   mlaunch "m$kind"
   if window_up; then sleep 3; mshot "models-$kind"; else bad "m$kind/models 視窗沒有出現"; cat "/tmp/app-m$kind-models.log"; fi

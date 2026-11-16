@@ -32,8 +32,11 @@ final class CandidatePanel {
     var level = NSWindow.Level.popUpMenu
     func orderOut(_ sender: Any?) {}
     static var compositions: [String] = []
+    /// 每次畫出的候選頁與反白（#283）：看方向鍵有沒有真的進到候選窗。
+    static var candidates: [(page: Int, highlight: Int)] = []
     func show(_ snapshot: Snapshot, at: NSRect, composition: Bool = false) {
         if composition { Self.compositions.append(snapshot.text) }
+        if let list = snapshot.candidates { Self.candidates.append((list.page, list.highlight)) }
     }
     func showHint(_ text: String, at: NSRect, for duration: TimeInterval = 1) { Self.hints.append(text) }
 }

@@ -42,6 +42,13 @@ func SeedStats(recent []string) map[string]Stat {
 
 // Pick 記下一次選取，回傳新的順序與分數（都不與輸入共用）。order 是目前保存的順序。
 func Pick(order []string, stats map[string]Stat, text string, now int64) ([]string, map[string]Stat) {
+	return Rank(CleanRecent(order), stats, text, now, MaxRecent)
+}
+
+// Rank 是 Pick 不綁目錄的部分：order 須已去重、只含可接受的項目，清單最多 limit 項。
+// 符號選單的「最近」分頁也用它（#290）。回傳值都不與輸入共用。
+func Rank(order []string, stats map[string]Stat, text string, now int64, limit int) ([]string, map[string]Stat) {
+	order = slices.Clone(order)
 	next := make(map[string]Stat, len(stats)+1)
 	for k, st := range stats {
 		if st.At == 0 && now > 0 {
@@ -51,9 +58,8 @@ func Pick(order []string, stats map[string]Stat, text string, now int64) ([]stri
 	}
 	st := next[text]
 	next[text] = Stat{Score: Decayed(st, now) + 1, At: now}
-	order = CleanRecent(order)
 	if !slices.Contains(order, text) {
-		if len(order) >= MaxRecent { // 滿了：讓出分數最低的位置，新選的一定進得來
+		if len(order) >= limit { // 滿了：讓出分數最低的位置，新選的一定進得來
 			weakest := 0
 			for i := range order {
 				if Decayed(next[order[i]], now) <= Decayed(next[order[weakest]], now) {
@@ -70,8 +76,8 @@ func Pick(order []string, stats map[string]Stat, text string, now int64) ([]stri
 			order[j], order[j-1] = order[j-1], order[j]
 		}
 	}
-	if len(order) > MaxRecent {
-		order = order[:MaxRecent]
+	if len(order) > limit {
+		order = order[:limit]
 	}
 	for k := range next { // 分數只留給清單裡的項目，大小有界
 		if !slices.Contains(order, k) {
@@ -83,9 +89,14 @@ func Pick(order []string, stats map[string]Stat, text string, now int64) ([]stri
 
 // CleanStats 只保留目錄裡、而且在順序清單中的項目；分數不合理的丟掉。
 func CleanStats(stats map[string]Stat, order []string) map[string]Stat {
+	return KeepStats(stats, CleanRecent(order))
+}
+
+// KeepStats 只保留在順序清單 order（已清理過）中的項目；分數不合理的丟掉。
+func KeepStats(stats map[string]Stat, order []string) map[string]Stat {
 	var out map[string]Stat
 	for k, st := range stats {
-		if Contains(k) && slices.Contains(order, k) && st.Score > 0 && !math.IsInf(st.Score, 0) && !math.IsNaN(st.Score) {
+		if slices.Contains(order, k) && st.Score > 0 && !math.IsInf(st.Score, 0) && !math.IsNaN(st.Score) {
 			if out == nil {
 				out = map[string]Stat{}
 			}

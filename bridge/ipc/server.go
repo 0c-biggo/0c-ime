@@ -37,6 +37,9 @@ type Server struct {
 	VocabDisabled string
 	// OnVocab 在自訂詞彙指令改了詞彙後呼叫；宿主應立即存檔。
 	OnVocab func()
+	// ResetPersonal 處理 reset_personal（#301）：宿主在存檔鎖內清空個人資料（Engine.ResetPersonal）並立刻寫檔，
+	// 失敗時回錯誤。nil 表示不支援，health 不回報 personal_reset。
+	ResetPersonal func() error
 
 	mu              sync.Mutex
 	conns           map[net.Conn]bool
@@ -97,6 +100,9 @@ func (s *Server) health() map[string]string {
 		info["idle_seconds"] = fmt.Sprint(int(time.Since(s.lastKey).Seconds()))
 	}
 	s.mu.Unlock()
+	if s.ResetPersonal != nil {
+		info["personal_reset"] = "true"
+	}
 	info["sessions"] = fmt.Sprint(total)
 	info["composing"] = fmt.Sprint(composing)
 	info["pid"] = fmt.Sprint(os.Getpid())
@@ -331,6 +337,14 @@ func (s *Server) do(env Envelope, sessions map[uint64]bool, startDrain *bool) Re
 			s.OnVocab()
 		}
 		return Reply{OK: true, Vocab: &resp}
+	case OpResetPersonal:
+		if s.ResetPersonal == nil {
+			break
+		}
+		if err := s.ResetPersonal(); err != nil {
+			return Reply{Error: err.Error()}
+		}
+		return Reply{OK: true}
 	}
 	return Reply{Error: "不認得的操作 " + env.Op}
 }

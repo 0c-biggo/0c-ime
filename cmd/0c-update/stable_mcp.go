@@ -31,7 +31,11 @@ func stableMCP(base string) string { return filepath.Join(base, "bin", mcpName()
 // 核心目錄沒有它（較舊的更新器準備的核心目錄只複製引擎、更新器與字典）時退回完整安裝收據的那一份：
 // 與穩定更新器不同，舊一點的轉接照樣能用，總比讓 AI 工具的設定突然失效好。都沒有時為空字串。
 func currentMCP(base, receipt string) (string, string) {
-	name := mcpName()
+	return currentStableSource(base, receipt, mcpName())
+}
+
+// currentStableSource 是穩定副本的來源：核心目錄記錄了 name 時取核心目錄的，否則取完整安裝收據的版本目錄（見 currentMCP）。
+func currentStableSource(base, receipt, name string) (string, string) {
 	if dir, ok := enginedir.Dir(base); ok {
 		if files, err := enginedir.ReadFiles(dir); err == nil && files[name] != "" {
 			return filepath.Join(dir, name), files[name]

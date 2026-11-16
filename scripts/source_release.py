@@ -97,6 +97,9 @@ def fetch_models(lock, cache, offline=False):
                         pending.unlink(missing_ok=True)
             check_file(target, entry)
 
+# Selection packages are v1 through 0.2.11 and v2 (tone_policy) from 0.2.12; older releases must still verify.
+MODEL_SCHEMAS = {"select": ("zuin-sequence-runtime-v1", "zuin-sequence-runtime-v2"), "punct": ("zuin-punct-runtime-v1",)}
+
 
 def check_models(root, lock):
     for role, model in lock["models"].items():
@@ -106,9 +109,8 @@ def check_models(root, lock):
         for name, entry in model["files"].items():
             check_file(folder / name, entry)
         manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
-        schema = "zuin-sequence-runtime-v1" if role == "select" else "zuin-punct-runtime-v1"
         expected = {name: model["files"][name]["sha256"] for name in ("model.onnx", "vocab.json")}
-        if manifest.get("schema") != schema or manifest.get("files") != expected:
+        if manifest.get("schema") not in MODEL_SCHEMAS[role] or manifest.get("files") != expected:
             raise ValueError(f"model manifest does not match lock: {role}")
         if role == "select" and not SHA256.fullmatch(manifest.get("dictionary_sha256", "")):
             raise ValueError("selection model is missing its system dictionary binding")

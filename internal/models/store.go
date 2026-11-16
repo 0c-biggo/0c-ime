@@ -79,6 +79,9 @@ type Inspection struct {
 	Paired, PairCurrent bool
 	// Weights：目前 models.lock 的權重都在（大小相符）。
 	Weights bool
+	// Download：每個角色還要下載的位元組，是 weights 裡不在或大小不符的檔案合計（Install 沿用其餘的檔案；
+	// 這裡不算雜湊，大小相符但內容壞掉的檔案下載時才發現、照樣重新下載）。
+	Download map[string]int64
 	// AnyUser：個人目錄有任何下載過的模型（權重或任一份配對）。
 	AnyUser bool
 }
@@ -94,6 +97,15 @@ func (in Inspection) Need() string {
 		return "redownload"
 	}
 	return "download"
+}
+
+// DownloadSize 是這次下載實際要下載的位元組（status 的 download_size）：已有的權重不算。
+func (in Inspection) DownloadSize() int64 {
+	var n int64
+	for _, b := range in.Download {
+		n += b
+	}
+	return n
 }
 
 func regular(path string) bool {
@@ -115,12 +127,16 @@ func (s Store) Inspect(l Lock, dictionary string) Inspection {
 			in.PairCurrent = info.ModelsLock == l.SHA256
 		}
 	}
-	in.Weights = true
+	in.Weights, in.Download = true, map[string]int64{}
 	for _, role := range Roles {
 		m := l.Models[role]
+		in.Download[role] = 0
 		for _, n := range m.FileNames() {
 			st, err := os.Stat(filepath.Join(s.WeightsDir(role, m.Revision), n))
-			in.Weights = in.Weights && err == nil && st.Mode().IsRegular() && st.Size() == m.Files[n].Size
+			if err != nil || !st.Mode().IsRegular() || st.Size() != m.Files[n].Size {
+				in.Weights = false
+				in.Download[role] += m.Files[n].Size
+			}
 		}
 	}
 	if entries, err := os.ReadDir(filepath.Join(s.Root, "weights")); err == nil && len(entries) > 0 {
@@ -186,7 +202,19 @@ func (s Store) Install(ctx context.Context, l Lock, p Pairing, dictionary string
 	}
 	defer os.RemoveAll(staging)
 
-	total, done := l.Size(), int64(0)
+	// 先核對已有的權重：沿用的檔案不算進下載進度，total 是這次實際要下載的位元組（與 status 的 download_size 一致）。
+	reuse := map[string]bool{}
+	total, done := int64(0), int64(0)
+	for _, role := range Roles {
+		m := l.Models[role]
+		for _, n := range m.FileNames() {
+			if checkFile(filepath.Join(s.WeightsDir(role, m.Revision), n), m.Files[n]) == nil {
+				reuse[role+"/"+n] = true
+			} else {
+				total += m.Files[n].Size
+			}
+		}
+	}
 	progress("downloading", 0, total)
 	for _, role := range Roles {
 		m := l.Models[role]
@@ -196,12 +224,10 @@ func (s Store) Install(ctx context.Context, l Lock, p Pairing, dictionary string
 		}
 		for _, n := range m.FileNames() {
 			want, target := m.Files[n], filepath.Join(dst, n)
-			if existing := filepath.Join(s.WeightsDir(role, m.Revision), n); checkFile(existing, want) == nil {
-				if err := link(existing, target); err != nil {
+			if reuse[role+"/"+n] {
+				if err := link(filepath.Join(s.WeightsDir(role, m.Revision), n), target); err != nil {
 					return err
 				}
-				done += want.Size
-				progress("downloading", done, total)
 				continue
 			}
 			if f == nil {

@@ -1,12 +1,16 @@
 {
-  "schema": "zuin-sequence-runtime-v1",
+  "schema": "zuin-sequence-runtime-v2",
   "context_policy": "confirmed_left_64",
+  "tone_policy": {
+    "schema": "zuin-tone-mask-v1",
+    "unknown_tone_id": 0
+  },
   "allow_partial": true,
   "dictionary_sha256": "517e6c8bb5cbb145c0554edc3cc91c2b55fc753dd42e11194d83f6b0e119aea3",
   "weight": 2.0,
   "margin": 0.0,
   "files": {
-    "model.onnx": "71af1f0e77b2752cc71cbc04bf19c8e8f2e765662246f766e65a2822bab4e66e",
+    "model.onnx": "4a80caf18acbaddde10c908dcbf35919908d616e94618cdde71fc3409c969261",
     "vocab.json": "556dffaffbf4c05211a846dcee55ef735cea68c5754f9bffcc6f9588124172b3"
   },
   "spec": {

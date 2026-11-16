@@ -64,6 +64,9 @@ func ensureSettingsEntry() {
 	}
 }
 
+// restoreSettingsEntry（完整安裝之後）：macOS 照常維護，見 ensureSettingsEntry。
+func restoreSettingsEntry() { ensureSettingsEntry() }
+
 func removeSettingsEntry() {
 	home, err := os.UserHomeDir()
 	if err == nil {

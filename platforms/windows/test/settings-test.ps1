@@ -145,8 +145,11 @@ try {
     Check (Test-Path $lnk) 'Start Menu shortcut created by the install'
     $link = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk)
     $report.shortcut = [ordered]@{ target = $link.TargetPath; arguments = $link.Arguments; icon = $link.IconLocation; dir = $link.WorkingDirectory }
-    Check ($link.TargetPath -ieq "$env:SystemRoot\System32\conhost.exe") 'shortcut runs conhost' $link.TargetPath
-    Check ($link.Arguments -ieq ('--headless "' + $stable + '" open-settings')) 'shortcut runs the stable updater hidden' $link.Arguments
+    # #284：捷徑直接指向設定程式（GUI）的穩定副本，不經 conhost --headless（惡意 LNK 的常見手法，SEP 以 Scr.Malcode!gen 隔離）。
+    $stableSettings = "$base\bin\0c-settings.exe"
+    Check ($link.TargetPath -ieq $stableSettings) 'shortcut opens the stable settings program directly' $link.TargetPath
+    Check ($link.Arguments -eq '') 'shortcut has no arguments' $link.Arguments
+    Check ((Get-FileHash $stableSettings).Hash.ToLower() -eq $receipt.files.'0c-settings.exe') 'the stable settings copy matches the receipt'
     Check (Test-Path ($link.IconLocation -replace ',\d+$', '')) 'shortcut icon file exists'
     Check (Test-Path "$base\settings-entry.json") 'marker file written'
 
@@ -176,13 +179,27 @@ try {
     Check ($restored.document_context -ne $false) 'pressing it again restores the setting' ($restored | ConvertTo-Json -Compress)
     StopSettings
 
-    # 2) 開始功能表的捷徑（以 conhost --headless 執行，不閃出主控台視窗）。
+    # 2) 開始功能表的捷徑：直接開 GUI 程式，不經主控台。
+    $consolesBefore = @(Get-Process -Name conhost, OpenConsole, WindowsTerminal -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
     Interactive "Start-Process -FilePath '$lnk'"
     Check (WaitSettings) 'the shortcut starts the settings program'
     $shot = Shot 'windows-shortcut.png'
     Check ($shot -match 'found=true') 'settings window found via the shortcut' $shot
-    Check (@(Get-Process -Name conhost -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero -and $_.StartTime -gt (Get-Date).AddMinutes(-1) }).Count -eq 0) 'no console window was shown'
+    $proc = SettingsProcesses | Select-Object -First 1
+    Check ($proc.Path -ieq $stableSettings) 'the shortcut started the stable copy' $proc.Path
+    $newConsoles = @(Get-Process -Name conhost, OpenConsole, WindowsTerminal -ErrorAction SilentlyContinue | Where-Object { $consolesBefore -notcontains $_.Id -and $_.MainWindowHandle -ne [IntPtr]::Zero })
+    Check ($newConsoles.Count -eq 0) 'no console window was shown' (($newConsoles | ForEach-Object { $_.Name }) -join ',')
     StopSettings
+
+    # 2b) #284：捷徑被移除（使用者刪掉或防毒軟體隔離）後，排程與選單用到的維護不重建它；重新安裝才補回。
+    Remove-Item $lnk -Force
+    Interactive "& '$stable' open-settings"
+    Check (WaitSettings) 'open-settings starts the settings program without the shortcut'
+    StopSettings
+    $run = RunCapture $stable 'schedule repair'
+    Check (-not (Test-Path $lnk)) 'a removed shortcut is not recreated by open-settings or schedule repair'
+    Run $Setup '/S'
+    Check (Test-Path $lnk) 'reinstalling restores the shortcut'
 
     # 3) TSF 輸入指示器選單：第一項「設定…」，選了之後經 0c-ui 開啟設定程式。
     $m = MenuProbe
@@ -239,6 +256,16 @@ try {
     Check (-not (Test-Path $arp)) 'uninstall removed the app entry'
     Check (-not (Test-Path $lnk)) 'uninstall removed the settings shortcut'
     Check (-not (Test-Path "$base\settings-entry.json")) 'uninstall removed the marker file'
+    Check (-not (Test-Path "$base\bin\0c-settings.exe")) 'uninstall removed the stable settings copy'
+    Check (-not (Get-ScheduledTask -TaskName $ownUpdateTask -ErrorAction SilentlyContinue)) 'uninstall removed the update task'
+    # 還開著的應用程式可能帶起舊的 0c-ui，以版本目錄的 0c-update 執行 schedule repair：不可把排程或捷徑建回來。
+    $versionUpdater = [IO.Path]::GetFullPath("$base\$($receipt.directory)\0c-update.exe")
+    if (Test-Path $versionUpdater) {
+        $run = RunCapture $versionUpdater 'schedule repair'
+        $report.repair_after_uninstall = $run.text.Trim()
+        Check (-not (Get-ScheduledTask -TaskName $ownUpdateTask -ErrorAction SilentlyContinue)) 'schedule repair after uninstall does not recreate the update task' $run.text
+        Check (-not (Test-Path $lnk)) 'schedule repair after uninstall does not recreate the shortcut'
+    }
     $report.passed = $true
 } catch { $report.error = $_.Exception.Message } finally {
     try {

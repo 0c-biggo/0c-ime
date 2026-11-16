@@ -4,8 +4,8 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -15,11 +15,11 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"unicode/utf16"
 	"unsafe"
 
 	"github.com/0c-biggo/0c-ime/internal/autoupdate"
 	"github.com/0c-biggo/0c-ime/internal/enginedir"
+	"github.com/0c-biggo/0c-ime/internal/winshell"
 	"github.com/Microsoft/go-winio"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
@@ -40,7 +40,7 @@ func dialEngine(timeout time.Duration) (net.Conn, error) { return winio.DialPipe
 func refreshPathUpdater(string) { ensureSettingsEntry(); syncUninstallEntry() }
 
 func coreLayout() (autoupdate.CoreLayout, bool) {
-	return autoupdate.CoreLayout{Server: "0c-server.exe", Update: "0c-update.exe", Settings: "0c-settings.exe", MCP: "0c-mcp.exe"}, true
+	return autoupdate.CoreLayout{Server: "0c-server.exe", Update: "0c-update.exe", Settings: "0c-settings.exe", MCP: "0c-mcp.exe", Launcher: launcherName}, true
 }
 
 // 外殼更新要改 TSF 註冊，需要系統管理員；排程以一般權限執行，所以要使用者確認。
@@ -128,62 +128,62 @@ func conditions() autoupdate.Conditions {
 	return c
 }
 
-// toastScript 以 ToastGeneric 顯示通知；ZC_TOAST_ACTION 非空時加「立即安裝／稍後」按鈕：
-// 「立即安裝」以 zc-update: 協定啟動 0c-update（見 registerProtocol），「稍後 1 小時」保存同一資產的提醒。
-const toastScript = `$ErrorActionPreference='Stop'
-[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
-[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null
-$doc = New-Object Windows.Data.Xml.Dom.XmlDocument
-$doc.LoadXml('<toast><visual><binding template="ToastGeneric"><text/><text/></binding></visual></toast>')
-$t = $doc.GetElementsByTagName('text')
-$t.Item(0).AppendChild($doc.CreateTextNode($env:ZC_TOAST_TITLE)) > $null
-$t.Item(1).AppendChild($doc.CreateTextNode($env:ZC_TOAST_BODY)) > $null
-if ($env:ZC_TOAST_ACTION) {
-  $toast = $doc.SelectSingleNode('/toast')
-  $toast.SetAttribute('scenario', 'reminder')
-  $actions = $doc.CreateElement('actions')
-  $install = $doc.CreateElement('action')
-  $install.SetAttribute('content', '立即安裝')
-  $install.SetAttribute('activationType', 'protocol')
-  $install.SetAttribute('arguments', $env:ZC_TOAST_ACTION)
-  $later = $doc.CreateElement('action')
-  $later.SetAttribute('content', '稍後 1 小時')
-  $later.SetAttribute('activationType', 'protocol')
-  $later.SetAttribute('arguments', $env:ZC_TOAST_SNOOZE)
-  $actions.AppendChild($install) > $null
-  $actions.AppendChild($later) > $null
-  $toast.AppendChild($actions) > $null
-}
-$n = [Windows.UI.Notifications.ToastNotification]::new($doc)
-[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($env:ZC_TOAST_APP).Show($n)`
-
 // protocolScheme 是通知按鈕啟動 0c-update 的協定；只接受綁定版本及 SHA 的 finish／snooze。
 const protocolScheme = "zc-update"
 
-// registerProtocol 讓 zc-update: 以 conhost --headless 執行穩定的 0c-update（不閃主控台視窗）。
+// registerProtocol 讓 zc-update: 執行穩定的 0c-update（不閃主控台視窗）：經 bin\0c-updatew.exe，沒有它時退回
+// conhost --headless（見 launchCommand，#289）。
+// 每次送出有按鈕的通知前都會呼叫：內容與現值相同就不寫。反覆改寫協定處理程式是端點防護在找的常駐手法（#289 的後續）。
 func registerProtocol() error {
-	stable := stableUpdater(basePath())
-	if _, err := os.Stat(stable); err != nil {
+	base := basePath()
+	if _, err := os.Stat(stableUpdater(base)); err != nil {
 		return err
 	}
-	root, _, err := registry.CreateKey(registry.CURRENT_USER, `Software\Classes\`+protocolScheme, registry.SET_VALUE)
-	if err != nil {
-		return err
+	command, args := launchCommand(base, "protocol")
+	_, err := setRegistryStrings(`Software\Classes\`+protocolScheme, protocolValues(command, args))
+	return err
+}
+
+// protocolValues 是 zc-update: 協定在 HKCU\Software\Classes 底下的值（子機碼 → 值名稱 → 內容；"" 是預設值）。
+func protocolValues(command, args string) []registryString {
+	return []registryString{
+		{"", "", "URL:靈犀注音更新"},
+		{"", "URL Protocol", ""},
+		{`shell\open\command`, "", fmt.Sprintf(`"%s" %s "%%1"`, command, args)},
 	}
-	defer root.Close()
-	if err = root.SetStringValue("", "URL:靈犀注音更新"); err != nil {
-		return err
+}
+
+// registryString 是 HKCU 某個機碼底下的一個字串值。
+type registryString struct{ subkey, name, value string }
+
+// setRegistryStrings 讓 HKCU\<root> 底下的字串值與 values 相同：值已存在且內容相同就不開寫入權限、也不寫，
+// 回傳實際寫了幾個。
+func setRegistryStrings(root string, values []registryString) (int, error) {
+	written := 0
+	for _, v := range values {
+		path := root
+		if v.subkey != "" {
+			path += `\` + v.subkey
+		}
+		if key, err := registry.OpenKey(registry.CURRENT_USER, path, registry.QUERY_VALUE); err == nil {
+			have, kind, err := key.GetStringValue(v.name)
+			key.Close()
+			if err == nil && kind == registry.SZ && have == v.value {
+				continue
+			}
+		}
+		key, _, err := registry.CreateKey(registry.CURRENT_USER, path, registry.SET_VALUE)
+		if err != nil {
+			return written, err
+		}
+		err = key.SetStringValue(v.name, v.value)
+		key.Close()
+		if err != nil {
+			return written, err
+		}
+		written++
 	}
-	if err = root.SetStringValue("URL Protocol", ""); err != nil {
-		return err
-	}
-	cmd, _, err := registry.CreateKey(registry.CURRENT_USER, `Software\Classes\`+protocolScheme+`\shell\open\command`, registry.SET_VALUE)
-	if err != nil {
-		return err
-	}
-	defer cmd.Close()
-	conhost := filepath.Join(os.Getenv("SystemRoot"), `System32\conhost.exe`)
-	return cmd.SetStringValue("", fmt.Sprintf(`"%s" --headless "%s" protocol "%%1"`, conhost, stable))
+	return written, nil
 }
 
 func removeProtocol() {
@@ -195,49 +195,32 @@ func removeProtocol() {
 // toastApp 是通知的 AppUserModelID；在 HKCU 註冊顯示名稱後，通知來源顯示「靈犀注音」。
 const toastApp = "Zuin.0c.Update"
 
+// registerToastApp：每次通知前呼叫，顯示名稱已註冊就不寫。
 func registerToastApp() error {
-	key, _, err := registry.CreateKey(registry.CURRENT_USER, `Software\Classes\AppUserModelId\`+toastApp, registry.SET_VALUE)
-	if err != nil {
-		return err
-	}
-	defer key.Close()
-	return key.SetStringValue("DisplayName", "靈犀注音")
+	_, err := setRegistryStrings(`Software\Classes\AppUserModelId\`+toastApp, []registryString{{"", "DisplayName", "靈犀注音"}})
+	return err
 }
 
-func encodePS(script string) string {
-	u := utf16.Encode([]rune(script))
-	b := make([]byte, len(u)*2)
-	for i, v := range u {
-		b[2*i], b[2*i+1] = byte(v), byte(v>>8)
-	}
-	return base64.StdEncoding.EncodeToString(b)
-}
-
+// notify 以 ToastGeneric 顯示通知；n.Action 非空時加「立即安裝／稍後」按鈕：「立即安裝」以 zc-update: 協定
+// 啟動 0c-update（見 registerProtocol），「稍後 1 小時」保存同一資產的提醒。
+// 在行程內以 WinRT 送出（internal/winshell），不再開 powershell.exe -EncodedCommand（#289）。
 func notify(n autoupdate.Notice) error {
-	title, body := n.Title, n.Body
-	ps := filepath.Join(os.Getenv("SystemRoot"), `System32\WindowsPowerShell\v1.0\powershell.exe`)
-	cmd := exec.Command(ps, "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encodePS(toastScript))
 	app := toastApp
 	if registerToastApp() != nil {
-		app = `{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe` // 無法註冊時仍要送達
+		app = `{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe` // 無法註冊時借用系統已註冊的 AUMID，仍要送達
 	}
-	action, snooze := "", ""
+	t := winshell.Toast{Title: n.Title, Body: n.Body}
 	if n.Action != "" {
 		var err error
-		if action, err = noticeActionURL(n.Action, n.TargetVersion, n.TargetSHA256); err != nil {
+		if t.Action, err = noticeActionURL(n.Action, n.TargetVersion, n.TargetSHA256); err != nil {
 			return err
 		}
-		snooze, _ = noticeActionURL("snooze", n.TargetVersion, n.TargetSHA256)
+		t.Snooze, _ = noticeActionURL("snooze", n.TargetVersion, n.TargetSHA256)
 		if err = registerProtocol(); err != nil {
 			return err
 		}
 	}
-	cmd.Env = append(os.Environ(), "ZC_TOAST_TITLE="+title, "ZC_TOAST_BODY="+body, "ZC_TOAST_APP="+app, "ZC_TOAST_ACTION="+action, "ZC_TOAST_SNOOZE="+snooze)
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NO_WINDOW, HideWindow: true}
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%s (%w)", strings.TrimSpace(string(out)), err)
-	}
-	return nil
+	return winshell.ShowToast(app, t)
 }
 
 // taskNameFor 是工作排程器裡本使用者的工作名稱（同一台電腦的每個使用者各有一份）。
@@ -251,16 +234,63 @@ func taskNameFor(prefix string) string {
 func taskName() string       { return taskNameFor("0c-update") }
 func engineTaskName() string { return taskNameFor("0c-engine") }
 
-func schtasksPath() string { return filepath.Join(os.Getenv("SystemRoot"), `System32\schtasks.exe`) }
+// 排程的查詢、建立、執行與刪除都在行程內呼叫工作排程器的 COM 介面（internal/winshell），不再開 schtasks.exe：
+// 從 %TEMP% 讀 XML 的 schtasks /Create 與頻繁的 /Query、/Run、/Delete 都是端點防護會看的命令列（#289 的後續）。
 
-func quietCommand(name string, args ...string) *exec.Cmd {
-	cmd := exec.Command(name, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NO_WINDOW, HideWindow: true}
-	return cmd
+func taskExists(name string) bool { return winshell.TaskExists(name) }
+
+// errTaskReadOnly：排程的定義不是目前的，但它是提權建立、只開放讀取的（0.2.11 以前的安裝程式），一般權限改不了。
+var errTaskReadOnly = errors.New("排程由系統管理員權限建立，一般權限無法更新，下一次完整安裝時會換新")
+
+// ensureTask 讓工作排程器裡的 name 是 definition（見 planTask）：定義相同就不寫；提權時一併把安全描述元開放給本人
+// （TaskOpenSDDL），一般權限寫時保留原本的。回傳有沒有寫入。
+func ensureTask(name, definition, sid string, elevated bool) (bool, error) {
+	stamped, want := stampTaskDefinition(definition)
+	current, err := winshell.GetTask(name)
+	exists := err == nil
+	if err != nil && !errors.Is(err, winshell.ErrTaskNotFound) {
+		return false, fmt.Errorf("讀取排程失敗：%w", err)
+	}
+	switch planTask(exists, taskDefinitionStamp(current.XML), want, winshell.TaskWritableBy(current.SDDL, sid), elevated) {
+	case taskKeep:
+		return false, nil
+	case taskReadOnly:
+		return false, errTaskReadOnly
+	}
+	sddl := ""
+	if elevated {
+		sddl = winshell.TaskOpenSDDL(sid)
+	}
+	if err = winshell.RegisterTask(name, stamped, sddl); err != nil {
+		return false, fmt.Errorf("建立排程失敗：%w", err)
+	}
+	return true, nil
 }
 
-func taskExists(name string) bool {
-	return quietCommand(schtasksPath(), "/Query", "/TN", name).Run() == nil
+// deleteTask 刪除排程；不存在不算失敗（回傳 false, nil）。本人只能讀的排程（提權建立）不嘗試刪除，
+// 照實回報 errTaskReadOnly，不印「已移除」（#284）。
+func deleteTask(name, sid string) (bool, error) {
+	current, err := winshell.GetTask(name)
+	switch {
+	case errors.Is(err, winshell.ErrTaskNotFound):
+		return false, nil
+	case err != nil:
+		return false, err
+	case !elevatedOK() && !winshell.TaskWritableBy(current.SDDL, sid):
+		return false, errors.New("排程由系統管理員權限建立，一般權限無法移除；請從「已安裝的應用程式」解除安裝靈犀注音，或重新安裝後再移除")
+	}
+	if err = winshell.DeleteTask(name); err != nil && !errors.Is(err, winshell.ErrTaskNotFound) {
+		return false, err
+	}
+	return err == nil, nil
+}
+
+// currentSID 是目前使用者的 SID（排程名稱、Principal 與安全描述元都用它）。
+func currentSID() string {
+	if u, err := user.Current(); err == nil {
+		return u.Uid
+	}
+	return ""
 }
 
 func xmlEscape(s string) string {
@@ -268,7 +298,7 @@ func xmlEscape(s string) string {
 }
 
 // installSchedule 以工作排程器建立使用者層級的工作：登入 5 分鐘後與每 15 分鐘喚起，只在使用者登入時
-// 執行（才能判斷閒置、發通知）；以 conhost --headless 執行，不閃出主控台視窗。
+// 執行（才能判斷閒置、發通知）；經 GUI 程式 bin\0c-updatew.exe 執行，不閃出主控台視窗、也不經 conhost --headless（#289）。
 func installSchedule(base string) error {
 	self, err := os.Executable()
 	if err != nil {
@@ -281,19 +311,43 @@ func installSchedule(base string) error {
 	return installScheduleFrom(base, self)
 }
 
-// installScheduleFrom 以 source 換上穩定副本，並以目前程式的定義（重新）建立排程。
+// installScheduleFrom 以 source 換上穩定副本（與它旁邊的啟動器），並讓排程是目前程式的定義（相同就不寫，見 ensureTask）。
+// 0.2.11 以前提權建立的排程只開放讀取，一般權限改不了，舊的 conhost 定義要等提權的完整安裝；這一版起提權建立的排程
+// 開放給本人，之後定義再變，一般權限的 schedule repair 就換得掉（refreshTaskDefinitions）。
 func installScheduleFrom(base, source string) error {
-	stable := stableUpdater(base)
-	if err := replaceUpdater(source, stable); err != nil {
+	if err := replaceStableUpdater(source, base); err != nil {
 		return err
+	}
+	if err := installLauncherBeside(source, stableLauncher(base)); err != nil {
+		fmt.Fprintln(os.Stderr, "0c-update: 排程用的啟動器未更新，排程仍以 conhost 執行：", err)
 	}
 	u, err := user.Current()
 	if err != nil {
 		return err
 	}
-	conhost := filepath.Join(os.Getenv("SystemRoot"), `System32\conhost.exe`)
-	args := fmt.Sprintf(`--headless %s auto`, syscall.EscapeArg(stable))
-	task := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-16"?>
+	changed, err := ensureTask(taskName(), updateTaskXML(u.Username, u.Uid, base), u.Uid, elevatedOK())
+	if err != nil {
+		return err
+	}
+	if changed {
+		fmt.Println("已建立自動更新排程（工作排程器 " + taskName() + "）")
+	} else {
+		fmt.Println("自動更新排程已是目前的定義（工作排程器 " + taskName() + "）")
+	}
+	// 引擎排程與自動更新分開：使用者關掉自動更新（schedule remove）時引擎仍要在登入時啟動。
+	if err = installEngineTask(u, base); err != nil {
+		fmt.Fprintln(os.Stderr, "0c-update: 登入啟動引擎的排程未建立：", err)
+	}
+	if protocolCommand() != "" { // 先前的通知註冊過協定：一併換成目前的定義
+		_ = registerProtocol()
+	}
+	return nil
+}
+
+// updateTaskXML 是自動更新排程的定義：登入 5 分鐘後與每隔 scheduleEvery 執行 `auto`。
+func updateTaskXML(username, uid, base string) string {
+	command, args := launchCommand(base, "auto")
+	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo><Description>靈犀注音自動更新</Description></RegistrationInfo>
   <Triggers>
@@ -312,45 +366,14 @@ func installScheduleFrom(base, source string) error {
   </Settings>
   <Actions Context="Author"><Exec><Command>%[3]s</Command><Arguments>%[4]s</Arguments></Exec></Actions>
 </Task>
-`, xmlEscape(u.Username), xmlEscape(u.Uid), xmlEscape(conhost), xmlEscape(args), int(scheduleEvery(base).Minutes()))
-	if err = createTask(taskName(), task); err != nil {
-		return err
-	}
-	fmt.Println("已建立自動更新排程（工作排程器 " + taskName() + "）")
-	// 引擎排程與自動更新分開：使用者關掉自動更新（schedule remove）時引擎仍要在登入時啟動。
-	if err = installEngineTask(u, conhost, stable); err != nil {
-		fmt.Fprintln(os.Stderr, "0c-update: 登入啟動引擎的排程未建立：", err)
-	}
-	return nil
-}
-
-// createTask 以 UTF-16 的工作定義建立（或取代）工作排程器的工作。
-func createTask(name, task string) error {
-	dir, err := os.MkdirTemp("", "0c-task-")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(dir)
-	file := filepath.Join(dir, "task.xml")
-	units := utf16.Encode([]rune(task))
-	b := []byte{0xff, 0xfe}
-	for _, v := range units {
-		b = append(b, byte(v), byte(v>>8))
-	}
-	if err = os.WriteFile(file, b, 0o600); err != nil {
-		return err
-	}
-	if out, err := exec.Command(schtasksPath(), "/Create", "/F", "/TN", name, "/XML", file).CombinedOutput(); err != nil {
-		return fmt.Errorf("建立排程失敗：%s (%w)", strings.TrimSpace(string(out)), err)
-	}
-	return nil
+`, xmlEscape(username), xmlEscape(uid), xmlEscape(command), xmlEscape(args), int(scheduleEvery(base).Minutes()))
 }
 
 // engineTaskXML：登入時立即以穩定副本執行 `engine`，引擎在使用者第一次打字前就常駐。
 // 沙箱應用程式（Windows 搜尋框等 AppContainer）裡的 TSF DLL 不能啟動程式，只能連上已在執行的引擎。
 // 優先順序 4 是一般；引擎由 startEngine 明確以一般優先順序啟動。
-func engineTaskXML(username, uid, conhost, stable string) string {
-	args := fmt.Sprintf(`--headless %s engine`, syscall.EscapeArg(stable))
+func engineTaskXML(username, uid, base string) string {
+	command, args := launchCommand(base, "engine")
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo><Description>靈犀注音引擎：登入時啟動，讓 Windows 搜尋框等沙箱應用程式也能輸入</Description></RegistrationInfo>
@@ -368,15 +391,55 @@ func engineTaskXML(username, uid, conhost, stable string) string {
   </Settings>
   <Actions Context="Author"><Exec><Command>%[3]s</Command><Arguments>%[4]s</Arguments></Exec></Actions>
 </Task>
-`, xmlEscape(username), xmlEscape(uid), xmlEscape(conhost), xmlEscape(args))
+`, xmlEscape(username), xmlEscape(uid), xmlEscape(command), xmlEscape(args))
 }
 
-func installEngineTask(u *user.User, conhost, stable string) error {
-	if err := createTask(engineTaskName(), engineTaskXML(u.Username, u.Uid, conhost, stable)); err != nil {
+func installEngineTask(u *user.User, base string) error {
+	changed, err := ensureTask(engineTaskName(), engineTaskXML(u.Username, u.Uid, base), u.Uid, elevatedOK())
+	if err != nil {
 		return err
 	}
-	fmt.Println("已建立登入啟動引擎的排程（工作排程器 " + engineTaskName() + "）")
+	if changed {
+		fmt.Println("已建立登入啟動引擎的排程（工作排程器 " + engineTaskName() + "）")
+	}
 	return nil
+}
+
+// refreshTaskDefinitions（schedule repair，通常是一般權限）：排程還在、但定義不是這一版的（例如 #289 以前的
+// conhost --headless 寫法），而且本人改得了（這一版起提權建立的排程開放給本人）時換成目前的定義，不必等下一次 UAC。
+// 定義相同不寫；本人只能讀的舊排程不嘗試（見 planTask）。排程不見了不在這裡建：自動更新排程由 repairUpdater 重建
+// （有次數限制與通知），登入排程由 ensureEngineTask 補回。解除安裝之後、使用者關掉自動更新時不動自動更新排程。
+func refreshTaskDefinitions(base string) {
+	if noActiveInstall() {
+		return
+	}
+	if version, err := installedVersion(); err != nil || version == "" {
+		return
+	}
+	if _, err := os.Stat(stableUpdater(base)); err != nil {
+		return
+	}
+	u, err := user.Current()
+	if err != nil {
+		return
+	}
+	tasks := []struct{ name, definition, label string }{{engineTaskName(), engineTaskXML(u.Username, u.Uid, base), "登入啟動引擎的排程"}}
+	if s, err := autoupdate.Load(base); err == nil && !s.ScheduleRemoved {
+		tasks = append(tasks, struct{ name, definition, label string }{taskName(), updateTaskXML(u.Username, u.Uid, base), "自動更新排程"})
+	}
+	for _, t := range tasks {
+		if !taskExists(t.name) {
+			continue
+		}
+		switch changed, err := ensureTask(t.name, t.definition, u.Uid, elevatedOK()); {
+		case errors.Is(err, errTaskReadOnly):
+			// 0.2.11 以前提權建立：等下一次完整安裝，不每次嘗試
+		case err != nil:
+			fmt.Fprintln(os.Stderr, "0c-update: "+t.label+"沒有換成目前的定義：", err)
+		case changed:
+			fmt.Println("已把" + t.label + "換成目前的定義（工作排程器 " + t.name + "）")
+		}
+	}
 }
 
 // ensureEngineTask（schedule repair）：已安裝而登入排程不見了（例如被防毒軟體移除）時補回。
@@ -392,7 +455,7 @@ func ensureEngineTask(base string) {
 	}
 	u, err := user.Current()
 	if err == nil {
-		err = installEngineTask(u, filepath.Join(os.Getenv("SystemRoot"), `System32\conhost.exe`), stable)
+		err = installEngineTask(u, base)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "0c-update: 登入啟動引擎的排程未補回：", err)
@@ -402,7 +465,9 @@ func ensureEngineTask(base string) {
 // removeResidentEngine（uninstall）：移除登入排程，並請常駐引擎存檔後結束（不再閒置結束，否則會留到登出）。
 // 仍在組字時引擎不交接，留到登出。
 func removeResidentEngine() {
-	quietCommand(schtasksPath(), "/Delete", "/F", "/TN", engineTaskName()).Run()
+	if _, err := deleteTask(engineTaskName(), currentSID()); err != nil {
+		fmt.Fprintln(os.Stderr, "0c-update: 登入啟動引擎的排程沒有移除：", err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if err := autoupdate.Drain(ctx, dialEngine, 10*time.Second); err != nil {
@@ -448,11 +513,18 @@ func restartResidentEngine() {
 	}
 }
 
+// removeSchedule（uninstall、schedule remove、#284 的殘留排程）：通知註冊與協定一定移除；排程刪不掉時照實回報。
 func removeSchedule() error {
-	exec.Command(schtasksPath(), "/Delete", "/F", "/TN", taskName()).Run()
 	registry.DeleteKey(registry.CURRENT_USER, `Software\Classes\AppUserModelId\`+toastApp)
 	removeProtocol()
-	fmt.Println("已移除自動更新排程")
+	switch removed, err := deleteTask(taskName(), currentSID()); {
+	case err != nil:
+		return fmt.Errorf("自動更新排程沒有移除：%w", err)
+	case removed:
+		fmt.Println("已移除自動更新排程")
+	default:
+		fmt.Println("沒有自動更新排程")
+	}
 	return nil
 }
 

@@ -39,10 +39,13 @@ type repairHooks struct {
 	refreshStable  func(base string) (bool, error) // 穩定副本不是目前版本時換掉（見 refreshStaleUpdater）；nil 表示不處理
 	notify         func(autoupdate.Notice) error
 	now            func() time.Time
+	// uninstalled：沒有啟用中的完整安裝（Windows 解除安裝之後收據停用）。執行中的穩定更新器刪不掉自己，bin 會留下來；
+	// 還開著的應用程式裡的 DLL 又可能帶起 0c-ui 執行 repair。這時不可把排程重建回來（#284）。nil 表示不檢查。
+	uninstalled func() bool
 }
 
 var platformRepair = repairHooks{scheduleExists: scheduleExists, install: installSchedule, refreshStable: refreshStableUpdater,
-	notify: notify, now: time.Now}
+	notify: notify, now: time.Now, uninstalled: noActiveInstall}
 
 // scheduleWanted：完整安裝建立過排程（有 bin/），且使用者沒有以 schedule remove 關閉。
 func scheduleWanted(base string, s *autoupdate.State) bool {
@@ -68,6 +71,9 @@ func updaterProblem(base string, s *autoupdate.State, h repairHooks) string {
 // 先讀一份快照決定要做什麼；換檔、重建排程與通知都可能花上數秒（複製更新器、防毒掃描），在鎖外做，結果再以
 // EditState 短暫上鎖寫回，不覆寫協調器在這段時間存下的進度與紀錄。
 func repairUpdater(base string, report bool, h repairHooks) error {
+	if h.uninstalled != nil && h.uninstalled() {
+		return nil
+	}
 	s, err := autoupdate.Load(base)
 	if err != nil {
 		return err

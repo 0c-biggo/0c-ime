@@ -36,7 +36,7 @@ func TestComposer(t *testing.T) {
 	if got, _ := c.Add(Tone1); got != "ㄐㄧㄣ" {
 		t.Fatalf("got %q", got)
 	}
-	// 退格依輸入順序
+	// 退格依畫面順序（#309）：照順序打時就是最後按的那個
 	c.Add('ㄉ')
 	c.Add('ㄨ')
 	c.Backspace()
@@ -80,5 +80,34 @@ func TestComposerEditsForDynamicLayouts(t *testing.T) {
 	e.Replace(Final, 'ㄣ') // 沒有韻母：不動作
 	if e.String() != "ㄧ" {
 		t.Errorf("Replace 不該補上沒有的符號：%q", e.String())
+	}
+}
+
+// #309（GitHub 0c-ime#70）：不照順序打（ㄨ ㄢ ㄓ，畫面 ㄓㄨㄢ）時，退格從畫面最後面往前刪：ㄓㄨ → ㄓ → 空，
+// 跟新酷音（Syllable::pop）、小麥注音一樣，不是照按鍵順序先刪 ㄓ。
+func TestComposerBackspaceFollowsDisplayOrder(t *testing.T) {
+	var c Composer
+	for _, r := range "ㄨㄢㄓ" {
+		c.Add(r)
+	}
+	if c.String() != "ㄓㄨㄢ" {
+		t.Fatalf("composed %q", c.String())
+	}
+	for _, want := range []string{"ㄓㄨ", "ㄓ", ""} {
+		if !c.Backspace() || c.String() != want {
+			t.Fatalf("after backspace got %q, want %q", c.String(), want)
+		}
+	}
+	if !c.Empty() || c.Backspace() {
+		t.Fatal("an empty composer has nothing to erase")
+	}
+	// 刪掉後補上同一類，照常組字。
+	for _, r := range "ㄢㄉ" {
+		c.Add(r)
+	}
+	c.Backspace()
+	c.Add('ㄤ')
+	if c.String() != "ㄉㄤ" {
+		t.Fatalf("got %q", c.String())
 	}
 }

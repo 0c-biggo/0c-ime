@@ -244,6 +244,16 @@ func run() throws {
           "no recent modifier change in the session falls back to the event time")
     check(RightShiftTap.eventTime(timestamp: 80, now: 80.5, sinceLastModifierChange: 0.1) == 80,
           "a modifier change after the event (e.g. Command pressed since) falls back to the event time")
+    // #308：Parsec 等遠端桌面注入的修飾鍵 keyCode 是 0（kVK_ANSI_A），只有旗標是對的。
+    check(FlagsKey.of(keyCode: 56, capsLock: false, capsMode: false) == .leftShift
+          && FlagsKey.of(keyCode: 60, capsLock: false, capsMode: false) == .rightShift
+          && FlagsKey.of(keyCode: 57, capsLock: true, capsMode: false) == .capsLock, "local Shift and Caps Lock keep their key codes")
+    check(FlagsKey.of(keyCode: 55, capsLock: false, capsMode: false) == .other
+          && FlagsKey.of(keyCode: 63, capsLock: false, capsMode: false) == .other, "Command and Fn are not Shift")
+    check(FlagsKey.of(keyCode: 0, capsLock: false, capsMode: false) == .remoteShift, "a key code 0 modifier change is a remote Shift")
+    check(FlagsKey.of(keyCode: 0, capsLock: true, capsMode: false) == .capsLock
+          && FlagsKey.of(keyCode: 0, capsLock: false, capsMode: true) == .capsLock, "a key code 0 Caps Lock change is Caps Lock")
+    check(FlagsKey.of(keyCode: 0, capsLock: true, capsMode: true) == .remoteShift, "remote Shift while Caps Lock stays on")
     // 舊核心沒有 right_shift：右 Shift 照舊切換、左 Shift 看 left_shift，時限 0.3 秒。
     let legacy = ShiftToggleSetting(info: ["left_shift": "false"])
     check(legacy.right && !legacy.left && legacy.tapLimit == 0.3, "an old engine keeps right Shift on and left off")
@@ -573,6 +583,16 @@ func markedTextChecks() {
                                last: MarkedText.Shown(text: MarkedText.attributed(segments(#"[{"text":"我","style":"normal"},{"text":"世傑","style":"marked"}]"#)), cursor: 1),
                                clientMarkedRange: { NSRange(location: 0, length: 3) }), "an unchanged mark is not re-sent")
 
+    // 候選窗開著卻沒有組字（沒在打字時按 ` 開的符號表，#283）：交給 App 一個帶底線的佔位，游標在它前面；
+    // 有組字或沒有候選窗時照原本的組字（沒有就是空的，不放佔位）。
+    let placeholder = MarkedText.presented([], cursor: 0, candidates: true)
+    check(placeholder.text.string == " " && placeholder.cursor == 0 && underline(placeholder.text, 0) == NSUnderlineStyle.single.rawValue,
+          "an open candidate list without composition keeps an underlined placeholder in the app")
+    check(MarkedText.presented([], cursor: 0, candidates: false).text.length == 0, "no candidate list, no placeholder")
+    let withCandidates = MarkedText.presented(segments(#"[{"text":"「","style":"normal"}]"#), cursor: 1, candidates: true)
+    check(withCandidates.text.string == "「" && withCandidates.cursor == 1, "real composition replaces the placeholder")
+    check(MarkedText.presented(segments(#"[{"text":"我","style":"normal"}]"#), cursor: 9, candidates: false).cursor == 1, "cursor stays inside the composition")
+
     let shown = MarkedText.Shown(text: styled, cursor: 5)
     let same = MarkedText.Shown(text: MarkedText.attributed(segments(#"[{"text":"我今","style":"locked"},{"text":"天","style":"corrected"},{"text":"ㄒㄧ","style":"input"}]"#)), cursor: 5)
     var asked = 0
@@ -615,6 +635,13 @@ func vocabKeyChecks(directory: URL, session: EngineSession, key: (String) throws
     let comma = try key("Ctrl+,")
     check(comma.handled && comma.text == "，", "Ctrl+, types a full-width comma: \(comma.text)")
     check(try key("Escape").text.isEmpty, "Escape clears the comma")
+    // #300：設定檔沒有 zhuyin_error_hint 時預設開；ㄅㄩˊ 沒有字，聲調不收、快照帶 bell，緊接著再按 ˊ 原樣留下。
+    var refused = try key("1")
+    for k in ["m", "6"] { refused = try key(k) }
+    check(refused.handled && refused.bell == true && refused.text == "ㄅㄩ", "a tone without characters is refused with a bell: \(refused.text)")
+    let kept = try key("6")
+    check(kept.bell != true && kept.text == "ㄅㄩˊ", "the same tone again keeps the literal: \(kept.text)")
+    check(try key("Escape").text.isEmpty, "Escape clears the literal")
     // #169：open 的 info 回報能即時切換「輸出簡體字」；切換後組字照樣是繁體、送出是簡體，快照帶狀態與提示，設定檔跟著寫。
     check(EngineSession.simplifiedLive && !EngineSession.outputSimplified, "open reply carries output_simplified_live and the traditional state")
     var scenery = try key("z")

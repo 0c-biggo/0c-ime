@@ -200,6 +200,13 @@ async fn models_command(action: String) -> Result<Value, String> {
     call(command, timeout).await
 }
 
+/// 「我的詞彙」頁「靈犀學到的」底下的「清除學習紀錄」（#301）：0c-update personal reset -json。結果（成功或契約錯誤）原樣交給前端。
+#[tauri::command]
+async fn personal_command(action: String) -> Result<Value, String> {
+    let (command, timeout) = updater::personal_args(&action)?;
+    call(command, timeout).await
+}
+
 /// 用系統瀏覽器開外部網址（「模型」頁的 Hugging Face 連結）。設定視窗本身不離開本機頁面，只放行 Hugging Face。
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
@@ -325,7 +332,8 @@ fn main() {
         .manage(watch::Watcher::default())
         .invoke_handler(tauri::generate_handler![
             app_info, get_status, get_settings, set_settings, check_update, download_update, install_update, export_summary,
-            profile_command, vocab_request, export_vocab, api_command, vocab_watch, vocab_unwatch, models_command, open_url
+            profile_command, vocab_request, export_vocab, api_command, vocab_watch, vocab_unwatch, models_command, open_url,
+            personal_command
         ])
         .setup(move |app| {
             open_window(app.handle(), page)?;

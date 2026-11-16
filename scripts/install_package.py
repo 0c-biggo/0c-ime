@@ -518,7 +518,7 @@ def shell_unused(procs, run=subprocess.run):
     return fcitx_on_bus(run) is False
 
 
-def require_desktop_stopped(home=None, run=subprocess.run):
+def require_desktop_stopped(home=None, run=subprocess.run, verb="覆蓋"):
     # Avoid replacing a paired dictionary while the old desktop engine is still using it.
     names = ("fcitx5", "0c-ibus", *SERVERS)
     found = user_processes(names)
@@ -529,7 +529,7 @@ def require_desktop_stopped(home=None, run=subprocess.run):
         # 先停輸入法框架，引擎才不會被下一個按鍵重新啟動；引擎收到 SIGTERM 會先存好學習資料。
         stop = "; ".join(f"pkill -x {name}" for name in running)
         after = "完成後登出再登入。" if "fcitx5" in running else "完成後切回「靈犀注音」即可。"
-        raise ValueError(f"靈犀注音正在使用中，不能直接覆蓋。請先完成組字，再執行 {stop} 結束輸入法後重跑這個指令；{after}")
+        raise ValueError(f"靈犀注音正在使用中，不能直接{verb}。請先完成組字，再執行 {stop} 結束輸入法後重跑這個指令；{after}")
 
 
 def system_addon_dir(run=subprocess.run):
@@ -1486,7 +1486,7 @@ def main():
         if os.getuid() == 0:
             raise ValueError("請以一般使用者執行，不要使用 sudo")
         if args.action in ("uninstall", "rollback", "restore-user"):
-            require_desktop_stopped()
+            require_desktop_stopped(verb={"uninstall": "移除", "rollback": "回復"}.get(args.action, "還原"))
             with mutation_lock(args.home.resolve()):
                 icons = icon_files(args.home.resolve())
                 if args.action == "restore-user":
@@ -1557,7 +1557,9 @@ def main():
                 if ibus and not shutil.which("fcitx5"):
                     print(f"使用 IBus（例如 Ubuntu／GNOME）：執行 {args.home / OPTIONAL['bin/0c-ibus']} register")
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
-        print(f"安裝失敗：{error}", file=sys.stderr)
+        # 解除安裝、回復失敗時不說「安裝失敗」（#280）。
+        failed = {"uninstall": "解除安裝", "rollback": "回復", "restore-user": "還原個人詞庫", "check": "檢查"}.get(args.action, "安裝")
+        print(f"{failed}失敗：{error}", file=sys.stderr)
         sys.exit(1)
 
 

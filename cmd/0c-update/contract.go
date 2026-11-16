@@ -79,6 +79,8 @@ func classify(err error) contractError {
 		return contractError{Code: codeInProgress, Message: err.Error()}
 	case errors.Is(err, autoupdate.ErrLocked):
 		return contractError{Code: codeBusy, Message: err.Error()}
+	case errors.Is(err, errResetBusy):
+		return contractError{Code: codeBusy, Message: err.Error()}
 	case errors.Is(err, errPackageManaged):
 		return contractError{Code: codePackageManaged, Message: err.Error()}
 	case errors.As(err, &me):
@@ -137,13 +139,15 @@ type settingsDoc struct {
 // 決定顯示與否（它們也要能搭配還沒有這些功能的舊版 0c-update），舊版介面忽略這個欄位。
 type features struct {
 	Vocab bool `json:"vocab"` // 0.2.0：「我的詞彙」頁、選單入口、我的片語
+	// PersonalReset：0c-update personal reset（#301，0.2.12）；設定程式看到它才顯示「清除學習紀錄」。
+	PersonalReset bool `json:"personal_reset,omitempty"`
 	// 引擎服務（#120，只在 status -json）：是否常駐（0.2.0 起恆為 true）、定義是否存在（installed／absent）與服務管理員的狀態。
 	EngineService      bool   `json:"engine_service,omitempty"`
 	EngineServiceState string `json:"engine_service_state,omitempty"`
 	EngineServiceUnit  string `json:"engine_service_unit,omitempty"`
 }
 
-func featuresOf() features { return features{Vocab: true} }
+func featuresOf() features { return features{Vocab: true, PersonalReset: true} }
 
 // runningValues 把引擎 health 回報的啟動配置換成設定的命令列寫法；沒有回報的項目不出現。
 func runningValues(info map[string]string) map[string]string {
@@ -201,6 +205,9 @@ func runningValues(info map[string]string) map[string]string {
 	switch info["shift_symbol_halfwidth"] { // #258
 	case "true":
 		out["shift-symbol-halfwidth"] = "on"
+		if info["all_symbols_halfwidth"] == "true" { // #282
+			out["shift-symbol-halfwidth"] = "all"
+		}
 	case "false":
 		out["shift-symbol-halfwidth"] = "off"
 	}
@@ -209,6 +216,12 @@ func runningValues(info map[string]string) map[string]string {
 		out["cjk-latin-space"] = "on"
 	case "false":
 		out["cjk-latin-space"] = "off"
+	}
+	switch info["zhuyin_error_hint"] { // #300
+	case "true":
+		out["zhuyin-error-hint"] = "on"
+	case "false":
+		out["zhuyin-error-hint"] = "off"
 	}
 	switch info["caps_lock_english"] { // #173
 	case "true":
@@ -322,7 +335,7 @@ type setOptions struct {
 	repair bool // 設定檔壞掉時改名保留，從預設值重新開始
 }
 
-const setUsage = "用法：0c-update set selection neural|statistical、set punctuation on|off、set document-context on|off、set mixed-input on|off、set english-autocomplete on|off、set left-shift on|off、set esc-clear on|off、set space-selects on|off、set candidate-cursor before|after、set advance-after-select on|off、set output-simplified on|off、set simplified-hotkey on|off、set ctrl-punctuation on|off、set shift-symbol-halfwidth on|off、set cjk-latin-space on|off、set caps-lock-english on|off（Windows、Linux）、set toneless on|off、set keyboard-layout standard|eten|hsu、set fuzzy-z-zh|fuzzy-c-ch|fuzzy-s-sh|fuzzy-en-eng off|select|auto [鍵 值 ...] [-apply] [-notify] [-json] [-repair]"
+const setUsage = "用法：0c-update set selection neural|statistical、set punctuation on|off、set document-context on|off、set mixed-input on|off、set english-autocomplete on|off、set left-shift on|off、set esc-clear on|off、set space-selects on|off、set candidate-cursor before|after、set advance-after-select on|off、set output-simplified on|off、set simplified-hotkey on|off、set ctrl-punctuation on|off、set shift-symbol-halfwidth off|on|all、set cjk-latin-space on|off、set zhuyin-error-hint on|off、set caps-lock-english on|off（Windows、Linux）、set toneless on|off、set keyboard-layout standard|eten|hsu、set fuzzy-z-zh|fuzzy-c-ch|fuzzy-s-sh|fuzzy-en-eng off|select|auto [鍵 值 ...] [-apply] [-notify] [-json] [-repair]"
 
 func parseSetArgs(args []string) (setOptions, error) {
 	var o setOptions

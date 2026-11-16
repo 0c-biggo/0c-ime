@@ -193,10 +193,11 @@ func (p *system) Activated(t autoupdate.Target, dir string) {
 	if dir != "" {
 		src := filepath.Join(p.base, filepath.FromSlash(dir), filepath.Base(updaterName()))
 		if _, err := os.Stat(src); err == nil {
-			_ = replaceUpdater(src, stableUpdater(p.base))
+			_ = replaceStableUpdater(src, p.base)
 		}
 	}
-	refreshStableMCP(p.base) // 核心目錄附了新的 0c-mcp 時換上（Windows）
+	refreshStableMCP(p.base)      // 核心目錄附了新的 0c-mcp 時換上（Windows）
+	refreshStableLauncher(p.base) // 同上，排程用的啟動器 0c-updatew（Windows，#289）
 	autoupdate.PruneCore(p.base)
 	os.RemoveAll(filepath.Join(p.base, "update", "downloads"))
 }
@@ -238,6 +239,31 @@ func removeOldCopies(dst string) {
 	}
 }
 
+// copyBeside 把 src 複製成 dst 旁邊的暫存檔 dst.new，回傳暫存檔路徑。
+func copyBeside(src, dst string) (string, error) {
+	in, err := os.Open(src)
+	if err != nil {
+		return "", err
+	}
+	defer in.Close()
+	tmp := dst + ".new"
+	os.Remove(tmp)
+	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o700)
+	if err != nil {
+		return "", err
+	}
+	if _, err = io.Copy(out, in); err != nil {
+		out.Close()
+		os.Remove(tmp)
+		return "", err
+	}
+	if err = out.Close(); err != nil {
+		os.Remove(tmp)
+		return "", err
+	}
+	return tmp, nil
+}
+
 // replaceUpdater 以改名換上新檔；Windows 上執行中的檔案不能覆寫但可改名，舊檔下次清除。
 func replaceUpdater(src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
@@ -248,22 +274,8 @@ func replaceUpdater(src, dst string) error {
 			return nil
 		}
 	}
-	in, err := os.Open(src)
+	tmp, err := copyBeside(src, dst)
 	if err != nil {
-		return err
-	}
-	defer in.Close()
-	tmp := dst + ".new"
-	os.Remove(tmp)
-	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o700)
-	if err != nil {
-		return err
-	}
-	if _, err = io.Copy(out, in); err != nil {
-		out.Close()
-		return err
-	}
-	if err = out.Close(); err != nil {
 		return err
 	}
 	// 舊檔改名後留給下次清除（Windows 上執行中的檔案刪不掉）。名字每次都不同：上一次留下的 .old 可能仍被執行中的
@@ -429,6 +441,10 @@ func autoCommand(action string, args []string) (resultErr error) {
 			repairFixedDLL(base)
 			refreshStableMCP(base) // 外殼更新由舊的穩定更新器執行，它不認得 0c-mcp；由新版在這裡補上（Windows）
 			listInputMethod(base)  // 同上，舊的更新器不會把靈犀注音加入輸入法清單（Windows，#191）
+			// 同上，排程用的啟動器 0c-updatew（Windows，#289）
+			refreshStableLauncher(base)
+			// 排程定義不是這一版的、而且本人改得了（這一版起提權建立的排程開放給本人）時換新；相同不寫（Windows）
+			refreshTaskDefinitions(base)
 			return repairUpdater(base, *report, platformRepair)
 		case "status":
 			fmt.Println(scheduleStatus())
@@ -501,6 +517,10 @@ func autoCommand(action string, args []string) (resultErr error) {
 			return emitJSON(output, checkResult{Schema: contractSchema, OK: true, Update: autoupdate.ViewOf(s, installed)})
 		}
 		return err
+	}
+	// #284（Windows）：解除安裝之後留下的排程不再查詢、下載與通知，移除自己後結束。
+	if action == "auto" && !*login && !*asJSON && !*report && retireOrphanSchedule() {
+		return nil
 	}
 	if *feed == "" {
 		*feed = DefaultFeed
@@ -743,7 +763,8 @@ func afterInstall() {
 	}
 	_ = setScheduleRemoved(basePath(), false)
 	engineAfterInstall(basePath())
-	ensureSettingsEntry() // 排程之後做，ZC_NO_SCHEDULE 的測試環境不會碰到真實的應用程式選單
+	// 排程之後做，ZC_NO_SCHEDULE 的測試環境不會碰到真實的應用程式選單。完整安裝時補回使用者移除過的入口（#284）。
+	restoreSettingsEntry()
 }
 
 // forgetInstalledTarget：使用者自己完整安裝後，背景更新準備的同版或舊版待辦已沒有意義，
@@ -870,7 +891,7 @@ func statusMap(base, installed string, dial autoupdate.Dialer) map[string]any {
 		for _, p := range fuzzy.Pairs() {
 			fuzzyModes[p.ID()] = st.FuzzyConfig().Mode(p).String()
 		}
-		out["settings"] = map[string]any{"selection": st.Selection, "punctuation": st.Punctuation, "document_context": st.DocumentContext, "mixed_input": st.MixedInput, "english_autocomplete": st.EnglishAutocomplete, "left_shift": st.LeftShift, "esc_clear": st.EscClear, "space_selects": st.SpaceSelects, "advance_after_select": st.AdvanceAfterSelect, "output_simplified": st.OutputSimplified, "simplified_hotkey": st.SimplifiedHotkey, "ctrl_punctuation": st.CtrlPunctuation, "shift_symbol_halfwidth": st.ShiftSymbolHalfwidth, "cjk_latin_space": st.CJKLatinSpace, "caps_lock_english": st.CapsLockEnglish, "toneless": st.Toneless, "keyboard_layout": st.KeyboardLayout, "fuzzy": fuzzyModes}
+		out["settings"] = map[string]any{"selection": st.Selection, "punctuation": st.Punctuation, "document_context": st.DocumentContext, "mixed_input": st.MixedInput, "english_autocomplete": st.EnglishAutocomplete, "left_shift": st.LeftShift, "esc_clear": st.EscClear, "space_selects": st.SpaceSelects, "advance_after_select": st.AdvanceAfterSelect, "output_simplified": st.OutputSimplified, "simplified_hotkey": st.SimplifiedHotkey, "ctrl_punctuation": st.CtrlPunctuation, "shift_symbol_halfwidth": st.ShiftSymbolHalfwidth, "all_symbols_halfwidth": st.AllSymbolsHalfwidth, "cjk_latin_space": st.CJKLatinSpace, "zhuyin_error_hint": st.ZhuyinErrorHint, "caps_lock_english": st.CapsLockEnglish, "toneless": st.Toneless, "keyboard_layout": st.KeyboardLayout, "fuzzy": fuzzyModes}
 	}
 	return out
 }

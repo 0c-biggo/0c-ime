@@ -242,6 +242,11 @@ type Snapshot struct {
 	// 從設定程式或別的輸入框切換後，下一個快照就跟上。只有回報 output_simplified_live 的引擎才有這一項，
 	// 舊引擎沒有時外殼不能當成「繁體」，要看 health 的 output_simplified。
 	OutputSimplified bool `json:"output_simplified,omitempty"`
+	// Bell（#300）：這一鍵被擋下，外殼要提示使用者。目前只有「打錯注音時提示」：按了聲調但讀音沒有字，聲調不收，
+	// 注音停在組字區（style pending 的那一段）等使用者修改。Windows 用 MessageBeep、macOS 用 NSBeep；Fcitx5、IBus
+	// 沒有統一的提示音，把這個快照裡 pending 的那一段畫成醒目樣式。只出現在擋下按鍵的那一次請求的快照，下一個快照
+	// 就沒有。舊外殼不認得這一項時不提示，聲調照樣被擋（注音停住，再按一次同一個聲調照舊收下）。
+	Bell bool `json:"bell,omitempty"`
 }
 
 // SuggestedText 回傳按 Tab 接受後預覽的完整組字；無建議或範圍不合法時為空。

@@ -17,8 +17,9 @@ func TestIdleKeysFullWidthMatchSession(t *testing.T) {
 	for _, l := range []layout.Layout{layout.Standard, layout.ETen, layout.Hsu} {
 		for _, style := range []string{"0c", "microsoft", "chewing", "mcbopomofo", "macos"} {
 			for _, letter := range []string{"", "inline", "commit", "lower"} {
-				for _, opts := range []struct{ mixed, toneless, halfShift bool }{
-					{false, false, false}, {true, false, false}, {true, true, false}, {false, false, true}, {true, false, true},
+				for _, opts := range []struct{ mixed, toneless, halfShift, allHalf bool }{
+					{false, false, false, false}, {true, false, false, false}, {true, true, false, false}, {false, false, true, false}, {true, false, true, false},
+					{false, false, true, true}, {true, false, true, true}, // #282：所有符號鍵打半形，全形時照舊
 				} {
 					for _, emoji := range []string{"equals", "off"} {
 						e := testEngine()
@@ -29,6 +30,7 @@ func TestIdleKeysFullWidthMatchSession(t *testing.T) {
 							e.InputStyle.ShiftLetter = letter
 						}
 						e.Layout, e.MixedInput, e.Toneless, e.ShiftSymbolHalfwidth, e.EmojiShortcut = l, opts.mixed, opts.toneless, opts.halfShift, emoji
+						e.AllSymbolsHalfwidth = opts.allHalf
 						e.Preview02 = true
 						name := fmt.Sprintf("%s/%s/%s/%+v/%s", l.Name(), style, letter, opts, emoji)
 						keys := e.IdleKeysFullWidth()

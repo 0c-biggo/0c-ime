@@ -40,10 +40,12 @@ type Engine struct {
 	SelectionKeys         string            // 使用者選的選字鍵（#112）；空字串為 1234567890。
 	CtrlPunct             bool              // 「Ctrl＋標點打全形」開著時由宿主設定（#168）；零值時 Ctrl＋標點交給應用程式。
 	ShiftSymbolHalfwidth  bool              // 「Shift＋符號打半形」開著時由宿主設定（#258）；零值時 Shift＋符號照舊打全形標點。
+	AllSymbolsHalfwidth   bool              // 「所有符號鍵打半形」時由宿主設定（#282）；零值時照舊。
 	CJKLatinSpace         bool              // 「中英文之間自動加空格」開著時由宿主設定（#273）；零值時送出的文字不補空格。
 	CapsLockEnglish       bool              // 「Caps Lock 開著時直接打英文」開著時由宿主設定（#173）；零值時 caps_lock 請求不起作用。
 	Fuzzy                 fuzzy.Config      // 使用者逐對啟用的模糊音；零值全部關閉。
 	Toneless              bool              // 「不打聲調也能選字」開著時由宿主設定（#150）；開啟時停用中英混打的自動判斷。
+	ZhuyinErrorHint       bool              // 「打錯注音時提示」開著時由宿主設定（#300，預設開）；零值時沒有字的音節照舊原樣留下。
 	EnglishAutocomplete   bool
 	MixedInput            bool                // opt-in bilingual keys; disabled preserves legacy behavior.
 	English               *english.Dictionary // nil uses the authored prototype vocabulary.
@@ -103,9 +105,13 @@ func (e *Engine) IdleKeys() string {
 			return r
 		}, keys)
 	}
-	if e.ShiftSymbolHalfwidth {
-		// Shift＋符號打半形（#258）：沒在組字時這些鍵交還應用程式，TestKeyDown 不能吃。
+	if e.ShiftSymbolHalfwidth || e.AllSymbolsHalfwidth {
+		// Shift＋符號打半形（#258）與所有符號鍵打半形（#282）：沒在組字時這些鍵交還應用程式，TestKeyDown 不能吃。
+		// 所有符號鍵打半形拿掉排列裡全部的標點鍵，涵蓋前者（< > " 打鍵帽字元，不由核心送出 , . ;）。
 		drop := session.HalfwidthShiftKeys(e.Layout)
+		if e.AllSymbolsHalfwidth {
+			drop = session.AllSymbolsHalfwidthKeys(e.Layout)
+		}
 		keys = strings.Map(func(r rune) rune {
 			if strings.ContainsRune(drop, r) {
 				return -1
@@ -141,11 +147,13 @@ func (e *Engine) OpenSession() uint64 {
 	e.sessions[e.next].SelectionKeys = e.SelectionKeys
 	e.sessions[e.next].CtrlPunct = e.CtrlPunct
 	e.sessions[e.next].ShiftSymbolHalfwidth = e.ShiftSymbolHalfwidth
+	e.sessions[e.next].AllSymbolsHalfwidth = e.AllSymbolsHalfwidth
 	e.sessions[e.next].CJKLatinSpace = e.CJKLatinSpace
 	e.sessions[e.next].CapsLockEnglish = e.CapsLockEnglish
 	e.sessions[e.next].InputStyle = e.InputStyle
 	e.sessions[e.next].Fuzzy = e.Fuzzy
 	e.sessions[e.next].Toneless = e.Toneless
+	e.sessions[e.next].ZhuyinErrorHint = e.ZhuyinErrorHint
 	e.sessions[e.next].EnglishAutocomplete = e.EnglishAutocomplete
 	e.sessions[e.next].MixedInput = e.MixedInput
 	e.sessions[e.next].EmojiShortcut = e.EmojiShortcut
@@ -200,6 +208,20 @@ func (e *Engine) PrunePersonalIfDue() (personal.PruneStats, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.Model.PruneIfDue()
+}
+
+// ResetPersonal 清除全部學到的資料（設定程式的「清除學習紀錄」，#301）：個人資料回到空白、「靈犀學到的」頁的
+// 復原複本一起放掉（否則復原會把清掉的詞放回來），每個輸入框也丟掉清除前打的前文、正在組字的那段送出時不學。
+// 自訂詞彙不動。宿主之後要立刻存檔，磁碟上的 user.json 才會跟著清空。
+func (e *Engine) ResetPersonal() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.Model.ResetStore()
+	clear(e.learnedUndo)
+	e.learnedUndo = nil
+	for _, s := range e.sessions {
+		s.ForgetLearning()
+	}
 }
 
 // PersonalSnapshot 在引擎鎖內複製個人資料，讓宿主在鎖外存檔，不跟提交同時讀寫 map。

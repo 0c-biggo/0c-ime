@@ -49,7 +49,9 @@ func main() {
 	capsLockEnglish := flag.Bool("caps-lock-english", false, "Caps Lock 開著時直接打英文（用 :caps on 送）；關閉時 caps_lock 不起作用。重播需使用相同開關")
 	ctrlPunct := flag.Bool("ctrl-punctuation", true, "注音模式的 Ctrl＋, . ' ; ? ! : ( ) 打全形標點（用 :k Ctrl+, 送）；關閉時交給應用程式")
 	cjkLatinSpace := flag.Bool("cjk-latin-space", false, "送出時在漢字與英文字母相連處補半形空格（#273）")
+	zhuyinErrorHint := flag.Bool("zhuyin-error-hint", true, "打錯注音時提示（#300）：按了聲調但讀音沒有字時不收聲調、畫面標示 [提示]，緊接著再按同一個聲調照舊原樣留下。重播需使用相同開關")
 	shiftSymbolHalfwidth := flag.Bool("shift-symbol-halfwidth", false, "注音模式的 Shift＋符號鍵打半形（#258），全形改用 Ctrl＋符號或 ↓。重播需使用相同開關")
+	allSymbolsHalfwidth := flag.Bool("all-symbols-halfwidth", false, "注音模式所有符號鍵打按鍵上的半形字元（#282，同設定 shift-symbol-halfwidth all），Ctrl＋標點固定開、聲調選填暫停。重播需使用相同開關")
 	advanceAfterSelect := flag.Bool("advance-after-select", false, "選字後游標移到所選詞後面（前方模式往後移一個字）。重播需使用相同開關")
 	candidateCursor := flag.String("candidate-cursor", "after", "修改字詞的位置：after（游標後方）或 before（游標前方）。重播需使用相同設定")
 	outputSimplified := flag.Bool("output-simplified", false, "送出時轉成簡體字（組字與候選仍是繁體）")
@@ -80,9 +82,14 @@ func main() {
 		check(fmt.Errorf("未知的修改字詞位置 %q（before、after）", *candidateCursor))
 	}
 	eng.CandidateBeforeCursor = *candidateCursor == "before"
-	eng.CtrlPunct = *ctrlPunct
-	eng.ShiftSymbolHalfwidth = *shiftSymbolHalfwidth
+	eng.CtrlPunct = *ctrlPunct || *allSymbolsHalfwidth
+	eng.ShiftSymbolHalfwidth = *shiftSymbolHalfwidth || *allSymbolsHalfwidth
+	eng.AllSymbolsHalfwidth = *allSymbolsHalfwidth
+	if *allSymbolsHalfwidth {
+		eng.Toneless = false
+	}
 	eng.CJKLatinSpace = *cjkLatinSpace
+	eng.ZhuyinErrorHint = *zhuyinErrorHint
 	eng.CapsLockEnglish = *capsLockEnglish
 	if *outputSimplified {
 		eng.Simplified, err = simplified.TW2S()
@@ -147,6 +154,9 @@ func main() {
 		if *shiftSymbolHalfwidth {
 			fmt.Fprintln(rec, "# 重播需要相同的 Shift＋符號設定：0c-cli -shift-symbol-halfwidth")
 		}
+		if *allSymbolsHalfwidth {
+			fmt.Fprintln(rec, "# 重播需要相同的標點寬度設定：0c-cli -all-symbols-halfwidth")
+		}
 		if *advanceAfterSelect {
 			fmt.Fprintln(rec, "# 重播需要相同的選字後游標設定：0c-cli -advance-after-select")
 		}
@@ -158,6 +168,9 @@ func main() {
 		}
 		if *cjkLatinSpace {
 			fmt.Fprintln(rec, "# 重播需要相同的中英文空格設定：0c-cli -cjk-latin-space")
+		}
+		if !*zhuyinErrorHint {
+			fmt.Fprintln(rec, "# 重播需要相同的打錯注音提示設定：0c-cli -zhuyin-error-hint=false")
 		}
 		if !*spaceSelects {
 			fmt.Fprintln(rec, "# 重播需要相同的空白鍵設定：0c-cli -space-selects=false")
@@ -296,6 +309,9 @@ func render(s proto.Snapshot) {
 	}
 	if pos == s.Cursor.Rune {
 		b.WriteString("｜")
+	}
+	if s.Bell { // #300：打錯注音時提示，外殼嗶一聲或標示注音
+		b.WriteString("  [提示]")
 	}
 	if h := s.ReadingHint; h != nil { // #162：空白出中文的讀音，Enter 留數字
 		b.WriteString("  [空白 " + h.Text + "]")

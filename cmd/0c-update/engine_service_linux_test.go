@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 )
 
 // 0.2.0 起引擎常駐對所有人生效（#120）：引擎沒在跑時每次喚起都叫起，舊設定檔寫著 preview_0_2=false 也一樣；
@@ -46,14 +47,44 @@ func TestEnsureEngineServiceStartsResidentEngine(t *testing.T) {
 
 // 安裝、回復、移除前：外殼都沒在執行而引擎還在時，一律請它交接退出（不再看 preview_0_2）；引擎沒在跑時不動。
 func TestDrainEngineForInstallerWithoutSwitch(t *testing.T) {
-	saved := engineRunning
-	t.Cleanup(func() { engineRunning = saved })
+	saved, savedAlive := engineRunning, engineProcessAlive
+	t.Cleanup(func() { engineRunning, engineProcessAlive = saved, savedAlive })
 	asked := 0
 	engineRunning = func() bool { asked++; return false }
+	engineProcessAlive = func() bool { return false }
 	t.Setenv("HOME", t.TempDir())
 	writeSettings(t, func() string { os.MkdirAll(basePath(), 0o700); return basePath() }(), `{"preview_0_2":false}`)
 	drainEngineForInstaller()
 	if asked != 1 {
 		t.Fatalf("不看設定檔，直接檢查引擎有沒有在跑：%d", asked)
+	}
+}
+
+// #280：裝好馬上解除安裝時，引擎行程已經在、還沒開始接受連線。等它就緒再交接，不當成沒在跑；
+// 沒有引擎行程時不等；行程一直不接受連線時等到上限就放棄，交給安裝器照舊說明。
+func TestEngineAcceptingWaitsForStartingEngine(t *testing.T) {
+	saved, savedAlive, savedWait := engineRunning, engineProcessAlive, engineStartWait
+	t.Cleanup(func() { engineRunning, engineProcessAlive, engineStartWait = saved, savedAlive, savedWait })
+	dials, alive := 0, true
+	engineProcessAlive = func() bool { return alive }
+
+	engineRunning = func() bool { dials++; return dials >= 3 }
+	if !engineAccepting() || dials != 3 {
+		t.Fatalf("剛啟動的引擎：等到可以連線：%d", dials)
+	}
+
+	dials, alive = 0, false
+	engineRunning = func() bool { dials++; return false }
+	if engineAccepting() || dials != 1 {
+		t.Fatalf("沒有引擎行程：不等：%d", dials)
+	}
+
+	dials, alive, engineStartWait = 0, true, 250*time.Millisecond
+	start := time.Now()
+	if engineAccepting() {
+		t.Fatal("一直不接受連線的引擎：不算可交接")
+	}
+	if took := time.Since(start); took < engineStartWait || took > 2*time.Second {
+		t.Fatalf("等到上限就放棄：%v", took)
 	}
 }

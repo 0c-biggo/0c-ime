@@ -90,6 +90,13 @@ int main() {
     EXPECT(splitText == "【世傑】好" && splitLayout.cursor == static_cast<int>(splitText.size()));
     auto unmarkedLayout = zuin::preeditLayout({{"世傑", "normal"}}, 3);
     EXPECT(unmarkedLayout.runs.size() == 1 && unmarkedLayout.cursor == 3);
+    // 打錯注音時提示（#300）：快照帶 bell 時停住的注音（pending）反白，其他分段照舊、不加括號；沒有 bell 照一般底線。
+    const std::vector<zuin::Segment> refused = {{"我", "normal"}, {"ㄅㄩ", "pending"}};
+    const int end = static_cast<int>(std::string("我ㄅㄩ").size());
+    auto bellLayout = zuin::preeditLayout(refused, end, true);
+    EXPECT(bellLayout.runs.size() == 2 && bellLayout.cursor == end);
+    EXPECT(bellLayout.runs[1].style.highlight && bellLayout.runs[1].style.underline && !bellLayout.runs[0].style.highlight);
+    EXPECT(!zuin::preeditLayout(refused, end).runs[1].style.highlight);
 
     // 不認得的樣式（未來的引擎）照一般組字畫，不會不見。
     auto unknown = zuin::preeditStyle("future");

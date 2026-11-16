@@ -51,3 +51,21 @@ struct RightShiftTap {
         return physical
     }
 }
+
+/// flagsChanged 是哪個鍵。遠端桌面（Parsec、RustDesk 的傳統鍵盤模式、舊版 Deskflow）注入修飾鍵時 keyCode 是 0，
+/// 只有修飾鍵旗標是對的（#308，GitHub 0c-ime#71）。不是實體修飾鍵的 keyCode（54–63：Command、Shift、Option、Control、
+/// Caps Lock、Fn）時從旗標推回：Caps Lock 跟目前記得的狀態不同就是 Caps Lock，否則當成 Shift（左右不明）；
+/// 帶著或放開其他修飾鍵的變化照 Shift 的規則處理（帶著 Command／Control／Option 不算單按）。
+enum FlagsKey: Equatable {
+    case leftShift, rightShift, remoteShift, capsLock, other
+
+    static func of(keyCode: UInt16, capsLock: Bool, capsMode: Bool) -> FlagsKey {
+        switch keyCode {
+        case 56: return .leftShift
+        case 60: return .rightShift
+        case 57: return .capsLock
+        case 54...63: return .other
+        default: return capsLock != capsMode ? .capsLock : .remoteShift
+        }
+    }
+}

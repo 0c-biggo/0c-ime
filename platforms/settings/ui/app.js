@@ -490,12 +490,13 @@
     },
     candidates: {
       title: '選字', lead: '候選字怎麼排、怎麼選，以及要不要列出近音的字（模糊音）。',
-      keys: ['selection', 'document-context', 'space-selects', 'candidate-cursor', 'advance-after-select', 'candidate-layout', 'selection-keys', 'esc-clear', 'toneless', 'style-tab', 'style-up', 'style-candidate-tab', 'style-candidate-space', 'style-candidate-enter', 'style-page-size', 'style-candidate-navigation'],
+      // zhuyin-error-hint（#300，打錯注音時提示）跟不打聲調一樣是按聲調時的規則，接在它後面。
+      keys: ['selection', 'document-context', 'space-selects', 'candidate-cursor', 'advance-after-select', 'candidate-layout', 'selection-keys', 'esc-clear', 'toneless', 'zhuyin-error-hint', 'style-tab', 'style-up', 'style-candidate-tab', 'style-candidate-space', 'style-candidate-enter', 'style-page-size', 'style-candidate-navigation'],
     },
     keyboard: {
       title: '鍵盤與符號', lead: '注音的鍵盤排列，以及標點符號和 Emoji 怎麼打。',
       // emoji-equals-first 是 Emoji 選單的子選項，畫在它下面。
-      // shift-symbol-halfwidth（#258）跟 Ctrl＋標點是一對（Shift 半形、Ctrl 全形），排在它下面；
+      // shift-symbol-halfwidth（標點寬度，#258、#282 三選一）跟 Ctrl＋標點是一對（半形與全形），排在它下面；
       // cjk-latin-space（#273，中英文之間自動加空格）也是半形排版，接在後面。
       keys: ['keyboard-layout', 'ctrl-punctuation', 'shift-symbol-halfwidth', 'cjk-latin-space', 'punctuation', 'emoji-shortcut', 'emoji-equals-first', 'style-punctuation', 'style-shift-space', 'style-shift-delete'],
     },
@@ -753,6 +754,9 @@
   }
 
   async function init() {
+    // 「清除學習紀錄」（#301）在「我的詞彙」的「靈犀學到的」清單底下，由 vocab.js 決定何時顯示：
+    // 0.2.12 起的 0c-update 才有（settings -json 的 features.personal_reset）。「我的詞彙」不顯示時（features.vocab 為假的舊版）就不出現。
+    const personalReset = window.ZcPersonalReset({ h, clear, invoke, toast, onDone: () => vocab.afterReset() });
     vocab = window.ZcVocab({
       h, clear, invoke, toast,
       platform: () => (state.info && state.info.platform) || '',
@@ -760,6 +764,8 @@
       mcpPresent: () => !!(state.info && state.info.mcp_present),
       // 引擎是否在執行（status 的 runtime）；還不知道時 null。
       engineRunning: () => (state.status && state.status.runtime ? state.status.runtime.state === 'running' : null),
+      personalReset,
+      personalResetEnabled: () => !!(state.settings && state.settings.features && state.settings.features.personal_reset),
     });
     styles = window.ZcInputStyles({
       h, render, settings: () => state.settings, showKeyboard: () => show('keyboard'),
