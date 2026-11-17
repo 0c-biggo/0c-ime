@@ -70,6 +70,10 @@ type service struct {
 	simplifiedSeq              uint64
 	address                    string           // ibus-daemon 的位址，交給更新器在更新後重新叫起外殼
 	clock                      func() time.Time // 單按 Shift 計時用；nil 為 time.Now，測試時換成假時鐘
+
+	// refreshMenu 上次送出的選單屬性與對象：內容沒變就不重送（見 refreshMenu）。
+	menuSent   [4]property
+	menuSentTo *engine
 }
 
 func (s *service) now() time.Time {
@@ -118,6 +122,9 @@ func (s *service) setSimplified(on, live bool) {
 	if e := s.focused; e != nil {
 		e.emit("UpdateProperty", e.modeProperty().variant())
 		e.emit("UpdateProperty", s.simplifiedProperty().variant())
+		if s.menuSentTo == e {
+			s.menuSent[menuSimplified] = s.simplifiedProperty()
+		}
 	}
 }
 
@@ -140,17 +147,35 @@ func (s *service) updateProperty() property {
 	return property{key: propUpdate, typ: propNormal, sensitive: true, label: row, hidden: s.update.packageManaged}
 }
 
+// menuSimplified 是「輸出簡體字」在 refreshMenu 送出順序裡的位置。
+const menuSimplified = 2
+
 // refreshMenu 在鎖內呼叫：把設定、我的詞彙與更新列送給目前焦點的 engine（GNOME 只顯示它的屬性）。
 // 「我的詞彙…」的出現與消失也走 UpdateProperty 的 visible：GNOME Shell 每次換 engine 只收第一個
 // RegisterProperties（ibusManager.js 的 _engineChanged 收到一次就不再聽），之後重新登錄會被丟掉，
 // 只有既有屬性的 UpdateProperty 會生效（_updateSubProperty，IBusProperty.update 連 visible 一起更新）。
+//
+// 內容與上次送給同一個 engine 的完全相同時不送：GNOME Shell 每收到一個 UpdateProperty 就發
+// current-source-changed（status/keyboard.js 的 _ibusPropertyUpdated），觸控模式下螢幕鍵盤會整個重建
+// （keyboard.js 的 _onSourceChanged），每 5 秒的狀態查詢因此讓合成器主執行緒卡住約一秒。
 func (s *service) refreshMenu() {
-	if e := s.focused; e != nil {
-		e.emit("UpdateProperty", s.settingsProperty().variant())
-		e.emit("UpdateProperty", s.vocabProperty().variant())
-		e.emit("UpdateProperty", s.simplifiedProperty().variant())
-		e.emit("UpdateProperty", s.updateProperty().variant())
+	e := s.focused
+	if e == nil {
+		return
 	}
+	menu := [...]property{s.settingsProperty(), s.vocabProperty(), s.simplifiedProperty(), s.updateProperty()}
+	if s.menuSentTo == e && s.menuSent == menu {
+		return
+	}
+	s.menuSentTo, s.menuSent = e, menu
+	for _, p := range menu {
+		e.emit("UpdateProperty", p.variant())
+	}
+}
+
+// forgetMenu 在鎖內呼叫：engine 重新啟用（切回靈犀注音）後，下一次 refreshMenu 一定重送。
+func (s *service) forgetMenu() {
+	s.menuSentTo = nil
 }
 
 // queryStatus 在背景讀更新狀態；沒有重疊查詢，不阻塞按鍵與選單。
@@ -346,6 +371,7 @@ func (s *service) engineMethod(e *engine, member string, body []interface{}) ([]
 		e.finish("reset")
 	case "Enable":
 		e.enable()
+		s.forgetMenu()
 	case "Disable":
 		e.finish("disable")
 	case "SetCapabilities":
