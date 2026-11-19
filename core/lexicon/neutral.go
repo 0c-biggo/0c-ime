@@ -70,5 +70,10 @@ func (n neutralParticles) HasPrefix(syls []zhuyin.Syllable) bool {
 	return n.Source.HasPrefix(syls) || len(n.fallback(syls)) > 0
 }
 
+// Continuations 沿用底層詞庫：補的語氣詞都是單一音節，不會接在任何前綴之後。
+func (n neutralParticles) Continuations(prefix []zhuyin.Syllable, add func(zhuyin.Syllable)) bool {
+	return Continuations(n.Source, prefix, add)
+}
+
 // LongestWord 沿用底層詞庫：補的語氣詞都是單一音節。
 func (n neutralParticles) LongestWord() int { return Longest(n.Source) }

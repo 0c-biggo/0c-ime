@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "../src/panel.h"
 #include "../src/session.h"
 #include "../src/shift.h"
 #include "../src/context.h"
@@ -221,6 +222,24 @@ int main(int argc, char **argv) {
         for (const char *k : {"a", "8", "6", "q", "i", "6"}) { snap = s.key(k); }
         snap = s.commitForShortcut();
         CHECK(snap.ok && snap.commit == "麻婆" && snap.text().empty(), "組合鍵前應先送出組字：%s", snap.commit.c_str());
+
+        // #322：失焦時 Fcitx／應用程式照畫面提交用戶端組字，未打完的注音靠 DontCommit 留在文件外；
+        // 前端送出的（組字去掉 DontCommit）要與 deactivate 的 commit 請求送出、學習的相同。Enter 照畫面原樣送出。
+        for (const char *k : {"a", "8", "6", "q", "i", "6", "g"}) { snap = s.key(k); }
+        {
+            auto layout = zuin::preeditLayout(snap.preedit, snap.cursorByte(), snap.bell);
+            std::string hostCommit;
+            for (const auto &run : layout.runs) { if (!run.dontCommit()) { hostCommit += run.text; } }
+            CHECK(snap.text() == "麻婆ㄕ" && !snap.preedit.empty() && snap.preedit.back().unfinished, "未打完的注音應標 unfinished");
+            CHECK(hostCommit == "麻婆", "前端失焦提交的文字：%s", hostCommit.c_str());
+            snap = s.handle({{"type", "commit"}});
+            CHECK(snap.commit == hostCommit && snap.text().empty(), "commit 請求應與前端提交相同：%s", snap.commit.c_str());
+        }
+        snap = s.key("g");
+        CHECK(snap.preedit.size() == 1 && snap.preedit[0].unfinished, "只有未打完的注音");
+        CHECK(s.handle({{"type", "commit"}}).commit.empty(), "只有未打完的注音時失焦什麼都不送");
+        for (const char *k : {"a", "8", "6", "g"}) { snap = s.key(k); }
+        CHECK(s.key("Enter").commit == "麻ㄕ", "Enter 照畫面原樣送出未打完的注音");
 
         // 同音補全先預覽；斷線重播後仍需提交相同的完整詞。
         for (const char *k : {"v", "u", "l", "3", "x", "j", "/", "6"}) {

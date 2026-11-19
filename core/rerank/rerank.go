@@ -29,6 +29,10 @@ type Request struct {
 	Context      string              `json:"context,omitempty"`
 	Reading      []zhuyin.Syllable   `json:"reading"`
 	Candidates   []decode.Hypothesis `json:"candidates"`
+
+	// ToneKnown 逐音節標出聲調是否已知（models zuin-tone-mask-v1）；false 的音節在 Reading 裡是不帶聲調符號的基底。
+	// 全部已知時為 nil，請求與舊協定逐位元組相同。只送給 Options.UnknownTones 的評分器，見 MaskTones。
+	ToneKnown []bool `json:"tone_known,omitempty"`
 }
 
 type Scorer interface {
@@ -48,6 +52,18 @@ type Options struct {
 	// 就另取「最後音節改輕聲」的 N-best，把新候選的引擎分數扣 NeutralExpand 後併入。
 	NeutralExpand float64
 	NeutralBases  map[zhuyin.Syllable]bool
+	// UnknownTones：評分器接受未知聲調（套件宣告 tone-mask，見 UnknownTonesDeclared）。開啟時沒打聲調的段落
+	// 也送評分，讀音以 MaskTones 轉成基底加 ToneKnown；關閉時這種段落照統計引擎（#150）。
+	UnknownTones bool
+	// Bases 是評分器字表的音節基底（不帶聲調，見 ParseBases）。非 nil 時，基底不在表內的段落在本機就不送評分，
+	// 不必等評分器整例回退；nil 不檢查。
+	Bases map[zhuyin.Syllable]bool
+	// Chars 是評分器字表的字（見 ParseChars）。非 nil 時，含字表外字元的候選在本機就拿掉（KeepEncodable），
+	// 其他候選照常評分，不讓評分器因為一個候選整批拒絕；nil 不檢查。
+	Chars map[rune]bool
+	// ContextlessWeight >0 時，前文是空的請求改用這個融合權重（平台設定，例：手機沒前文 0.5，見 MobileWeight）；
+	// 0 一律用 Weight。單音節文字評分一定有前文，用 TextWeight。
+	ContextlessWeight float64
 }
 
 // Supported 採整例回退，不以刪除 Partial/Correction 路徑製造虛假的召回改善。
@@ -70,8 +86,11 @@ func Supported(r Request) bool {
 	if !utf8.ValidString(r.Context) || utf8.RuneCountInString(r.Context) > MaxContextRunes {
 		return false
 	}
-	for _, y := range r.Reading {
-		if !y.Valid() {
+	if r.ToneKnown != nil && len(r.ToneKnown) != len(r.Reading) {
+		return false
+	}
+	for i, y := range r.Reading {
+		if !y.Valid() || r.ToneKnown != nil && !r.ToneKnown[i] && y != y.Base() {
 			return false
 		}
 	}

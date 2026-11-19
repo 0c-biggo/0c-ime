@@ -104,3 +104,52 @@ assert next(x for x in s['items'] if x['key'] == 'toggle-key')['value'] == 'none
 assert not any(x.get('locked') for x in s['items'])
 PY
 shoot styles-legacy styles
+# #318：新安裝（內建習慣）在設定頁直接改被鎖住的項目，一按就複製成自訂並改好，不再先跳出「複製成自訂並…」。
+# 「中英切換」頁：頁首的「選用風格／複製成自訂」之後是中英切換鍵（一組單選）；↓ 換到下一個選項。
+new_home styles-one
+rm "$(base_of styles-one)/settings.json"
+run_update styles-one settings -json > "$OUT/styles-one-before.json"
+launch styles-one mode
+if window_up; then
+  sleep 2.5
+  import -window root "$OUT/styles-one-locked.png"
+  tabs $((NAV + 2)); xdotool key Down
+  sleep 4
+  import -window root "$OUT/styles-one-changed.png"
+  run_update styles-one settings -json > "$OUT/styles-one-after.json"
+  check "按被鎖住的中英切換鍵直接複製成「…（自訂）」、套用並改好這一項，其他設定照舊" python3 - "$OUT/styles-one-before.json" "$OUT/styles-one-after.json" <<'PY_ONE'
+import json, sys
+before, after = [json.load(open(p)) for p in sys.argv[1:]]
+bp, ap = before['profiles'], after['profiles']
+builtin = next(x for x in bp['items'] if x['id'] == bp['active'])
+active = next(x for x in ap['items'] if x['id'] == ap['active'])
+assert builtin['builtin'] and not active['builtin'], (builtin, active)
+assert active['name'] == builtin['name'] + '（自訂）', active['name']
+b = {x['key']: x['value'] for x in before['items']}
+a = {x['key']: x['value'] for x in after['items']}
+assert a['toggle-key'] != b['toggle-key'], (b['toggle-key'], a['toggle-key'])
+assert {k: v for k, v in a.items() if k != 'toggle-key'} == {k: v for k, v in b.items() if k != 'toggle-key'}
+assert not any(x.get('locked') for x in after['items'])
+PY_ONE
+else bad "styles-one/mode 視窗沒有出現"; cat /tmp/app-styles-one-mode.log; fi
+stop_app
+# 切回內建習慣再改一次：已經有「…（自訂）」時另建「…（自訂 2）」，不沿用舊副本。
+run_update styles-one profile select "$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['profiles']['active'])" "$OUT/styles-one-before.json")" > /dev/null
+launch styles-one mode
+if window_up; then
+  sleep 2.5
+  tabs $((NAV + 2)); xdotool key Down
+  sleep 4
+  import -window root "$OUT/styles-one-again.png"
+  run_update styles-one settings -json > "$OUT/styles-one-again.json"
+  check "已有同名自訂時另建編號副本，舊副本保留" python3 - "$OUT/styles-one-before.json" "$OUT/styles-one-again.json" <<'PY_AGAIN'
+import json, sys
+before, after = [json.load(open(p)) for p in sys.argv[1:]]
+name = next(x for x in before['profiles']['items'] if x['id'] == before['profiles']['active'])['name']
+p = after['profiles']
+custom = sorted(x['name'] for x in p['items'] if not x['builtin'])
+assert custom == sorted([name + '（自訂）', name + '（自訂 2）']), custom
+assert next(x for x in p['items'] if x['id'] == p['active'])['name'] == name + '（自訂 2）'
+PY_AGAIN
+else bad "styles-one/mode 重新開啟失敗"; cat /tmp/app-styles-one-mode.log; fi
+stop_app

@@ -24,7 +24,7 @@ COMPILE_ARGS = [
     "-public=true", "-relative-readings=true", "-inherit=true",
     "-yibu=true", "-neutral=true", "-polyphone=true", "-max-variants=4",
     "-unigram=mcbopomofo=2,0c_collect=1", "-unigram-fallback=chewing-v4,zhwiki",
-    "-fallback-scale=0.25", "-alpha=0.5", "-prune-mu=0.7",
+    "-fallback-scale=0.25", "-alpha=0.5", "-attested-mass=3e-06", "-prune-mu=0.7",
     "-prune-by=entropy",
     "-demote=", "-rare=cns11643,mcbopomofo-rare",
     "-bigram=chewing-v4=3,zhwiki=1,0c_collect-ns=3,0c_collect-ss=2", "-bigram-max=12000000",
@@ -58,10 +58,19 @@ def main():
     p.add_argument("--rev", help="取指定 Git 提交；省略時使用目前的原始碼樹，亦適用解壓後的 tarball")
     p.add_argument("--bigram-dir", type=Path, help="含 chewing-v4.tsv、zhwiki.tsv、0c_collect-ns.tsv、0c_collect-ss.tsv")
     p.add_argument("--boost", default=BOOST, help=f"0c-compile -boost（預設 {BOOST!r}）")
+    p.add_argument("--curated-bigram", metavar="PATH",
+                   help="0c-compile -curated-bigram：提交裡的人工 bigram 檔，相對於 repo 根目錄（如 data/lm/curated-bigram.tsv）；"
+                        "預設不傳，桌面配方不變")
     p.add_argument("--go", default="go")
     p.add_argument("--models", type=Path, help="同時將固定公開模型配對至重建字典，輸出 <out>/models")
     a = p.parse_args()
     compile_args = COMPILE_ARGS + ["-boost=" + a.boost]
+    if a.curated_bigram:
+        curated = Path(a.curated_bigram)
+        if curated.is_absolute() or ".." in curated.parts or curated.parts[:1] != ("data",):
+            p.error("--curated-bigram 要是 data/ 底下、相對於 repo 根目錄的路徑（從提交取出）")
+        # 相對路徑：0c-compile 在取出的原始碼目錄執行，manifest 記下的是這個相對路徑，產物可重現。
+        compile_args.append("-curated-bigram=" + curated.as_posix())
     out = a.out.absolute()
     if out.exists():
         p.error(f"輸出已存在：{out}")

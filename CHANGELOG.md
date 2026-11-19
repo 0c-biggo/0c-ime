@@ -2,6 +2,29 @@
 
 每個版本的「公開摘要」與 [官網更新紀錄](https://0c.biggo.com/updates/) 相同；「原始碼套件」記錄 Release 完整 tarball 的內容變化。
 
+## 0.2.13（2026-11-19，public-beta）
+
+### 公開摘要
+
+- 沒開中英混打時，用聲調鍵打完一個字後馬上又按同一個聲調鍵（例如 cl33），不再多出一個數字（「好3」），只留下「好」。緊接著按空白照舊打出聲調符號；連按第三下才是數字。開著中英混打時照舊留下數字，因為「有3個」這類寫法的按鍵完全一樣。
+- Linux（GNOME、IBus）：平板或帳篷這類觸控模式下，畫面與影片不再每 5 秒卡一下。
+- 新設定「單按 Shift 的時限」（中英切換頁，在中英切換鍵下面）：按下 Shift 到放開要在多久之內才算單按、切換中英，可選 0.2 到 0.6 秒，預設照舊 0.3 秒。按得比較慢、常切換不成功時調長；打字時常不小心切到英文時調短。
+- 設定程式：選了內建輸入習慣後，直接改被它固定的項目，會自動複製一份成為你自己的輸入習慣（例如「靈犀注音（自訂）」）並改好，不必再多按「複製成自訂並開啟」；之後可在「輸入習慣」切回原本的風格。
+- 打到一半的注音（例如只打了 ㄕ）遇到切換輸入法（Caps Lock 或選單切到 ABC）、點到別處（包括在 Edge、Chrome 的網頁裡點輸入框外的地方）、換到別的視窗，或開著「Caps Lock 開著時直接打英文」時按下 Caps Lock，不再把 ㄕ 當成文字留在文件裡，只送出已經組好的字，跟單按 Shift 切英文一樣。要故意打注音符號，照舊按 Enter 送出。Linux 的 IBus 例外：前面已經有組好的字時，點到別處或切換輸入法仍會連 ㄕ 一起送出（IBus 只能整段送出組字）；只有 ㄕ 時不會留下。Windows 的 Edge、Chrome 例外：用觸控或手寫筆點、網頁自己把游標移走，或在網頁裡按 Tab 時，仍會連 ㄕ 一起留下。
+- 新設定「記住我選的字詞」（選字頁，預設開啟）：關閉後照常選字，神經選字、依前文選字和已經學到的都照常使用，只是不再記下新的選擇、英文單字和最近用過的符號，打字不會再改動個人學習檔。「我的詞彙」照常可以加詞；要清掉已經學到的，用「我的詞彙」→「靈犀學到的」的「清除學習紀錄」。
+- 單打一個注音時，常用字不再被常見字的罕用讀音擠到後面：例如 ㄇㄧˋ 第一個是「密」而不是「日」，ㄉㄧˋ 是「第」「地」而不是「的」，ㄉㄞˋ 是「帶」而不是「大」，ㄕㄨㄟˋ 是「稅」而不是「說」。這些罕用讀音仍在候選裡；「目的」「大夫」「參與」這類詞照常打得出來。
+
+### 原始碼套件
+
+- 字典（#320）：0c-compile 新增 `-attested-mass`（出貨字典 `3e-06`，`internal/compile/attested.go`），高頻字的可考讀音改由詞庫裡的多字詞佐證決定排序，沒有佐證時給固定低分；主讀音、通行音、多字詞讀音不變。`data/lexicon/words.tsv` 另加「總銷」。內附字典依公開來源與 0c-ime-data 的 bigram 輸入重建：`lexicon.bin`、`lm.bin`（只多「總銷」一個 unigram）與 `report.txt` 改變，`NOTICE.txt` 與英文子包不變，manifest 改為 `f2fa260f…`。模型權重不換，`models/pairing.lock.json` 依新字典重新配對（select manifest `7236647c…`、punct `ec2248dc…`）。
+- 0c-compile：新增 `-curated-bigram` 與人工 bigram 檔 `data/lm/curated-bigram.tsv`，`scripts/build_release_data.py --curated-bigram` 可傳入；預設不用，出貨字典沒有使用。讀 bigram 時改以詞 id 保存詞對、以堆積選出 `-bigram-max` 筆，重建出貨字典的記憶體高峰由 7 GB 以上降到 4 GiB 以內，產物逐位元組不變。
+- 送出組字（#322）：外殼替使用者結束組字（失焦、切換輸入法、Caps Lock）時改走 `Session.commitComposed`，未打完的注音不送出。快照分段新增 `proto.Segment.Unfinished`；Fcitx5 把這段標成 `DontCommit`，IBus 在只剩這段時以 `IBUS_ENGINE_PREEDIT_CLEAR` 清掉；Windows TSF 在宿主自己終止組字（`OnCompositionTerminated`）時改送 `commit` 並改寫組字範圍，Chromium 的視窗另在組字期間掛本執行緒的滑鼠 hook（`platforms/windows/tsf/src/click.rs`），在網頁收到點擊前先送出。
+- 聲調鍵（#321）：沒開混打時，聲調鍵剛完成一個音節、緊接著又按同一個聲調鍵，第二下不留數字；緊接的空白照舊是聲調符號，第三下才是數字。
+- 設定：新設定 `shift-tap-ms`（#319，GitHub #76；`settings.json` 的 `shift_tap_ms`，200 到 600 毫秒，預設 300），health／open 的 `shift_tap_ms` 改讀設定。新設定 `personal-learning`（#297；`settings.json` 的 `personal_learning`，缺欄位即開啟），關閉時 `Engine.NoLearning`／`Session.NoLearning` 不再學習、不重寫 `user.json`，`user.json` 格式不變。設定程式改被內建風格鎖住的項目時直接複製成自訂風格再套用（#318，GitHub #75）。
+- IBus（#317，GitHub #73）：`refreshMenu` 記住上次送給同一個 engine 的屬性，內容相同不再重送，engine 銷毀時丟掉紀錄。前半已隨 PR #73 併入 main。
+- 解碼（#305、#307）：候選評分的右側前後文改用整句解碼同一組詞弧，長段不打聲調時列詞長不再比解碼慢一個數量級，結果不變。尾端前綴快取上限可設定（`Engine.PrefixCacheKeys`，桌面維持 4096），排序依據的先驗改變時重建。
+- 觸控鍵盤用的核心功能：注音簡拼、九宮格、撤銷學習、相鄰鍵容錯、補全與聯想詞（`core/session` 的 `ninekey.go`、`spatial.go`、`completion.go`、`predict.go` 等）。這些只回應觸控外殼送的請求，桌面外殼不送，桌面的選字結果不變。
+
 ## 0.2.12（2026-11-16，public-beta）
 
 ### 公開摘要

@@ -25,7 +25,11 @@ func TestDrainDeliversFinalCommitReplyBeforeDisconnect(t *testing.T) {
 		return r
 	}
 	open := call(Envelope{Op: OpOpen, Version: proto.Version})
-	r := call(Envelope{Op: OpHandle, Session: open.Session, Req: &proto.Request{Type: proto.Key, Key: "a"}})
+	// 組好一個字（ㄨㄛˇ）：commit 請求只送已組好的字，未打完的注音不送（#322）。
+	var r Reply
+	for _, k := range []string{"j", "i", "3"} {
+		r = call(Envelope{Op: OpHandle, Session: open.Session, Req: &proto.Request{Type: proto.Key, Key: k}})
+	}
 	if r.Snapshot == nil || r.Snapshot.Text() == "" {
 		t.Fatalf("fixture must compose before commit: %+v", r.Snapshot)
 	}

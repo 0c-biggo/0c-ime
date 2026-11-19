@@ -137,8 +137,8 @@ type Undo struct {
 
 // Undoable 執行 f，回傳復原用的複本；f 沒有改到學習資料時回傳 nil。
 //
-// f 只能呼叫 Forget、ForgetAll、Unlearn、UnlearnAll、Relearn：複本不是整份個人資料，而是這些操作改每一項之前
-// 用 note 記下的原值（m.undo 不是 nil 的期間）。以前整份複製再逐類比對，個人資料到上限時一次要 20～30 ms，
+// f 只能呼叫 Forget、ForgetAll、Unlearn、UnlearnAll、Relearn、Learn、LearnFollow：複本不是整份個人資料，而是這些
+// 操作改每一項之前用 note 記下的原值（m.undo 不是 nil 的期間）。Learn 不含英文學習（LearnEnglish 沒有記錄）。以前整份複製再逐類比對，個人資料到上限時一次要 20～30 ms，
 // 都在引擎鎖裡；現在只跟改到的項目數有關。其他會改學習資料的方法沒有記錄，不能放進 f。
 func (m *Model) Undoable(f func()) *Undo {
 	s := m.Store

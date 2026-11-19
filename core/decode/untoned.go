@@ -1,6 +1,7 @@
 package decode
 
 import (
+	"math"
 	"sort"
 
 	"github.com/0c-biggo/0c-ime/core/input"
@@ -13,6 +14,10 @@ import (
 // 沒打聲調的單音節展開成五個聲調後常有幾百個字，整句解碼與 N-best 的成本跟弧數成正比；機率排在 64 名以後的
 // 字幾乎不會贏，仍可從候選窗選到（候選另外列舉，不受這個上限影響）。和尾端前綴的 TopM 同一個數。
 const maxUntonedArcs = defaultTopM
+
+// maxAbbreviatedArcs 是經過簡拼位置的弧上限。只打聲母時同一組（起點、終點）常有上千個詞，
+// 全部進入整句解碼與疊字、補全評分會讓每鍵延遲超過手機的預算；候選窗另外列舉，不受這個上限影響。
+const maxAbbreviatedArcs = 24
 
 // untonedPos 回報音節格第 i 個位置是不是沒打聲調展開的（input.Hyp.Untoned）；全部打了聲調時永遠是 false。
 func untonedPos(lat input.Lattice, i int) bool {
@@ -33,6 +38,19 @@ func untonedSpan(lat input.Lattice, start, end int) bool {
 	return false
 }
 
+// abbreviatedSpan 回報 [start, end) 是否經過簡拼展開的位置（input.Hyp.Abbreviated）。只看標記、不看列長：
+// 桌面的聲調選填加模糊音一列就有 20 個假設，那不是簡拼，弧數上限與裁切方式要跟沒有簡拼時一樣。
+func abbreviatedSpan(lat input.Lattice, start, end int) bool {
+	for i := start; i < end; i++ {
+		for _, h := range lat[i] {
+			if h.Abbreviated {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // lockTouches 回報 [start, end) 是否碰到鎖定；碰到的不裁切，鎖定的詞一定要留著。
 func lockTouches(locks map[int]Lock, start, end int) bool {
 	for at, l := range locks {
@@ -43,8 +61,10 @@ func lockTouches(locks map[int]Lock, start, end int) bool {
 	return false
 }
 
-// topUntonedArcs 依終點由小到大，各留無上下文機率（含個人化，學過的字不會被裁掉）乘讀音權重最高的 maxUntonedArcs 個弧。
-func (d *Decoder) topUntonedArcs(pooled map[int][]arc) []arc {
+// topUntonedArcs 依終點由小到大，各留無上下文機率（含個人化，學過的字不會被裁掉）乘讀音權重最高的 limit 個弧。
+// costed 時再乘輸入成本 exp(-cost)：簡拼展開成不是打的那個完整音節要多一點證據，裁切時一併考慮；
+// 沒打聲調（#150）的弧照舊不看成本（近音的成本由整句解碼計入），桌面的聲調選填加模糊音結果不變。
+func (d *Decoder) topUntonedArcs(pooled map[int][]arc, limit int, costed bool) []arc {
 	if len(pooled) == 0 {
 		return nil
 	}
@@ -56,7 +76,7 @@ func (d *Decoder) topUntonedArcs(pooled map[int][]arc) []arc {
 	var out []arc
 	for _, j := range ends {
 		arcs := pooled[j]
-		if len(arcs) <= maxUntonedArcs {
+		if len(arcs) <= limit {
 			out = append(out, arcs...)
 			continue
 		}
@@ -64,18 +84,21 @@ func (d *Decoder) topUntonedArcs(pooled map[int][]arc) []arc {
 		idx := make([]int, len(arcs))
 		for k := range arcs {
 			score[k] = d.Score.Prob(lm.BOS, arcs[k].e.Surface) * arcs[k].e.PRW
+			if costed {
+				score[k] *= math.Exp(-arcs[k].cost)
+			}
 			idx[k] = k
 		}
 		sort.SliceStable(idx, func(a, b int) bool { return score[idx[a]] > score[idx[b]] })
-		for _, k := range idx[:maxUntonedArcs] {
+		for _, k := range idx[:limit] {
 			out = append(out, arcs[k])
 		}
 	}
 	return out
 }
 
-// Reading 回傳詞 word 佔音節格 [start, end) 時在詞庫裡的讀音：只看成本 0 的假設（使用者打的音；
-// 沒打聲調的音節展開成的五個聲調也是成本 0），以詞庫前綴剪枝逐一組合，取讀音相容權重最高的詞條。
+// Reading 回傳詞 word 佔音節格 [start, end) 時在詞庫裡的讀音：只看使用者打的音（成本 0 的假設；
+// 沒打聲調的音節展開成的五個聲調、簡拼展開的音節也算），以詞庫前綴剪枝逐一組合，取讀音相容權重最高的詞條。
 // 找不到時回傳 false。給「聲調選填」（#150）在提交、加詞時把沒打聲調的音節換回詞庫讀音用：
 // 學習與自訂詞只收真的讀音，不收內部記號。
 func Reading(lex lexicon.Source, lat input.Lattice, start, end int, word string) ([]zhuyin.Syllable, bool) {
@@ -105,8 +128,8 @@ func reading(lex lexicon.Source, lat input.Lattice, start, end int, word string,
 			return
 		}
 		for _, h := range lat[pos] {
-			if h.Cost > 0 {
-				continue
+			if h.Cost > 0 && !h.Untoned {
+				continue // 近音不是打的音；簡拼展開的成本照樣算打的音
 			}
 			r := append(reading[:len(reading):len(reading)], h.Syl)
 			if lex.HasPrefix(r) {

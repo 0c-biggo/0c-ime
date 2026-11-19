@@ -153,7 +153,7 @@ PY"
   check "再按一次可關閉補標點" grep -q '"punctuation": false' "$(settings_of live)"
 else bad "live/keyboard 視窗沒有出現"; cat /tmp/app-live-keyboard.log; fi
 stop_app
-# 「中英切換」：中英切換鍵、開始時的中英模式、切換視窗後的中英模式、中英混打、英文模式自動補字。
+# 「中英切換」：中英切換鍵、單按 Shift 的時限、開始時的中英模式、切換視窗後的中英模式、中英混打、英文模式自動補字。
 launch live mode
 if window_up; then
   sleep 2.5
@@ -165,6 +165,14 @@ if window_up; then
   xdotool key Up
   sleep 3
   check "中英切換鍵可改回右 Shift" bash -c "grep -q '\"toggle_key\": \"right\"' '$(settings_of live)' && grep -q '\"left_shift\": false' '$(settings_of live)'"
+  # 再下一個是單按 Shift 的時限（一組單選，預設 0.3 秒，#319）：↓ 選 0.4 秒，↑ 改回。
+  xdotool key Tab Down
+  sleep 3
+  check "單按 Shift 的時限可保存 400" grep -q '"shift_tap_ms": 400' "$(settings_of live)"
+  import -window root "$OUT/shift-tap-400.png"
+  xdotool key Up
+  sleep 3
+  check "單按 Shift 的時限可改回 300" grep -q '"shift_tap_ms": 300' "$(settings_of live)"
   # 再下一個是開始時的中英模式（一組單選，預設注音，#160）：↓ 選「英文」；Linux 的「切換視窗後」native 名稱跟著變成「每次回到英文」。
   xdotool key Tab Down
   sleep 3
@@ -361,6 +369,8 @@ for _ in range(80):
         ok=value.get('emoji_shortcut') == ('equals' if mode=='emoji_on' else 'off')
     elif mode.startswith('hint_'):
         ok=value.get('zhuyin_error_hint') == (mode=='hint_on')
+    elif mode.startswith('learning_'):
+        ok=value.get('personal_learning') == (mode=='learning_on')
     else:
         expected='select' if mode=='fuzzy_on' else 'off'
         # 模糊音預設 select：維持預設的配對不寫入設定檔，關閉時明確寫 off。
@@ -410,7 +420,8 @@ if window_up; then
 else bad "toggles/keyboard 重新開啟失敗"; cat /tmp/app-toggles-keyboard.log; fi
 stop_app
 # 「打錯注音時提示」（#300，預設開）在「選字」的不打聲調後面（導覽後第 10 個）；空白鍵關閉、再開。
-# 模糊音在「選字」最後：原有 10 項＋7 項選字習慣規則之後（導覽後第 18 個）。
+# 再下一項是「記住我選的字詞」（#297，預設開）；空白鍵關閉、再開。
+# 模糊音在「選字」最後：原有 11 項＋7 項選字習慣規則之後（導覽後第 19 個）。
 launch toggles candidates
 if window_up; then
   sleep 2.5
@@ -420,6 +431,13 @@ if window_up; then
   import -window root "$OUT/zhuyin-error-hint-off.png"
   xdotool key space
   check "打錯注音時提示可以重新開啟" toggle_value hint_on
+  sleep 1
+  xdotool key Tab space
+  check "預設開啟的記住我選的字詞可以關閉，保留未知設定" toggle_value learning_off
+  sleep 1
+  import -window root "$OUT/personal-learning-off.png"
+  xdotool key space
+  check "記住我選的字詞可以重新開啟" toggle_value learning_on
   sleep 1
   tabs 8; xdotool key space
   check "預設開啟的模糊音總開關一次關閉四組，保留未知設定" toggle_value fuzzy_off
@@ -499,12 +517,12 @@ sys.exit(1)
 PY_LAYOUT
 }
 # 「中英切換」：停用的混打不在 Tab 順序裡，原因（鍵盤排列）在另一頁，所以下面多一個「到「鍵盤與符號」修改「鍵盤排列」」，
-# 是中英切換鍵、開始時的中英模式、切換視窗後的中英模式之後的第 4 個；按了切到鍵盤與符號、焦點在選中的倚天，← 選標準。
+# 是中英切換鍵、單按 Shift 的時限（#319）、開始時的中英模式、切換視窗後的中英模式之後的第 5 個；按了切到鍵盤與符號、焦點在選中的倚天，← 選標準。
 launch eten mode
 if window_up; then
   sleep 2.5
   import -window root "$OUT/eten-mode.png"
-  tabs $((NAV + 4)); xdotool key space
+  tabs $((NAV + 5)); xdotool key space
   sleep 1.5
   import -window root "$OUT/eten-goto-keyboard.png"
   xdotool key Left
@@ -564,11 +582,11 @@ if window_up; then
 else bad "eten/candidates 視窗沒有出現"; cat /tmp/app-eten-candidates.log; fi
 stop_app
 # 「Caps Lock 開著時直接打英文」（#173，Windows、Linux）在「中英切換」最後，預設關閉；已切回標準排列，混打可以按，
-# 前面是中英切換鍵、開始模式、切換視窗後、混打、英文補字，第 6 個；空白鍵開啟。
+# 前面是中英切換鍵、單按 Shift 的時限（#319）、開始模式、切換視窗後、混打、英文補字，第 7 個；空白鍵開啟。
 launch eten mode
 if window_up; then
   sleep 2.5
-  tabs $((NAV + 6)); xdotool key space
+  tabs $((NAV + 7)); xdotool key space
   sleep 3
   check "Caps Lock 英文開關可開啟" grep -q '"caps_lock_english": true' "$(settings_of eten)"
   import -window root "$OUT/caps-lock-english-on.png"
@@ -594,7 +612,8 @@ if window_up; then
   sleep 2.5
   import -window root "$OUT/hsu-mode.png"
   # 混打反灰、寫「許氏排列時關閉」，下面的「到「鍵盤與符號」修改「鍵盤排列」」切過去，鍵盤排列選中「許氏」。
-  tabs $((NAV + 4)); xdotool key Return
+  # 前面是中英切換鍵、單按 Shift 的時限（#319）、開始模式、切換視窗後。
+  tabs $((NAV + 5)); xdotool key Return
   sleep 1.5
   import -window root "$OUT/hsu-goto-keyboard.png"
 else bad "hsu/mode 視窗沒有出現"; cat /tmp/app-hsu-mode.log; fi

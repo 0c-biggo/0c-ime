@@ -25,6 +25,8 @@ type pendingLiteral struct {
 	prefix bool
 	// untoned：聲調選填時沒打聲調就完成的音節（#150）；畫面同一聲（不標聲調），收回解碼時仍不限聲調。
 	untoned bool
+	// abbrev：簡拼音節原樣留下時記住它，收回解碼時仍是簡拼。
+	abbrev zhuyin.Syllable
 }
 
 func (p pendingLiteral) end() int { return p.start + len([]rune(p.composer.String())) }
@@ -38,6 +40,9 @@ func (p pendingLiteral) mark() int {
 }
 
 func (p pendingLiteral) syllable() zhuyin.Syllable {
+	if p.abbrev != "" {
+		return p.abbrev
+	}
 	if p.untoned {
 		return zhuyin.Untone(zhuyin.Syllable(p.composer.String()))
 	}
@@ -89,7 +94,10 @@ func (s *Session) restorePendingLiteral() {
 // comp 是按聲調之前的組音狀態，接著打的注音從新的音節開始，不會蓋掉它。
 func (s *Session) insertSyllableLiteral(comp zhuyin.Composer, syl zhuyin.Syllable) {
 	p := pendingLiteral{start: s.cursor, composer: comp, tone: syl.ToneOf()}
-	if syl.Untoned() {
+	switch {
+	case syl.Abbreviated():
+		p.tone, p.abbrev = max(syl.ToneOf(), 1), syl // 簡拼：照打的樣子留下，沒打聲調的同一聲不標
+	case syl.Untoned():
 		p.tone, p.untoned = 1, true // 沒打聲調（#150）：照一聲的樣子原樣留下，不標聲調
 	}
 	s.insertLiteral(syl.Text())
@@ -152,17 +160,20 @@ type syllableState struct {
 	mixedOrigins    map[int]mixedOrigin
 	displayed       map[int]string
 	rejected        []personal.RejectedSeg
+	spatial         map[int][]input.Hyp
+	nine            map[int][]zhuyin.Syllable
 }
 
 // 插入、刪除都會換成新的切片與對照表，淺複製就足以還原。
 func (s *Session) saveSyllables() syllableState {
 	return syllableState{s.syls, s.cursor, s.locks, s.literals, s.pendingLiterals, s.mixedKeys, s.literalKeys, s.mixedOrigins, s.displayed,
-		append([]personal.RejectedSeg(nil), s.rejected...)}
+		append([]personal.RejectedSeg(nil), s.rejected...), s.spatial, s.nine}
 }
 
 func (s *Session) restoreSyllables(st syllableState) {
 	s.syls, s.cursor, s.locks, s.literals, s.pendingLiterals = st.syls, st.cursor, st.locks, st.literals, st.pendingLiterals
 	s.mixedKeys, s.literalKeys, s.mixedOrigins, s.displayed, s.rejected = st.mixedKeys, st.literalKeys, st.mixedOrigins, st.displayed, st.rejected
+	s.spatial, s.nine = st.spatial, st.nine
 }
 
 // completeDecodable 回報游標前剛收進的音節所在的一段（字面文字之間）能否解成完整的詞，

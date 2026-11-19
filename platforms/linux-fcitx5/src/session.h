@@ -11,6 +11,8 @@ namespace zuin {
 
 struct Segment {
     std::string text, style; // style：normal、locked、corrected、partial、pending、marked、reading
+    // 未打完的注音：外殼結束組字（commit 請求）時核心不照畫面送出（#322，proto.Segment.Unfinished）。舊核心沒有這一項。
+    bool unfinished = false;
 };
 
 // candidateKey 是候選第 index 項的鍵標（#112）：核心給的 key（1、q、;）；舊核心沒有這個欄位時依位置 1–0，

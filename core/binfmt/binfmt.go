@@ -1,5 +1,5 @@
 // Package binfmt 是執行期資料包的底層格式：魔術字、版本、依序排列的區段、CRC32 校驗。
-// 全部為小端序、不含指標，所以同一份位元組可以直接讀入，日後也可以 mmap。
+// 全部為小端序、不含指標，所以同一份位元組可以直接讀入，也可以由宿主 mmap 後直接查詢（Reader.View、lexicon.Map）。
 package binfmt
 
 import (
@@ -58,6 +58,12 @@ func (w *Writer) Bytes8(xs []uint8) {
 func (w *Writer) String(s string) {
 	w.U32(uint32(len(s)))
 	w.buf = append(w.buf, s...)
+}
+
+// Raw 寫入 count 個元素、已經是小端序的區段內容（例如 Reader.View 讀出的位元組）。
+func (w *Writer) Raw(count int, data []byte) {
+	w.U32(uint32(count))
+	w.buf = append(w.buf, data...)
 }
 
 // Finish 附上整份內容的 CRC32 並回傳。
@@ -162,6 +168,13 @@ func (r *Reader) F32s() []float32 {
 func (r *Reader) Bytes8() []uint8 {
 	n := r.count(1)
 	return append([]uint8(nil), r.take(n)...)
+}
+
+// View 讀出每個元素 size 位元組的區段，不複製也不轉換：回傳的切片指向原本的位元組（小端序），
+// 呼叫端之後不能再改那些位元組。
+func (r *Reader) View(size int) []byte {
+	n := r.count(size)
+	return r.take(size * n)
 }
 
 func (r *Reader) String() string {

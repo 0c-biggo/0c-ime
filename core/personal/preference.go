@@ -133,6 +133,8 @@ func (m *Model) SplitConfirmed(left, word string) bool { return m.ObservedPair(l
 func (m *Model) noteConfirmed(word, reading string) {
 	s := m.Store
 	k := pair(word, reading)
+	r := m.recording() // Undoable（觸控退格撤銷學習）要能還原手選紀錄
+	note(r.confirmed, s.Confirmed, k)
 	s.Confirmed[k] = s.Confirmed[k].add(s.Time, confirmUnit)
 	for _, e := range m.Lex.Exact(zhuyin.ParseReading(reading)) {
 		if e.Surface == word {
@@ -142,6 +144,7 @@ func (m *Model) noteConfirmed(word, reading string) {
 		if u, ok := s.Confirmed[rk]; ok {
 			u = u.at(s.Time)
 			u.Long = max(0, u.Long-confirmUnit)
+			note(r.confirmed, s.Confirmed, rk)
 			s.Confirmed[rk] = u
 		}
 	}
@@ -157,6 +160,7 @@ func (m *Model) keepConfirmed(syls []zhuyin.Syllable, g Seg) {
 	k := pair(g.Word, zhuyin.Key(syls[g.Start:g.End]))
 	if e, ok := s.Confirmed[k]; ok && s.Time > e.Updated {
 		e.Updated = s.Time
+		note(m.recording().confirmed, s.Confirmed, k)
 		s.Confirmed[k] = e
 	}
 }

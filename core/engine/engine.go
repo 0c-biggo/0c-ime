@@ -42,10 +42,13 @@ type Engine struct {
 	ShiftSymbolHalfwidth  bool              // 「Shift＋符號打半形」開著時由宿主設定（#258）；零值時 Shift＋符號照舊打全形標點。
 	AllSymbolsHalfwidth   bool              // 「所有符號鍵打半形」時由宿主設定（#282）；零值時照舊。
 	CJKLatinSpace         bool              // 「中英文之間自動加空格」開著時由宿主設定（#273）；零值時送出的文字不補空格。
+	NoLearning            bool              // 「記住我選的字詞」關閉時由宿主設定（#297）；選字、神經選字照常，只是不寫進個人資料。
 	CapsLockEnglish       bool              // 「Caps Lock 開著時直接打英文」開著時由宿主設定（#173）；零值時 caps_lock 請求不起作用。
 	Fuzzy                 fuzzy.Config      // 使用者逐對啟用的模糊音；零值全部關閉。
 	Toneless              bool              // 「不打聲調也能選字」開著時由宿主設定（#150）；開啟時停用中英混打的自動判斷。
 	ZhuyinErrorHint       bool              // 「打錯注音時提示」開著時由宿主設定（#300，預設開）；零值時沒有字的音節照舊原樣留下。
+	Abbreviation          bool              // 聲調選填時只打聲母或介音也能選字；只在 Toneless 時作用。
+	MixedWithToneless     bool              // 聲調選填與混打共存（手機）：注音鍵走聲調選填，實體按鍵走混打。
 	EnglishAutocomplete   bool
 	MixedInput            bool                // opt-in bilingual keys; disabled preserves legacy behavior.
 	English               *english.Dictionary // nil uses the authored prototype vocabulary.
@@ -62,6 +65,11 @@ type Engine struct {
 	// SimplifiedSwitch：宿主支援從輸入法選單即時切換「輸出簡體字」時設定（#169，見 simplified.go）；零值時
 	// output_simplified 請求回 handled=false。
 	SimplifiedSwitch SimplifiedSwitch
+
+	// PrefixCacheKeys：每個 session 的解碼器尾端前綴快取最多幾個讀音（#307），宿主在建立 session 前設定。
+	// 0 為預設 4096（桌面）；手機設較小的值壓住記憶體。只影響速度與記憶體，不影響選字結果。
+	PrefixCacheKeys int
+
 	// StartEnglish：開始時是英文模式（#160，settings 的 start_mode=english）。新 session 從英文開始；
 	// SharedMode 時是引擎啟動（登入）後第一個共用的模式。零值從注音開始，跟以前一樣。
 	StartEnglish  bool
@@ -86,16 +94,19 @@ func New(lex lexicon.Source, sys lm.System) *Engine {
 	return &Engine{Model: personal.NewModel(lex, sys), EmojiShortcut: "equals", EmojiEqualsFirst: true, sessions: map[uint64]*session.Session{}}
 }
 
+// mixedKeys 回報按鍵是否照中英混打規則判斷。
+func (e *Engine) mixedKeys() bool { return e.MixedInput && (!e.Toneless || e.MixedWithToneless) }
+
 // ToneMarkKeys 回報沒在組字時的聲調鍵是否由輸入法處理（單按＋空白是聲調符號，#135）；
 // 中英混打（只在標準排列）時照混打規則。給自己過濾閒置按鍵的外殼（Windows）查詢。
 func (e *Engine) ToneMarkKeys() bool {
-	return session.ToneMarkKeys(e.MixedInput && !e.Toneless, e.Layout == nil || e.Layout == layout.Standard)
+	return session.ToneMarkKeys(e.mixedKeys(), e.Layout == nil || e.Layout == layout.Standard)
 }
 
 // IdleKeys 回報沒在組字、注音模式時輸入法會處理的可見 ASCII 按鍵（session.IdleKeys），依鍵盤排列與設定而不同（#183）。
 // 給自己過濾閒置按鍵的外殼（Windows）查詢，外殼不必各自維護每種排列的按鍵表。
 func (e *Engine) IdleKeys() string {
-	keys := session.IdleKeys(e.Layout, e.MixedInput && !e.Toneless, e.EmojiShortcut)
+	keys := session.IdleKeys(e.Layout, e.mixedKeys(), e.EmojiShortcut)
 	if e.InputStyle.Punctuation == "microsoft" {
 		// 風格的半形原字元交還應用程式；設定「Shift＋符號打半形」開著時也一樣（#272）。
 		keys = strings.Map(func(r rune) rune {
@@ -149,11 +160,14 @@ func (e *Engine) OpenSession() uint64 {
 	e.sessions[e.next].ShiftSymbolHalfwidth = e.ShiftSymbolHalfwidth
 	e.sessions[e.next].AllSymbolsHalfwidth = e.AllSymbolsHalfwidth
 	e.sessions[e.next].CJKLatinSpace = e.CJKLatinSpace
+	e.sessions[e.next].NoLearning = e.NoLearning
 	e.sessions[e.next].CapsLockEnglish = e.CapsLockEnglish
 	e.sessions[e.next].InputStyle = e.InputStyle
 	e.sessions[e.next].Fuzzy = e.Fuzzy
 	e.sessions[e.next].Toneless = e.Toneless
 	e.sessions[e.next].ZhuyinErrorHint = e.ZhuyinErrorHint
+	e.sessions[e.next].Abbreviation = e.Abbreviation
+	e.sessions[e.next].MixedWithToneless = e.MixedWithToneless
 	e.sessions[e.next].EnglishAutocomplete = e.EnglishAutocomplete
 	e.sessions[e.next].MixedInput = e.MixedInput
 	e.sessions[e.next].EmojiShortcut = e.EmojiShortcut
@@ -168,6 +182,7 @@ func (e *Engine) OpenSession() uint64 {
 	if e.DocumentContextWeight != nil {
 		e.sessions[e.next].Opt.DocumentContextWeight = *e.DocumentContextWeight
 	}
+	e.sessions[e.next].Opt.PrefixCacheKeys = e.PrefixCacheKeys
 	if e.initialEnglish() {
 		e.sessions[e.next].Handle(proto.Request{Type: proto.Mode, On: true})
 	}

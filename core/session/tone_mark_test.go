@@ -5,7 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/0c-biggo/0c-ime/core/layout"
 	"github.com/0c-biggo/0c-ime/core/proto"
+	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // #135：沒開中英混打時，注音暫存是空的、單按聲調鍵再按空白，輸出聲調符號（同新酷音：
@@ -270,5 +272,111 @@ func TestLoneToneKeyDownBeforeSpace(t *testing.T) {
 		if snap := s.Handle(proto.Request{Type: proto.Select, Index: 1}); snap.Text() != want {
 			t.Fatalf("倚天選聲調符號：%q", snap.Text())
 		}
+	}
+}
+
+// #321：沒開中英混打時，剛用某個聲調鍵打完一個字、緊接著又按同一個聲調鍵（打太快連按兩下），
+// 第二下不留數字（同 macOS 注音、小麥注音「聲調鍵改前一個字的聲調」遇到同一個聲調時沒有變化）。
+// #135 的聲調符號照舊：第二下緊接空白仍是聲調符號（我ˇ），↓ 第二項是原本的數字。
+func repeatToneSession() *Session {
+	return syllableLiteralSession(word{"好", "ㄏㄠˇ", 3e-3}, word{"對", "ㄉㄨㄟˋ", 3e-3}, word{"嘛", "ㄇㄚˊ", 1e-3},
+		word{"嗎", "ㄇㄚ˙", 3e-3}, word{"個", "ㄍㄜˋ", 2e-3})
+}
+
+func TestRepeatedToneKeyAfterSyllableIsDropped(t *testing.T) {
+	for _, c := range []struct{ syl, key, want string }{
+		{"ㄏㄠˇ", "3", "好"}, {"ㄉㄨㄟˋ", "4", "對"}, {"ㄇㄚˊ", "6", "嘛"}, {"ㄇㄚ˙", "7", "嗎"},
+	} {
+		s := repeatToneSession()
+		typeSyl(s, c.syl)
+		snap := key(s, c.key)
+		if !snap.Handled || snap.Text() != c.want || snap.Commit != "" {
+			t.Fatalf("%s 後連按 %s：第二下不留數字：%+v", c.syl, c.key, snap)
+		}
+		if snap = key(s, proto.KeyEnter); snap.Commit != c.want {
+			t.Fatalf("%s 後連按 %s 再 Enter 提交 %q", c.syl, c.key, snap.Commit)
+		}
+	}
+
+	// 接著打下一個字照常；句中也一樣。
+	s := repeatToneSession()
+	typeSyl(s, "ㄨㄛˇ")
+	typeSyl(s, "ㄏㄠˇ")
+	key(s, "3")
+	if snap := typeSyl(s, "ㄍㄜˋ"); snap.Text() != "我好個" {
+		t.Fatalf("連按後接注音：%q", snap.Text())
+	}
+
+	// 第三下是使用者真的要的數字（照 #135 先以數字留著）。
+	s = repeatToneSession()
+	typeSyl(s, "ㄏㄠˇ")
+	if snap := keys(s, "3", "3"); snap.Text() != "好3" {
+		t.Fatalf("連按後再按一次：%q", snap.Text())
+	}
+	if snap := key(s, proto.KeyEnter); snap.Commit != "好3" {
+		t.Fatalf("提交 %q", snap.Commit)
+	}
+
+	// 不同的聲調鍵不是連按，照舊是數字。
+	s = repeatToneSession()
+	typeSyl(s, "ㄏㄠˇ")
+	if snap := key(s, "4"); snap.Text() != "好4" {
+		t.Fatalf("不同聲調鍵：%q", snap.Text())
+	}
+
+	// 中間隔了別的按鍵就不是連按。
+	s = repeatToneSession()
+	typeSyl(s, "ㄏㄠˇ")
+	keys(s, proto.KeyLeft, proto.KeyRight)
+	if snap := key(s, "3"); snap.Text() != "好3" {
+		t.Fatalf("隔了游標移動：%q", snap.Text())
+	}
+	// 句首的聲調鍵照舊是數字。
+	s = repeatToneSession()
+	if snap := key(s, "3"); snap.Text() != "3" {
+		t.Fatalf("句首聲調鍵：%q", snap.Text())
+	}
+}
+
+func TestRepeatedToneKeyPlusSpaceStillTypesToneMark(t *testing.T) {
+	s := repeatToneSession()
+	typeSyl(s, "ㄏㄠˇ")
+	snap := keys(s, "3", " ")
+	if snap.Text() != "好ˇ" || snap.Candidates != nil {
+		t.Fatalf("連按後接空白仍是聲調符號（#135）：%+v", snap)
+	}
+	key(s, proto.KeyLeft) // 游標在「好」與 ˇ 之間，後方模式選游標後的字
+	items := downItems(key(s, proto.KeyDown))
+	if len(items) < 2 || items[0] != "ˇ" || items[1] != "3" {
+		t.Fatalf("ˇ 上按 ↓ 第二項是原本的數字：%q", items)
+	}
+	s.Handle(proto.Request{Type: proto.Select, Index: 1})
+	if snap = key(s, proto.KeyEnter); snap.Commit != "好3" {
+		t.Fatalf("選回數字後提交 %q", snap.Commit)
+	}
+	assertNoZhuyinLearned(t, s, "ˇ")
+}
+
+func TestRepeatedToneKeyLeavesOtherSetupsAlone(t *testing.T) {
+	// 中英混打：連按的數字與「有3個」（u.33ek4）分不出來，照舊是數字。
+	s := repeatToneSession()
+	s.MixedInput = true
+	typeSyl(s, "ㄏㄠˇ")
+	if snap := key(s, "3"); snap.Text() != "好3" {
+		t.Fatalf("中英混打照舊：%q", snap.Text())
+	}
+	// 倚天排列（混打停用）：聲調鍵 1 2 3 4 一樣。
+	s = etenSession(t)
+	typeKeys(s, layout.ETen.Keys(zhuyin.Syllable("ㄨㄛˇ")))
+	if snap := key(s, "3"); snap.Text() != "我" {
+		t.Fatalf("倚天連按：%q", snap.Text())
+	}
+	// 許氏：聲調鍵也是聲母，連按的第二下是新的音節。
+	s = repeatToneSession()
+	s.SetLayout(layout.Hsu)
+	k := layout.Hsu.Keys(zhuyin.Syllable("ㄏㄠˇ"))
+	typeKeys(s, k)
+	if snap := key(s, k[len(k)-1:]); snap.Text() == "好" {
+		t.Fatalf("許氏的聲調鍵同時是聲母，不吞：%+v", snap)
 	}
 }

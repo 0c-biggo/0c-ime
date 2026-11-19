@@ -313,6 +313,10 @@ func (c Config) Widen(lat input.Lattice, syls []zhuyin.Syllable, from, to int) i
 	out := append(input.Lattice(nil), lat...)
 	for i := max(from, 0); i < min(to, len(lat), len(syls)); i++ {
 		row := append([]input.Hyp(nil), lat[i]...)
+		if syls[i].Abbreviated() {
+			out[i] = row // 簡拼已涵蓋同聲母的所有音節，不再加近音，免得音節格暴增
+			continue
+		}
 		for _, y := range syls[i].Tones() { // 沒打聲調的音節（#150）：每個聲調各自的近音；其他音節只有自己
 			for _, a := range c.Alternatives(y) {
 				if !hasSyl(row, a.Syl) {

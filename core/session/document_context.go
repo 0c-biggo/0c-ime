@@ -80,7 +80,9 @@ func (s *Session) committedTail() string {
 	if g.Partial || g.End != len(s.syls) || s.literals[g.Start] || utf8.RuneCountInString(g.Word) > decode.MaxWordLen {
 		return ""
 	}
-	for _, e := range s.model.Source().Exact(s.syls[g.Start:g.End]) {
+	// 沒打聲調的音節換回詞庫讀音再比（同學習）；換不回來就不當前文。
+	syls, _ := s.resolvedSyllables()
+	for _, e := range s.model.Source().Exact(syls[g.Start:g.End]) {
 		if e.Surface == g.Word {
 			return g.Word
 		}

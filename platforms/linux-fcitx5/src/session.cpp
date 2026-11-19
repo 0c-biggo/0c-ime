@@ -390,7 +390,7 @@ Snapshot Session::parse(const nlohmann::json &reply) {
     s.bell = j.value("bell", false);
     if (j.contains("preedit")) {
         for (const auto &g : j["preedit"]) {
-            s.preedit.push_back({g.value("text", ""), g.value("style", "normal")});
+            s.preedit.push_back({g.value("text", ""), g.value("style", "normal"), g.value("unfinished", false)});
         }
     }
     if (j.contains("cursor")) {

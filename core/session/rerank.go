@@ -65,14 +65,36 @@ func (s *Session) rerankPath() {
 	}
 }
 
+// Rescore 讓外殼在非同步評分器算完之後重排目前的組字，回報是否重排過（呼叫端接著讀 View）。
+// 非同步評分器第一次遇到某段時先回錯誤（「還在算」，rerankSegment 不快取失敗），在背景算完後由外殼呼叫這裡；
+// 重解時 rerankSegment 再問一次評分器，命中外殼自己的快取。
+//
+// 只在 rerankAllowed（不看 allowRerank）時做：有候選開著、有手選鎖、私密、暫停、英文時不做；不動鎖、候選、游標與學習。
+// 神經畫面保留規則：開評分器時簽章不含模型世代，別的欄位的學習不換掉已顯示文字（signature）。
+// 清掉 pathSig 重解會用目前的模型，所以顯示的 path 解出之後模型變過（pathGen != model.Gen）就不重排，
+// 等下一次修改音節時照常採用最新模型與評分。
+func (s *Session) Rescore() bool {
+	// allowRerank 平常只在處理按鍵請求時打開（Handle）；外殼直接呼叫這裡，視同重送上一次按鍵的重排。
+	allow := s.allowRerank
+	s.allowRerank = true
+	defer func() { s.allowRerank = allow }()
+	if !s.rerankAllowed() || s.pathSig == "" || s.pathGen != s.model.Gen {
+		return false
+	}
+	s.pathSig = ""
+	s.refresh()
+	return true
+}
+
 func (s *Session) rerankAllowed() bool {
 	return s.Rerank.Scorer != nil && s.allowRerank && s.comp.Empty() && s.cand == nil && !s.private && !s.paused && !s.english && len(s.locks) == 0
 }
 
-// rerankable：段落長度在模型範圍內；有沒打聲調音節（#150）的段落沒有共用讀音可送，照統計引擎。
+// rerankable：段落長度在模型範圍內，讀音評分器讀得懂（rerank.Options.Readable）：沒打聲調的音節（#150）
+// 只送給接受未知聲調的評分器，簡拼與評分器字表外的基底在本機就照統計引擎，不送出去等它回退。
 func (s *Session) rerankable(start, end int) bool {
 	n := end - start
-	return (n >= 2 && n <= 32 || n == 1 && s.Rerank.TextWeight > 0) && !zhuyin.HasUntoned(s.syls[start:end])
+	return (n >= 2 && n <= 32 || n == 1 && s.Rerank.TextWeight > 0) && s.Rerank.Readable(s.syls[start:end])
 }
 
 // segMemo 記下某段上次跑完時的輸入摘要、提示與套用的 winner 段。摘要相同就重放，不重跑 N-best。
@@ -176,6 +198,8 @@ func (s *Session) segRerankDigest(start, end int, shown, before string) string {
 		end == len(s.syls), s.Opt.Beam, s.Opt.Continue, s.Opt.DocumentContextWeight,
 		s.Rerank.Weight, s.Rerank.Margin, s.Rerank.HintGap, s.Rerank.TextWeight, s.Rerank.TextMargin,
 		s.Fuzzy.Key(), s.Rerank.AllowPartial, start, end)
+	// 手機：沒前文的權重、未知聲調與九宮格讀音（固定讀音會改音節格，音節本身可能不變）。
+	fmt.Fprintf(&b, "|%g|%v|%s", s.Rerank.ContextlessWeight, s.Rerank.UnknownTones, s.nineSignature())
 	return b.String()
 }
 
@@ -195,23 +219,34 @@ func (s *Session) rerankSegmentBody(lat input.Lattice, start, end int, shown, be
 	} // 搜尋契約不一致時不得偷換首選。
 	rows = s.extendShown(lat, start, end, rows)
 	rows = s.expandNeutral(lat, start, end, rows)
+	// 含評分器字表外字元的候選先拿掉，其他候選照常評分；顯示中的路徑本身有這種字時整段照統計引擎。
+	rows, encodable := opt.KeepEncodable(rows)
+	if !encodable {
+		return nil, true
+	}
 	context := ""
 	if opt.ContextRunes > 0 {
 		context = lastRunes(s.neuralContext()+before, min(opt.ContextRunes, rerank.MaxContextRunes))
 	}
 	req := rerank.Request{AllowPartial: opt.AllowPartial, Revision: s.rev + 1, Context: context, Reading: slices.Clone(s.syls[start:end]), Candidates: rows}
-	weight, margin := opt.Weight, opt.Margin
+	req.Reading, req.ToneKnown = rerank.MaskTones(req.Reading)
+	weight, margin := opt.WeightFor(req.Context), opt.Margin
 	if end-start == 1 {
 		req.Mode, weight, margin = rerank.ModeText, opt.TextWeight, opt.TextMargin
 	}
-	if !rerank.Supported(req) {
+	if !opt.Supports(req) {
 		return nil, true
 	}
-	// 排除哪些候選（vetoed）只取決於候選與個人資料，個人資料沒變時沿用快取，不必每鍵重算（#101）。
-	key := rerankKey(req) + vetoInputs(rows)
+	// 排除哪些候選（vetoed）只取決於候選、個人資料與簡拼／九宮格位置的讀音（abbrevVetoKey），個人資料沒變時沿用
+	// 快取，不必每鍵重算（#101）。簡拼位置的檢查要在詞庫裡找每個候選的讀音，快取命中時不再算。
+	key := rerankKey(req) + rerank.ToneKnownKey(req) + vetoInputs(rows) + s.abbrevVetoKey(start, end, rows)
 	entry, cached := s.rerankCache[key]
 	if !cached || entry.gen != s.model.Gen || entry.time != s.model.Store.Time {
-		vetoed := s.vetoRepeats(rows, s.overturnsUser(rows, start, end))
+		abbrevVeto, ok := vetoAbbrev(s, lat, start, end, rows) // 簡拼位置的讀音不准改（rerank_abbrev.go）
+		if !ok {
+			return nil, true
+		}
+		vetoed := mergeVetoes(s.vetoRepeats(rows, s.overturnsUser(rows, start, end)), abbrevVeto)
 		habit := s.overturnsHabit(rows, start, end)
 		if !cached || !slices.Equal(vetoed, entry.vetoed) || !slices.Equal(habit, entry.habit) {
 			// 宿主只能取得複本；即使有錯誤，也不能就地修改候選／手選狀態。
@@ -305,10 +340,11 @@ func (s *Session) extendShown(lat input.Lattice, start, end int, rows []decode.H
 // 原 N-best 根本沒有它。最後音節基底在 NeutralBases 內且不是輕聲時，另以「最後音節改輕聲」取 N-best，
 // 不在原清單的候選扣 NeutralExpand 後附在後面。原首選仍是 rows[0]，覆寫規則不變；
 // 評分器以打出讀音與輕聲讀音分別評分取大（套件宣告 neutral_expand_penalty）。
+// 沒打聲調的末音節不擴充：它的音節格本來就含輕聲。
 func (s *Session) expandNeutral(lat input.Lattice, start, end int, rows []decode.Hypothesis) []decode.Hypothesis {
 	opt := s.Rerank
 	last := s.syls[end-1]
-	if opt.NeutralExpand <= 0 || end-start > 32 || last.ToneOf() == 5 || !opt.NeutralBases[last.Base()] {
+	if opt.NeutralExpand <= 0 || end-start > 32 || last.Untoned() || last.ToneOf() == 5 || !opt.NeutralBases[last.Base()] {
 		return rows
 	}
 	neutral := slices.Clone(lat[start:end])

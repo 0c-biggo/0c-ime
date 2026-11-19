@@ -216,6 +216,23 @@ func preeditAttrs(style string, start, end uint32) []attribute {
 	return []attribute{{attrUnderline, underlineSingle, start, end}}
 }
 
+// preeditMode 是組字送給 IBus 的模式。失焦、重設、切換輸入法時，ibus-daemon、GTK／Qt 的 IBus 模組與 GNOME Shell
+// 在 COMMIT 模式下把整段組字照畫面提交；IBus 沒有 Fcitx5 DontCommit 那種只提交一部分的格式，引擎在 FocusOut 之後
+// 提交又會送到下一個欄位（ibus-daemon 已把 engine 換給別的 context）。組字只剩未打完的注音（核心標 Unfinished，#322）時
+// 改用 CLEAR：失焦只清掉，跟 commit 請求一樣什麼都不送。前面還有組好的字時仍用 COMMIT：組好的字不能因為失焦就不見，
+// 只能連未打完的注音一起送出。
+func preeditMode(segs []proto.Segment) uint32 {
+	if len(segs) == 0 {
+		return preeditCommit
+	}
+	for _, g := range segs {
+		if !g.Unfinished && g.Text != "" {
+			return preeditCommit
+		}
+	}
+	return preeditClear
+}
+
 // preeditAttrList 把組字分段轉成 IBus 的文字屬性（範圍以字元計）。bell 是快照的 bell（#300）：停住的注音（pending）標成紅底。
 func preeditAttrList(segs []proto.Segment, bell bool) []attribute {
 	var attrs []attribute
@@ -449,7 +466,8 @@ func (e *engine) enable() {
 }
 
 // finish 是失焦、重設與停用：ibus-daemon 已依 preeditCommit 把畫面上的組字提交給應用程式，
-// 這裡只讓核心完成同一段組字（學習並清除），不再送出提交，避免重複。
+// 這裡只讓核心完成同一段組字（學習並清除），不再送出提交，避免重複。只有未打完的注音時組字是 CLEAR 模式（preeditMode），
+// 應用程式什麼都沒收到，commit 請求也什麼都不送（#322）。
 func (e *engine) finish(reason string) {
 	e.shift.reset()
 	e.left.reset()
@@ -532,7 +550,7 @@ func (e *engine) render(snap snapshot) {
 		e.emit("CommitText", newText(snap.Commit))
 	}
 	if downgraded || text != e.preedit || cursor != e.preCursor || !slices.Equal(snap.Preedit, e.preSegs) || snap.Bell != e.preBell {
-		e.emit("UpdatePreeditText", newText(text, preeditAttrList(snap.Preedit, snap.Bell)...), cursor, text != "", uint32(preeditCommit))
+		e.emit("UpdatePreeditText", newText(text, preeditAttrList(snap.Preedit, snap.Bell)...), cursor, text != "", preeditMode(snap.Preedit))
 		e.preedit, e.preCursor, e.preSegs, e.preBell = text, cursor, slices.Clone(snap.Preedit), snap.Bell
 	}
 	// 通知（例如候選窗的 Shift＋Delete 之後「已從詞庫刪除：…」）是使用者剛做的動作的回饋，只出現在這一次快照，

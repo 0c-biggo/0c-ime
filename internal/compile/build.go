@@ -24,6 +24,9 @@ type Options struct {
 	PolyphoneCommon  bool    // L3：破音字可用該字的主讀音輸入
 	MaxVariants      int     // 每個詞由規則產生的讀音上限
 	UnigramAlpha     float64 // 詞頻平滑：每個詞加上的虛擬次數（以各來源正規化後的比例計）
+	// AttestedMass 是單字可考讀音沒有詞例佐證時的分數（單位同 -unigram 混合後的詞頻）：高頻字的可考讀音
+	// 依詞庫中「這個字唸這個音」的比例估計 P(r|w)，等級值為上限（#320，見 attestedPRW）。0 為舊公式。
+	AttestedMass float64
 
 	// Unigram 是詞頻來源的混合權重，如 "mcbopomofo=1,chewing-v4=1"。各來源先各自正規化成
 	// 機率分布，再依權重線性混合。空字串表示所有來源等權重。
@@ -38,6 +41,9 @@ type Options struct {
 	// BigramMax 是 bigram 的保留上限（0 表示不剪枝）。依「保留這一筆對模型的貢獻」排序：
 	// P(前詞)·P(詞|前詞)·log(有這筆時的機率 ÷ 沒有時的機率)，即對內插模型的熵剪枝。
 	BigramMax int
+	// CuratedBigram 是人工 bigram 檔（如 data/lm/curated-bigram.tsv，格式見檔頭）：各來源線性混合之後、
+	// 剪枝之前與混合值取最大值，而且不剪枝。只當逐案補丁；空字串為不用（manifest 也不記）。
+	CuratedBigram string `json:",omitempty"`
 	// PruneMu 是剪枝時假設的執行期內插權重 μ（見 personal.Params.Mu）。
 	PruneMu float64
 	// PruneBy 是剪枝的排序標準："entropy"（預設，見 pruneBigrams）、"joint"（只看 P(l,w)）、
@@ -62,7 +68,7 @@ type Options struct {
 }
 
 func DefaultOptions() Options {
-	return Options{InheritVariants: true, YiBuSandhi: true, NeutralTone: true, PolyphoneCommon: true, MaxVariants: 4, UnigramAlpha: 0.5, BMPOnly: true}
+	return Options{InheritVariants: true, YiBuSandhi: true, NeutralTone: true, PolyphoneCommon: true, MaxVariants: 4, UnigramAlpha: 0.5, AttestedMass: 3e-6, BMPOnly: true}
 }
 
 // Result 是編譯結果。
@@ -143,6 +149,12 @@ func Build(d *Data, o Options) *Result {
 		return false
 	}
 
+	// 單字可考讀音的 P(r|w) 依詞頻估計（#320）；詞頻權重有錯時這裡略過，下面語言模型一節會報錯。
+	var attested map[string]map[zhuyin.Syllable]float64
+	if w, err := parseWeights(o.Unigram, d.Counts); err == nil {
+		attested = attestedPRW(d, keep, rareChars(d, o.Rare, keep), unigramFreq(w, d.Counts), o.AttestedMass)
+	}
+
 	// 單字表：同一字的讀音彙整，供規則使用
 	chars := map[string][]CharReading{}
 	for _, c := range d.Chars {
@@ -151,7 +163,11 @@ func Build(d *Data, o Options) *Result {
 		}
 		checkOrigins("chars:"+c.Char, c.Origins)
 		chars[c.Char] = append(chars[c.Char], c)
-		add(c.Char, []zhuyin.Syllable{c.Reading}, c.Grade, c.Grade.PRW(), c.Origins, false)
+		prw := c.Grade.PRW()
+		if p, ok := attested[c.Char][c.Reading]; ok {
+			prw = p
+		}
+		add(c.Char, []zhuyin.Syllable{c.Reading}, c.Grade, prw, c.Origins, false)
 	}
 	primaryOf := map[string]zhuyin.Syllable{}
 	for ch, rs := range chars {
@@ -367,6 +383,10 @@ func Build(d *Data, o Options) *Result {
 		}
 	}
 	var bi map[[2]string]float64
+	if o.CuratedBigram != "" && o.Bigram == "" {
+		fail("lm", "人工 bigram 要搭配 -bigram 來源")
+		return res
+	}
 	if o.Bigram != "" {
 		srcs := map[string]map[string]float64{}
 		for k := range d.Bigrams {
@@ -385,9 +405,23 @@ func Build(d *Data, o Options) *Result {
 				return res
 			}
 		}
+		var keep map[[2]string]bool
+		if o.CuratedBigram != "" {
+			curated, err := readCuratedBigrams(o.CuratedBigram, words)
+			if err != nil {
+				fail("lm", "人工 bigram：%v", err)
+				return res
+			}
+			keep = make(map[[2]string]bool, len(curated))
+			for k, p := range curated {
+				bi[k] = max(bi[k], p)
+				keep[k] = true
+			}
+			res.Report.CuratedBigrams = len(curated)
+		}
 		if o.BigramMax > 0 && len(bi) > o.BigramMax {
 			res.Report.BigramsBeforePrune = len(bi)
-			bi = pruneBigrams(bi, uni, o.BigramMax, o.PruneMu, o.PruneBy)
+			bi = pruneBigrams(bi, uni, o.BigramMax, o.PruneMu, o.PruneBy, keep)
 		}
 		res.Report.Bigrams = len(bi)
 		for k := range bi {
@@ -592,6 +626,7 @@ type Report struct {
 	Inconsistent                            []string
 	MaxSingleCandidates                     int
 	Bigrams, BigramsBeforePrune             int
+	CuratedBigrams                          int
 	FallbackWords                           int
 	MaxSingleReading                        string
 	Corrections                             int
@@ -628,6 +663,9 @@ func (r Report) String() string {
 	fmt.Fprintf(&b, "自動修正讀音：%d\nbigram：%d", r.Corrections, r.Bigrams)
 	if r.BigramsBeforePrune > 0 {
 		fmt.Fprintf(&b, "（剪枝前 %d）", r.BigramsBeforePrune)
+	}
+	if r.CuratedBigrams > 0 {
+		fmt.Fprintf(&b, "；人工 bigram %d 筆（取最大值、不剪枝）", r.CuratedBigrams)
 	}
 	b.WriteString("\n")
 	var rules []string
@@ -727,12 +765,51 @@ func readBigrams(p string, words map[string]bool, weight float64, out map[[2]str
 	return sc.Err()
 }
 
-// pruneBigrams 保留對內插模型貢獻最大的 n 筆 bigram。
+// readCuratedBigrams 讀取人工 bigram 檔「前詞<TAB>詞<TAB>P(詞|前詞)<TAB>原因」。前詞可以是句首 "<s>"。
+// 和 readBigrams 不同，詞不在詞庫、機率不合法、重複的配對、沒寫原因都是錯誤，不默默略過。
+func readCuratedBigrams(p string, words map[string]bool) (map[[2]string]float64, error) {
+	f, err := os.Open(p)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	out := map[[2]string]float64{}
+	sc := bufio.NewScanner(f)
+	for n := 1; sc.Scan(); n++ {
+		l := sc.Text()
+		if l == "" || l[0] == '#' {
+			continue
+		}
+		c := strings.Split(l, "\t")
+		if len(c) != 4 || strings.TrimSpace(c[3]) == "" {
+			return nil, fmt.Errorf("%s:%d：要四欄（前詞、詞、機率、原因）", p, n)
+		}
+		a, b := c[0], c[1]
+		if !(words[a] || a == lm.BOS) {
+			return nil, fmt.Errorf("%s:%d：前詞 %q 不在詞庫", p, n, a)
+		}
+		if !words[b] {
+			return nil, fmt.Errorf("%s:%d：詞 %q 不在詞庫", p, n, b)
+		}
+		x, err := strconv.ParseFloat(c[2], 64)
+		if err != nil || !(x > 0 && x <= 1) {
+			return nil, fmt.Errorf("%s:%d：機率 %q 不合法", p, n, c[2])
+		}
+		k := [2]string{a, b}
+		if _, dup := out[k]; dup {
+			return nil, fmt.Errorf("%s:%d：%s→%s 重複", p, n, a, b)
+		}
+		out[k] = x
+	}
+	return out, sc.Err()
+}
+
+// pruneBigrams 保留對內插模型貢獻最大的 n 筆 bigram；keep 裡的配對一定保留（算在 n 筆內）。
 //
 // 執行期的系統機率是 μ·P_bi(w|l) + (1−μ)·P_uni(w)。拿掉一筆 bigram 後它退回 (1−μ)·P_uni(w)，
 // 所以這筆的貢獻以 P(l,w)·log(1 + μ·P_bi/((1−μ)·P_uni(w))) 衡量，其中 P(l,w) ≈ P_uni(l)·P_bi(w|l)。
 // 句首 <s> 沒有 unigram，以最常見的詞的機率代替（句首的 bigram 很少，影響不大）。
-func pruneBigrams(bi map[[2]string]float64, uni map[string]float64, n int, mu float64, by string) map[[2]string]float64 {
+func pruneBigrams(bi map[[2]string]float64, uni map[string]float64, n int, mu float64, by string, keep map[[2]string]bool) map[[2]string]float64 {
 	if mu <= 0 || mu >= 1 {
 		mu = 0.7
 	}
@@ -746,6 +823,9 @@ func pruneBigrams(bi map[[2]string]float64, uni map[string]float64, n int, mu fl
 	}
 	all := make([]scored, 0, len(bi))
 	for k, p := range bi {
+		if keep[k] {
+			continue
+		}
 		pl := uni[k[0]]
 		if k[0] == lm.BOS {
 			pl = maxUni
@@ -768,7 +848,10 @@ func pruneBigrams(bi map[[2]string]float64, uni map[string]float64, n int, mu fl
 		return all[i].k[0]+"\t"+all[i].k[1] < all[j].k[0]+"\t"+all[j].k[1]
 	})
 	out := make(map[[2]string]float64, n)
-	for _, x := range all[:n] {
+	for k := range keep {
+		out[k] = bi[k]
+	}
+	for _, x := range all[:max(0, min(len(all), n-len(out)))] {
 		out[x.k] = bi[x.k]
 	}
 	return out

@@ -36,6 +36,18 @@ func TestOpenSessionCarriesFuzzyConfig(t *testing.T) {
 	}
 }
 
+// 宿主設定的尾端前綴快取上限（#307，手機設 512）交給之後開的每個 session；沒設時照預設。
+func TestOpenSessionCarriesPrefixCacheKeys(t *testing.T) {
+	e := testEngine()
+	if got := e.Session(e.OpenSession()).Opt.PrefixCacheKeys; got != 0 {
+		t.Fatalf("沒設時應照預設（0）：%d", got)
+	}
+	e.PrefixCacheKeys = 512
+	if got := e.Session(e.OpenSession()).Opt.PrefixCacheKeys; got != 512 {
+		t.Fatalf("session 沒有帶到快取上限：%d", got)
+	}
+}
+
 // 使用者關閉「空白鍵選字」時，之後開的每個 session 都照設定；預設空白選字。
 func TestOpenSessionCarriesSpaceSelection(t *testing.T) {
 	e := testEngine()

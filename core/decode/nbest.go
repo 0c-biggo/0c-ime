@@ -147,23 +147,32 @@ func (k repeatArc) mayCap(segs []Seg, at int, w string) bool {
 func (d *Decoder) wordArcs(lat input.Lattice, at int, locks map[int]Lock) []arc {
 	var arcs []arc
 	var pooled map[int][]arc // 經過沒打聲調位置的弧（#150），依終點分組，最後各留前 maxUntonedArcs 個
+	var abbrev map[int][]arc // 經過簡拼位置的弧，各留前 maxAbbreviatedArcs 個
 	d.spans(lat, at, func(reading []zhuyin.Syllable, cost float64) {
 		end := at + len(reading)
 		pool := untonedSpan(lat, at, end) && !lockTouches(locks, at, end)
+		short := pool && abbreviatedSpan(lat, at, end)
 		for _, e := range d.Lex.Exact(reading) {
 			if allowed(locks, at, end, e.Surface) {
-				if pool {
+				switch {
+				case short:
+					if abbrev == nil {
+						abbrev = map[int][]arc{}
+					}
+					abbrev[end] = append(abbrev[end], arc{end, e, cost})
+				case pool:
 					if pooled == nil {
 						pooled = map[int][]arc{}
 					}
 					pooled[end] = append(pooled[end], arc{end, e, cost})
-				} else {
+				default:
 					arcs = append(arcs, arc{end, e, cost})
 				}
 			}
 		}
 	})
-	return append(arcs, d.topUntonedArcs(pooled)...)
+	arcs = append(arcs, d.topUntonedArcs(pooled, maxUntonedArcs, false)...)
+	return append(arcs, d.topUntonedArcs(abbrev, maxAbbreviatedArcs, true)...)
 }
 
 // NBest 與 Best 共用弧分數、前綴彙總及詞界保護。供離線評測與明確啟用的有界神經重排；預設搜尋不變。

@@ -107,6 +107,7 @@ func (m *Model) resolveCorrections(syls []zhuyin.Syllable, start, end int, word 
 				continue
 			}
 			u := old.Usage.at(m.Store.Time)
+			note(m.recording().corrections, m.Store.Corrections, k)
 			switch {
 			case force:
 				delete(m.Store.Corrections, k)
@@ -162,6 +163,7 @@ func (m *Model) learnCorrections(c Commit) {
 			continue
 		}
 		k := correctionKey(x.Reading, x.Left, x.Right)
+		note(m.recording().corrections, m.Store.Corrections, k)
 		old := m.Store.Corrections[k]
 		if old.Word == x.Word {
 			x.Usage = old.Usage
@@ -186,6 +188,7 @@ func (m *Model) learnCorrections(c Commit) {
 			return keys[i] < keys[j]
 		})
 		for _, k := range keys[:len(keys)-maxCorrections] {
+			note(m.recording().corrections, m.Store.Corrections, k)
 			delete(m.Store.Corrections, k)
 		}
 	}

@@ -1,24 +1,24 @@
 {
-  "dictionary_manifest_sha256": "4e4c4cdf7681b48de2004927745c2adc03f53b0c7b776e9258c39a7f5b0f4075",
+  "dictionary_manifest_sha256": "f2fa260f9c48f9c8f9371c63b4521105ba488f462bd06e13be42543d067177d1",
   "models_lock_sha256": "84f5195065b5b4e3124d2af0e09c874b08a0be9eec0db354f61f7e3647adfdb7",
   "packages": {
     "punct": {
       "manifest.json": {
-        "sha256": "3b3d77b7ddb4473fa736f8607b8f2cd9fb6aeec280392bd767fddec4771cb709",
+        "sha256": "ec2248dc6169457ad190a87c02717215ebc093bd1fff4c10d594da33700a630d",
         "size": 556
       },
       "vocab.json": {
-        "sha256": "b52cc62a989f30a5c08e85985c6d5bcc84e8d987289cc5d56ffcd0ff934fd7b3",
+        "sha256": "0beb1b377ce87e8449409903a6df81270291c2ff5706e51c98b90d918b82edd3",
         "size": 312708
       }
     },
     "select": {
       "manifest.json": {
-        "sha256": "abe80086968926c983d93c1c876a4ad9bb857e2efd208a4ace570a5a8fabf4fc",
+        "sha256": "7236647c74734c334cf726194a637b71d1422ae195ea60fa042fcde5a7552481",
         "size": 1165
       },
       "vocab.json": {
-        "sha256": "b52cc62a989f30a5c08e85985c6d5bcc84e8d987289cc5d56ffcd0ff934fd7b3",
+        "sha256": "0beb1b377ce87e8449409903a6df81270291c2ff5706e51c98b90d918b82edd3",
         "size": 312708
       }
     }

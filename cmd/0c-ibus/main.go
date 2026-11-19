@@ -299,6 +299,9 @@ func (s *service) dispatch(msg *dbus.Message, path dbus.ObjectPath, iface, membe
 			if s.focused == e {
 				s.focused = nil
 			}
+			if s.menuSentTo == e {
+				s.forgetMenu()
+			}
 			return nil, nil
 		}
 	case ifaceProperties:

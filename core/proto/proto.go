@@ -20,9 +20,14 @@ const (
 	Select     = "select"     // Index：候選的 ID
 	Close      = "close"      // 關閉候選，保留組字
 	Accept     = "accept"     // 接受 Tab 補全
-	Commit     = "commit"     //
+	Complete   = "complete"   // Word：接受補全（觸控：候選列上的補全詞）；未打完的注音先不打聲調就完成，補全仍是 Word 才接受
+	Commit     = "commit"     // 外殼替使用者結束組字（失焦、換輸入法等）：送出已組好的字，未打完的注音不送（#322）；帶 Word（觸控）時送出外殼畫面上的這句，解出來不同時照這串字重新斷詞，對不齊就不送（Handled false）
 	Cancel     = "cancel"     // 放棄組字，不學習
 	Forget     = "forget"     // Word：撤銷與該詞有關的學習
+	Fix        = "fix"        // To、Length、Word：把從 To 起 Length 個音節直接固定成 Word，不必先開候選（觸控從句首清單點詞）
+	Predict    = "predict"    // 沒在組字時，列出已確認前文之後最可能接的詞（觸控的聯想詞）；以 select 送出
+	Unlearn    = "unlearn"    // Word：撤銷與該詞有關的學習，不留 tombstone，之後照常可以再學（觸控：長按學過的候選）
+	UndoLearn  = "undo_learn" // 還原上一次提交（或點聯想詞）學到的內容，不留 tombstone（觸控：送出後立刻退格）；只能還原一次
 	Pause      = "pause"      // On：暫停／恢復學習
 	Mode       = "mode"       // On：設定中英模式（true 為英文）；外殼重連後用它還原模式
 	Toggle     = "toggle"     // 中英模式切換（單按 Shift）；Restore 見 Request
@@ -37,6 +42,11 @@ const (
 	// output_simplified_live=true 時送；引擎不支援即時切換時回 handled=false、什麼都不改。
 	// 這是全域設定，不屬於組字：外殼不把它記進斷線重播的紀錄。
 	OutputSimplified = "output_simplified"
+	// NineReading（注音九宮格，觸控）：To、Word。把一個九宮格音節固定成讀音 Word（快照 nine_readings.readings 的一項），
+	// 移除其他讀音（左欄「注音選擇」）。To 是快照 nine_readings.at：pending 時（To 等於游標、還有沒完成的鍵）固定的是那串鍵
+	// 的拼法，之後照常按聲調鍵完成；否則是第 To 個已完成的音節，蓋到它的手選解除、重新解碼。Word 不是那個位置的讀音時
+	// 什麼都不改，Notices 帶「沒有這個讀音」。
+	NineReading = "nine_reading"
 )
 
 // 輸入模式。
@@ -134,6 +144,22 @@ type Request struct {
 	// Restore 只用於 Toggle：外殼確認上一次切換之後沒有任何按鍵或其他操作（防誤觸的立即切回），
 	// 核心才把上次切到英文時清掉的未打完注音放回。舊外殼不送，切回時不還原。
 	Restore bool `json:"restore,omitempty"`
+	// Near（觸控鍵盤，只用於 Symbol）：這次點按也可能是想按的鄰鍵，Cost 是比打到的鍵多出的負對數機率，
+	// 由外殼依觸控位置的空間模型算出。核心在音節格放入換成鄰鍵的讀音，
+	// 打的鍵接不上音節時也可改用鄰鍵；沒有 Near 時行為與沒有此功能時相同。
+	Near []NearKey `json:"near,omitempty"`
+	// Group（注音九宮格，只用於 Symbol）：這顆鍵代表的一組注音，例如 "ㄇㄋㄜㄝ"（三星式分組）；這時 Symbol 不看、Near 不用。
+	// 鍵先存著，按聲調鍵（Group 全是聲調符號，例如 "ˊˇˋ˙"：音節結束、聲調未指定）、空白（Symbol "ˉ"，一聲）
+	// 或指定聲調（Symbol 是單一聲調符號）時，核心把每顆鍵各取一個注音組成合法音節，全部放進音節格由解碼依前後文挑。
+	// 有沒完成的九宮格鍵時，不帶 Group 的單一注音（長按選的）當成只有那個注音的一顆鍵。
+	// 沒有 Group（也沒有沒完成的九宮格鍵）時行為與沒有此功能時相同。
+	Group string `json:"group,omitempty"`
+}
+
+// NearKey 是一次點按的鄰鍵假設。
+type NearKey struct {
+	Symbol string  `json:"symbol"`
+	Cost   float64 `json:"cost"`
 }
 
 // 組字區分段的樣式。
@@ -152,6 +178,11 @@ const (
 type Segment struct {
 	Text  string `json:"text"`
 	Style string `json:"style"`
+	// Unfinished 標出外殼替使用者結束組字（commit 請求：失焦、切到別的輸入法）時不照畫面送出的那段：
+	// 未打完的注音（含中英混打顯示成注音的暫存按鍵）會丟掉，聲調選填／九宮格已是完整音節的會換成解碼的字（#322）。
+	// 由應用程式或框架自己把畫面上的組字送進文件的平台（Fcitx5 的用戶端組字、IBus 的 COMMIT 模式）
+	// 靠它不把這段帶進文件。同樣是 pending 樣式、照畫面送出的保底注音與英文暫存按鍵不標。舊核心沒有這一項。
+	Unfinished bool `json:"unfinished,omitempty"`
 }
 
 // CursorPos 同時以兩種單位給出游標在組字區文字中的位置，外殼不自行換算。
@@ -177,6 +208,9 @@ const (
 	CandidateCommon   = "common"
 	CandidateRelated  = "related"
 	CandidatePersonal = "personal"
+	// CandidateCorrected：這個候選的讀音是把某個按鍵換成鄰鍵才得到的（觸控的相鄰鍵容錯）。外殼把它排在
+	// 打的音本身的候選後面，不當成一般候選的長短順序。
+	CandidateCorrected = "corrected"
 )
 
 type CandidateList struct {
@@ -247,6 +281,18 @@ type Snapshot struct {
 	// 沒有統一的提示音，把這個快照裡 pending 的那一段畫成醒目樣式。只出現在擋下按鍵的那一次請求的快照，下一個快照
 	// 就沒有。舊外殼不認得這一項時不提示，聲調照樣被擋（注音停住，再按一次同一個聲調照舊收下）。
 	Bell bool `json:"bell,omitempty"`
+	// NineReadings（注音九宮格）：左欄「注音選擇」要畫的讀音；沒有九宮格的鍵或音節時省略。
+	NineReadings *NineReadings `json:"nine_readings,omitempty"`
+}
+
+// NineReadings 是一個九宮格音節可以選的讀音（注音，沒打聲調的不帶聲調、一聲不標）。
+// 有還沒完成的九宮格鍵時是那串鍵目前可能的拼法（Pending，音節的開頭），At 是游標（那個音節會插入的位置）；
+// 否則是游標前那個有多個讀音的九宮格音節，At 是它的位置。外殼點了其中一項送 nine_reading（To 為 At、Word 為那一項）。
+type NineReadings struct {
+	At       int      `json:"at"`
+	Pending  bool     `json:"pending,omitempty"`
+	Readings []string `json:"readings"` // 依常用程度；Pending 時第一項是組字區畫的那個
+	Current  int      `json:"current"`  // 組字目前用的那一項（Readings 的索引）；Pending 時一律 0
 }
 
 // SuggestedText 回傳按 Tab 接受後預覽的完整組字；無建議或範圍不合法時為空。

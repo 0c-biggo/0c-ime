@@ -138,6 +138,49 @@ unsafe fn composition_caret(ec: u32, comp: &ITfComposition, cursor: usize) -> wi
     Ok(caret)
 }
 
+/// 範圍的內容是否正好是 `text`。緩衝區多留一格，範圍裡還有其他字就讀得出來、判為不符。
+unsafe fn holds(ec: u32, range: &ITfRange, text: &[u16]) -> windows_core::Result<bool> {
+    let mut buf = vec![0u16; text.len() + 1];
+    let mut fetched = 0u32;
+    range.GetText(ec, 0, &mut buf, &mut fetched)?;
+    Ok(buf.get(..fetched as usize) == Some(text))
+}
+
+/// 宿主終止組字時（OnCompositionTerminated）組字範圍處理到哪裡（#322）；只記步驟與 HRESULT，不記文字。
+#[derive(Debug, PartialEq)]
+pub(crate) enum Settled {
+    /// 範圍裡已經是要留下的文字（例如只有組好的字），沒有改動文件。
+    Kept,
+    /// 範圍改成了要留下的文字（拿掉未打完的注音）。
+    Rewritten,
+    /// 改寫失敗：文件裡仍是原本的組字。
+    Failed(HRESULT),
+}
+
+/// 宿主終止組字時（#322），用 OnCompositionTerminated 給的寫入 cookie 把組字範圍改成要留在文件裡的文字 `keep`，
+/// 改了就清掉組字的顯示屬性（同 Apply::end）。游標不動：宿主可能正把插入點移到使用者點的位置。
+/// 呼叫端先確認範圍裡還是外殼最後顯示的組字（`shows`）。
+pub(crate) unsafe fn settle_terminated(ec: u32, range: &ITfRange, keep: &[u16]) -> Settled {
+    if holds(ec, range, keep).unwrap_or(false) {
+        return Settled::Kept;
+    }
+    if let Err(e) = range.SetText(ec, 0, if keep.is_empty() { no_text() } else { keep }) {
+        // 寫入後才回報失敗的宿主（#88）：讀回確認。
+        if !holds(ec, range, keep).unwrap_or(false) {
+            return Settled::Failed(e.code());
+        }
+    }
+    if let Ok(prop) = range.GetContext().and_then(|ctx| ctx.GetProperty(&GUID_PROP_ATTRIBUTE)) {
+        let _ = prop.Clear(ec, range);
+    }
+    Settled::Rewritten
+}
+
+/// 組字範圍裡是否還是外殼最後顯示的組字（#322：宿主或別的路徑改過就不碰）。
+pub(crate) unsafe fn shows(ec: u32, range: &ITfRange, shown: &[u16]) -> bool {
+    holds(ec, range, shown).unwrap_or(false)
+}
+
 /// 目前選取的插入點（空組字也能開 Emoji 選單，這時沒有組字範圍）。
 unsafe fn selection_caret(ctx: &ITfContext, ec: u32) -> windows_core::Result<ITfRange> {
     let mut selected = [TF_SELECTION::default()];
@@ -355,12 +398,8 @@ impl Apply {
     }
 
     /// 組字範圍的內容是否正好是提交文字（SetText 回報失敗時確認宿主到底寫了沒）。
-    /// 緩衝區多留一格，範圍裡還有其他字就讀得出來、判為不符。
     unsafe fn holds_commit(&self, ec: u32, range: &ITfRange) -> windows_core::Result<bool> {
-        let mut buf = vec![0u16; self.commit.len() + 1];
-        let mut fetched = 0u32;
-        range.GetText(ec, 0, &mut buf, &mut fetched)?;
-        Ok(buf.get(..fetched as usize) == Some(&self.commit[..]))
+        holds(ec, range, &self.commit)
     }
 
     unsafe fn end(&self, ec: u32, comp: &ITfComposition) -> windows_core::Result<()> {
@@ -601,6 +640,14 @@ pub(crate) mod tests {
             text.splice(s..e, new.iter().copied());
             span.end.set(s + new.len());
         }
+        /// 外殼交給宿主寫入文字的次數（InsertTextAtSelection 與 SetText）。
+        pub(crate) fn text_writes(&self) -> usize {
+            self.text_args.borrow().len()
+        }
+        /// 下一次 SetText 沒寫入就回報失敗（#322：宿主終止組字時不讓外殼改寫範圍）。
+        pub(crate) fn drop_next_set_text(&self) {
+            self.fail_set_text.set(Some(SetTextFailure::Dropped));
+        }
         /// 結束組字、文字留在文件裡成為已提交（系統相容層替程式完成組字，#66）。
         pub(crate) fn end_composition(&self) {
             *self.live.borrow_mut() = None;
@@ -658,6 +705,13 @@ pub(crate) mod tests {
             let (s, e) = (self.span.start.get(), self.span.end.get());
             self.doc.text.borrow_mut().splice(s..e, new.iter().copied());
             self.span.end.set(s + new.len());
+            // 插入點跟著文字移動（真的文字儲存也是）：在改寫範圍之後就平移，在範圍裡就落到新文字的結尾。
+            let caret = self.doc.caret.get();
+            if caret >= e {
+                self.doc.caret.set(caret - (e - s) + new.len());
+            } else if caret > s {
+                self.doc.caret.set(s + new.len());
+            }
             match failure {
                 Some(SetTextFailure::Written) => Err(E_FAIL.into()),
                 _ => Ok(()),

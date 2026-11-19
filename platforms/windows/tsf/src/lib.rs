@@ -16,6 +16,7 @@ use windows_core::{ComObject, Interface, BOOL, GUID, HRESULT};
 
 mod candidate;
 mod caret;
+mod click;
 mod context;
 mod cuas;
 mod displayattr;

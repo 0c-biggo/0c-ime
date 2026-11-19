@@ -273,6 +273,7 @@ func (s *Session) forgetCandidate() {
 		s.notices = append(s.notices, "已從詞庫刪除："+word+"（可在設定程式復原）")
 	case s.model.Learned(word):
 		s.model.Forget(word)
+		s.lastLearn = nil // 跟 Forget 請求一樣：之前的復原複本不能讓忘掉的詞回來
 		s.forgot = true
 		s.notices = append(s.notices, "不再推薦："+word)
 	default:

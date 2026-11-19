@@ -238,9 +238,13 @@ func TestNextPreeditAfterCommitUsesCommitMode(t *testing.T) {
 	e.processKey(keyReturn, 0, 0)
 	rec.take()
 	typeKeys(e, "ji3")
+	// 打到一半的 ㄨ、ㄨㄛ 只有未打完的注音，是 CLEAR（#322）；組成「我」之後要回到 COMMIT，失焦才會送出。
 	for _, s := range rec.take() {
-		if s.name == "UpdatePreeditText" && s.args[3].(uint32) != preeditCommit {
-			t.Fatalf("提交之後的新組字模式 = %v，應回到 COMMIT", s.args[3])
+		if s.name != "UpdatePreeditText" {
+			continue
+		}
+		if text := variantText(t, s.args[0]); (text == "我") != (s.args[3].(uint32) == preeditCommit) {
+			t.Fatalf("提交之後的新組字 %q 模式 = %v，組好的字應回到 COMMIT、未打完的注音是 CLEAR", text, s.args[3])
 		}
 	}
 }
@@ -258,6 +262,64 @@ func TestFocusOutDoesNotCommitAgain(t *testing.T) {
 	}
 	if e.preedit != "" || len(e.session.log) != 0 {
 		t.Fatalf("失焦後仍有組字 %q／%d", e.preedit, len(e.session.log))
+	}
+}
+
+// lastPreeditMode 回傳最後一次 UpdatePreeditText 的文字與模式；沒有重送時 ok=false。
+func lastPreeditMode(t *testing.T, sig []recorded) (text string, mode uint32, ok bool) {
+	t.Helper()
+	for _, s := range sig {
+		if s.name == "UpdatePreeditText" {
+			text, mode, ok = variantText(t, s.args[0]), s.args[3].(uint32), true
+		}
+	}
+	return text, mode, ok
+}
+
+// #322：失焦、切換輸入法時 ibus-daemon／GTK／GNOME Shell 照畫面提交 COMMIT 模式的組字。組字只剩未打完的注音時
+// 用 CLEAR，失焦後應用程式什麼都沒收到，跟核心 commit 請求（不送未打完的注音）一致；Enter 照舊原樣送出。
+func TestUnfinishedOnlyPreeditIsNotCommittedOnFocusOut(t *testing.T) {
+	e, rec, sock := newTestEngine(t)
+	defer startServer(t, sock, toyEngine(t))()
+	typeKeys(e, "g")
+	if text, mode, ok := lastPreeditMode(t, rec.take()); !ok || text != "ㄕ" || mode != preeditClear {
+		t.Fatalf("只有未打完的注音時組字應是 CLEAR：%q %v %v", text, mode, ok)
+	}
+	e.finish("focus_out")
+	for _, s := range rec.take() {
+		if s.name == "CommitText" {
+			t.Fatalf("失焦不得送出未打完的注音：%+v", s)
+		}
+	}
+	if e.preedit != "" || len(e.session.log) != 0 {
+		t.Fatalf("失焦後仍有組字 %q／%d", e.preedit, len(e.session.log))
+	}
+
+	// 打完成字後回到 COMMIT：失焦照畫面送出組好的字。
+	typeKeys(e, "ji3")
+	if text, mode, _ := lastPreeditMode(t, rec.take()); text != "我" || mode != preeditCommit {
+		t.Fatalf("組好的字應是 COMMIT：%q %v", text, mode)
+	}
+	// 組好的字之後的未打完注音：IBus 不能只提交一部分，寧可連注音一起送出也不丟掉組好的字（仍是 COMMIT）。
+	typeKeys(e, "g")
+	if text, mode, _ := lastPreeditMode(t, rec.take()); text != "我ㄕ" || mode != preeditCommit {
+		t.Fatalf("前面有組好的字時仍是 COMMIT：%q %v", text, mode)
+	}
+	e.finish("focus_out")
+	rec.take()
+
+	// Enter 照畫面原樣送出（要打注音符號的人靠它）；送出前照舊先降成 CLEAR，送完清空回到 COMMIT。
+	typeKeys(e, "g")
+	rec.take()
+	e.processKey(keyReturn, 0, 0)
+	var committed []string
+	for _, s := range rec.take() {
+		if s.name == "CommitText" {
+			committed = append(committed, variantText(t, s.args[0]))
+		}
+	}
+	if !slices.Equal(committed, []string{"ㄕ"}) || e.preedit != "" {
+		t.Fatalf("Enter 應原樣送出未打完的注音：%v／%q", committed, e.preedit)
 	}
 }
 
@@ -1160,5 +1222,14 @@ func TestRefreshMenuSkipsUnchangedProperties(t *testing.T) {
 	svc.refreshMenu()
 	if keys, _ := vocabUpdate(t, rec.take()); keys != "settings,vocab,simplified,update" {
 		t.Fatalf("重新啟用後要重送：%s", keys)
+	}
+	// engine 被 Destroy 後不再留著它的參考。
+	svc.order = newOrderer()
+	svc.engines[e.path] = e
+	if _, err := svc.dispatch(&dbus.Message{}, e.path, ifaceService, "Destroy"); err != nil {
+		t.Fatal(err)
+	}
+	if svc.menuSentTo != nil {
+		t.Fatal("Destroy 後 menuSentTo 應清掉")
 	}
 }
