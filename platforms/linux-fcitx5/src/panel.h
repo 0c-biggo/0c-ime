@@ -30,12 +30,15 @@ inline PreeditStyle preeditStyle(const std::string &style) {
     return out;
 }
 
-// 組字的一段。display 為 true 的是只顯示、不屬於組字文字的記號（Fcitx 的 DontCommit：失焦時 Fcitx 提交
-// 組字也不會帶出去）。
+// 組字的一段。display 為 true 的是只顯示、不屬於組字文字的記號；unfinished 是未打完的注音（#322）。
+// 兩者都標 Fcitx 的 DontCommit（dontCommit()）：失焦時 Fcitx 或應用程式自己照畫面提交組字，也不會把它們帶進文件，
+// 送出的文字與核心 commit 請求送出的一樣。
 struct PreeditRun {
     std::string text;
     PreeditStyle style;
     bool display = false;
+    bool unfinished = false;
+    bool dontCommit() const { return display || unfinished; }
 };
 
 struct PreeditLayout {
@@ -62,7 +65,7 @@ inline PreeditLayout preeditLayout(const std::vector<Segment> &segments, int cur
         }
         auto style = preeditStyle(g.style);
         if (bell && g.style == "pending") { style.highlight = true; }
-        out.runs.push_back({g.text, style, false});
+        out.runs.push_back({g.text, style, false, g.unfinished});
         at += static_cast<int>(g.text.size());
         if (marked(i) && !marked(i + 1)) {
             out.runs.push_back({close, PreeditStyle{}, true});

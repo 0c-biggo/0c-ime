@@ -164,6 +164,7 @@ func serve() string {
 	eng.AllSymbolsHalfwidth = config.AllSymbolsHalfwidth   // #282
 	eng.CJKLatinSpace = config.CJKLatinSpace               // #273
 	eng.ZhuyinErrorHint = config.ZhuyinErrorHint           // #300
+	eng.NoLearning = !config.PersonalLearning              // #297
 	// #173：Windows、Linux 的設定；macOS 開 Caps Lock 一律切到英文（#84），不看設定檔的值。
 	capsSetting := config.CapsLockEnglish && (settings.CapsLockEnglishSetting(runtime.GOOS) || config.ProfileRules().CapsLetter == "lower")
 	eng.CapsLockEnglish = capsLockRequests(runtime.GOOS, capsSetting)
@@ -417,7 +418,14 @@ func serve() string {
 		return nil
 	}
 	srv := &ipc.Server{Engine: eng, Log: lg, VocabDisabled: vocabDisabled, OnVocab: func() { vocabEdited() },
-		OnCommit: func() { schedule.changed(time.Now(), false); remind.markCommitted() },
+		// 關閉「記住我選的字詞」（#297）時送出不改個人資料，不為它排存檔：user.json 不會因打字而重寫。
+		// 加詞、撤銷等改了個人資料的操作照舊由 OnVocab／OnForget 排存檔。
+		OnCommit: func() {
+			if !eng.NoLearning {
+				schedule.changed(time.Now(), false)
+			}
+			remind.markCommitted()
+		},
 		OnForget: func() { schedule.changed(time.Now(), true) }}
 	// 設定程式的「清除學習紀錄」（#301）：清空記憶體裡的個人資料並立刻存檔，不重啟引擎。
 	srv.ResetPersonal = personalReset{mu: &saveMu, eng: eng, path: *user, writable: writable, state: &personalState, schedule: schedule}.run
@@ -445,7 +453,7 @@ func serve() string {
 		"input_profile": config.ActiveProfile().ID, "input_profile_fingerprint": config.ProfileFingerprint(),
 		"input_style_shift_space": config.ProfileRules().ShiftSpace, "input_style_shift_letter": config.ProfileRules().ShiftLetter, "input_style_caps_letter": config.ProfileRules().CapsLetter,
 		"selection_setting": config.Selection, "punctuation": fmt.Sprint(eng.Punct != nil), "document_context": fmt.Sprint(config.DocumentContext),
-		"fuzzy": eng.Fuzzy.Key(), "mixed_input": fmt.Sprint(config.MixedInput), "english_autocomplete": fmt.Sprint(config.EnglishAutocomplete), "left_shift": fmt.Sprint(config.TogglesLeft()), "right_shift": fmt.Sprint(config.TogglesRight()), "toggle_key": config.ToggleKey, "shift_tap_ms": "300", "mode_memory": config.ModeMemory, "start_mode": config.EffectiveStartMode(), "esc_clear": fmt.Sprint(config.EscClear), "space_selects": fmt.Sprint(config.SpaceSelects), "advance_after_select": fmt.Sprint(config.AdvanceAfterSelect),
+		"fuzzy": eng.Fuzzy.Key(), "mixed_input": fmt.Sprint(config.MixedInput), "english_autocomplete": fmt.Sprint(config.EnglishAutocomplete), "left_shift": fmt.Sprint(config.TogglesLeft()), "right_shift": fmt.Sprint(config.TogglesRight()), "toggle_key": config.ToggleKey, "shift_tap_ms": fmt.Sprint(config.ShiftTapMillis()), "mode_memory": config.ModeMemory, "start_mode": config.EffectiveStartMode(), "esc_clear": fmt.Sprint(config.EscClear), "space_selects": fmt.Sprint(config.SpaceSelects), "advance_after_select": fmt.Sprint(config.AdvanceAfterSelect),
 		"selection_keys": config.SelectionKeys, "candidate_cursor": config.CandidateCursor, "candidate_layout": config.CandidateLayout, "emoji_shortcut": config.EmojiShortcut, "emoji_equals_first": fmt.Sprint(config.EmojiEqualsFirst),
 		"keyboard_layout": config.KeyboardLayout, "preview_0_2": fmt.Sprint(eng.Preview02), "vocab_state": vocabState,
 		// #123：外殼據此決定要不要把組字中的 Shift＋←／→、候選窗的 Shift＋Delete／⌫ 送給引擎。
@@ -473,6 +481,8 @@ func serve() string {
 		"cjk_latin_space": fmt.Sprint(eng.CJKLatinSpace),
 		// #300：打錯注音時提示；外殼不用看（快照的 bell 說這一鍵要提示），0c-update 拿它跟設定檔比較。
 		"zhuyin_error_hint": fmt.Sprint(eng.ZhuyinErrorHint),
+		// #297：記住我選的字詞；外殼不用看（不學的是引擎），0c-update 拿它跟設定檔比較。
+		"personal_learning": fmt.Sprint(!eng.NoLearning),
 		// #173：引擎認得 caps_lock 請求而且設定「Caps Lock 開著時直接打英文」開著；外殼只在這一項是 true 時回報
 		// Caps Lock 狀態，舊引擎沒有這一項、或設定關閉時，注音模式照舊不理 Caps Lock（#168）。
 		"caps_lock_english": fmt.Sprint(capsSetting),

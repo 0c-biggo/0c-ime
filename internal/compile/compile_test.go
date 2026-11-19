@@ -232,7 +232,7 @@ func TestBigramPruning(t *testing.T) {
 		{"說服", "風景"}: 0.5,  // 前詞罕見：先剪
 		{"企業", "東西"}: 0.21, // 後詞本來就常見，bigram 幾乎沒有提升：先剪
 	}
-	got := pruneBigrams(bi, uni, 1, 0.7, "entropy")
+	got := pruneBigrams(bi, uni, 1, 0.7, "entropy", nil)
 	if _, ok := got[[2]string{"企業", "風景"}]; !ok || len(got) != 1 {
 		t.Errorf("%v", got)
 	}

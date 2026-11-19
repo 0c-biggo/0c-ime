@@ -1,11 +1,14 @@
 package lexicon
 
 import (
+	"bytes"
 	"os"
 	"reflect"
 	"sort"
 	"testing"
+	"unsafe"
 
+	"github.com/0c-biggo/0c-ime/core/binfmt"
 	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
@@ -54,6 +57,7 @@ func TestCompactMatchesMem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	mapped := mapShifted(t, built.Encode())
 	queries := [][]zhuyin.Syllable{nil, {"ㄅㄚ"}, {"ㄧㄣ", "ㄇㄚˊ"}}
 	for _, e := range es {
 		for k := 1; k <= len(e.Reading); k++ {
@@ -61,7 +65,7 @@ func TestCompactMatchesMem(t *testing.T) {
 		}
 		queries = append(queries, append(append([]zhuyin.Syllable(nil), e.Reading...), "ㄉㄨㄥˋ"))
 	}
-	for _, c := range []*Compact{built, decoded} {
+	for _, c := range []*Compact{built, decoded, mapped} {
 		for _, q := range queries {
 			if len(q) == 0 {
 				continue
@@ -81,6 +85,52 @@ func TestCompactMatchesMem(t *testing.T) {
 				t.Fatalf("Has(%q)", w)
 			}
 		}
+	}
+}
+
+// mapShifted 把資料包放在錯開一個位元組的位置再 Map：mmap 進來的區段不保證對齊。
+// 詞面串接要以 b 本身交給轉換函式（宿主用 unsafe.String 時才真的不複製）。
+func mapShifted(t *testing.T, enc []byte) *Compact {
+	t.Helper()
+	b := append([]byte{0}, enc...)[1:]
+	lo, hi := uintptr(unsafe.Pointer(&b[0])), uintptr(unsafe.Pointer(&b[len(b)-1]))
+	aliased := false
+	c, err := Map(b, func(x []byte) string {
+		p := uintptr(unsafe.Pointer(&x[0]))
+		aliased = lo <= p && p <= hi
+		return string(x)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !aliased {
+		t.Fatal("詞面串接被複製了")
+	}
+	if !bytes.Equal(c.Encode(), enc) {
+		t.Fatal("Map 後重新編碼的位元組不同")
+	}
+	return c
+}
+
+// 讀音必須依詞條順序連續存放（span 由下一個詞條的起點算長度），不是的要拒絕。
+func TestMapRejectsGappedReadings(t *testing.T) {
+	c, err := Build(toyEntries(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := binfmt.NewWriter(magic, version)
+	w.String(sylString(c.syls))
+	w.Raw(len(c.rd)/2+1, append(append([]byte(nil), c.rd...), 0, 0)) // 最後多一個沒人用的音節
+	for _, col := range []struct {
+		n int
+		b []byte
+	}{{c.n, c.rdOff}, {c.n, c.sfOff}, {c.n, c.sfLen}, {c.n, c.rdLen}, {c.n, c.flags}, {c.n, c.prw}} {
+		w.Raw(col.n, col.b)
+	}
+	w.String(c.strs)
+	w.Raw(c.n, c.byText)
+	if _, err := Decode(w.Finish()); err == nil {
+		t.Fatal("讀音區段有多餘的音節，應被拒絕")
 	}
 }
 
@@ -137,5 +187,44 @@ func TestLookupOrderIsTotal(t *testing.T) {
 		if len(got) != len(readings) || !sort.StringsAreSorted(got) {
 			t.Fatalf("%c 的讀音順序 %v 不是依讀音排序", rune(0x4E00+i), got)
 		}
+	}
+}
+
+// Continuations 必須與逐一問 HasPrefix 相同。
+func TestContinuationsMatchHasPrefix(t *testing.T) {
+	entries := []Entry{}
+	for _, e := range []struct{ w, r string }{
+		{"你", "ㄋㄧˇ"}, {"你好", "ㄋㄧˇ ㄏㄠˇ"}, {"你好嗎", "ㄋㄧˇ ㄏㄠˇ ㄇㄚ˙"}, {"你們", "ㄋㄧˇ ㄇㄣ˙"}, {"擬好", "ㄋㄧˇ ㄏㄠˇ"},
+		{"好", "ㄏㄠˇ"}, {"好嗎", "ㄏㄠˇ ㄇㄚ˙"}, {"逆", "ㄋㄧˋ"}, {"逆風", "ㄋㄧˋ ㄈㄥ"},
+	} {
+		entries = append(entries, Entry{Surface: e.w, Reading: zhuyin.ParseReading(e.r), PRW: 1})
+	}
+	mem := NewMem()
+	for _, e := range entries {
+		mem.Add(e)
+	}
+	c, err := Build(entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := []zhuyin.Syllable{"ㄋㄧˇ", "ㄋㄧˋ", "ㄏㄠˇ", "ㄇㄚ˙", "ㄇㄣ˙", "ㄈㄥ", "ㄅㄚ"}
+	for name, src := range map[string]Source{"compact": c, "mem": mem, "neutral": NeutralParticles(c)} {
+		for _, prefix := range [][]zhuyin.Syllable{{"ㄋㄧˇ"}, {"ㄋㄧˇ", "ㄏㄠˇ"}, {"ㄋㄧˋ"}, {"ㄏㄠˇ"}, {"ㄅㄚ"}, {"ㄋㄧˇ", "ㄏㄠˇ", "ㄇㄚ˙"}} {
+			for range 2 { // 第二次走快取
+				got := map[zhuyin.Syllable]bool{}
+				if !Continuations(src, prefix, func(y zhuyin.Syllable) { got[y] = true }) {
+					t.Fatalf("%s 應支援 Continuations", name)
+				}
+				for _, y := range all {
+					want := src.HasPrefix(append(prefix[:len(prefix):len(prefix)], y))
+					if got[y] != want {
+						t.Errorf("%s %v+%s：Continuations %v，HasPrefix %v", name, prefix, y, got[y], want)
+					}
+				}
+			}
+		}
+	}
+	if Continuations(c, nil, func(zhuyin.Syllable) {}) {
+		t.Fatal("空前綴不支援")
 	}
 }

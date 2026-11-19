@@ -112,9 +112,9 @@ func (s *Session) openSymbolMenuAt() bool {
 	return true
 }
 
-// rememberSymbol 記下從符號選單選的符號；私人欄位、暫停學習時不記。
+// rememberSymbol 記下從符號選單選的符號；私人欄位、暫停學習、關閉「記住我選的字詞」（#297）時不記。
 func (s *Session) rememberSymbol(c *candState, text string) {
-	if c.symbols == "" || s.paused || s.private || s.localBlocked || !symbols.Contains(text) {
+	if c.symbols == "" || s.paused || s.private || s.localBlocked || s.NoLearning || !symbols.Contains(text) {
 		return
 	}
 	s.model.RememberSymbol(text)

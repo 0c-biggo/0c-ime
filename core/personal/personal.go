@@ -267,6 +267,15 @@ func (m *Model) HasAdaptation() bool { return len(m.Store.Bi) > 0 || len(m.Store
 // MassVersion 實作 decode.MassVersion。
 func (m *Model) MassVersion() (int, int64) { return m.Gen, m.Store.Time }
 
+// PriorVersion 實作 decode.PriorVersion：Prior（sysUni）只隨自訂詞彙改變（自訂詞的頻率下限），學習不影響它；
+// 換掉整份詞彙（SetVocab）時 owner 不同，改動時版本加一。解碼器的尾端前綴快取據此保留或重算（#307）。
+func (m *Model) PriorVersion() (any, uint64) {
+	if m.Vocab == nil {
+		return (*vocab.Set)(nil), 0
+	}
+	return m.Vocab, m.Vocab.Version()
+}
+
 // PriorMass removes positive learned counts while preserving the same context
 // denominator as Prob. The decoder uses it only to cap proper word prefixes.
 func (m *Model) PriorMass(left, word string) float64 {
@@ -409,6 +418,29 @@ func (v view) HasPrefix(syls []zhuyin.Syllable) bool {
 	return len(v.phrases(func(rk string) bool { return hasSylPrefix(rk, k) })) > 0
 }
 
+// Continuations 是系統詞庫、自訂詞與個人片語接在 syls 之後的音節（lexicon.Continuer）；系統詞庫不支援時回傳 false。
+func (v view) Continuations(syls []zhuyin.Syllable, add func(zhuyin.Syllable)) bool {
+	if !lexicon.Continuations(v.sys(), syls, add) {
+		return false
+	}
+	if v.m.vocabLen() > 0 {
+		v.m.Vocab.Continuations(syls, add)
+	}
+	if len(v.m.Store.PhraseOrder) > 0 {
+		k := zhuyin.Key(syls)
+		for _, ph := range v.m.Store.PhraseOrder {
+			if rk, ok := v.m.Store.Phrases[ph]; ok && strings.HasPrefix(rk, k+" ") {
+				rest := rk[len(k)+1:]
+				if i := strings.IndexByte(rest, ' '); i >= 0 {
+					rest = rest[:i]
+				}
+				add(zhuyin.Syllable(rest))
+			}
+		}
+	}
+	return true
+}
+
 // LongestWord 回報詞條讀音的最長音節數（decode.Long）：系統詞庫的長詞（#142）與自訂詞（#122）
 // 都可以超過一般詞的解碼上限。
 func (v view) LongestWord() int {
@@ -473,6 +505,11 @@ func (m *Model) observe(left, w string, weight float64) {
 	k := pair(left, w)
 	before := s.Bi[k]
 	valid := m.diversityValid()
+	r := m.recording()
+	noteFloat(r.bi, s.Bi, k)
+	noteFloat(r.ctx, s.Ctx, left)
+	noteFloat(r.uni, s.Uni, w)
+	noteFloat(r.uses, s.Uses, w)
 	s.Bi[k] += weight
 	s.Ctx[left] += weight
 	s.Uni[w] += weight
@@ -499,6 +536,17 @@ func (m *Model) dropBi(left, w string) {
 
 func runeLen(s string) int { return len([]rune(s)) }
 
+// LearnFollow 記下使用者點選接在 left 之後的聯想詞：與一般送出的詞同權重，
+// 常接的詞越用越前面。這是唯一跨提交學的詞對；不晉升片語，被遺忘的詞不學。
+func (m *Model) LearnFollow(left, w string) {
+	if left == "" || w == "" || m.Store.Tombstones[w] {
+		return
+	}
+	m.Gen++
+	m.observe(left, w, m.P.WPassive)
+	m.observeEvidence(left, w, m.P.WPassive)
+}
+
 // Learn 依學習規則更新個人資料。只在提交後呼叫。
 func (m *Model) Learn(c Commit) {
 	m.Gen++
@@ -519,7 +567,9 @@ func (m *Model) Learn(c Commit) {
 				reading = r.Reading
 			}
 			if !zhuyin.HasUntoned(reading) {
-				s.Rejects[pair(r.Word, zhuyin.Key(reading))]++
+				k := pair(r.Word, zhuyin.Key(reading))
+				note(m.recording().rejects, s.Rejects, k)
+				s.Rejects[k]++
 			}
 			noLearn = append(noLearn, [2]int{r.Start, r.End})
 		}
@@ -606,12 +656,17 @@ func (m *Model) noteManual(syls []zhuyin.Syllable, g Seg) {
 		return
 	}
 	s := m.Store
+	r := m.recording()
+	note(r.tombstones, s.Tombstones, g.Word)
 	delete(s.Tombstones, g.Word) // 明確的手動選取可解除 tombstone
 	if g.End-g.Start == 1 && !m.PickedSingle(syls[g.Start], g.Word) {
 		syl := string(syls[g.Start])
-		s.Picked[syl] = append(s.Picked[syl], g.Word)
+		note(r.picked, s.Picked, syl)
+		s.Picked[syl] = append(slices.Clip(s.Picked[syl]), g.Word) // Clip: the noted slice must not see the append
 	}
-	s.Readings[pair(g.Word, zhuyin.Key(syls[g.Start:g.End]))] = true // 個人讀音自適應
+	k := pair(g.Word, zhuyin.Key(syls[g.Start:g.End]))
+	note(r.readings, s.Readings, k)
+	s.Readings[k] = true // 個人讀音自適應
 }
 
 func (m *Model) seePhrase(ph, readingKey, left string, weight float64) {
@@ -621,9 +676,14 @@ func (m *Model) seePhrase(ph, readingKey, left string, weight float64) {
 			return
 		}
 	}
+	r := m.recording()
+	note(r.phraseSeen, s.PhraseSeen, ph)
 	s.PhraseSeen[ph]++
 	m.observeEvidence(left, ph, weight)
 	if _, have := s.Phrases[ph]; s.PhraseSeen[ph] >= m.P.PhrasePromoteAt && !have && !m.Lex.Has(ph) && !m.IsVocab(ph) {
+		note(r.phrases, s.Phrases, ph)
+		noteFloat(r.uni, s.Uni, ph)
+		noteFloat(r.uses, s.Uses, ph)
 		s.Phrases[ph] = readingKey
 		s.PhraseOrder = append(s.PhraseOrder, ph)
 		// 晉升時把已累積的證據交給片語，之後由片語這個單位接手計數。

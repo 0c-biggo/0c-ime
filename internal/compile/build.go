@@ -2,6 +2,8 @@ package compile
 
 import (
 	"bufio"
+	"bytes"
+	"container/heap"
 	"fmt"
 	"math"
 	"os"
@@ -24,6 +26,10 @@ type Options struct {
 	PolyphoneCommon  bool    // L3：破音字可用該字的主讀音輸入
 	MaxVariants      int     // 每個詞由規則產生的讀音上限
 	UnigramAlpha     float64 // 詞頻平滑：每個詞加上的虛擬次數（以各來源正規化後的比例計）
+	// AttestedMass 是單字可考讀音沒有詞例佐證時的分數（單位同 -unigram 混合後的詞頻）：高頻字的可考讀音
+	// 依詞庫中「這個字唸這個音」的比例估計 P(r|w)，等級值為上限（#320，見 attestedPRW）。0 為舊公式。
+	// 0 時不寫進 manifest，舊版字典資料以 -attested-mass=0 重建時 manifest 逐位元組相同。
+	AttestedMass float64 `json:",omitempty"`
 
 	// Unigram 是詞頻來源的混合權重，如 "mcbopomofo=1,chewing-v4=1"。各來源先各自正規化成
 	// 機率分布，再依權重線性混合。空字串表示所有來源等權重。
@@ -38,6 +44,9 @@ type Options struct {
 	// BigramMax 是 bigram 的保留上限（0 表示不剪枝）。依「保留這一筆對模型的貢獻」排序：
 	// P(前詞)·P(詞|前詞)·log(有這筆時的機率 ÷ 沒有時的機率)，即對內插模型的熵剪枝。
 	BigramMax int
+	// CuratedBigram 是人工 bigram 檔（如 data/lm/curated-bigram.tsv，格式見檔頭）：各來源線性混合之後、
+	// 剪枝之前與混合值取最大值，而且不剪枝。只當逐案補丁；空字串為不用（manifest 也不記）。
+	CuratedBigram string `json:",omitempty"`
 	// PruneMu 是剪枝時假設的執行期內插權重 μ（見 personal.Params.Mu）。
 	PruneMu float64
 	// PruneBy 是剪枝的排序標準："entropy"（預設，見 pruneBigrams）、"joint"（只看 P(l,w)）、
@@ -62,7 +71,7 @@ type Options struct {
 }
 
 func DefaultOptions() Options {
-	return Options{InheritVariants: true, YiBuSandhi: true, NeutralTone: true, PolyphoneCommon: true, MaxVariants: 4, UnigramAlpha: 0.5, BMPOnly: true}
+	return Options{InheritVariants: true, YiBuSandhi: true, NeutralTone: true, PolyphoneCommon: true, MaxVariants: 4, UnigramAlpha: 0.5, AttestedMass: 3e-6, BMPOnly: true}
 }
 
 // Result 是編譯結果。
@@ -143,6 +152,12 @@ func Build(d *Data, o Options) *Result {
 		return false
 	}
 
+	// 單字可考讀音的 P(r|w) 依詞頻估計（#320）；詞頻權重有錯時這裡略過，下面語言模型一節會報錯。
+	var attested map[string]map[zhuyin.Syllable]float64
+	if w, err := parseWeights(o.Unigram, d.Counts); err == nil {
+		attested = attestedPRW(d, keep, rareChars(d, o.Rare, keep), unigramFreq(w, d.Counts), o.AttestedMass)
+	}
+
 	// 單字表：同一字的讀音彙整，供規則使用
 	chars := map[string][]CharReading{}
 	for _, c := range d.Chars {
@@ -151,7 +166,11 @@ func Build(d *Data, o Options) *Result {
 		}
 		checkOrigins("chars:"+c.Char, c.Origins)
 		chars[c.Char] = append(chars[c.Char], c)
-		add(c.Char, []zhuyin.Syllable{c.Reading}, c.Grade, c.Grade.PRW(), c.Origins, false)
+		prw := c.Grade.PRW()
+		if p, ok := attested[c.Char][c.Reading]; ok {
+			prw = p
+		}
+		add(c.Char, []zhuyin.Syllable{c.Reading}, c.Grade, prw, c.Origins, false)
 	}
 	primaryOf := map[string]zhuyin.Syllable{}
 	for ch, rs := range chars {
@@ -367,6 +386,10 @@ func Build(d *Data, o Options) *Result {
 		}
 	}
 	var bi map[[2]string]float64
+	if o.CuratedBigram != "" && o.Bigram == "" {
+		fail("lm", "人工 bigram 要搭配 -bigram 來源")
+		return res
+	}
 	if o.Bigram != "" {
 		srcs := map[string]map[string]float64{}
 		for k := range d.Bigrams {
@@ -377,18 +400,30 @@ func Build(d *Data, o Options) *Result {
 			fail("lm", "bigram：%v", err)
 			return res
 		}
-		bi = map[[2]string]float64{}
+		t := newBigramTable(words)
 		for src, w := range bw {
 			checkOrigins("lm", []string{src})
-			if err := readBigrams(d.Bigrams[src], words, w, bi); err != nil {
+			if err := t.read(d.Bigrams[src], w); err != nil {
 				fail("lm", "%v", err)
 				return res
 			}
 		}
-		if o.BigramMax > 0 && len(bi) > o.BigramMax {
-			res.Report.BigramsBeforePrune = len(bi)
-			bi = pruneBigrams(bi, uni, o.BigramMax, o.PruneMu, o.PruneBy)
+		if o.CuratedBigram != "" {
+			curated, err := readCuratedBigrams(o.CuratedBigram, words)
+			if err != nil {
+				fail("lm", "人工 bigram：%v", err)
+				return res
+			}
+			for k, p := range curated {
+				t.setCurated(k, p)
+			}
+			res.Report.CuratedBigrams = len(curated)
 		}
+		if o.BigramMax > 0 && len(t.p) > o.BigramMax {
+			res.Report.BigramsBeforePrune = len(t.p)
+			t.prune(uni, o.BigramMax, o.PruneMu, o.PruneBy)
+		}
+		bi = t.pairs()
 		res.Report.Bigrams = len(bi)
 		for k := range bi {
 			if k[0] == lm.BOS {
@@ -592,6 +627,7 @@ type Report struct {
 	Inconsistent                            []string
 	MaxSingleCandidates                     int
 	Bigrams, BigramsBeforePrune             int
+	CuratedBigrams                          int
 	FallbackWords                           int
 	MaxSingleReading                        string
 	Corrections                             int
@@ -628,6 +664,9 @@ func (r Report) String() string {
 	fmt.Fprintf(&b, "自動修正讀音：%d\nbigram：%d", r.Corrections, r.Bigrams)
 	if r.BigramsBeforePrune > 0 {
 		fmt.Fprintf(&b, "（剪枝前 %d）", r.BigramsBeforePrune)
+	}
+	if r.CuratedBigrams > 0 {
+		fmt.Fprintf(&b, "；人工 bigram %d 筆（取最大值、不剪枝）", r.CuratedBigrams)
 	}
 	b.WriteString("\n")
 	var rules []string
@@ -699,9 +738,52 @@ func parseBoost(spec string) (map[string]float64, error) {
 	return out, nil
 }
 
-// readBigrams 讀取「前詞<TAB>詞<TAB>P(詞|前詞)」，把 weight×P 加進 out。只保留兩個詞都在
+// bigramTable 累加各來源的 bigram 機率。bigram 來源合計有數千萬筆（0.2.13 的字典剪枝前約 3,700 萬），
+// 以 [2]string 為鍵、鍵又指向整行文字時要 7 GB 以上的記憶體，在 4 GiB 的建置機上會被 OOM 砍掉；
+// 所以詞以編號表示，配對的鍵是「前詞編號<<32 | 詞編號」。
+type bigramTable struct {
+	ids   map[string]uint32
+	names []string
+	bos   uint32 // 句首 "<s>" 的編號；它只能當前詞
+	p     map[uint64]float64
+	keep  map[uint64]bool // 人工 bigram：剪枝時一定保留
+}
+
+func newBigramTable(words map[string]bool) *bigramTable {
+	t := &bigramTable{ids: make(map[string]uint32, len(words)), p: map[uint64]float64{}}
+	for w, ok := range words {
+		if ok {
+			t.ids[w] = uint32(len(t.names))
+			t.names = append(t.names, w)
+		}
+	}
+	if id, ok := t.ids[lm.BOS]; ok {
+		t.bos = id
+	} else {
+		t.bos = uint32(len(t.names))
+		t.names = append(t.names, lm.BOS)
+	}
+	return t
+}
+
+func (t *bigramTable) pair(k uint64) (string, string) {
+	return t.names[k>>32], t.names[uint32(k)]
+}
+
+// id 回傳詞庫內的詞的編號；prev 為 true 時另接受句首 "<s>"。
+func (t *bigramTable) id(w []byte, prev bool) (uint32, bool) {
+	if id, ok := t.ids[string(w)]; ok {
+		return id, true
+	}
+	if prev && string(w) == lm.BOS {
+		return t.bos, true
+	}
+	return 0, false
+}
+
+// read 讀取「前詞<TAB>詞<TAB>P(詞|前詞)」，把 weight×P 加進表中。只保留兩個詞都在
 // 詞庫內的配對；前詞可以是句首 "<s>"。
-func readBigrams(p string, words map[string]bool, weight float64, out map[[2]string]float64) error {
+func (t *bigramTable) read(p string, weight float64) error {
 	f, err := os.Open(p)
 	if err != nil {
 		return err
@@ -709,30 +791,119 @@ func readBigrams(p string, words map[string]bool, weight float64, out map[[2]str
 	defer f.Close()
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
-		l := sc.Text()
-		if l == "" || l[0] == '#' {
+		l := sc.Bytes()
+		if len(l) == 0 || l[0] == '#' {
 			continue
 		}
-		a, rest, _ := strings.Cut(l, "\t")
-		b, ps, _ := strings.Cut(rest, "\t")
-		if !(words[a] || a == lm.BOS) || !words[b] {
+		a, rest, _ := bytes.Cut(l, []byte{'\t'})
+		b, ps, _ := bytes.Cut(rest, []byte{'\t'})
+		ia, oka := t.id(a, true)
+		ib, okb := t.id(b, false)
+		if !oka || !okb {
 			continue
 		}
-		x, err := strconv.ParseFloat(ps, 64)
+		x, err := strconv.ParseFloat(string(ps), 64)
 		if err != nil || !(x > 0 && x <= 1) {
 			return fmt.Errorf("%s：機率 %q 不合法", p, ps)
 		}
-		out[[2]string{a, b}] += weight * x
+		t.p[uint64(ia)<<32|uint64(ib)] += weight * x
 	}
 	return sc.Err()
 }
 
-// pruneBigrams 保留對內插模型貢獻最大的 n 筆 bigram。
+// setCurated 把人工 bigram 和混合值取最大值，並標成剪枝時保留。k 的兩個詞要已通過 readCuratedBigrams 的檢查。
+func (t *bigramTable) setCurated(k [2]string, p float64) {
+	a, _ := t.id([]byte(k[0]), true)
+	b, _ := t.id([]byte(k[1]), false)
+	x := uint64(a)<<32 | uint64(b)
+	t.p[x] = max(t.p[x], p)
+	if t.keep == nil {
+		t.keep = map[uint64]bool{}
+	}
+	t.keep[x] = true
+}
+
+// pairs 回傳以字串為鍵的 bigram。
+func (t *bigramTable) pairs() map[[2]string]float64 {
+	out := make(map[[2]string]float64, len(t.p))
+	for k, p := range t.p {
+		a, b := t.pair(k)
+		out[[2]string{a, b}] = p
+	}
+	return out
+}
+
+// readCuratedBigrams 讀取人工 bigram 檔「前詞<TAB>詞<TAB>P(詞|前詞)<TAB>原因」。前詞可以是句首 "<s>"。
+// 和 readBigrams 不同，詞不在詞庫、機率不合法、重複的配對、沒寫原因都是錯誤，不默默略過。
+func readCuratedBigrams(p string, words map[string]bool) (map[[2]string]float64, error) {
+	f, err := os.Open(p)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	out := map[[2]string]float64{}
+	sc := bufio.NewScanner(f)
+	for n := 1; sc.Scan(); n++ {
+		l := sc.Text()
+		if l == "" || l[0] == '#' {
+			continue
+		}
+		c := strings.Split(l, "\t")
+		if len(c) != 4 || strings.TrimSpace(c[3]) == "" {
+			return nil, fmt.Errorf("%s:%d：要四欄（前詞、詞、機率、原因）", p, n)
+		}
+		a, b := c[0], c[1]
+		if !(words[a] || a == lm.BOS) {
+			return nil, fmt.Errorf("%s:%d：前詞 %q 不在詞庫", p, n, a)
+		}
+		if !words[b] {
+			return nil, fmt.Errorf("%s:%d：詞 %q 不在詞庫", p, n, b)
+		}
+		x, err := strconv.ParseFloat(c[2], 64)
+		if err != nil || !(x > 0 && x <= 1) {
+			return nil, fmt.Errorf("%s:%d：機率 %q 不合法", p, n, c[2])
+		}
+		k := [2]string{a, b}
+		if _, dup := out[k]; dup {
+			return nil, fmt.Errorf("%s:%d：%s→%s 重複", p, n, a, b)
+		}
+		out[k] = x
+	}
+	return out, sc.Err()
+}
+
+// pruneBigrams 保留對內插模型貢獻最大的 n 筆 bigram；keep 裡的配對一定保留（算在 n 筆內）。
+// 見 bigramTable.prune；這裡給以字串為鍵的呼叫端與測試用。
+func pruneBigrams(bi map[[2]string]float64, uni map[string]float64, n int, mu float64, by string, keep map[[2]string]bool) map[[2]string]float64 {
+	words := map[string]bool{}
+	for k := range bi {
+		words[k[0]], words[k[1]] = true, true
+	}
+	t := newBigramTable(words)
+	for k, p := range bi {
+		a, b := t.ids[k[0]], t.ids[k[1]]
+		x := uint64(a)<<32 | uint64(b)
+		t.p[x] = p
+		if keep[k] {
+			if t.keep == nil {
+				t.keep = map[uint64]bool{}
+			}
+			t.keep[x] = true
+		}
+	}
+	t.prune(uni, n, mu, by)
+	return t.pairs()
+}
+
+// prune 保留對內插模型貢獻最大的 n 筆 bigram；人工 bigram（t.keep）一定保留，算在 n 筆內。
 //
 // 執行期的系統機率是 μ·P_bi(w|l) + (1−μ)·P_uni(w)。拿掉一筆 bigram 後它退回 (1−μ)·P_uni(w)，
 // 所以這筆的貢獻以 P(l,w)·log(1 + μ·P_bi/((1−μ)·P_uni(w))) 衡量，其中 P(l,w) ≈ P_uni(l)·P_bi(w|l)。
 // 句首 <s> 沒有 unigram，以最常見的詞的機率代替（句首的 bigram 很少，影響不大）。
-func pruneBigrams(bi map[[2]string]float64, uni map[string]float64, n int, mu float64, by string) map[[2]string]float64 {
+//
+// 排序依貢獻由大到小，同分時依「前詞<TAB>詞」的字串順序。這是全序，所以用大小為 n 的堆積選出的集合
+// 和全部排序後取前 n 筆相同，而不必另外複製並排序數千萬筆。
+func (t *bigramTable) prune(uni map[string]float64, n int, mu float64, by string) {
 	if mu <= 0 || mu >= 1 {
 		mu = 0.7
 	}
@@ -740,17 +911,21 @@ func pruneBigrams(bi map[[2]string]float64, uni map[string]float64, n int, mu fl
 	for _, p := range uni {
 		maxUni = math.Max(maxUni, p)
 	}
-	type scored struct {
-		k [2]string
-		s float64
-	}
-	all := make([]scored, 0, len(bi))
-	for k, p := range bi {
-		pl := uni[k[0]]
-		if k[0] == lm.BOS {
+	m := max(0, n-len(t.keep))
+	h := &bigramHeap{t: t, s: make([]scoredBigram, 0, min(m, len(t.p)))}
+	for k, p := range t.p {
+		if m == 0 {
+			break
+		}
+		if t.keep[k] {
+			continue
+		}
+		l, w := t.pair(k)
+		pl := uni[l]
+		if l == lm.BOS {
 			pl = maxUni
 		}
-		pw := uni[k[1]]
+		pw := uni[w]
 		gain := math.Log1p(mu * p / ((1 - mu) * pw))
 		s := pl * p * gain
 		switch by {
@@ -759,17 +934,51 @@ func pruneBigrams(bi map[[2]string]float64, uni map[string]float64, n int, mu fl
 		case "ratio":
 			s = gain
 		}
-		all = append(all, scored{k, s})
-	}
-	sort.Slice(all, func(i, j int) bool {
-		if all[i].s != all[j].s {
-			return all[i].s > all[j].s
+		x := scoredBigram{k, s, p}
+		if len(h.s) < m {
+			heap.Push(h, x)
+		} else if h.better(x, h.s[0]) {
+			h.s[0] = x
+			heap.Fix(h, 0)
 		}
-		return all[i].k[0]+"\t"+all[i].k[1] < all[j].k[0]+"\t"+all[j].k[1]
-	})
-	out := make(map[[2]string]float64, n)
-	for _, x := range all[:n] {
-		out[x.k] = bi[x.k]
 	}
-	return out
+	out := make(map[uint64]float64, len(t.keep)+len(h.s))
+	for k := range t.keep {
+		out[k] = t.p[k]
+	}
+	for _, x := range h.s {
+		out[x.k] = x.p
+	}
+	t.p = out
+}
+
+type scoredBigram struct {
+	k    uint64
+	s, p float64
+}
+
+// bigramHeap 的頂端是目前保留的配對中最差的一筆。
+type bigramHeap struct {
+	t *bigramTable
+	s []scoredBigram
+}
+
+// better 回傳 x 是否排在 y 前面（見 bigramTable.prune 的排序）。
+func (h *bigramHeap) better(x, y scoredBigram) bool {
+	if x.s != y.s {
+		return x.s > y.s
+	}
+	xa, xb := h.t.pair(x.k)
+	ya, yb := h.t.pair(y.k)
+	return xa+"\t"+xb < ya+"\t"+yb
+}
+
+func (h *bigramHeap) Len() int           { return len(h.s) }
+func (h *bigramHeap) Less(i, j int) bool { return h.better(h.s[j], h.s[i]) }
+func (h *bigramHeap) Swap(i, j int)      { h.s[i], h.s[j] = h.s[j], h.s[i] }
+func (h *bigramHeap) Push(x any)         { h.s = append(h.s, x.(scoredBigram)) }
+func (h *bigramHeap) Pop() any {
+	x := h.s[len(h.s)-1]
+	h.s = h.s[:len(h.s)-1]
+	return x
 }

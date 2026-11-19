@@ -251,7 +251,7 @@ func (s *Session) selectEmoji(id int) bool {
 	if c.kind == "kaomoji" && !c.direct {
 		s.paletteUndo = &literalSpan{start, s.cursor}
 	}
-	if text != "=" && !s.paused && !s.private && !s.localBlocked {
+	if text != "=" && !s.paused && !s.private && !s.localBlocked && !s.NoLearning {
 		if c.kind != "phrases" {
 			s.model.RememberEmoji(text)
 		}

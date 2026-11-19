@@ -180,7 +180,7 @@ func storesClose(t *testing.T, what string, a, b *Store) {
 	x.Bi, x.Ctx, x.Uni, x.Uses, x.Total = nil, nil, nil, nil, 0
 	y.Bi, y.Ctx, y.Uni, y.Uses, y.Total = nil, nil, nil, nil, 0
 	if !reflect.DeepEqual(x, y) {
-		for _, f := range []string{"Corrections", "EvidenceByContext", "EvidenceByWord", "Picked", "PhraseSeen", "Phrases", "PhraseOrder", "Tombstones", "Readings", "Rejects", "Pronouns", "English"} {
+		for _, f := range []string{"Corrections", "EvidenceByContext", "EvidenceByWord", "Picked", "PhraseSeen", "Phrases", "PhraseOrder", "Tombstones", "Readings", "Rejects", "Pronouns", "English", "Confirmed", "ZhuyinKeys", "SymbolRecent", "SymbolStats"} {
 			if !reflect.DeepEqual(reflect.ValueOf(x).FieldByName(f).Interface(), reflect.ValueOf(y).FieldByName(f).Interface()) {
 				t.Fatalf("%s：%s 不同", what, f)
 			}

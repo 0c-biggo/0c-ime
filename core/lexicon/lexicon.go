@@ -53,6 +53,21 @@ func Longest(src Source) int {
 	return 0
 }
 
+// Continuer 是 Source 的選用擴充：對每個讀音以 prefix 加上 y 開頭的詞條的下一個音節 y 呼叫 add
+// （可能重複），回報是否支援。結果與「對每個 y 問 HasPrefix(prefix+y)」相同；簡拼展開的位置有上百個讀音，
+// 解碼器改順著詞庫裡實際接得上的音節走，不逐一試。prefix 是空的時候不必支援。
+type Continuer interface {
+	Continuations(prefix []zhuyin.Syllable, add func(zhuyin.Syllable)) bool
+}
+
+// Continuations 照 Continuer 列出 prefix 之後接得上的音節；src 不支援時回傳 false，呼叫端改用 HasPrefix。
+func Continuations(src Source, prefix []zhuyin.Syllable, add func(zhuyin.Syllable)) bool {
+	if c, ok := src.(Continuer); ok && len(prefix) > 0 {
+		return c.Continuations(prefix, add)
+	}
+	return false
+}
+
 type node struct {
 	children map[zhuyin.Syllable]*node
 	order    []zhuyin.Syllable // 子節點的插入順序，確保走訪結果可重現
@@ -102,6 +117,15 @@ func (m *Mem) find(syls []zhuyin.Syllable) *node {
 		n = c
 	}
 	return n
+}
+
+func (m *Mem) Continuations(prefix []zhuyin.Syllable, add func(zhuyin.Syllable)) bool {
+	if n := m.find(prefix); n != nil {
+		for _, y := range n.order {
+			add(y)
+		}
+	}
+	return true
 }
 
 func (m *Mem) Exact(syls []zhuyin.Syllable) []Entry {

@@ -97,6 +97,14 @@ int main() {
     EXPECT(bellLayout.runs.size() == 2 && bellLayout.cursor == end);
     EXPECT(bellLayout.runs[1].style.highlight && bellLayout.runs[1].style.underline && !bellLayout.runs[0].style.highlight);
     EXPECT(!zuin::preeditLayout(refused, end).runs[1].style.highlight);
+    // 未打完的注音（#322）：核心標 unfinished 的那段加 DontCommit，失焦時 Fcitx／應用程式照畫面提交組字也只送出「你」；
+    // 同樣是 pending 樣式、照畫面送出的保底注音與英文暫存按鍵（沒標 unfinished）照舊提交。
+    const std::vector<zuin::Segment> unfinished = {{"你", "normal"}, {"ㄕ", "pending", true}};
+    auto unfinishedLayout = zuin::preeditLayout(unfinished, static_cast<int>(std::string("你ㄕ").size()));
+    EXPECT(unfinishedLayout.runs.size() == 2 && !unfinishedLayout.runs[0].dontCommit() && unfinishedLayout.runs[1].dontCommit());
+    EXPECT(!unfinishedLayout.runs[1].display && unfinishedLayout.runs[1].style.underline);
+    EXPECT(!zuin::preeditLayout({{"ㄗㄨㄞˇ", "pending"}}, 0).runs[0].dontCommit());
+    EXPECT(!layout.runs[0].dontCommit() && layout.runs[1].dontCommit() && !layout.runs[2].dontCommit());
 
     // 不認得的樣式（未來的引擎）照一般組字畫，不會不見。
     auto unknown = zuin::preeditStyle("future");

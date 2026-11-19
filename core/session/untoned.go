@@ -1,11 +1,15 @@
 package session
 
 import (
+	"maps"
+	"math"
 	"slices"
+	"sort"
 
 	"github.com/0c-biggo/0c-ime/core/decode"
 	"github.com/0c-biggo/0c-ime/core/input"
 	"github.com/0c-biggo/0c-ime/core/layout"
+	"github.com/0c-biggo/0c-ime/core/lm"
 	"github.com/0c-biggo/0c-ime/core/personal"
 	"github.com/0c-biggo/0c-ime/core/proto"
 	"github.com/0c-biggo/0c-ime/core/zhuyin"
@@ -26,6 +30,63 @@ import (
 // toneless 回報聲調選填是否生效：只在標準排列。倚天 41 鍵的 ' 是 ㄘ（沒有分隔鍵），許氏一個鍵兼聲母、韻母與聲調，
 // 「接不上就開新音節」的規則在那裡不成立；設定保留，切回標準排列就照舊（同混打，#83、#183）。
 func (s *Session) toneless() bool { return s.Toneless && s.layout == layout.Standard }
+
+// abbreviation 回報簡拼是否生效：只在聲調選填生效時。
+func (s *Session) abbreviation() bool { return s.Abbreviation && s.toneless() }
+
+// untonedSyllable 回傳未打完的注音 base 不打聲調就完成時的音節：簡拼生效而 base 只有一個聲母或介音時是簡拼音節
+// （ㄓ 也包括 ㄓㄨ、ㄓㄠ……），其他完整音節是沒打聲調的音節；都不是時回傳 ""。
+func (s *Session) untonedSyllable(base zhuyin.Syllable) zhuyin.Syllable {
+	if s.abbreviation() && zhuyin.Abbreviable(base) {
+		return zhuyin.Abbreviate(base, 0)
+	}
+	if base.Legal() {
+		return zhuyin.Untone(base)
+	}
+	return ""
+}
+
+// abbreviatedTone 處理簡拼生效時「聲母或介音直接接聲調」（ㄅˇ、空白的一聲）：打的注音本身不是這個聲調的
+// 完整音節時，回傳只限聲調的簡拼音節；是的話（ㄓˋ、ㄧˊ）照舊是那個音節，打聲調的輸入結果不變。
+func (s *Session) abbreviatedTone(before zhuyin.Composer, done zhuyin.Syllable) zhuyin.Syllable {
+	prefix := zhuyin.Syllable(before.String())
+	if !s.abbreviation() || done.Legal() || !zhuyin.Abbreviable(prefix) {
+		return done
+	}
+	return zhuyin.Abbreviate(prefix, done.ToneOf())
+}
+
+// editsPending 回報實體按鍵 k 是不是作用在未打完的注音上的編輯鍵（Backspace 刪一個注音、Esc 清掉未打完的注音）。
+// 這兩個鍵之前不完成注音鍵或九宮格打到一半的音節（finishSymbolPending），否則會先收成音節、再整個刪掉。
+// 其他非字元鍵（Enter、方向鍵、Tab、Delete）本來就會用到整段組字，照舊先完成（聲調選填的 untonedKey 也會做）。
+func editsPending(k string) bool { return k == proto.KeyBackspace || k == proto.KeyEscape }
+
+// finishSymbolPending：共存時（MixedWithToneless）注音鍵打到一半就切到實體按鍵，未打完的注音不打聲調就完成，
+// 不讓字母接在注音後面當成注音鍵。
+func (s *Session) finishSymbolPending() {
+	if s.MixedWithToneless && s.symbolPending {
+		s.finishUntoned()
+	}
+	s.symbolPending = false
+}
+
+// PreviewPending 回傳「未打完的注音現在不打聲調就完成」時的候選，不改變組字狀態：手機的候選列在打字途中
+// 一直更新，選字時才真的完成音節（這時由 Candidates 請求開啟的是同一份候選，ID 相同）。沒有未打完的注音、
+// 或注音還不能完成時回傳 nil。
+func (s *Session) PreviewPending() *proto.CandidateList {
+	nine := s.ninePending() && len(s.nineReadings(s.nineKeys, nineToneKey)) > 0 // 九宮格的鍵同未打完的注音
+	if !nine && (!s.toneless() || s.comp.Empty() || s.untonedSyllable(zhuyin.Syllable(s.comp.String())) == "") {
+		return nil
+	}
+	saved := *s
+	s.syls, s.locks = slices.Clone(s.syls), maps.Clone(s.locks)
+	s.literals, s.displayed = maps.Clone(s.literals), maps.Clone(s.displayed)
+	s.finishUntoned()
+	s.openCandidates(0)
+	out := s.snapshot().Candidates
+	*s = saved
+	return out
+}
 
 // untonedSeparator 處理聲調選填時的 '（負責人 2026-10-22 決定，同 RIME 的分隔鍵）：組字中按 ' 只切音節、不出頓號——
 // 未打完而已是完整音節的注音不打聲調就完成，下一個注音開始新的音節（ㄒㄧ'ㄢ → 西安）；沒有未打完的注音（剛打完聲調）
@@ -49,8 +110,8 @@ func (s *Session) untonedBreak(sym rune) bool {
 		return false
 	}
 	cur := zhuyin.Syllable(s.comp.String())
-	if !cur.Legal() {
-		return false // 還不是完整音節：照原本的取代規則
+	if s.untonedSyllable(cur) == "" {
+		return false // 還不是完整音節（也不能簡拼）：照原本的取代規則
 	}
 	if s.comp.Slot(cl) == 0 && lastClass(s.comp) < cl && zhuyin.LegalPrefix(zhuyin.Syllable(string(cur)+string(sym))) {
 		return false // 接得上：ㄒㄧ＋ㄢ 是 ㄒㄧㄢ
@@ -68,14 +129,17 @@ func lastClass(c zhuyin.Composer) zhuyin.Class {
 	return last
 }
 
-// finishUntoned 把未打完、但已是完整音節的注音當成沒打聲調的音節收進組字。
-// 沒開聲調選填、沒有未打完的注音，或注音還不是完整音節時不動作，回傳 false。
+// finishUntoned 把未打完、但已是完整音節（或能簡拼）的注音當成沒打聲調的音節收進組字。
+// 沒開聲調選填、沒有未打完的注音，或注音還不是完整音節也不能簡拼時不動作，回傳 false。
 func (s *Session) finishUntoned() bool {
+	if s.ninePending() {
+		return s.finishNine(nineToneKey) // 九宮格的鍵：不打聲調就完成（不看聲調選填的設定，九宮格本來就靠解碼定讀音）
+	}
 	if !s.toneless() || s.comp.Empty() {
 		return false
 	}
-	base := zhuyin.Syllable(s.comp.String())
-	if !base.Legal() {
+	done := s.untonedSyllable(zhuyin.Syllable(s.comp.String()))
+	if done == "" {
 		return false
 	}
 	before := s.comp
@@ -84,7 +148,7 @@ func (s *Session) finishUntoned() bool {
 	// 否則 Enter 送出的會是整段的統計結果，前面神經改過的字也被換回去。
 	allow := s.allowRerank
 	s.allowRerank = true
-	s.completeSyllable(before, zhuyin.Untone(base))
+	s.completeSyllable(before, done)
 	s.allowRerank = allow
 	return true
 }
@@ -117,8 +181,8 @@ type runMark struct{ key, pos int } // keys[key:] 從音節位置 pos 開始
 // untonedRunFrom 回傳這一鍵要接續的那串按鍵：上一鍵留下的、狀態沒變的接著用；否則從游標處開始新的一串
 // （游標前還有不知道按鍵的未打完注音時，要等它完成才有起點）。沒開聲調選填或沒有自訂英文詞時回傳 nil。
 func (s *Session) untonedRunFrom(run *untonedRun) *untonedRun {
-	if !s.toneless() || !s.Preview02 || !s.model.HasVocab() {
-		return nil
+	if !s.toneless() || s.mixedInput() || !s.Preview02 || !s.model.HasVocab() {
+		return nil // 混打共存時（MixedWithToneless）英文詞由混打判斷
 	}
 	if run == nil || run.cursor != s.cursor || run.syls != len(s.syls) || run.comp != s.comp.String() {
 		run = &untonedRun{}
@@ -263,4 +327,51 @@ func (s *Session) rejectedReadings() []personal.RejectedSeg {
 // untonedTouches 回報 [start, end) 是否有讀音沒能換回詞庫讀音的沒打聲調音節；這種段落不學習。
 func untonedTouches(resolved []zhuyin.Syllable, start, end int) bool {
 	return end <= len(resolved) && zhuyin.HasUntoned(resolved[start:end])
+}
+
+// maxAbbreviatedReadings 是簡拼位置保留的讀音數：只打 ㄌ 時有上百個帶調音節，全部進入音節格會讓
+// 連續簡拼的每鍵延遲超過手機的預算。依單音節的常用程度留前面的，打的注音本身是完整音節時一定保留；
+// 排在後面的音節要打完整注音才找得到。
+const maxAbbreviatedReadings = 64
+
+// topAbbreviated 依 syllablePrior 留下簡拼音節 y 的位置最常用的 maxAbbreviatedReadings 個讀音，保持原本順序。
+func (s *Session) topAbbreviated(y zhuyin.Syllable, row []input.Hyp) []input.Hyp {
+	if len(row) <= maxAbbreviatedReadings {
+		return row
+	}
+	typed := y.Base()
+	ps := make([]float64, len(row))
+	idx := make([]int, len(row))
+	for i, h := range row {
+		idx[i] = i
+		ps[i] = s.syllablePrior(h.Syl) * math.Exp(-h.Cost)
+		if h.Syl.Base() == typed {
+			ps[i] = math.Inf(1) // 打的注音本身是完整音節（ㄕ 的 ㄕ、ㄕˊ……）
+		}
+	}
+	sort.SliceStable(idx, func(a, b int) bool { return ps[idx[a]] > ps[idx[b]] })
+	keep := idx[:maxAbbreviatedReadings]
+	sort.Ints(keep)
+	out := make([]input.Hyp, 0, len(keep))
+	for _, i := range keep {
+		out = append(out, row[i])
+	}
+	return out
+}
+
+// syllablePrior 是帶調音節的常用程度：讀這個音的系統單字中，無上下文機率乘讀音權重最高的一筆。
+// 系統詞庫不變，記在 session 裡；個人學習不影響簡拼保留哪些音節。
+func (s *Session) syllablePrior(y zhuyin.Syllable) float64 {
+	if p, ok := s.sylPrior[y]; ok {
+		return p
+	}
+	if s.sylPrior == nil {
+		s.sylPrior = map[zhuyin.Syllable]float64{}
+	}
+	best := 0.0
+	for _, e := range s.model.Lex.Exact([]zhuyin.Syllable{y}) {
+		best = max(best, s.model.SystemProb(lm.BOS, e.Surface)*e.PRW)
+	}
+	s.sylPrior[y] = best
+	return best
 }

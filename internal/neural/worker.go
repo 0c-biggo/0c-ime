@@ -150,8 +150,30 @@ type Manifest struct {
 	NeutralTolerant  []string          `json:"neutral_tolerant_last"`
 	Files            map[string]string `json:"files"`
 	// TonePolicy 只在 v2 套件出現（zuin-tone-mask-v1），loadManifest 依 rerank.ValidTonePolicy 核對。
-	// 桌面不依它開未知聲調：沒打聲調的段落照統計引擎，請求不帶 tone_known，打了聲調的分數與 v1 套件的做法相同。
+	// 桌面目前不依它開未知聲調，見 desktopUnknownTones。
 	TonePolicy *rerank.TonePolicy `json:"tone_policy,omitempty"`
+
+	bases map[zhuyin.Syllable]bool // vocab.json 的音節基底，loadManifest 核對雜湊後讀出
+	chars map[rune]bool            // vocab.json 的字表，同上；含表外字的候選在本機拿掉，不讓整批被拒
+}
+
+// desktopUnknownTones：桌面還沒評估過未知聲調，v2 套件照常載入（打了聲調的段落照樣神經選字；tone0-only 與 PF512
+// 只差未知聲調那一列，打聲調的分數相同），但不開 rerank.Options.UnknownTones，沒打聲調的段落照統計引擎。
+// 手機外殼自己用 rerank.UnknownTonesDeclared 決定。桌面評估過要開時，改成 rerank.UnknownTonesDeclared(m.Schema, m.TonePolicy)。
+func (m Manifest) desktopUnknownTones() bool { return false }
+
+// options 是套件宣告的融合設定；Worker 與 Supervisor 共用。權重照 manifest（PF512 為 2.0），不設 ContextlessWeight；
+// Bases 讓字表外的讀音在本機就照統計引擎；Chars 讓含字表外字元的候選在本機拿掉。
+func (m Manifest) options(scorer rerank.Scorer) rerank.Options {
+	return rerank.Options{Scorer: scorer, Weight: m.Weight, Margin: m.Margin, AllowPartial: m.AllowPartial,
+		ContextRunes: contextRunes(m), HintGap: m.HintGap, TextWeight: m.TextWeight, TextMargin: m.TextMargin,
+		NeutralExpand: m.NeutralExpand, NeutralBases: neutralBases(m),
+		UnknownTones: m.desktopUnknownTones(), Bases: m.bases, Chars: m.chars}
+}
+
+// supports 是送出前的檢查（rerank.Options.Supports）：桌面不送 tone_known，字表外的基底與字不送。不建 NeutralBases，每次請求都走。
+func (m Manifest) supports(r rerank.Request) bool {
+	return rerank.Options{UnknownTones: m.desktopUnknownTones(), Bases: m.bases, Chars: m.chars}.Supports(r)
 }
 
 // neutralBases 只在套件宣告 neutral_expand_penalty 時啟用候選擴充；清單為一聲（無聲調符號）的基底。
@@ -249,13 +271,24 @@ func loadManifest(c Config) (Manifest, error) {
 		!(m.NeutralExpand >= 0) || math.IsInf(m.NeutralExpand, 0) || m.NeutralExpand > 0 && len(m.NeutralTolerant) == 0 {
 		return m, errors.New("neural manifest contract mismatch")
 	}
-	for _, name := range []string{"model.onnx", "vocab.json"} {
-		digest, e := fileSHA(filepath.Join(c.Package, name))
-		if e != nil {
-			return m, e
+	digest, err := fileSHA(filepath.Join(c.Package, "model.onnx"))
+	if err != nil {
+		return m, err
+	}
+	vocab, err := os.ReadFile(filepath.Join(c.Package, "vocab.json"))
+	if err != nil {
+		return m, err
+	}
+	if sum := sha256.Sum256(vocab); digest != m.Files["model.onnx"] || hex.EncodeToString(sum[:]) != m.Files["vocab.json"] {
+		return m, errors.New("neural package hash mismatch")
+	}
+	// 讀不出音節基底或字表時不在本機檢查（Bases／Chars 為 nil），字表本身對不對照舊由 worker 啟動時判斷。
+	if strings.HasPrefix(m.Schema, "zuin-sequence-runtime-") {
+		if bases, e := rerank.ParseBases(vocab); e == nil {
+			m.bases = bases
 		}
-		if digest != m.Files[name] {
-			return m, errors.New("neural package hash mismatch")
+		if chars, e := rerank.ParseChars(vocab); e == nil {
+			m.chars = chars
 		}
 	}
 	return m, nil
@@ -365,11 +398,9 @@ func (w *Worker) stop() {
 	}
 }
 func (w *Worker) Close() { w.mu.Lock(); w.stop(); w.mu.Unlock(); <-w.done }
-func (w *Worker) Options() rerank.Options {
-	return rerank.Options{Scorer: w, Weight: w.manifest.Weight, Margin: w.manifest.Margin, AllowPartial: w.manifest.AllowPartial,
-		ContextRunes: contextRunes(w.manifest), HintGap: w.manifest.HintGap, TextWeight: w.manifest.TextWeight, TextMargin: w.manifest.TextMargin,
-		NeutralExpand: w.manifest.NeutralExpand, NeutralBases: neutralBases(w.manifest)}
-}
+
+func (w *Worker) Options() rerank.Options { return w.manifest.options(w) }
+
 func (w *Worker) Stats() Stats { w.mu.Lock(); defer w.mu.Unlock(); return w.stats }
 func (w *Worker) Dead() bool   { w.mu.Lock(); defer w.mu.Unlock(); return w.dead }
 func (w *Worker) Score(r rerank.Request) ([]float64, error) {
@@ -380,7 +411,7 @@ func (w *Worker) Score(r rerank.Request) ([]float64, error) {
 		w.stats.Unavailable++
 		return nil, ErrUnavailable
 	}
-	if !rerank.Supported(r) || r.AllowPartial != w.manifest.AllowPartial || (r.Mode == rerank.ModeText && (w.manifest.TextWeight <= 0 || contextRunes(w.manifest) == 0)) {
+	if !w.manifest.supports(r) || r.AllowPartial != w.manifest.AllowPartial || (r.Mode == rerank.ModeText && (w.manifest.TextWeight <= 0 || contextRunes(w.manifest) == 0)) {
 		return nil, errors.New("unsupported neural request")
 	}
 	if contextRunes(w.manifest) == 0 {

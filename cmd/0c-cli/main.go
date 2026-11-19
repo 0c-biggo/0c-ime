@@ -49,6 +49,7 @@ func main() {
 	capsLockEnglish := flag.Bool("caps-lock-english", false, "Caps Lock 開著時直接打英文（用 :caps on 送）；關閉時 caps_lock 不起作用。重播需使用相同開關")
 	ctrlPunct := flag.Bool("ctrl-punctuation", true, "注音模式的 Ctrl＋, . ' ; ? ! : ( ) 打全形標點（用 :k Ctrl+, 送）；關閉時交給應用程式")
 	cjkLatinSpace := flag.Bool("cjk-latin-space", false, "送出時在漢字與英文字母相連處補半形空格（#273）")
+	personalLearning := flag.Bool("personal-learning", true, "記住我選的字詞（#297）；關閉時照常選字（含神經選字與已學到的），只是送出不寫進個人資料。重播需使用相同開關")
 	zhuyinErrorHint := flag.Bool("zhuyin-error-hint", true, "打錯注音時提示（#300）：按了聲調但讀音沒有字時不收聲調、畫面標示 [提示]，緊接著再按同一個聲調照舊原樣留下。重播需使用相同開關")
 	shiftSymbolHalfwidth := flag.Bool("shift-symbol-halfwidth", false, "注音模式的 Shift＋符號鍵打半形（#258），全形改用 Ctrl＋符號或 ↓。重播需使用相同開關")
 	allSymbolsHalfwidth := flag.Bool("all-symbols-halfwidth", false, "注音模式所有符號鍵打按鍵上的半形字元（#282，同設定 shift-symbol-halfwidth all），Ctrl＋標點固定開、聲調選填暫停。重播需使用相同開關")
@@ -90,6 +91,7 @@ func main() {
 	}
 	eng.CJKLatinSpace = *cjkLatinSpace
 	eng.ZhuyinErrorHint = *zhuyinErrorHint
+	eng.NoLearning = !*personalLearning
 	eng.CapsLockEnglish = *capsLockEnglish
 	if *outputSimplified {
 		eng.Simplified, err = simplified.TW2S()
@@ -171,6 +173,9 @@ func main() {
 		}
 		if !*zhuyinErrorHint {
 			fmt.Fprintln(rec, "# 重播需要相同的打錯注音提示設定：0c-cli -zhuyin-error-hint=false")
+		}
+		if !*personalLearning {
+			fmt.Fprintln(rec, "# 重播需要相同的學習設定：0c-cli -personal-learning=false")
 		}
 		if !*spaceSelects {
 			fmt.Fprintln(rec, "# 重播需要相同的空白鍵設定：0c-cli -space-selects=false")

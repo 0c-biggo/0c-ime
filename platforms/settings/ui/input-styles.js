@@ -8,23 +8,27 @@
     // locked 是唯讀，不代表關閉；disabled 才是目前條件讓設定不起作用。
     const value = item.effective != null && item.effective !== '' ? item.effective
       : item.disabled && toggle ? 'off' : item.value;
-    // copyToChange：只因內建風格鎖住（#275）。按下去提議複製成自訂再改，不是毫無反應；
+    // copyToChange：只因內建風格鎖住（#275）。按下去直接複製成自訂再改（#318），不是毫無反應；
     // 其他條件停用、唯讀或儲存中，複製也解不開，照舊按不動。
     return { value, disabled: !!(busy || item.locked || item.disabled), toggle,
       checked: toggle && value === values.find((v) => v !== 'off'),
       copyToChange: !!(item.locked && !item.disabled && !busy) };
   }
 
-  // 在設定頁直接改被內建風格鎖住的項目時的提議（#275）：說明是哪個風格固定，按鈕寫出複製後要做的事。
-  // 副本名稱與「輸入習慣」頁「複製成自訂」的預設相同。目前不是內建風格時（本來就能改）回傳 null。
-  function copyOffer(profiles, item, value, labels = {}) {
+  // 在設定頁直接改被內建風格鎖住的項目時（#275、#318）：一按就把目前的內建風格複製成自訂、套用，再改這一項，
+  // 不再先問。副本名稱與「輸入習慣」頁「複製成自訂」的預設相同；已經有同名的自訂（以前複製過、又切回內建）時
+  // 加上編號（「靈犀注音（自訂 2）」），不沿用舊副本：舊副本可能改過別的設定，換過去會連帶改掉其他項目。
+  // done 是成功後的提示，failed 是複製成功、這一項卻沒改成時的開頭。目前不是內建風格時（本來就能改）回傳 null。
+  function copyTarget(profiles) {
     const active = profiles?.items?.find((p) => p.id === profiles.active);
     if (!active || !active.builtin) return null;
-    const toggle = item.values?.length === 2 && item.values.includes('off');
-    const action = toggle ? (value === 'off' ? '關閉' : '開啟') : '改成「' + valueLabel(item, value, labels) + '」';
+    const taken = new Set((profiles.items || []).map((p) => p.name));
+    let name = active.name + '（自訂）';
+    for (let n = 2; taken.has(name); n++) name = active.name + '（自訂 ' + n + '）';
     return {
-      id: active.id, name: active.name + '（自訂）', button: '複製成自訂並' + action,
-      text: '這一項由「' + active.name + '」風格固定。複製一份成為你自己的輸入習慣就能修改，其他設定都維持原樣；之後可在「輸入習慣」切回原本的風格。',
+      id: active.id, name,
+      done: '已改用「' + name + '」，可在「輸入習慣」切回「' + active.name + '」。',
+      failed: '已改用「' + name + '」，但這一項沒有改成：',
     };
   }
 
@@ -46,7 +50,7 @@
     return Array.from(value).length >= 1 && Array.from(value).length <= 80 && !/[\u0000-\u001f\u007f-\u009f]/.test(value);
   };
 
-  window.ZcInputStylesLogic = { controlState, copyOffer, differences, validName, valueLabel };
+  window.ZcInputStylesLogic = { controlState, copyTarget, differences, validName, valueLabel };
 
   window.ZcInputStyles = function ({ h, settings, render, mutate, valueLabel, showKeyboard }) {
     let selected = null;

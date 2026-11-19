@@ -1,5 +1,5 @@
 //! #189：以模擬的文件、context 與組字走一次 ITfThreadMgrEventSink::OnSetFocus，確認焦點變化時組字送到哪個 context。
-//! WPF 與原生 EDIT 在焦點移開時自己結束組字（OnCompositionTerminated），桌面測試走不到這條路；Excel 不會結束組字。
+//! WPF 與原生 EDIT 在焦點移開時自己結束組字（OnCompositionTerminated），這條路在 terminate_host_tests（#322）；Excel 不會結束組字。
 use super::*;
 use windows::Win32::Foundation::E_NOTIMPL;
 use windows::Win32::System::Com::IDataObject;

@@ -23,6 +23,12 @@ type System interface {
 	Bi(left, w string) float64
 }
 
+// Successors 是選用的擴充：列出以 left 為前詞的每個 bigram 後詞與 P(w | left)，順序不拘。
+// 給聯想詞（session.predict）找候選；沒有這個擴充的模型不提供聯想詞。
+type Successors interface {
+	Successors(left string, fn func(w string, p float64))
+}
+
 // Mem 是記憶體內實作。
 type Mem struct {
 	uni map[string]float64
@@ -42,6 +48,14 @@ func (m *Mem) Uni(w string) float64 {
 }
 
 func (m *Mem) Bi(left, w string) float64 { return m.bi[[2]string{left, w}] }
+
+func (m *Mem) Successors(left string, fn func(w string, p float64)) {
+	for k, p := range m.bi {
+		if k[0] == left {
+			fn(k[1], p)
+		}
+	}
+}
 
 // HasLeft 回報是否有以 left 為前詞的 bigram。
 func (m *Mem) HasLeft(left string) bool {

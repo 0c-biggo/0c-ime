@@ -26,8 +26,8 @@ test('固定風格的開關仍顯示實際開啟；無效條件與唯讀各自�
 });
 
 // #275：新安裝的內建「靈犀注音」鎖住不打聲調、中英混打等開關，按了沒反應、只看到「由風格決定」。
-// 被風格鎖住的項目按下去要提議複製成自訂再改；其他原因停用（倚天排列、唯讀、儲存中）照舊按不動，因為複製也解不開。
-test('被內建風格鎖住的項目可以按，提議複製成自訂；其他原因停用的不提議', () => {
+// 被風格鎖住的項目按下去要複製成自訂再改；其他原因停用（倚天排列、唯讀、儲存中）照舊按不動，因為複製也解不開。
+test('被內建風格鎖住的項目可以按，複製成自訂再改；其他原因停用的不複製', () => {
   const item = { key: 'toneless', values: ['off', 'on'], value: 'off', locked: true };
   assert.equal(logic.controlState(item).copyToChange, true);
   assert.equal(logic.controlState({ ...item, disabled: true, disabled_reason: '倚天 41 鍵時關閉' }).copyToChange, false);
@@ -35,20 +35,22 @@ test('被內建風格鎖住的項目可以按，提議複製成自訂；其他�
   assert.equal(logic.controlState({ ...item, locked: false }).copyToChange, false);
 });
 
-test('複製提議說明是哪個風格固定、按鈕寫出要做的事，副本名稱沿用輸入習慣頁的預設', () => {
+// #318：按了被內建風格鎖住的項目直接複製成自訂並改，不再先問；副本名稱沿用輸入習慣頁的預設，
+// 已有同名的自訂時加編號，不沿用舊副本（舊副本可能改過別的設定）。
+test('一鍵複製：副本名稱沿用輸入習慣頁的預設，同名時加編號，提示說改用了哪一個、怎麼切回', () => {
   const profiles = { active: '0c', items: [{ id: '0c', name: '靈犀注音', builtin: true }, { id: 'custom-1', name: '我的', builtin: false }] };
-  const toneless = { key: 'toneless', values: ['off', 'on'] };
-  const on = logic.copyOffer(profiles, toneless, 'on');
-  assert.equal(on.id, '0c');
-  assert.equal(on.name, '靈犀注音（自訂）');
-  assert.equal(on.button, '複製成自訂並開啟');
-  assert.match(on.text, /「靈犀注音」風格固定/);
-  assert.match(on.text, /其他設定都維持原樣/);
-  assert.equal(logic.copyOffer(profiles, toneless, 'off').button, '複製成自訂並關閉');
-  const keys = { key: 'selection-keys', values: ['1234567890', 'asdfghjkl;'], value_labels: { 'asdfghjkl;': 'a s d f g h j k l ;' } };
-  assert.equal(logic.copyOffer(profiles, keys, 'asdfghjkl;').button, '複製成自訂並改成「a s d f g h j k l ;」');
-  assert.equal(logic.copyOffer({ ...profiles, active: 'custom-1' }, toneless, 'on'), null, '自訂本來就能改');
-  assert.equal(logic.copyOffer(null, toneless, 'on'), null);
+  const first = logic.copyTarget(profiles);
+  assert.equal(first.id, '0c');
+  assert.equal(first.name, '靈犀注音（自訂）');
+  assert.equal(first.done, '已改用「靈犀注音（自訂）」，可在「輸入習慣」切回「靈犀注音」。');
+  assert.match(first.failed, /^已改用「靈犀注音（自訂）」，但這一項沒有改成：$/);
+  profiles.items.push({ id: 'custom-2', name: '靈犀注音（自訂）', builtin: false });
+  assert.equal(logic.copyTarget(profiles).name, '靈犀注音（自訂 2）');
+  profiles.items.push({ id: 'custom-3', name: '靈犀注音（自訂 2）', builtin: false });
+  assert.equal(logic.copyTarget(profiles).name, '靈犀注音（自訂 3）');
+  assert.equal(logic.copyTarget({ ...profiles, active: 'custom-1' }), null, '自訂本來就能改');
+  assert.equal(logic.copyTarget(null), null);
+  assert.equal(logic.copyOffer, undefined, '不再先提議、等第二次按');
 });
 
 test('中文與 Emoji 名稱依 Unicode 字數限制，不接受空白與控制字元', () => {

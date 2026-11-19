@@ -32,7 +32,7 @@ use crate::log::{zdebug, zlog};
 use crate::session::{Session, Snapshot};
 use crate::ui::UiClient;
 use crate::uielement::Elements;
-use crate::{caret, context, edit, keys, privacy};
+use crate::{caret, click, context, edit, keys, privacy};
 
 #[implement(
     ITfTextInputProcessorEx,
@@ -167,6 +167,8 @@ struct State {
     hotkey_tested: keys::Tested,
     /// OnTestKeyDown 對其他按鍵的決定（#216）：說要吃、OnKeyDown 卻沒吃成時（等不到重啟中的引擎），以原字元補送。
     key_tested: keys::Tested,
+    /// Chromium 的視窗組字中（click.rs 看著滑鼠按下）最近一次套用快照的 context：按下滑鼠時組字送到這裡（組字範圍拿不到 context 時，#322）。
+    click_context: Option<ITfContext>,
 }
 
 /// 候選窗最近一次的呈現：OnLayoutChange 時重查游標位置並補送。
@@ -390,6 +392,7 @@ impl TextService {
                 left_from: None,
                 hotkey_tested: keys::Tested::default(),
                 key_tested: keys::Tested::default(),
+                click_context: None,
             }),
             applying: Cell::new(0),
             layout_missed: Cell::new(false),
@@ -399,6 +402,8 @@ impl TextService {
 
 impl Drop for TextService {
     fn drop(&mut self) {
+        // 保險：沒經過 Deactivate 就釋放時，也不能留下指向這個物件的滑鼠 hook（#322）。
+        click::forget_dropped(self);
         crate::object_destroyed();
     }
 }
@@ -683,6 +688,13 @@ impl TextService_Impl {
         }
         // 版面晚到（Chromium）時由 OnLayoutChange 補上位置；沒有候選就不必收通知。
         self.watch_layout(if show { ctx } else { None });
+        // Chromium 的視窗組字時，滑鼠按下先送出組字（#322，見 click.rs）。經系統相容層的 IMM32 程式不在此列。
+        let composing_in = {
+            let st = self.state.borrow();
+            ctx.filter(|c| st.composing && !privacy::imm32_context(c, st.activate_flags))
+        };
+        click::follow(self, composing_in.and(owner));
+        self.state.borrow_mut().click_context = composing_in.filter(|_| click::watching_for(self)).cloned();
         // 套用期間略過的版面通知：現在 shown 與 revision 已是這一鍵的，位置不是準確的就補查一次。
         let exact = placed.is_some_and(|(_, source)| source == caret::Source::Exact);
         if self.layout_missed.take() && show && !exact && self.applying.get() == 0 {
@@ -985,7 +997,7 @@ impl TextService_Impl {
         eaten
     }
 
-    /// 結束目前組字：commit（失焦、停用）或 cancel（應用程式自行終止組字）。
+    /// 結束目前組字（失焦、停用、交給 App 的快捷鍵前）：送 commit 或其他結束請求。應用程式自行終止組字見 settle_terminated。
     fn finish(&self, ctx: Option<&ITfContext>, kind: &str) {
         let (composing, completing) = {
             let st = self.state.borrow();
@@ -1294,6 +1306,26 @@ impl TextService_Impl {
         false
     }
 
+    /// #322：Chromium 的視窗組字中按下滑鼠（click.rs 的 hook，點擊交給程式之前）：照失焦的規則送出組字，
+    /// 瀏覽器接著處理這次點擊時已經沒有組字可定案，打到一半的注音不會留在網頁裡。套用快照、請相容層完成組字的途中
+    /// （宿主在我們的呼叫裡取訊息）或狀態正被借用時不動，照舊由宿主終止組字的路徑收尾。
+    pub(crate) fn mouse_pressed(&self) {
+        if self.applying.get() != 0 {
+            return;
+        }
+        let ready = self
+            .state
+            .try_borrow_mut()
+            .is_ok_and(|st| st.composing && st.completing.is_none());
+        if !ready {
+            return;
+        }
+        zlog!("Chromium 組字中按下滑鼠：先送出組字 exe={}", crate::log::exe_name());
+        let fallback = self.state.borrow().click_context.clone();
+        let ctx = self.composition_context().or(fallback);
+        self.finish(ctx.as_ref(), "commit");
+    }
+
     /// 組字一律經相容層送出；條件都成立才把這一鍵重排給程式，回傳有沒有攔下（#66）。送出前先取快照：
     /// 是白名單的鍵而且不是輸入法熱鍵（先看白名單，不在白名單的鍵不列舉熱鍵表）、焦點視窗、view 視窗、
     /// 焦點視窗的佇列本來沒有 WM_CHAR。送出之後必須全部符合：目標有效而且就是 view（相容層的結果字串排給 view）、
@@ -1516,8 +1548,10 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
             let ctx = self.focused_context();
             self.finish(ctx.as_ref(), "commit");
             self.forget_candidates();
+            click::forget(self);
             let (tm, tid, cookie) = {
                 let mut st = self.state.borrow_mut();
+                st.click_context = None;
                 st.callback = None;
                 st.composition = None;
                 st.composing = false;
@@ -1817,7 +1851,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
 impl ITfCompositionSink_Impl for TextService_Impl {
     fn OnCompositionTerminated(
         &self,
-        _ec: u32,
+        ec: u32,
         composition: Ref<'_, ITfComposition>,
     ) -> windows_core::Result<()> {
         crate::guarded("OnCompositionTerminated", || {
@@ -1838,11 +1872,16 @@ impl ITfCompositionSink_Impl for TextService_Impl {
                 let st = self.state.borrow();
                 matches!(&st.completing, Some(CompletingState { composition: Some(c), .. }) if Some(c) == composition.as_ref())
             };
-            // 應用程式或系統終止了組字（例如滑鼠點到別處）：組字文字留在文件裡，核心放棄本次組字、不學習。
+            // 應用程式或系統終止了組字（點到別處、Win＋Space 換輸入法、切到別的視窗）：照失焦的規則收尾（#322，見 settle_terminated）。
             // 之後的 Enter、方向鍵交還宿主（例如 RichEdit 2.0 讀取 WM_GETTEXT 時會結束組字，#88）。
             if !by_cuas {
                 zlog!("組字被宿主終止 exe={}", crate::log::exe_name());
             }
+            // 範圍與外殼最後顯示的組字要在清掉外殼狀態前取得。
+            let terminated = (!by_cuas).then(|| {
+                let shown = self.state.borrow().session.english_state.text();
+                (composition.as_ref().and_then(|c| unsafe { c.GetRange() }.ok()), shown)
+            });
             {
                 let mut st = self.state.borrow_mut();
                 st.composition = None;
@@ -1856,17 +1895,44 @@ impl ITfCompositionSink_Impl for TextService_Impl {
                 }
             }
             self.forget_candidates();
+            click::follow(self, None);
+            self.state.borrow_mut().click_context = None;
             if by_cuas {
                 zdebug!("組字由相容層完成，不送取消");
                 return Ok(());
             }
-            let _ = self
-                .state
-                .borrow_mut()
-                .session
-                .handle(json!({"type": "cancel"}));
+            if let Some((range, shown)) = terminated {
+                self.settle_terminated(ec, range.as_ref(), &shown);
+            }
             Ok(())
         })
+    }
+}
+
+impl TextService {
+    /// 宿主終止了組字（#322）：組字文字由宿主留在文件裡，失焦與 Deactivate 的 commit 走不到。範圍裡還是外殼最後顯示的組字時，
+    /// 照失焦的規則請引擎 commit（組好的字送出並學習、未打完的注音丟掉），再用終止通知的寫入 cookie 把範圍改成送出的文字，
+    /// 文件裡就不會留下打到一半的 ㄕ。範圍讀不到，或內容不是最後顯示的組字（宿主改過、文件沒跟上快照），照舊放棄組字（cancel、
+    /// 不學習、不動文件）。引擎沒回應時同樣不動文件。
+    fn settle_terminated(&self, ec: u32, range: Option<&windows::Win32::UI::TextServices::ITfRange>, shown: &str) {
+        let shown16: Vec<u16> = shown.encode_utf16().collect();
+        let Some(range) = range.filter(|r| unsafe { edit::shows(ec, r, &shown16) }) else {
+            zlog!("宿主終止組字：組字範圍不是最後顯示的組字，放棄這次組字");
+            let _ = self.state.borrow_mut().session.handle(json!({"type": "cancel"}));
+            return;
+        };
+        let snapshot = self.state.borrow_mut().session.handle(json!({"type": "commit"}));
+        if !snapshot.ok {
+            return;
+        }
+        let keep: Vec<u16> = snapshot.commit.encode_utf16().collect();
+        match unsafe { edit::settle_terminated(ec, range, &keep) } {
+            edit::Settled::Kept => zdebug!("宿主終止組字：文件裡已是送出的文字"),
+            edit::Settled::Rewritten => {
+                zlog!("宿主終止組字：組字範圍改成送出的文字（{} → {} 個 UTF-16 單位）", shown16.len(), keep.len())
+            }
+            edit::Settled::Failed(hr) => zlog!("宿主終止組字：改寫組字範圍失敗 {}，文件留著原本的組字", hr),
+        }
     }
 }
 
@@ -2155,6 +2221,10 @@ mod focus_host_tests;
 #[cfg(test)]
 #[path = "imm32_order_tests.rs"]
 mod imm32_order_tests;
+
+#[cfg(test)]
+#[path = "terminate_host_tests.rs"]
+mod terminate_host_tests;
 
 #[cfg(test)]
 mod shift_tests {

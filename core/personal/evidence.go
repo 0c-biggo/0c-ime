@@ -83,6 +83,9 @@ func (m *Model) AdvanceTime(now int64) {
 func (m *Model) observeEvidence(left, w string, weight float64) {
 	s := m.Store
 	k := pair(left, w)
+	r := m.recording()
+	note(r.byContext, s.EvidenceByContext, k)
+	note(r.byWord, s.EvidenceByWord, w)
 	s.EvidenceByContext[k] = s.EvidenceByContext[k].add(s.Time, weight)
 	s.EvidenceByWord[w] = s.EvidenceByWord[w].add(s.Time, weight)
 }

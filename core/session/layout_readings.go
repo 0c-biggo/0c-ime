@@ -16,11 +16,15 @@ import (
 // 解碼器回報走了非預設讀音的詞（Seg.Matched）；absorbReadings 把挑中的讀音寫回 syls、清掉 Matched，
 // 之後的顯示、學習與簡體轉換都看到真正的讀音，不會被當成近音（不標示修正、照常學習）。
 
-// expand 是組字的音節格：使用者打的音，加上排列的歧義讀音。
+// expand 是組字的音節格：使用者打的音，加上排列的歧義讀音與九宮格的讀音。
 func (s *Session) expand(syls []zhuyin.Syllable) input.Lattice {
-	lat := s.front.Expand(syls)
+	lat := s.widenSpatial(syls, s.front.Expand(syls))
 	for i, y := range syls {
 		if s.literals[i] {
+			continue
+		}
+		if y.Abbreviated() {
+			lat[i] = s.topAbbreviated(y, lat[i])
 			continue
 		}
 		readings := s.layout.Readings(y)
@@ -38,7 +42,7 @@ func (s *Session) expand(syls []zhuyin.Syllable) input.Lattice {
 		}
 		lat[i] = row
 	}
-	return lat
+	return s.widenNine(syls, lat) // 九宮格位置換成那串鍵的所有讀音（ninekey.go）
 }
 
 // absorbReadings 把路徑在歧義位置挑中的讀音寫回 syls；只因歧義讀音而不同的詞清掉 Matched。

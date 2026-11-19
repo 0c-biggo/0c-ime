@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -67,6 +68,9 @@ type Settings struct {
 	// ToggleKey 是單按哪個 Shift 切換注音／英文（#117）：right、both、left、none。macOS 預設 none，Windows both（#206），Linux right。
 	// 檔案沒有這個欄位時沿用平台預設；舊欄位 left_shift=true 保留為 both。Shift 加字母一律打大寫，不算切換。
 	ToggleKey string `json:"toggle_key"`
+	// ShiftTapMS 是單按 Shift 切換中英的時限（毫秒，#319）：按下到放開在這個時間內才算單按。只接受 ShiftTapChoices，
+	// 預設 300（缺欄位時也是）。外殼從 health 的 shift_tap_ms 拿到它。不屬於輸入習慣風格。
+	ShiftTapMS int `json:"shift_tap_ms"`
 	// ModeMemory 是切換視窗或輸入框後的中英模式（#115）：native 照平台原本的做法（Windows 每個程式各自記住、
 	// Linux 回到注音），shared 全部共用同一個模式（macOS 的預設，同系統輸入方式全域共用）。
 	ModeMemory string `json:"mode_memory"`
@@ -109,6 +113,10 @@ type Settings struct {
 	// Windows、macOS 發出提示音，Linux 在組字區標示；緊接著再按一次同一個聲調照舊原樣留下。只有一個注音符號時不擋。預設 true（缺欄位時也是）。
 	// 中英混打與不打聲調時不作用。不屬於輸入習慣風格，任何風格都能單獨開關。
 	ZhuyinErrorHint bool `json:"zhuyin_error_hint"`
+	// PersonalLearning：記住我選的字詞（#297，跟手機 App 的 personal_learning 同名）。預設 true（缺欄位時也是）。
+	// 關閉時引擎照常選字（神經選字、依前文選字、已學到的資料都照用），只是送出與手選不再寫進個人資料（user.json）。
+	// 「我的詞彙」不受影響。不屬於輸入習慣風格，任何風格都能單獨開關。
+	PersonalLearning bool `json:"personal_learning"`
 	// CapsLockEnglish：Caps Lock 開著時直接打英文（#173，Windows、Linux）。預設 false：注音模式不理 Caps Lock（#168）。
 	// 開啟時 Caps Lock 是暫時的英文模式：字母大寫、數字與符號半形，關掉回到原本的模式。macOS 一律如此（#84），不用這一項。
 	CapsLockEnglish bool `json:"caps_lock_english"`
@@ -256,8 +264,8 @@ func (s Settings) FuzzyConfig() fuzzy.Config {
 }
 
 func Default() Settings {
-	s := Settings{Selection: Neural, Punctuation: false, DocumentContext: true, CandidateCursor: defaultCandidateCursor(runtime.GOOS), CandidateLayout: "vertical", EmojiShortcut: "equals", EmojiEqualsFirst: true, EscClear: true, SpaceSelects: true, KeyboardLayout: LayoutStandard, SelectionKeys: SelectDigits, CtrlPunctuation: true, ZhuyinErrorHint: true,
-		ToggleKey: defaultToggleKey(runtime.GOOS), ModeMemory: defaultModeMemory(runtime.GOOS), StartMode: StartZhuyin}
+	s := Settings{Selection: Neural, Punctuation: false, DocumentContext: true, CandidateCursor: defaultCandidateCursor(runtime.GOOS), CandidateLayout: "vertical", EmojiShortcut: "equals", EmojiEqualsFirst: true, EscClear: true, SpaceSelects: true, KeyboardLayout: LayoutStandard, SelectionKeys: SelectDigits, CtrlPunctuation: true, ZhuyinErrorHint: true, PersonalLearning: true,
+		ToggleKey: defaultToggleKey(runtime.GOOS), ShiftTapMS: DefaultShiftTapMS, ModeMemory: defaultModeMemory(runtime.GOOS), StartMode: StartZhuyin}
 	s.LeftShift = s.TogglesLeft() // 舊欄位跟著切換鍵：Windows 預設左右 Shift 時是 true（#206）
 	return s
 }
@@ -288,6 +296,20 @@ func defaultToggleKey(goos string) string {
 		return ToggleBoth
 	}
 	return ToggleRight
+}
+
+// 單按 Shift 切換中英的時限（#319）：選單的選項與預設，單位毫秒。#117 起固定 300；按得慢的人要長一點，
+// 常誤切的人要短一點。RIME 固定 500 毫秒。
+var ShiftTapChoices = []int{200, 300, 400, 500, 600}
+
+const DefaultShiftTapMS = 300
+
+// ShiftTapMillis 是引擎回報給外殼的單按時限（毫秒）；值不在選單裡（零值的 Settings）時是預設的 300。
+func (s Settings) ShiftTapMillis() int {
+	if slices.Contains(ShiftTapChoices, s.ShiftTapMS) {
+		return s.ShiftTapMS
+	}
+	return DefaultShiftTapMS
 }
 
 // 切換視窗後的中英模式（#115）。
@@ -376,7 +398,7 @@ func (s *Settings) UnmarshalJSON(b []byte) error {
 	for _, field := range []struct {
 		key string
 		dst *bool
-	}{{"punctuation", &s.Punctuation}, {"document_context", &s.DocumentContext}, {"mixed_input", &s.MixedInput}, {"english_autocomplete", &s.EnglishAutocomplete}, {"left_shift", &s.LeftShift}, {"esc_clear", &s.EscClear}, {"space_selects", &s.SpaceSelects}, {"advance_after_select", &s.AdvanceAfterSelect}, {"emoji_equals_first", &s.EmojiEqualsFirst}, {"output_simplified", &s.OutputSimplified}, {"simplified_hotkey", &s.SimplifiedHotkey}, {"ctrl_punctuation", &s.CtrlPunctuation}, {"shift_symbol_halfwidth", &s.ShiftSymbolHalfwidth}, {"all_symbols_halfwidth", &s.AllSymbolsHalfwidth}, {"cjk_latin_space", &s.CJKLatinSpace}, {"zhuyin_error_hint", &s.ZhuyinErrorHint}, {"caps_lock_english", &s.CapsLockEnglish}, {"toneless", &s.Toneless}} {
+	}{{"punctuation", &s.Punctuation}, {"document_context", &s.DocumentContext}, {"mixed_input", &s.MixedInput}, {"english_autocomplete", &s.EnglishAutocomplete}, {"left_shift", &s.LeftShift}, {"esc_clear", &s.EscClear}, {"space_selects", &s.SpaceSelects}, {"advance_after_select", &s.AdvanceAfterSelect}, {"emoji_equals_first", &s.EmojiEqualsFirst}, {"output_simplified", &s.OutputSimplified}, {"simplified_hotkey", &s.SimplifiedHotkey}, {"ctrl_punctuation", &s.CtrlPunctuation}, {"shift_symbol_halfwidth", &s.ShiftSymbolHalfwidth}, {"all_symbols_halfwidth", &s.AllSymbolsHalfwidth}, {"cjk_latin_space", &s.CJKLatinSpace}, {"zhuyin_error_hint", &s.ZhuyinErrorHint}, {"personal_learning", &s.PersonalLearning}, {"caps_lock_english", &s.CapsLockEnglish}, {"toneless", &s.Toneless}} {
 		if raw, ok := take(field.key); ok {
 			var v bool
 			if json.Unmarshal(raw, &v) == nil {
@@ -416,6 +438,14 @@ func (s *Settings) UnmarshalJSON(b []byte) error {
 			} else {
 				kept[field.key] = raw
 			}
+		}
+	}
+	if raw, ok := take("shift_tap_ms"); ok { // #319：只認選單裡的整數毫秒
+		var ms int
+		if json.Unmarshal(raw, &ms) == nil && slices.Contains(ShiftTapChoices, ms) {
+			s.ShiftTapMS = ms
+		} else {
+			kept["shift_tap_ms"] = raw
 		}
 	}
 	// 舊檔只有 left_shift：推出切換鍵。新檔以 toggle_key 為準，left_shift 跟著它（舊版寫的 left_shift 不蓋過它）。
@@ -481,7 +511,7 @@ func (s Settings) MarshalJSON() ([]byte, error) {
 	for _, field := range []struct {
 		key   string
 		value any
-	}{{"selection", s.Selection}, {"punctuation", s.Punctuation}, {"document_context", s.DocumentContext}, {"mixed_input", s.MixedInput}, {"english_autocomplete", s.EnglishAutocomplete}, {"left_shift", s.LeftShift}, {"esc_clear", s.EscClear}, {"space_selects", s.SpaceSelects}, {"candidate_cursor", s.CandidateCursor}, {"advance_after_select", s.AdvanceAfterSelect}, {"candidate_layout", s.CandidateLayout}, {"emoji_shortcut", s.EmojiShortcut}, {"emoji_equals_first", s.EmojiEqualsFirst}, {"keyboard_layout", s.KeyboardLayout}, {"selection_keys", s.SelectionKeys}, {"toggle_key", s.ToggleKey}, {"mode_memory", s.ModeMemory}, {"start_mode", s.StartMode}, {"output_simplified", s.OutputSimplified}, {"simplified_hotkey", s.SimplifiedHotkey}, {"ctrl_punctuation", s.CtrlPunctuation}, {"shift_symbol_halfwidth", s.ShiftSymbolHalfwidth}, {"all_symbols_halfwidth", s.AllSymbolsHalfwidth}, {"cjk_latin_space", s.CJKLatinSpace}, {"zhuyin_error_hint", s.ZhuyinErrorHint}, {"caps_lock_english", s.CapsLockEnglish}, {"toneless", s.Toneless}} {
+	}{{"selection", s.Selection}, {"punctuation", s.Punctuation}, {"document_context", s.DocumentContext}, {"mixed_input", s.MixedInput}, {"english_autocomplete", s.EnglishAutocomplete}, {"left_shift", s.LeftShift}, {"esc_clear", s.EscClear}, {"space_selects", s.SpaceSelects}, {"candidate_cursor", s.CandidateCursor}, {"advance_after_select", s.AdvanceAfterSelect}, {"candidate_layout", s.CandidateLayout}, {"emoji_shortcut", s.EmojiShortcut}, {"emoji_equals_first", s.EmojiEqualsFirst}, {"keyboard_layout", s.KeyboardLayout}, {"selection_keys", s.SelectionKeys}, {"toggle_key", s.ToggleKey}, {"shift_tap_ms", s.ShiftTapMillis()}, {"mode_memory", s.ModeMemory}, {"start_mode", s.StartMode}, {"output_simplified", s.OutputSimplified}, {"simplified_hotkey", s.SimplifiedHotkey}, {"ctrl_punctuation", s.CtrlPunctuation}, {"shift_symbol_halfwidth", s.ShiftSymbolHalfwidth}, {"all_symbols_halfwidth", s.AllSymbolsHalfwidth}, {"cjk_latin_space", s.CJKLatinSpace}, {"zhuyin_error_hint", s.ZhuyinErrorHint}, {"personal_learning", s.PersonalLearning}, {"caps_lock_english", s.CapsLockEnglish}, {"toneless", s.Toneless}} {
 		if err := typed(field.key, field.value); err != nil {
 			return nil, err
 		}
@@ -536,7 +566,7 @@ func (s Settings) notes() []string {
 	if s.extra != "" {
 		_ = json.Unmarshal([]byte(s.extra), &kept)
 	}
-	for _, key := range []string{"selection", "punctuation", "document_context", "mixed_input", "english_autocomplete", "left_shift", "esc_clear", "space_selects", "candidate_cursor", "advance_after_select", "candidate_layout", "emoji_shortcut", "emoji_equals_first", "keyboard_layout", "selection_keys", "toggle_key", "mode_memory", "start_mode", "output_simplified", "simplified_hotkey", "ctrl_punctuation", "shift_symbol_halfwidth", "all_symbols_halfwidth", "cjk_latin_space", "zhuyin_error_hint", "caps_lock_english", "toneless"} {
+	for _, key := range []string{"selection", "punctuation", "document_context", "mixed_input", "english_autocomplete", "left_shift", "esc_clear", "space_selects", "candidate_cursor", "advance_after_select", "candidate_layout", "emoji_shortcut", "emoji_equals_first", "keyboard_layout", "selection_keys", "toggle_key", "shift_tap_ms", "mode_memory", "start_mode", "output_simplified", "simplified_hotkey", "ctrl_punctuation", "shift_symbol_halfwidth", "all_symbols_halfwidth", "cjk_latin_space", "zhuyin_error_hint", "personal_learning", "caps_lock_english", "toneless"} {
 		if raw, ok := kept[key]; ok {
 			out = append(out, fmt.Sprintf("%s：本版不認得 %s，暫用預設值，存檔時保留原值", strings.ReplaceAll(key, "_", "-"), raw))
 			delete(kept, key)
@@ -746,6 +776,12 @@ func (s Settings) valueLabels(key string) map[string]string {
 		return map[string]string{ModeNative: modeNativeLabel(runtime.GOOS, s.StartsEnglish()), ModeShared: "全部共用同一個模式"}
 	case "keyboard-layout":
 		return map[string]string{LayoutStandard: "標準", LayoutETen: "倚天 41 鍵", LayoutHsu: "許氏"}
+	case "shift-tap-ms": // #319
+		out := map[string]string{}
+		for _, ms := range ShiftTapChoices {
+			out[strconv.Itoa(ms)] = strconv.FormatFloat(float64(ms)/1000, 'f', -1, 64) + " 秒"
+		}
+		return out
 	case "shift-symbol-halfwidth":
 		return map[string]string{"off": "全形標點", "on": "Shift＋符號打半形", "all": "所有符號鍵打半形"}
 	}
@@ -825,6 +861,10 @@ func (s Settings) disabledReasonOn(goos, key string) string {
 		if s.startModeLocked(goos) {
 			return startModeLockedReason
 		}
+	case "shift-tap-ms":
+		if s.ToggleKey == ToggleNone {
+			return shiftTapUnusedReason
+		}
 	case "zhuyin-error-hint":
 		// 聲調選填（#150）與中英混打（#78）有自己處理沒有字的注音的方式，這一項不作用（#300）。
 		// 兩者本身停用（倚天、許氏、所有符號鍵打半形、輸入習慣衝突）時照常；聲調選填開著時混打也停用，原因寫聲調選填。
@@ -847,6 +887,9 @@ const mixedSpaceReason = "中英混打時關閉，按 ↓ 選字"
 // startModeLockedReason：不用 Shift 切換時沒有鍵能從英文切回注音，所以固定從注音開始（#184）。
 const startModeLockedReason = "不用 Shift 切換時固定從注音開始"
 
+// shiftTapUnusedReason：不用 Shift 切換時，單按 Shift 的時限沒有作用（#319）。
+const shiftTapUnusedReason = "不用 Shift 切換時不作用"
+
 // disabledBy 回報停用原因來自哪一項設定（Item.DisabledBy）：設定程式把各項分在不同頁面（#207），
 // 原因那一項在別頁時，用它帶人過去改。新增停用原因時要一起加在這裡（TestDisabledItemsNameTheirCause）。
 func disabledBy(reason string) string {
@@ -856,7 +899,7 @@ func disabledBy(reason string) string {
 	switch reason {
 	case "倚天 41 鍵時關閉", "許氏排列時關閉":
 		return "keyboard-layout"
-	case startModeLockedReason:
+	case startModeLockedReason, shiftTapUnusedReason:
 		return "toggle-key"
 	case "不打聲調時關閉": // 中英混打（#150）
 		return "toneless"
@@ -885,7 +928,7 @@ func specs() []spec {
 			func(s Settings) string { return onOff(s.DocumentContext) }},
 		{"mixed-input", "中英混打（試用）", "直接在注音中打英文；提供英文補全與拼字修正，由你確認接受。開啟時空白鍵輸入空白，按 ↓ 選字；數字拼得成注音時，按 Enter 留數字。若已啟用 Shift 中英切換，混打開或關都能單按 Shift 切到英文", "off", []string{"on", "off"},
 			func(s Settings) string { return onOff(s.MixedInput) }},
-		{"english-autocomplete", "英文模式自動補字", "單按 Shift 切換到英文模式後，輸入至少兩個字母時顯示補全候選，三個字母起也提供拼字修正；按 Tab 補全或修正拼字、Esc 關閉。「我的詞彙」的英文詞排在最前面；自己打過幾次的英文單字會記在本機，之後也會建議（私人欄位與暫停學習時不記）。與中英混打分開設定。空白送出單字並輸入空格；Enter 只送出單字，再按一次才換行或執行", "off", []string{"on", "off"},
+		{"english-autocomplete", "英文模式自動補字", "單按 Shift 切換到英文模式後，輸入至少兩個字母時顯示補全候選，三個字母起也提供拼字修正；按 Tab 補全或修正拼字、Esc 關閉。「我的詞彙」的英文詞排在最前面；自己打過幾次的英文單字會記在本機，之後也會建議（私人欄位與關閉「記住我選的字詞」時不記）。與中英混打分開設定。空白送出單字並輸入空格；Enter 只送出單字，再按一次才換行或執行", "off", []string{"on", "off"},
 			func(s Settings) string { return onOff(s.EnglishAutocomplete) }},
 		{"toggle-key", "中英切換鍵", toggleKeyDescription(runtime.GOOS), Default().ToggleKey, []string{ToggleRight, ToggleBoth, ToggleLeft, ToggleNone},
 			func(s Settings) string { return s.ToggleKey }},
@@ -932,6 +975,16 @@ func specs() []spec {
 	// #300：同上放在最後；設定程式排在「不打聲調也能選字」上面。
 	out = append(out, spec{"zhuyin-error-hint", "打錯注音時提示", zhuyinErrorHintDescription(runtime.GOOS), "on", []string{"on", "off"},
 		func(s Settings) string { return onOff(s.ZhuyinErrorHint) }})
+	// #319：同上放在最後；設定程式排在「中英切換鍵」下面。
+	tapValues := make([]string, 0, len(ShiftTapChoices))
+	for _, ms := range ShiftTapChoices {
+		tapValues = append(tapValues, strconv.Itoa(ms))
+	}
+	out = append(out, spec{"shift-tap-ms", shiftTapLabel, shiftTapDescription, strconv.Itoa(DefaultShiftTapMS), tapValues,
+		func(s Settings) string { return strconv.Itoa(s.ShiftTapMillis()) }})
+	// #297：同上放在最後；設定程式排在「選字」頁的「打錯注音時提示」下面。
+	out = append(out, spec{"personal-learning", "記住我選的字詞", personalLearningDescription, "on", []string{"on", "off"},
+		func(s Settings) string { return onOff(s.PersonalLearning) }})
 	for _, p := range fuzzy.Pairs() {
 		out = append(out, spec{"fuzzy-" + p.ID(), "模糊音 " + p.Symbols(), "把近音的字也列進候選，原音仍排在前面；「自動修正」（實驗）會在上下文明顯支持近音時另外自動改字", DefaultFuzzy, []string{"off", "select", "auto"},
 			func(s Settings) string { return s.FuzzyConfig().Mode(p).String() }})
@@ -942,6 +995,11 @@ func specs() []spec {
 	}
 	return out
 }
+
+// personalLearningDescription 是「記住我選的字詞」（#297）的說明：關閉時什麼照常、什麼不記、已學的怎麼清。
+const personalLearningDescription = "選過的字詞會排到前面，常用的英文單字也會記住；學習資料只存在這台電腦。" +
+	"關閉後照常選字（神經選字、依前文選字照舊，已經學到的也照常使用），只是不再記下新的選擇、英文單字和最近用過的符號；" +
+	"「我的詞彙」照常可以加詞。要清掉已經學到的，到「我的詞彙」的「靈犀學到的」按「清除學習紀錄」"
 
 // tonelessDescription 是「不打聲調也能選字」（#150）的說明：怎麼切音節、空白還是一聲、混打停用。
 const tonelessDescription = "聲調可打可不打：ㄋㄧㄏㄠ 就是「你好」，沒打聲調的字依前後文決定，有打聲調的字照聲調；少打聲調時選字比較容易錯，拿不定的字可以補聲調。" +
@@ -974,7 +1032,8 @@ func simplifiedHotkeyDescription(goos string) string {
 
 // toggleKeyDescription：Windows 另外提醒 Ctrl＋空白鍵。那是繁中輸入法的系統熱鍵，外殼接到就切換（#117），不受這一項影響。
 func toggleKeyDescription(goos string) string {
-	d := "單按哪個 Shift 切換注音／英文；按住 Shift 超過 0.3 秒、或 Shift 加字母（打大寫）不算切換。沒用來切換的 Shift 照系統原本的用途"
+	// 時限可調（#319），這裡不寫秒數，指向那一項，免得說明跟設定不一致。
+	d := "單按哪個 Shift 切換注音／英文；按住 Shift 超過「" + shiftTapLabel + "」、或 Shift 加字母（打大寫）不算切換。沒用來切換的 Shift 照系統原本的用途"
 	if goos == "windows" {
 		d += "。預設左右 Shift 都可以切換，不想讓左 Shift 切換可改成「右 Shift」；按著 Shift 點滑鼠選取也不算切換。也可以按 Ctrl＋空白鍵"
 	} else if goos == "darwin" {
@@ -982,6 +1041,12 @@ func toggleKeyDescription(goos string) string {
 	}
 	return d
 }
+
+// 「單按 Shift 的時限」（#319）的名稱與說明。
+const (
+	shiftTapLabel       = "單按 Shift 的時限"
+	shiftTapDescription = "按下 Shift 到放開在這個時間內才算單按，切換注音／英文。按得比較慢、常切換不成功時調長；打字時常不小心切到英文時調短"
+)
 
 // cjkLatinSpaceDescription 是「中英文之間自動加空格」（#273）的說明：什麼時候補、哪裡不補、只看這次送出的字。
 const cjkLatinSpaceDescription = "送出時在中文字和英文字母相連的地方補一個半形空格，例如「用Python寫」送出「用 Python 寫」；組字時照打的顯示。" +
@@ -1242,6 +1307,9 @@ func (s *Settings) set(key, value string) error {
 		s.setToggleKey(value)
 		s.forget("toggle_key")
 		s.forget("left_shift")
+	case "shift-tap-ms":
+		s.ShiftTapMS, _ = strconv.Atoi(value) // 已核對過是選單裡的值
+		s.forget("shift_tap_ms")
 	case "mode-memory":
 		s.ModeMemory = value
 		s.forget("mode_memory")
@@ -1278,6 +1346,9 @@ func (s *Settings) set(key, value string) error {
 	case "zhuyin-error-hint":
 		s.ZhuyinErrorHint = value == "on"
 		s.forget("zhuyin_error_hint")
+	case "personal-learning":
+		s.PersonalLearning = value == "on"
+		s.forget("personal_learning")
 	case "caps-lock-english":
 		s.CapsLockEnglish = value == "on"
 		s.forget("caps_lock_english")

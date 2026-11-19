@@ -74,6 +74,7 @@ func listSettings(w io.Writer, r settings.Report, path string) {
 	}
 	fmt.Fprintf(w, "english-autocomplete=%s（英文自動補字；Tab 接受、Esc 關閉）\n", onOff(s.EnglishAutocomplete))
 	fmt.Fprintf(w, "toggle-key=%s（中英切換鍵：right 右 Shift；both 左右 Shift；left 左 Shift；none 不用 Shift）\n", s.ToggleKey)
+	fmt.Fprintf(w, "shift-tap-ms=%d（單按 Shift 的時限，毫秒：200、300、400、500 或 600；按下到放開在這個時間內才算單按切換中英）\n", s.ShiftTapMillis())
 	locked := ""
 	if s.StartMode == settings.StartEnglish && !s.StartsEnglish() {
 		locked = "；目前不用 Shift 切換，固定從注音開始" // #184
@@ -95,6 +96,7 @@ func listSettings(w io.Writer, r settings.Report, path string) {
 	fmt.Fprintf(w, "shift-symbol-halfwidth=%s（標點寬度：off 全形標點；on Shift＋符號打半形，例如 Shift＋, 打 ,、Shift＋9 打 (，[ ] 照舊打「」；all 所有符號鍵打按鍵上的字，例如 Shift＋- 打 _、[ 打 [，這時 Ctrl＋標點固定開、聲調選填暫停。全形改按 Ctrl＋符號或 ↓）\n", symbolWidth)
 	fmt.Fprintf(w, "cjk-latin-space=%s（送出時在中文字和英文字母相連處補半形空格，例如「用Python寫」送出「用 Python 寫」；已有空格、標點與數字旁不補，也不跟前面已送出的字補）\n", onOff(s.CJKLatinSpace))
 	fmt.Fprintf(w, "zhuyin-error-hint=%s（打錯注音時提示：按了聲調但讀音沒有字時不收聲調、注音留著修改並提示；緊接著再按同一個聲調照舊留下注音；中英混打與不打聲調時不作用）\n", onOff(s.ZhuyinErrorHint))
+	fmt.Fprintf(w, "personal-learning=%s（記住我選的字詞：關閉時照常選字、神經選字與已學到的照常使用，只是不再記下新的選擇、英文單字和最近用過的符號；我的詞彙不受影響）\n", onOff(s.PersonalLearning))
 	if settings.CapsLockEnglishSetting(runtime.GOOS) {
 		fmt.Fprintf(w, "caps-lock-english=%s（Caps Lock 開著時直接打英文：字母大寫、數字與符號半形，關掉回到注音；關閉時注音模式不理 Caps Lock）\n", onOff(s.CapsLockEnglish))
 	}

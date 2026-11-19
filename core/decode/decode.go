@@ -62,11 +62,21 @@ type Lock struct {
 // matchedReading 回傳詞條讀音相對於使用者打的音（音節格第一個假設）有差異時的讀音鍵，沒有差異為空字串。
 func matchedReading(lat input.Lattice, start int, reading []zhuyin.Syllable) string {
 	for k, y := range reading {
-		if at := start + k; at < len(lat) && len(lat[at]) > 0 && lat[at][0].Syl != y {
+		if at := start + k; at < len(lat) && len(lat[at]) > 0 && lat[at][0].Syl != y && !untonedHyp(lat[at], y) {
 			return zhuyin.Key(reading)
 		}
 	}
 	return ""
+}
+
+// untonedHyp 回報 y 是否為這個位置沒打聲調或簡拼展開出來的讀音：那是使用者打的音，不是近音。
+func untonedHyp(row []input.Hyp, y zhuyin.Syllable) bool {
+	for _, h := range row {
+		if h.Untoned && h.Syl == y {
+			return true
+		}
+	}
+	return false
 }
 
 // segMatched 是弧的 Matched：只有走了有成本的假設才可能與打的音不同，零成本弧不必比對。
@@ -114,8 +124,12 @@ type Decoder struct {
 	// OnlyCosted 讓候選查詢只列舉經由有成本的假設（成本大於 0，例如近音）到達的讀音，
 	// 成本 0 的讀音（使用者打的音）略過。與 MaxCandidates 併用時，名額只計有成本的詞面。
 	OnlyCosted bool
+	// PrefixCacheKeys 是尾端前綴快取（topPrefixed）最多保留幾個讀音，每個讀音存前 TopM 個詞條；滿了整份清掉重算。
+	// 0 表示預設 4096，負數不快取。快取只影響速度、不影響答案（#307），手機用較小的上限壓住記憶體。
+	PrefixCacheKeys int
 
 	cache     map[string][]lexicon.Entry // 尾端讀音 → 依先驗排序的前 M 個系統詞條
+	cacheKey  prefixKey                  // cache 的失效條件（prefixVersion）
 	massScale map[string]float64
 	longerEnd []int
 	// FreshMass 讓每次搜尋都重建 massScale，不跨搜尋保留；給快取開／關比對的測試用。
@@ -166,6 +180,11 @@ func MaxLen(lex lexicon.Source) int {
 	return max(MaxWordLen, lexicon.Longest(lex))
 }
 
+// continuationRow：音節格某位置的假設多於這個數時，改用 lexicon.Continuations 剪枝。這只是換一種查法：
+// Continuer 的結果與逐一問 HasPrefix 相同，答案不變，所以照列長決定（簡拼、沒打聲調加模糊音或鄰鍵、九宮格的
+// 寬列都適用）。弧數上限與裁切方式看的是簡拼的明確標記（abbreviatedSpan），不是這個數。
+const continuationRow = 16
+
 // spans 列舉從 start 起、與音節格相容的所有讀音（以詞庫前綴剪枝）。
 func (d *Decoder) spans(lat input.Lattice, start int, fn func(reading []zhuyin.Syllable, cost float64)) {
 	limit := MaxLen(d.Lex)
@@ -174,12 +193,23 @@ func (d *Decoder) spans(lat input.Lattice, start int, fn func(reading []zhuyin.S
 		if pos == len(lat) || pos-start == limit {
 			return
 		}
+		// 寬列（簡拼展開的位置有上百個讀音）：先列出詞庫裡接得上的音節，不逐一試 HasPrefix。
+		var next map[zhuyin.Syllable]bool
+		if len(lat[pos]) > continuationRow {
+			next = map[zhuyin.Syllable]bool{}
+			if !lexicon.Continuations(d.Lex, reading, func(y zhuyin.Syllable) { next[y] = true }) {
+				next = nil
+			}
+		}
 		for _, h := range lat[pos] {
 			if d.MaxCost > 0 && cost+h.Cost > d.MaxCost {
 				continue
 			}
+			if next != nil && !next[h.Syl] {
+				continue
+			}
 			r := append(reading[:len(reading):len(reading)], h.Syl)
-			if !d.Lex.HasPrefix(r) {
+			if next == nil && !d.Lex.HasPrefix(r) {
 				continue
 			}
 			fn(r, cost+h.Cost)
@@ -187,6 +217,27 @@ func (d *Decoder) spans(lat input.Lattice, start int, fn func(reading []zhuyin.S
 		}
 	}
 	walk(start, nil, 0)
+}
+
+// Fits 回報 word 有沒有詞庫讀音放得進 lat 從 start 起的音節，以及那筆是不是自動修正讀音。
+// 只算使用者打的音（含沒打聲調、簡拼的展開），不算近音：同候選裡不帶 Matched 的詞。
+// 不評分，給不開候選、直接固定詞的手選用（session.fixWord）。
+func (d *Decoder) Fits(lat input.Lattice, start int, word string) (fits, correction bool) {
+	length := utf8.RuneCountInString(word)
+	if start < 0 || length == 0 || start+length > len(lat) {
+		return false, false
+	}
+	d.spans(lat[:start+length], start, func(reading []zhuyin.Syllable, cost float64) {
+		if fits && !correction || len(reading) != length || matchedReading(lat, start, reading) != "" {
+			return
+		}
+		for _, e := range d.Lex.Exact(reading) {
+			if e.Surface == word && (!fits || correction && !e.Correction) {
+				fits, correction = true, e.Correction // 有一般讀音就不算修正
+			}
+		}
+	})
+	return fits, correction
 }
 
 type state struct {
@@ -397,8 +448,41 @@ func (d *Decoder) tailEntries(lat input.Lattice, i int) []tailEntry {
 	return out
 }
 
+// PriorVersion 是選配介面（比照 MassVersion）：評分源回報 Prior 的版本，同一個版本裡每個詞的 Prior 都不變。
+// owner 必須可比較（通常是指標），否則比對時會 panic。personal.Model 的 Prior 只隨自訂詞彙改變，學習不影響它。
+type PriorVersion interface {
+	PriorVersion() (owner any, version uint64)
+}
+
+// prefixKey 是 topPrefixed 快取建立時的條件；不同就整份重算。
+type prefixKey struct {
+	topM    int
+	owner   any
+	version uint64
+	mass    bool // 版本來自 MassVersion（評分源沒有 PriorVersion）
+	time    int64
+}
+
+// prefixVersion 讓 topPrefixed 的快取與上限、清除時機無關（#307）：前 M 名依 Prior 排序，Prior 會隨自訂詞彙改變
+// （自訂詞的頻率下限）。評分源報 PriorVersion 時照它；沒有時看個人資料版本（MassVersion），因為沒有 Prior 的評分源
+// 改用含個人計數的 Prob 排序。兩者都不報的評分源視為不變。
+func (d *Decoder) prefixVersion() {
+	key := prefixKey{topM: d.TopM}
+	if v, ok := d.Score.(PriorVersion); ok {
+		key.owner, key.version = v.PriorVersion()
+	} else if v, ok := d.Score.(MassVersion); ok {
+		gen, at := v.MassVersion()
+		key.version, key.time, key.mass = uint64(gen), at, true
+	}
+	if d.cache != nil && key != d.cacheKey {
+		d.cache = nil
+	}
+	d.cacheKey = key
+}
+
 func (d *Decoder) topPrefixed(sys lexicon.Source, reading []zhuyin.Syllable) []lexicon.Entry {
 	key := zhuyin.Key(reading)
+	d.prefixVersion()
 	if es, ok := d.cache[key]; ok {
 		return es
 	}
@@ -427,7 +511,15 @@ func (d *Decoder) topPrefixed(sys lexicon.Source, reading []zhuyin.Syllable) []l
 	for k, x := range idx {
 		top[k] = es[x]
 	}
-	if d.cache == nil || len(d.cache) >= maxCacheKeys {
+	limit := d.PrefixCacheKeys
+	if limit == 0 {
+		limit = maxCacheKeys
+	}
+	if limit < 0 {
+		d.cache = nil
+		return top
+	}
+	if d.cache == nil || len(d.cache) >= limit {
 		d.cache = map[string][]lexicon.Entry{}
 	}
 	d.cache[key] = top
@@ -706,29 +798,30 @@ func (d *Decoder) CandidatesInContextWindows(lat input.Lattice, start, length in
 	}
 	fw := d.forward(lat[:start], kept)
 	before := d.frontier(fw[start])
-	// 每個位置的詞圖只列舉一次。
+	// 每個位置的詞圖只列舉一次，與整句解碼用同一組弧（wordArcs）：沒打聲調、簡拼的位置各依無上下文機率
+	// 留前幾名。右側的後綴動態規劃不設 beam，全部列舉時打到十幾個音節，句首一個詞長的查詢比整句解碼
+	// 貴一個數量級，手機上要十幾秒（#305）；打了聲調的位置不裁，結果不變。
 	arcs := make([][]arc, len(lat))
 	for at := end; at < len(lat); at++ {
-		d.spans(lat, at, func(reading []zhuyin.Syllable, cost float64) {
-			for _, e := range d.Lex.Exact(reading) {
-				j := at + len(reading)
-				if allowed(kept, at, j, e.Surface) {
-					arcs[at] = append(arcs[at], arc{j, e, cost})
-				}
-			}
-		})
+		arcs[at] = d.wordArcs(lat, at, kept)
 	}
 	type key struct {
 		at   int
 		left string
 	}
 	cache := map[key]float64{}
+	// 無上下文的前一個詞對每一條弧給出相同的分數（同 frontier 的前提），後綴最佳分數也就相同：
+	// 共用一格快取，沒有上下文的候選不必各自把右側重算一次（#305）。
+	ctx, _ := d.Score.(Contextual)
 	var suffix func(int, string) float64
 	suffix = func(at int, left string) float64 {
 		if at == len(lat) {
 			return 0
 		}
 		k := key{at, left}
+		if ctx != nil && d.Evidence == nil && !ctx.HasContext(left) {
+			k.left = "\x00"
+		}
 		if v, ok := cache[k]; ok {
 			return v
 		}
@@ -844,8 +937,8 @@ func (d *Decoder) candidates(lat input.Lattice, start, length int, score func(le
 	}
 	var pool []tailEntry
 	d.spans(lat[:start+length], start, func(reading []zhuyin.Syllable, cost float64) {
-		if len(reading) != length || d.OnlyCosted && cost <= 0 {
-			return
+		if len(reading) != length || d.OnlyCosted && (cost <= 0 || matchedReading(lat, start, reading) == "") {
+			return // 只列近音時，簡拼展開的成本不算
 		}
 		for _, e := range d.Lex.Exact(reading) {
 			if accept != nil && !accept(e) {

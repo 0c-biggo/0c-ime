@@ -51,13 +51,13 @@ func TestCapsLockEnglishIdle(t *testing.T) {
 	}
 }
 
-// 組字中開 Caps Lock：先送出組字（同 macOS 的 #84），再切到英文。
+// 組字中開 Caps Lock：先送出組字（同 macOS 的 #84），再切到英文。未打完的注音不送出（#322，同 Shift 切英文的 #90）。
 func TestCapsLockCommitsComposition(t *testing.T) {
 	s := capsSession()
 	typeKeys(s, "ji3vu;3")
 	key(s, "v") // 未打完的 ㄒ
 	snap := caps(s, true)
-	if snap.Commit != "我想ㄒ" || snap.Text() != "" || snap.Mode != proto.ModeEnglish || !snap.Handled {
+	if snap.Commit != "我想" || snap.Text() != "" || snap.Mode != proto.ModeEnglish || !snap.Handled {
 		t.Fatalf("組字中開 Caps Lock 應先送出組字再切英文：%+v", snap)
 	}
 	// 候選窗開著時也一樣送出。

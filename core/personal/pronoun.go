@@ -1,6 +1,7 @@
 package personal
 
 import (
+	"maps"
 	"sort"
 	"unicode/utf8"
 )
@@ -181,7 +182,10 @@ func (m *Model) learnPronouns(c Commit) {
 		g := c.Path[site.Seg]
 		manual := g.Manual && !g.Completion && !g.Suggested
 		key := string(site.Neutral)
+		note(m.recording().pronouns, m.Store.Pronouns, key)
 		h := m.Store.Pronouns[key]
+		// A copy of the cues: the habit noted above must keep the ones it had.
+		h.Cues = maps.Clone(h.Cues)
 		if h.Cues == nil {
 			h.Cues = map[string]PronounCount{}
 		}

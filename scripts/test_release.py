@@ -2992,7 +2992,7 @@ Successfully verified: 0c-update.exe
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_settings_ui_input_styles(self):
-        # #225 輸入習慣頁的預覽／複製流程；#275 被內建風格鎖住的項目按下去要提議複製成自訂，其他原因停用的不提議。
+        # #225 輸入習慣頁的預覽／複製流程；#275／#318 被內建風格鎖住的項目按下去直接複製成自訂（同名時加編號），其他原因停用的不複製。
         node = shutil.which("node")
         if not node:
             self.skipTest("沒有 node")

@@ -108,6 +108,17 @@ func (s *Set) HasPrefix(syls []zhuyin.Syllable) bool {
 	return n != nil && n.size > 0
 }
 
+// Continuations 對每個讀音以 syls 加上 y 開頭的自訂詞的下一個音節 y 呼叫 add（lexicon.Continuer）。
+func (s *Set) Continuations(syls []zhuyin.Syllable, add func(zhuyin.Syllable)) {
+	if n := s.find(syls); n != nil {
+		for y, c := range n.children {
+			if c.size > 0 {
+				add(y)
+			}
+		}
+	}
+}
+
 // Prefixed 回傳讀音以 syls 開頭的自訂詞（含恰好相等），依讀音長度、檔案順序排列。
 // limit 大於 0 時至多回傳 limit 筆。
 func (s *Set) Prefixed(syls []zhuyin.Syllable, limit int) []Match {

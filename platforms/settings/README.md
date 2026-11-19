@@ -29,7 +29,7 @@ Rust 的 `profile_command(action,id,name)` 只允許 `select`、`copy`、`rename
 
 | 頁面（`--page`） | 項目 |
 |---|---|
-| 中英切換（`mode`） | 中英切換鍵、開始時的中英模式、切換視窗後的中英模式、中英混打、英文模式自動補字、Caps Lock 開著時直接打英文（Windows、Linux） |
+| 中英切換（`mode`） | 中英切換鍵、單按 Shift 的時限、開始時的中英模式、切換視窗後的中英模式、中英混打、英文模式自動補字、Caps Lock 開著時直接打英文（Windows、Linux） |
 | 選字（`candidates`） | 選字方式（神經選字）、依前文選字、空白鍵選字、修改字詞的位置、選字後游標移到下一個字、選字排列、選字鍵、按 Esc 清除整段組字，另一張卡是模糊音總開關 |
 | 鍵盤與符號（`keyboard`） | 鍵盤排列、Ctrl＋標點打全形、標點寬度、提交時補標點（Beta）、Emoji 選單（子選項「將 = 放在第一項」） |
 
@@ -142,9 +142,13 @@ Windows 完整更新視窗驗收另有 `test/settings-update-test.ps1`：在沒�
 
 「標點寬度」（`shift-symbol-halfwidth`，`settings.json` 的 `shift_symbol_halfwidth` 與 `all_symbols_halfwidth`，#258、#282）三選一，預設「全形標點」，排在 Ctrl＋標點打全形之後：半形用 Shift 或所有符號鍵、全形用 Ctrl。「Shift＋符號打半形」時注音模式按 Shift＋符號鍵打半形標點（Shift＋, 是半形逗號、Shift＋9 是 `(`；< > 在 ↓ 裡），未按 Shift 的 [ ] 照舊打「」；「所有符號鍵打半形」時每個符號鍵都打按鍵上的字（Shift＋- 是 `_`、[ 是 `[`），這時 Ctrl＋標點固定開啟、不打聲調也能選字暫停（兩項顯示停用並帶回這一項）。三個選項畫成單選。不屬於輸入習慣風格，選用內建風格時也能開關。引擎讀設定，套用後生效。
 
+「單按 Shift 的時限」（`shift-tap-ms`，`settings.json` 的 `shift_tap_ms`，#319）是一組單選：0.2／0.3／0.4／0.5／0.6 秒（選項名稱在 `value_labels`），預設 0.3 秒，排在「中英切換鍵」之後。中英切換鍵選「不用 Shift」時反灰，寫「不用 Shift 切換時不作用」。不屬於輸入習慣風格。引擎讀設定、在 health 的 `shift_tap_ms` 回報，套用（引擎重啟）後外殼下一次單按 Shift 就照新的時限。
+
 「中英文之間自動加空格」（`cjk-latin-space`，`settings.json` 的 `cjk_latin_space`，#273）預設關閉，排在「Shift＋符號打半形」之後。開啟時送出的文字裡，中文字和英文字母直接相連處補一個半形空格（「用Python寫」送出「用 Python 寫」）；組字區照打的顯示，已有空格、標點與數字旁不補，只看這一次送出的字。不屬於輸入習慣風格。引擎讀設定，套用後生效。
 
 「打錯注音時提示」（`zhuyin-error-hint`，`settings.json` 的 `zhuyin_error_hint`，#300）預設開啟，排在「選字」頁的「不打聲調也能選字」之後。按了聲調但讀音沒有字時不收聲調、注音停住並提示（Windows、macOS 提示音，Linux 標示注音），緊接著再按一次同一個聲調照舊留下注音；只有一個注音符號（ㄟ、ㄅ＋空白）照舊直接留下。中英混打或不打聲調開著時反灰並附原因。不屬於輸入習慣風格。引擎讀設定，套用後生效。
+
+「記住我選的字詞」（`personal-learning`，`settings.json` 的 `personal_learning`，#297）預設開啟，排在「選字」頁的「打錯注音時提示」之後、輸入習慣的規則之前。關閉時照常選字（神經選字、依前文選字、已學到的照用），只是不再記下新的選擇、英文單字和最近用過的符號；「我的詞彙」照常。個人偏好，不屬於輸入習慣風格。引擎讀設定，套用後生效。
 
 輸入設定的「Caps Lock 開著時直接打英文」（`caps-lock-english`，`settings.json` 的 `caps_lock_english`）預設關閉，放在「中英切換」頁最後（#207），只有 Windows、Linux 有：macOS 開 Caps Lock 一律切到英文大寫（#84），`0c-update settings` 不列這一項，設定程式就不顯示。開啟時 Caps Lock 是暫時的英文模式（字母大寫、數字與符號半形，正在打的字先送出，關掉回到注音；先用 Shift 切到英文時只改大小寫）；關閉時注音模式不理 Caps Lock（#173、#168）。引擎讀設定，套用（引擎重啟）後生效；外殼依 health／open 的 `caps_lock_english` 決定要不要回報 Caps Lock 狀態。
 

@@ -512,3 +512,21 @@ func TestTonelessDisplaysWithoutMark(t *testing.T) {
 		t.Fatalf("送出：%q", snap.Commit)
 	}
 }
+
+// syllablePrior（簡拼保留哪些讀音、九宮格讀音的排序）只看系統詞庫：記在 session 裡的值不能取決於 session 開始時
+// 學過什麼，否則同一個人、同樣的按鍵在不同時間開的 session 結果不同。
+func TestSyllablePriorIgnoresLearning(t *testing.T) {
+	s := newTonelessSession(true)
+	y := zhuyin.Syllable("ㄋㄧˊ") // 泥：系統機率 2e-4
+	before := s.syllablePrior(y)
+	s.model.Store.Uni["泥"] += 1000 // 常打「泥」：個人的單字次數遠超過系統
+	s.model.Store.Total += 1000
+	if s.model.Prob(lm.BOS, "泥") == s.model.SystemProb(lm.BOS, "泥") {
+		t.Fatal("測試前提：個人機率要跟系統機率不同")
+	}
+	fresh := New(s.model) // 同一份個人資料，學過之後才開的 session
+	fresh.Toneless = true
+	if got := fresh.syllablePrior(y); got != before {
+		t.Fatalf("學了「泥」之後新開的 session：%g，學之前 %g", got, before)
+	}
+}

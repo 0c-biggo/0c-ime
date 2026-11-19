@@ -175,6 +175,17 @@ func (c *Compact) HasLeft(left string) bool {
 	return ok && c.leftStart[l] != c.leftStart[l+1]
 }
 
+// Successors 列出以 left 為前詞的 bigram 後詞與量化後的機率。
+func (c *Compact) Successors(left string, fn func(w string, p float64)) {
+	l, ok := c.find(left)
+	if !ok || len(c.q) == 0 {
+		return
+	}
+	for i := int(c.leftStart[l]); i < int(c.leftStart[l+1]); i++ {
+		fn(c.word(int(c.rightAt(i))), qTable[c.q[i]])
+	}
+}
+
 // EachBigram 依前詞、後詞的順序列出所有 bigram 與量化後的機率，供離線檢查（例如單字排序閘門）使用。
 func (c *Compact) EachBigram(fn func(left, w string, p float64)) {
 	for l := 0; l+1 < len(c.leftStart); l++ {

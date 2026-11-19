@@ -20,9 +20,22 @@ import (
 // 沒在組字時聲調鍵也要先留在組字區（以前直接交給應用程式），否則空白來時數字已經送出去了。
 
 type toneKeyPending struct {
-	at  int    // 組字區裡這個數字的位置
-	key string // 原本的按鍵
+	at      int    // 組字區裡這個數字的位置；dropped 時是聲調符號要插入的位置
+	key     string // 原本的按鍵
+	dropped bool   // 連按的第二下（#321）：數字沒有留在組字區
 }
+
+// 連按的聲調鍵（#321）：剛用某個聲調鍵打完一個字、緊接著又按同一個聲調鍵，多半是打太快連按兩下
+// （例如 ㄏㄠˇ 後多一個 3）。沒開中英混打時第二下不留數字；緊接著的空白照 #135 仍是聲調符號，
+// 所以「我ˇ」的打法（ㄨㄛˇ 3 空白）不變，要數字就再按一次。
+//
+// 微軟注音（Windows 11 25H2，.14 實測）在這裡打出聲調符號（ㄏㄠˇ 3 → 好ˇ）；macOS 注音與小麥注音
+// （McBopomofo #753 allowChangingPriorTone）、威注音（specifyIntonationKeyBehavior）把聲調鍵當成改前一個字的
+// 聲調，同一個聲調就沒有變化。新酷音把它放進注音暫存，接著打注音時丟掉。這裡只處理同一個聲調鍵；
+// 不同的聲調鍵（ㄏㄠˇ 4）照舊是數字。
+//
+// 中英混打時連按與「有3個」（u.3 3 ek4）、「到40」（2l4 40）的按鍵完全相同，語料裡漢字緊接著以它的聲調鍵
+// 開頭的數字約每千字一次，所以混打照舊是數字。
 
 // ToneMarkKeys 回報這個設定下，沒在組字時的聲調鍵是否由輸入法處理（先留在組字區等空白）。
 // 外殼若自己判斷閒置按鍵要不要交給核心（Windows 的 TestKeyDown），依這個答案決定聲調鍵。
@@ -32,9 +45,14 @@ func ToneMarkKeys(mixedInput, standardLayout bool) bool {
 
 // toneKey 處理注音暫存是空的時按下的聲調鍵（空白的一聲不算）：數字照字面留在游標處；
 // 前面沒有緊接著數字時記下來，下一鍵是空白就換成聲調符號（finishToneKey）。
-func (s *Session) toneKey(k string, sym rune) bool {
+// repeat 是上一鍵剛用這個聲調鍵打完一個字（#321）：不留數字，只記下來讓緊接著的空白打聲調符號。
+func (s *Session) toneKey(k string, sym rune, repeat bool) bool {
 	if s.mixedInput() || s.english || !s.comp.Empty() || zhuyin.ClassOf(sym) != zhuyin.Tone || sym == zhuyin.Tone1 {
 		return false
+	}
+	if repeat {
+		s.pendingToneKey = &toneKeyPending{at: s.cursor, key: k, dropped: true}
+		return true
 	}
 	lone := s.literalNumberBefore() == ""
 	s.insertLiteral(k)
@@ -44,16 +62,26 @@ func (s *Session) toneKey(k string, sym rune) bool {
 	return true
 }
 
-// finishToneKey 把緊接在空白之前的單獨聲調鍵換成聲調符號；原按鍵記在 literalKeys，↓ 可選回數字。
+// finishToneKey 把緊接在空白之前的單獨聲調鍵換成聲調符號（連按沒留數字的第二下直接插入）；
+// 原按鍵記在 literalKeys，↓ 可選回數字。
 func (s *Session) finishToneKey(p *toneKeyPending) bool {
-	if p == nil || !s.comp.Empty() || s.cursor != p.at+1 || !s.literals[p.at] || string(s.syls[p.at]) != p.key {
+	if p == nil || !s.comp.Empty() {
+		return false
+	}
+	if p.dropped {
+		if s.cursor != p.at {
+			return false
+		}
+	} else if s.cursor != p.at+1 || !s.literals[p.at] || string(s.syls[p.at]) != p.key {
 		return false
 	}
 	sym, ok := s.layout.Symbol([]rune(p.key)[0])
 	if !ok || zhuyin.ClassOf(sym) != zhuyin.Tone || sym == zhuyin.Tone1 {
 		return false
 	}
-	s.eraseBeforeCursor()
+	if !p.dropped {
+		s.eraseBeforeCursor()
+	}
 	s.insertLiteral(string(sym))
 	s.setLiteralKey(p.at, p.key)
 	return true
@@ -141,11 +169,11 @@ func (s *Session) alnumLiteralAt(pos int) bool {
 }
 
 // shiftKeys 平移位置→原按鍵的紀錄：插入時其後的右移，刪除時該格移除、其後左移。
-func shiftKeys(keys map[int]string, at, delta int) map[int]string {
+func shiftKeys[V any](keys map[int]V, at, delta int) map[int]V {
 	if len(keys) == 0 {
 		return keys
 	}
-	next := map[int]string{}
+	next := map[int]V{}
 	for pos, k := range keys {
 		switch {
 		case pos < at:

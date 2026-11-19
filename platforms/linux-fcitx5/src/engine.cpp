@@ -387,6 +387,8 @@ public:
 
     // FocusOut 的 client preedit 已由 Fcitx／前端提交；只有切換輸入法或
     // 使用伺服器端組字窗時，由外殼送出提交。核心仍完成組字並清除舊欄位。
+    // 前端提交的是組字去掉 DontCommit 的部分：未打完的注音標了 DontCommit（render），
+    // 所以與這裡 commit 請求送出、學習的文字相同（#322）。
     void deactivate(const fcitx::InputMethodEntry &entry, fcitx::InputContextEvent &event) override {
         auto *ic = event.inputContext();
         state(ic)->rightShift.reset(); state(ic)->leftShift.reset(); state(ic)->leftShiftOwned = false;
@@ -517,7 +519,7 @@ private:
         const auto layout = zuin::preeditLayout(snap.preedit, snap.cursorByte(), snap.bell);
         for (const auto &run : layout.runs) {
             auto flags = styleOf(run.style);
-            if (run.display) { flags |= fcitx::TextFormatFlag::DontCommit; }
+            if (run.dontCommit()) { flags |= fcitx::TextFormatFlag::DontCommit; }
             preedit.append(run.text, flags);
         }
         preedit.setCursor(layout.cursor);

@@ -59,12 +59,7 @@ func openSupervisedAsync(c Config, load func(Config) (Manifest, error), open fun
 	return s, nil
 }
 
-func (s *Supervisor) Options() rerank.Options {
-	return rerank.Options{Scorer: s, Weight: s.manifest.Weight, Margin: s.manifest.Margin, AllowPartial: s.manifest.AllowPartial,
-		ContextRunes: contextRunes(s.manifest), HintGap: s.manifest.HintGap,
-		TextWeight: s.manifest.TextWeight, TextMargin: s.manifest.TextMargin,
-		NeutralExpand: s.manifest.NeutralExpand, NeutralBases: neutralBases(s.manifest)}
-}
+func (s *Supervisor) Options() rerank.Options { return s.manifest.options(s) }
 
 func (s *Supervisor) Score(r rerank.Request) ([]float64, error) {
 	s.mu.Lock()
