@@ -28,7 +28,8 @@ type Options struct {
 	UnigramAlpha     float64 // 詞頻平滑：每個詞加上的虛擬次數（以各來源正規化後的比例計）
 	// AttestedMass 是單字可考讀音沒有詞例佐證時的分數（單位同 -unigram 混合後的詞頻）：高頻字的可考讀音
 	// 依詞庫中「這個字唸這個音」的比例估計 P(r|w)，等級值為上限（#320，見 attestedPRW）。0 為舊公式。
-	AttestedMass float64
+	// 0 時不寫進 manifest，舊版字典資料以 -attested-mass=0 重建時 manifest 逐位元組相同。
+	AttestedMass float64 `json:",omitempty"`
 
 	// Unigram 是詞頻來源的混合權重，如 "mcbopomofo=1,chewing-v4=1"。各來源先各自正規化成
 	// 機率分布，再依權重線性混合。空字串表示所有來源等權重。

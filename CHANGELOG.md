@@ -17,7 +17,7 @@
 ### 原始碼套件
 
 - 字典（#320）：0c-compile 新增 `-attested-mass`（出貨字典 `3e-06`，`internal/compile/attested.go`），高頻字的可考讀音改由詞庫裡的多字詞佐證決定排序，沒有佐證時給固定低分；主讀音、通行音、多字詞讀音不變。`data/lexicon/words.tsv` 另加「總銷」。內附字典依公開來源與 0c-ime-data 的 bigram 輸入重建：`lexicon.bin`、`lm.bin`（只多「總銷」一個 unigram）與 `report.txt` 改變，`NOTICE.txt` 與英文子包不變，manifest 改為 `f2fa260f…`。模型權重不換，`models/pairing.lock.json` 依新字典重新配對（select manifest `7236647c…`、punct `ec2248dc…`）。
-- 0c-compile：新增 `-curated-bigram` 與人工 bigram 檔 `data/lm/curated-bigram.tsv`，`scripts/build_release_data.py --curated-bigram` 可傳入；預設不用，出貨字典沒有使用。讀 bigram 時改以詞 id 保存詞對、以堆積選出 `-bigram-max` 筆，重建出貨字典的記憶體高峰由 7 GB 以上降到 4 GiB 以內，產物逐位元組不變。
+- 0c-compile：新增 `-curated-bigram` 與人工 bigram 檔 `data/lm/curated-bigram.tsv`，`scripts/build_release_data.py --curated-bigram` 可傳入；預設不用，出貨字典沒有使用。讀 bigram 時改以詞 id 保存詞對、以堆積選出 `-bigram-max` 筆，重建出貨字典的記憶體高峰由 7 GB 以上降到 4 GiB 以內，產物逐位元組不變。`-attested-mass` 為 0 時不寫進 manifest，舊版字典資料（例如 0c-ime-data data-20261101）以 `-attested-mass=0` 重建時，產物與舊工具逐位元組相同。
 - 送出組字（#322）：外殼替使用者結束組字（失焦、切換輸入法、Caps Lock）時改走 `Session.commitComposed`，未打完的注音不送出。快照分段新增 `proto.Segment.Unfinished`；Fcitx5 把這段標成 `DontCommit`，IBus 在只剩這段時以 `IBUS_ENGINE_PREEDIT_CLEAR` 清掉；Windows TSF 在宿主自己終止組字（`OnCompositionTerminated`）時改送 `commit` 並改寫組字範圍，Chromium 的視窗另在組字期間掛本執行緒的滑鼠 hook（`platforms/windows/tsf/src/click.rs`），在網頁收到點擊前先送出。
 - 聲調鍵（#321）：沒開混打時，聲調鍵剛完成一個音節、緊接著又按同一個聲調鍵，第二下不留數字；緊接的空白照舊是聲調符號，第三下才是數字。
 - 設定：新設定 `shift-tap-ms`（#319，GitHub #76；`settings.json` 的 `shift_tap_ms`，200 到 600 毫秒，預設 300），health／open 的 `shift_tap_ms` 改讀設定。新設定 `personal-learning`（#297；`settings.json` 的 `personal_learning`，缺欄位即開啟），關閉時 `Engine.NoLearning`／`Session.NoLearning` 不再學習、不重寫 `user.json`，`user.json` 格式不變。設定程式改被內建風格鎖住的項目時直接複製成自訂風格再套用（#318，GitHub #75）。
