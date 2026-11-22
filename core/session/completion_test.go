@@ -75,3 +75,42 @@ func TestCompleteRequestRefusesAnotherWord(t *testing.T) {
 		t.Fatalf("送出 %q", got)
 	}
 }
+
+// 游標在組字最後時 → 跟 Tab 一樣接受補全；沒有補全時 → 照舊不動。
+func TestRightArrowAcceptsCompletionAtEnd(t *testing.T) {
+	s := newCompletionSession()
+	s.Toneless = false
+	snap := symbolType(s, "ㄋㄧˇㄧˊㄌㄨˋㄕㄨㄣˋ")
+	if snap.Suggestion == "" {
+		t.Fatalf("應有補全建議：%+v", snap)
+	}
+	snap = key(s, proto.KeyRight)
+	if !snap.Handled || snap.Text() != "你一路順風" || snap.Suggestion != "" {
+		t.Fatalf("→ 沒有接受補全：%+v", snap)
+	}
+	if got := key(s, proto.KeyEnter).Commit; got != "你一路順風" {
+		t.Fatalf("送出 %q", got)
+	}
+}
+
+// 游標不在最後時 → 是移游標，不接受補全。
+func TestRightArrowMovesCursorBeforeEnd(t *testing.T) {
+	s := newCompletionSession()
+	s.Toneless = false
+	symbolType(s, "ㄋㄧˇㄧˊㄌㄨˋㄕㄨㄣˋ")
+	key(s, proto.KeyLeft)
+	snap := key(s, proto.KeyRight)
+	if snap.Text() != "你一路順" || snap.Cursor.Rune != 4 {
+		t.Fatalf("→ 應只移游標：%+v", snap)
+	}
+}
+
+// 同音替換預覽只有 Tab 能接受；→ 不改字。
+func TestRightArrowDoesNotAcceptHomophoneRewrite(t *testing.T) {
+	s := homophoneSession()
+	typeXiaolong(s)
+	key(s, proto.KeyTab)
+	if snap := key(s, proto.KeyRight); snap.Text() != "小龍" {
+		t.Fatalf("→ 接受了同音替換：%+v", snap)
+	}
+}
