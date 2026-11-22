@@ -57,6 +57,12 @@ func fullWidthASCII(k string) string {
 
 // styleKey handles only explicit profile differences. The zero rules object
 // never changes legacy key routing. Width is session state, not a saved option.
+// tabAcceptsCompletion：這個輸入習慣的 Tab 是接受補全（0c 本身）；新酷音（segment）、小麥注音（cycle）的 Tab
+// 另有用途，句尾的 → 也就不接受補全（#338）。
+func (s *Session) tabAcceptsCompletion() bool {
+	return s.InputStyle.Version == 0 || s.InputStyle.Tab == "0c"
+}
+
 func (s *Session) styleKey(k string) (handled bool, commit string, done bool) {
 	if s.InputStyle.Version == 0 {
 		return false, "", false
