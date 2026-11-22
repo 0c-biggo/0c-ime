@@ -245,7 +245,8 @@
     try {
       const result = await invoke('check_update');
       if (!result.ok) toast(errorText(result.error), result.error?.code === 'in_progress' ? 'warn' : 'error');
-      else toast(updateSummary(result.update).text, result.update.state === 'check_failed' ? 'warn' : 'ok');
+      // 結果由頁面上的狀態框顯示，toast 只確認檢查做完，不重複同一句（#330）。
+      else toast(result.update.state === 'check_failed' ? '檢查沒有完成，原因見下方。' : '檢查完成。', result.update.state === 'check_failed' ? 'warn' : 'ok');
     } catch (error) {
       toast(String(error), 'error');
     }
@@ -262,7 +263,7 @@
       const result = await invoke(kind === 'download' ? 'download_update' : 'install_update', { version: target.version, sha256: target.sha256 });
       if (!result.ok) toast(errorText(result.error), result.error?.code === 'in_progress' ? 'warn' : 'error');
       else if (result.update?.blocked && result.update.stage !== 'pending' && !(kind === 'download' && result.update.stage === 'prepared')) toast(result.update.blocked.detail || '更新尚未完成，請再試一次。', 'warn');
-      else if (kind === 'download') toast(result.update?.operation ? operationText(result.update.operation) : result.update?.stage === 'pending' ? updateSummary(result.update).text : '下載完成，可按「立即安裝」。', 'ok');
+      else if (kind === 'download') toast(result.update?.operation ? '已開始下載，進度見下方。' : result.update?.stage === 'pending' ? updateSummary(result.update).text : '下載完成，可按「立即安裝」。', 'ok');
       else toast(result.update?.stage === 'pending'
         ? (retiringDetail(result.update.blocked?.detail) ? SHELL_RETIRING_HELP : '請先儲存工作，登出再登入以完成更新。')
         : '更新作業已完成。', 'ok');
@@ -588,7 +589,8 @@
     const blocked = view.blocked || status.blocked;
     const summary = updateSummary(view);
     root.append(h('p', { class: 'lead' }, '目前版本 ' + (window.ZcEngineState(status, state.info?.platform).expected || '未知')));
-    root.append(h('div', { class: 'notice' + (summary.tone === 'warn' ? '' : ' info') },
+    // 進行中的作業由下面的進度列顯示同一句話，狀態框就不再出現（#330）。
+    if (!op) root.append(h('div', { class: 'notice' + (summary.tone === 'warn' ? '' : ' info') },
       h('p', {}, summary.text),
       view.target && !op ? h('p', {}, view.stage === 'pending' && view.target.kind === 'shell'
         ? (isWindows() ? WINDOWS_REOPEN_NOTE : blocked?.detail === '登出再登入時自動完成安裝' ? '套件已下載，儲存工作後登出再登入，會完成安裝。'

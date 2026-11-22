@@ -15,6 +15,7 @@ import (
 
 	"github.com/0c-biggo/0c-ime/internal/atomicfile"
 	"github.com/0c-biggo/0c-ime/internal/enginedir"
+	"github.com/0c-biggo/0c-ime/internal/robustio"
 )
 
 type Registrar interface {
@@ -443,7 +444,7 @@ func InstallWindows(bundle, base, arch string, reg Registrar) (string, []string,
 	if _, err = os.Stat(destination); err == nil {
 		if _, verr := Verify(destination, "windows", arch); verr != nil {
 			aside := fmt.Sprintf("%s.broken-%d", destination, time.Now().UnixNano())
-			if err = os.Rename(destination, aside); err != nil {
+			if err = robustio.Rename(destination, aside); err != nil {
 				return "", nil, fmt.Errorf("版本目錄 %s 不完整且無法移開（可能仍被執行中的程式使用）：%w", directory, err)
 			}
 			os.RemoveAll(aside) // 仍被使用的檔案刪不掉就留著，不影響新目錄
@@ -468,7 +469,9 @@ func InstallWindows(bundle, base, arch string, reg Registrar) (string, []string,
 		if _, e = Verify(stage, "windows", arch); e != nil {
 			return "", nil, e
 		}
-		if e = os.Rename(stage, destination); e != nil {
+		// 剛複製好的上千個檔案會被端點防護逐一開檔掃描，目錄裡有檔案開著時改名會被拒絕（#329）：
+		// 在原地等它放手再改名，不要丟掉暫存目錄重新複製（那會再觸發一輪掃描）。
+		if e = robustio.Rename(stage, destination); e != nil {
 			return "", nil, e
 		}
 	} else if err != nil {
@@ -533,7 +536,7 @@ func restoreStore(base, backup, name string) error {
 	if err = copyFile(saved, stage.Name()); err != nil {
 		return err
 	}
-	return os.Rename(stage.Name(), filepath.Join(base, name))
+	return robustio.Rename(stage.Name(), filepath.Join(base, name))
 }
 
 // RollbackWindows switches back to the version recorded before the current one, including a

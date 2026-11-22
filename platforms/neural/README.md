@@ -4,6 +4,8 @@
 
 `runtime/sequence_runtime.py` 與 `runtime/punct_runtime.py` 是 stdio worker，依賴 numpy 與 onnxruntime。固定模型版本、授權及系統字典配對要求見 [模型說明](../../models/README.md)。
 
+`qsel/` 是手機選字模型（q4x-b16）不經 onnxruntime 的 C 推論，權重留在唯讀 mmap（#336，見 [qsel/README.md](qsel/README.md)）；桌面不用。
+
 ## 使用發行版提供的 Python
 
 從完整 tarball 根目錄啟動已編譯的 server：

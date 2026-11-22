@@ -148,13 +148,20 @@ func (d *Decoder) wordArcs(lat input.Lattice, at int, locks map[int]Lock) []arc 
 	var arcs []arc
 	var pooled map[int][]arc // 經過沒打聲調位置的弧（#150），依終點分組，最後各留前 maxUntonedArcs 個
 	var abbrev map[int][]arc // 經過簡拼位置的弧，各留前 maxAbbreviatedArcs 個
-	d.spans(lat, at, func(reading []zhuyin.Syllable, cost float64) {
+	var fixed map[int][]arc  // 經過沒打聲調位置、又走了觸控修正讀音的弧（input.Hyp.Corrected），各留前 maxCorrectedArcs 個
+	d.markedSpans(lat, at, func(reading []zhuyin.Syllable, cost float64, corrected bool) {
 		end := at + len(reading)
-		pool := untonedSpan(lat, at, end) && !lockTouches(locks, at, end)
+		free := !lockTouches(locks, at, end)
+		pool := free && untonedSpan(lat, at, end)
 		short := pool && abbreviatedSpan(lat, at, end)
 		for _, e := range d.Lex.Exact(reading) {
 			if allowed(locks, at, end, e.Surface) {
 				switch {
+				case corrected && pool:
+					if fixed == nil {
+						fixed = map[int][]arc{}
+					}
+					fixed[end] = append(fixed[end], arc{end, e, cost})
 				case short:
 					if abbrev == nil {
 						abbrev = map[int][]arc{}
@@ -172,6 +179,7 @@ func (d *Decoder) wordArcs(lat input.Lattice, at int, locks map[int]Lock) []arc 
 		}
 	})
 	arcs = append(arcs, d.topUntonedArcs(pooled, maxUntonedArcs, false)...)
+	arcs = append(arcs, d.topUntonedArcs(fixed, maxCorrectedArcs, true)...)
 	return append(arcs, d.topUntonedArcs(abbrev, maxAbbreviatedArcs, true)...)
 }
 

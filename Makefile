@@ -1,4 +1,4 @@
-.PHONY: help assets upgrade test-upgrade test-release test-source-release test-sim
+.PHONY: help assets upgrade test-upgrade test-release test-source-release test-sim test-arm64
 .DEFAULT_GOAL := help
 
 PULL ?= 1
@@ -9,6 +9,7 @@ help:
 	@echo 'make upgrade PULL=0   使用目前工作目錄，略過 git pull'
 	@echo 'make test-release     驗證套件檢查與隔離安裝／回復流程'
 	@echo 'make test-source-release  驗證 GitHub 原始碼與模型 tarball 流程'
+	@echo 'make test-arm64       在 arm64（qemu 或 Apple Silicon）跑 core 測試並對照 amd64 的解碼結果'
 	@echo 'python3 scripts/source_release.py --help  建立原始碼發佈檔與另附的模型檔'
 	@echo 'make build PREFIX=/usr && make install PREFIX=/usr DESTDIR=…  發行版的系統安裝（由套件管理員更新，見 platforms/linux-system）'
 	@echo 'python3 scripts/package_release.py --help  建立完整 Linux 套件'
@@ -37,6 +38,20 @@ test-source-release:
 	python3 scripts/check_public_tree.py
 	python3 -m unittest discover -s scripts -p 'test_source_release.py'
 	python3 -m unittest discover -s scripts -p 'test_copyright.py'
+
+# arm64（手機、Apple Silicon）上跑 core 的測試，並把解碼結果跟 amd64 逐項對照（#325）。桌面評測都在 amd64 跑，
+# arm64 的分數最後幾位本來就不同（math.Log／Exp 各架構實作不同、FMA 融合）；這裡確認候選、順序與路徑一樣。
+# amd64 主機用 qemu-user（apt install qemu-user-static，或 ARM64_EXEC=<qemu-aarch64-static 的路徑>）；
+# Apple Silicon 直接跑 arm64，amd64 那份經 Rosetta 算。
+HOST_ARCH   = $(shell $(GO) env GOHOSTARCH 2>/dev/null)
+ARM64_EXEC ?= $(if $(filter arm64,$(HOST_ARCH)),,$(firstword $(shell command -v qemu-aarch64-static qemu-aarch64 2>/dev/null)))
+ARM64_OUT  ?= build/arm64
+
+test-arm64:
+	@[ "$(HOST_ARCH)" = arm64 ] || [ -n "$(ARM64_EXEC)" ] || { echo '找不到 qemu-aarch64-static：apt install qemu-user-static，或設 ARM64_EXEC=<路徑>' >&2; exit 1; }
+	mkdir -p $(ARM64_OUT)
+	GOARCH=amd64 ZERO_C_GOLDEN_DUMP=$(abspath $(ARM64_OUT))/plain-amd64.json $(GO) test -count=1 -run '^TestPlainLatticeGolden$$' ./core/decode
+	GOARCH=arm64 ZERO_C_GOLDEN_COMPARE=$(abspath $(ARM64_OUT))/plain-amd64.json $(GO) test -count=1 $(if $(ARM64_EXEC),-exec $(ARM64_EXEC)) ./core/...
 
 # ---- 系統安裝（Linux 發行版套件，#181）----
 # make && make install PREFIX=/usr DESTDIR=<暫存根目錄>：把兩種外殼（Fcitx5、IBus）、引擎、0c-update、設定程式、

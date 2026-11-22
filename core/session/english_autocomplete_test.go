@@ -84,7 +84,8 @@ func TestEnglishAutocompleteBoundariesKeepAppActions(t *testing.T) {
 			t.Fatal("English polluted Chinese learning")
 		}
 		// 邊界鍵確認這是完整的單字；. 1 Delete 後面可能還有字，不學前綴（#247 起混打沒開也學）。
-		if _, learned := s.model.Store.English["hel"]; learned != englishBoundary(k) {
+		// 完整的單字也只有按空白接著打的才學：游標鍵、Tab 送出的可能是單獨打的一串（#328）。
+		if _, learned := s.model.Store.English["hel"]; learned != (k == " ") {
 			t.Fatalf("%s: English learning %+v", k, s.model.Store.English)
 		}
 	}
@@ -252,8 +253,7 @@ func TestEnglishAutocompleteEditedCompletionDoesNotConfirm(t *testing.T) {
 			t.Fatalf("edited suggestion was independently confirmed: before=%+v after=%+v", before, after)
 		}
 		// 清空後自行輸入的新單字仍可確認。
-		mixedType(s, "brandnew")
-		key(s, proto.KeyEnter)
+		mixedType(s, "brandnew ")
 		if e := s.model.Store.English["brandnew"]; e.Confirmed != 1 {
 			t.Fatalf("new independently typed word did not confirm: %+v", e)
 		}
@@ -277,10 +277,9 @@ func TestEnglishAutocompleteTokenPrefixesLeaveNoLearning(t *testing.T) {
 			if app.String() != raw+" " || len(s.model.Store.English) != 0 {
 				t.Fatalf("token was changed or its prefix learned: %q %+v", app.String(), s.model.Store.English)
 			}
-			mixedType(s, "brandnew")
-			key(s, proto.KeyEnter)
+			mixedType(s, "brandnew ")
 			if e := s.model.Store.English["brandnew"]; e.Confirmed != 1 {
-				t.Fatalf("space must allow next standalone word to confirm: %+v", e)
+				t.Fatalf("space must allow next word to confirm: %+v", e)
 			}
 		})
 	}
@@ -308,21 +307,27 @@ func TestEnglishAutocompleteAssistedCharactersSurviveMaterialization(t *testing.
 	key(s, proto.KeyTab)
 	key(s, proto.KeyBackspace)
 	key(s, "m")
-	key(s, proto.KeyEnter)
+	key(s, " ")
 	if e := s.model.Store.English["helm"]; e.Confirmed != 1 {
 		t.Fatalf("undo should restore independently typed origins: %+v", e)
 	}
 }
 
-func TestEnglishAutocompleteStandaloneWordStillConfirms(t *testing.T) {
-	for _, boundary := range []string{" ", proto.KeyEnter, ",", "!", ";"} {
+// 英文模式一個字就是一段組字：按空白送出的字後面還有字，算一次確認；單獨打一串就按 Enter、Tab 或標點送出的
+// （密碼欄、帳號欄，#328）不學。
+func TestEnglishAutocompleteWordConfirmsOnlyBeforeMoreText(t *testing.T) {
+	for _, boundary := range []string{" ", proto.KeyEnter, proto.KeyTab, ",", "!", ";"} {
 		s := autocompleteSession()
 		s.MixedInput = true
 		s.model.AdvanceTime(100 * englishDay)
 		mixedType(s, "brandnew")
 		snap := key(s, boundary)
-		if snap.Handled != (boundary == proto.KeyEnter) || snap.Commit != "brandnew" || s.model.Store.English["brandnew"].Confirmed != 1 {
-			t.Fatalf("standalone word must confirm at %q: %+v %+v", boundary, snap, s.model.Store.English)
+		want := 0.0
+		if boundary == " " {
+			want = 1
+		}
+		if snap.Handled != (boundary == proto.KeyEnter) || snap.Commit != "brandnew" || s.model.Store.English["brandnew"].Confirmed != want {
+			t.Fatalf("%q：%+v %+v", boundary, snap, s.model.Store.English)
 		}
 	}
 }

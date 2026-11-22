@@ -1,12 +1,14 @@
 // Package atomicfile 以「同目錄暫存檔、寫完 Sync、再改名」取代整個檔案：讀的人只會讀到舊檔或完整的新檔，
 // 斷電後也不會留下長度對了、內容卻是零的檔案。Windows 的 os.Rename 以 MoveFileEx(MOVEFILE_REPLACE_EXISTING)
-// 覆蓋既有的檔案（目的檔被別的程式開著時失敗，呼叫端照舊回報錯誤）。暫存檔的權限是 0600。
+// 覆蓋既有的檔案；目的檔被防毒等程式短暫開著時依 robustio 有限次重試（#329），仍失敗才回報。暫存檔的權限是 0600。
 package atomicfile
 
 import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+
+	"github.com/0c-biggo/0c-ime/internal/robustio"
 )
 
 // Write 原子地把 data 寫到 path；失敗時刪掉暫存檔，原本的檔案不動。
@@ -33,7 +35,7 @@ func Write(path string, data []byte) error {
 	if err = f.Close(); err != nil {
 		return err
 	}
-	if err = os.Rename(tmp, path); err != nil {
+	if err = robustio.Rename(tmp, path); err != nil {
 		return err
 	}
 	ok = true

@@ -19,6 +19,12 @@ const maxUntonedArcs = defaultTopM
 // 全部進入整句解碼與疊字、補全評分會讓每鍵延遲超過手機的預算；候選窗另外列舉，不受這個上限影響。
 const maxAbbreviatedArcs = 24
 
+// maxCorrectedArcs 是經過沒打聲調位置、又走了觸控修正讀音（input.Hyp.Corrected：鄰鍵、漏按，#335）的弧上限，依無上下文
+// 機率乘 exp(-成本) 挑選。這種弧另外一池，不跟打的音搶 maxUntonedArcs：那個上限只看機率，修正的讀音一多，打的音裡
+// 機率較低的字（三鶯的鶯）會被擠掉。打了聲調的位置照舊不裁切（裁切會把鄰鍵讀到的罕用字擠掉，四張犁的犁）。
+// 候選窗另外列舉，不受這個上限影響。
+const maxCorrectedArcs = 16
+
 // untonedPos 回報音節格第 i 個位置是不是沒打聲調展開的（input.Hyp.Untoned）；全部打了聲調時永遠是 false。
 func untonedPos(lat input.Lattice, i int) bool {
 	for _, h := range lat[i] {

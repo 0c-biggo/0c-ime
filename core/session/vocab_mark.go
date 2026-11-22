@@ -34,6 +34,9 @@ func (s *Session) normalizeVocabKey(k string) string {
 	case !s.Preview02:
 		return base
 	case k == proto.KeyShiftDelete || k == proto.KeyShiftBackspace:
+		if s.englishForgettable() != "" {
+			return k // 英文建議的反悔鍵（english_forget.go，#328）
+		}
 		if s.cand == nil || s.cand.kind != "" || s.cand.english || s.cand.mixed {
 			return base
 		}

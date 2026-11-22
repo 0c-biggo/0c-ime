@@ -299,8 +299,12 @@ impl State {
         Some(keys::style_key(key, shift, caps, shift_space, caps_lower))
     }
 
-    fn vocab_keys(&self) -> bool {
-        self.session.vocab_keys() && !self.session.english()
+    /// 這一鍵（`vk`）送不送 #123 的新鍵名（keys::named_with 的 `vocab`）：引擎要回報 vocab_keys。英文模式引擎沒有
+    /// 標示加詞，Shift＋←／→ 照舊送原本的鍵；英文單字有補字候選時，Shift＋Delete／Backspace 送新鍵名，是反白的英文建議的
+    /// 反悔鍵（#328）。TestKeyDown（english_wants_key 吃下）與 OnKeyDown 用同一個答案。
+    fn vocab_keys(&self, vk: u32) -> bool {
+        self.session.vocab_keys()
+            && (!self.session.english() || keys::undo_vk(vk) && self.session.english_state.english_suggesting())
     }
 
     /// 這一鍵是不是要交給引擎的 Ctrl＋標點（#168）：中文模式、引擎可用而且回報 ctrl_punctuation（認得鍵名、設定開著）。
@@ -933,8 +937,10 @@ impl TextService_Impl {
             .confirm_context(id, confirmed);
     }
 
-    fn handle_key(&self, ctx: Option<&ITfContext>, key: &str) -> bool {
-        let snapshot = self.state.borrow_mut().session.key(key);
+    /// `keep`：引擎沒處理這一鍵也吃下（照快照送出文字，不把按鍵交給程式）；引擎沒有回應時照舊交給程式。
+    fn handle_key(&self, ctx: Option<&ITfContext>, key: &str, keep: bool) -> bool {
+        let mut snapshot = self.state.borrow_mut().session.key(key);
+        snapshot.handled |= keep && snapshot.ok;
         zdebug!(
             "snapshot ok={} handled={} composing={} commit_len={}",
             snapshot.ok,
@@ -1225,7 +1231,8 @@ impl TextService_Impl {
             }
             return Some(EnglishKey::Eat(false));
         }
-        let key = self.state.borrow_mut().styled_key(vk, lparam, false, true);
+        let vocab = self.state.borrow().vocab_keys(vk);
+        let key = self.state.borrow_mut().styled_key(vk, lparam, vocab, true);
         if key.as_deref() == Some("ShiftSpace") { return Some(EnglishKey::Eat(true)); }
         // IMM32 程式的焦點不是文字框（Photoshop 的畫布）：英文模式的按鍵是快捷鍵，整個交給程式，不開始補字（#210）。
         let flags = self.state.borrow().activate_flags;
@@ -1417,7 +1424,7 @@ impl TextService_Impl {
         if style_key.as_ref().is_some_and(|k| st.session.english_state.full_width_extra_key(k)) { return true; }
         if st.composing {
             let english = st.session.english();
-            let vocab = st.vocab_keys();
+            let vocab = st.vocab_keys(vk);
             return keys::composing_wants(english, st.styled_key(vk, lparam, vocab, english).as_deref());
         }
         if st.session.english() {
@@ -1781,7 +1788,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             }
             let (vocab, english) = {
                 let st = self.state.borrow();
-                (st.vocab_keys(), st.session.english())
+                (st.vocab_keys(vk), st.session.english())
             };
             // Ctrl＋標點（#168）與 wants_key 同一個判斷；其他鍵照舊，中文模式不理 Caps Lock。
             let ctrl = if keys::modifier_down() {
@@ -1796,7 +1803,10 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
                 return Ok(false.into());
             };
             self.confirm_document_context(pic.as_ref());
-            let mut eaten = self.handle_key(pic.as_ref(), &key);
+            // #328：英文補字候選上的 Shift＋Delete 在 TestKeyDown 已說吃（english_wants_key）。反白的是內建的詞時引擎照 Delete
+            // 送出單字、回未處理；照樣吃下，跟 TestKeyDown 一致（WPF 只看 TestKeyDown，回不吃按鍵就不見）。
+            let keep = english && key == "ShiftDelete" && key_tested == Some(true);
+            let mut eaten = self.handle_key(pic.as_ref(), &key, keep);
             if !eaten && literal_fallback && !self.state.borrow().composing {
                 eaten = self.type_literal(pic.as_ref(), vk, lparam.0);
             }

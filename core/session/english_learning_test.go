@@ -79,6 +79,7 @@ func TestMixedEnglishAssistedOriginsSurviveCursorEdits(t *testing.T) {
 			case "undo":
 				key(s, proto.KeyEscape)
 			}
+			mixedType(s, " ji3") // 在句子裡才學（#328）
 			key(s, proto.KeyEnter)
 			if edit == "undo" {
 				e := s.model.Store.English["recieve"]
@@ -133,7 +134,7 @@ func TestMixedEnglishPrivateQueriesCannotExposePersonalNames(t *testing.T) {
 	s := mixedSession()
 	for day := 100; day < 103; day++ {
 		s.model.AdvanceTime(int64(day) * englishDay)
-		mixedType(s, "newWidget_52")
+		mixedType(s, "newWidget_52 ji3")
 		key(s, proto.KeyEnter)
 	}
 	if !s.model.EnglishKnown("newWidget_52") {
@@ -178,6 +179,8 @@ func TestMixedEnglishEditsForgetAndExplicitRecovery(t *testing.T) {
 	mixedType(s, "newWidget_52")
 	s.Handle(proto.Request{Type: proto.Cursor, To: 0})
 	mixedType(s, "extra")
+	key(s, proto.KeyEnd)
+	mixedType(s, " ji3") // 在句子裡（#328）
 	key(s, proto.KeyEnter)
 	if _, ok := m.Store.English["newwidget_52"]; ok {
 		t.Fatal("replaced spelling kept positive evidence")
@@ -187,13 +190,13 @@ func TestMixedEnglishEditsForgetAndExplicitRecovery(t *testing.T) {
 	}
 	for day := 101; day < 104; day++ {
 		m.AdvanceTime(int64(day) * englishDay)
-		mixedType(s, "newWidget_52")
+		mixedType(s, "newWidget_52 ji3")
 		key(s, proto.KeyEnter)
 	}
 	s.Handle(proto.Request{Type: proto.Forget, Word: "newWidget_52"})
 	for day := 104; day < 107; day++ {
 		m.AdvanceTime(int64(day) * englishDay)
-		mixedType(s, "newWidget_52")
+		mixedType(s, "newWidget_52 ji3")
 		key(s, proto.KeyEnter)
 	}
 	if m.EnglishKnown("newWidget_52") || !m.Store.Tombstones["newwidget_52"] {
@@ -202,14 +205,15 @@ func TestMixedEnglishEditsForgetAndExplicitRecovery(t *testing.T) {
 	mixedType(s, "newWidget_52")
 	s.Handle(proto.Request{Type: proto.Candidates})
 	s.Handle(proto.Request{Type: proto.Select, Index: 0})
+	mixedType(s, " ji3")
 	key(s, proto.KeyEnter)
 	if m.Store.Tombstones["newwidget_52"] || m.EnglishKnown("newWidget_52") {
 		t.Fatal("explicit selection must restart, not skip, confirmation")
 	}
 	m.AdvanceTime(107 * englishDay)
-	mixedType(s, "newWidget_52")
+	mixedType(s, "newWidget_52 ji3")
 	key(s, proto.KeyEnter)
-	mixedType(s, "newWidget_52")
+	mixedType(s, "newWidget_52 ji3")
 	key(s, proto.KeyEnter)
 	if !m.EnglishKnown("newWidget_52") {
 		t.Fatal("explicit recovery never promoted")

@@ -155,8 +155,9 @@ func TestEnglishVocabPrefixDoesNotChangeMixedReading(t *testing.T) {
 	}
 }
 
+// typeEnglishWord 在英文模式打一個字、按空白接著打（句子裡的字），再按 Enter；單獨打一串就按 Enter 的不學（#328）。
 func typeEnglishWord(s *Session, word string) proto.Snapshot {
-	mixedType(s, word)
+	mixedType(s, word+" ")
 	return key(s, proto.KeyEnter)
 }
 

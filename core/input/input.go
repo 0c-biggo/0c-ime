@@ -17,6 +17,10 @@ type Hyp struct {
 	// 改用較小的上限（decode.maxAbbreviatedArcs）。要明確標記：沒打聲調加模糊音、鄰鍵或九宮格的一列也可能有幾十個
 	// 假設，不能從列長推斷是不是簡拼。
 	Abbreviated bool
+	// Corrected：這個假設是觸控鍵盤的修正（換成鄰鍵、補上漏按的鍵、去掉多按的鍵，session.SpatialOptions），不是打的音。
+	// 沒打聲調的位置，解碼器把經過它的弧另外依成本裁切（decode.maxCorrectedArcs），不跟打的音搶同一個上限：那裡依
+	// 無上下文機率只留前 64 個弧，修正的讀音一多，打的音裡機率較低的字（鶯）會被擠掉。桌面沒有這種假設。
+	Corrected bool
 }
 
 // Lattice 的每個元素是一個位置的所有假設。

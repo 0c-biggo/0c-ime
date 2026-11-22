@@ -1679,6 +1679,40 @@ func (s *Session) shiftMixedOrigins(at, delta int) {
 	s.mixedOrigins = next
 }
 
+// contextualEnglish 是這次送出要學的英文詞（#328）。整段組字只有一串英文、前後只有空白或引號括號這類標點
+// （mixedEnglishCommits 修掉的那些）時一個都不學：密碼和帳號就是這樣打的，欄位裡單獨一串，打完按 Enter、Tab
+// 或點別處送出。macOS 的 LINE 等程式的密碼欄沒有標成密碼欄、也沒開安全輸入，按鍵照常進輸入法，外殼分不出來；
+// 學到了就會在補字候選原樣列出整串密碼。英文模式一個字就是一段組字，按空白送出表示後面還有字，照常學。
+// 詞出現在句子裡（跟中文或其他詞同一段送出，或英文模式按空白接著打）才算一次確認，門檻與每日上限不變。
+// 用 ↓ 選回原按鍵（mp3、i16，#249）是明確的選擇，跟選中文候選一樣照常學。
+func (s *Session) contextualEnglish() []personal.EnglishCommit {
+	events := s.mixedEnglishCommits()
+	if len(events) != 1 || events[0].Explicit || s.english && s.englishSpaceCommit {
+		return events
+	}
+	chunks, inChunk := 0, false
+	for at, syl := range s.syls {
+		if !s.literals[at] {
+			return events // 有中文：詞在句子裡
+		}
+		text := string(syl)
+		switch {
+		case unicode.IsSpace([]rune(text)[0]):
+			inChunk = false
+		case strings.ContainsAny(text, "\"'()[]{}<>,!?;"):
+		default:
+			if !inChunk {
+				chunks++
+			}
+			inChunk = true
+		}
+	}
+	if chunks > 1 {
+		return events
+	}
+	return nil
+}
+
 // Extract final literal tokens, not a history of transient predictions. Missing
 // key origins (symbols/paste/manual English), paths and URLs cannot confirm a
 // word. Edits move or remove origins together with their visible characters.

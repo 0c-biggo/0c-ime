@@ -16,6 +16,7 @@ import (
 	"github.com/0c-biggo/0c-ime/bridge/ipc"
 	"github.com/0c-biggo/0c-ime/core/proto"
 	"github.com/0c-biggo/0c-ime/internal/enginedir"
+	"github.com/0c-biggo/0c-ime/internal/robustio"
 	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
@@ -114,7 +115,8 @@ func PrepareCore(base, scratch, archive string, t Target, goos, arch string, lay
 	if out, err := exec.Command(filepath.Join(stage, exe), "-check-data", "-data", filepath.Join(stage, "data")).CombinedOutput(); err != nil {
 		return "", fmt.Errorf("新版引擎隔離檢查失敗：%s (%w)", strings.TrimSpace(string(out)), err)
 	}
-	if err := os.Rename(stage, dest); err != nil {
+	// 跟完整安裝一樣，剛複製好的 neural／data 會被端點防護開檔掃描，改名目錄要等它放手（#329）。
+	if err := robustio.Rename(stage, dest); err != nil {
 		return "", err
 	}
 	return dir, nil

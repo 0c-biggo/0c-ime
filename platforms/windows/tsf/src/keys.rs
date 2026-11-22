@@ -136,7 +136,7 @@ pub fn is_keypad(vk: u32) -> bool {
 }
 
 /// 具名鍵加上 Shift：Shift+Tab 是獨立的 BackTab（組字中核心吃掉不動作，沒在組字時交還應用程式，#106）。
-/// `vocab` 為 true（引擎回報 vocab_keys、不在英文模式）時，Shift 加上
+/// `vocab` 為 true（引擎回報 vocab_keys；英文模式只有補字候選上的 Delete、Backspace，見 service 的 vocab_keys）時，Shift 加上
 /// ← → Delete Backspace 送 #123 的新鍵名：組字中標示要加入詞庫的範圍、候選窗的反悔鍵。
 /// 核心保證這些鍵名在沒有對應功能時就是原本的鍵，所以外殼不必追蹤候選窗狀態；
 /// 舊引擎不認得新鍵名，`vocab` 必須來自引擎的回報。
@@ -157,6 +157,11 @@ pub fn vocab_key(base: &str) -> Option<&'static str> {
         "Backspace" => "ShiftBackspace",
         _ => return None,
     })
+}
+
+/// Delete 或 Backspace：英文模式只有這兩個鍵送 #123 的新鍵名（反悔鍵，#328），Shift＋←／→ 沒有標示加詞。
+pub fn undo_vk(vk: u32) -> bool {
+    vk == VK_DELETE.0 as u32 || vk == VK_BACK.0 as u32
 }
 
 /// 新鍵名對應的原本按鍵（送給不支援的引擎前換回來）；不是新鍵名回傳 None。
@@ -773,6 +778,11 @@ mod tests {
             assert_eq!(named_with(vk as u32, true, true), Some(want), "{want}");
         }
         assert_eq!(named_with(0x41, true, true), None);
+        // #328：英文模式只有 Delete、Backspace 是反悔鍵；Shift＋←／→ 沒有標示加詞。
+        assert!(undo_vk(VK_DELETE.0 as u32) && undo_vk(VK_BACK.0 as u32));
+        for vk in [VK_LEFT.0, VK_RIGHT.0, VK_UP.0, VK_TAB.0, 0x41] {
+            assert!(!undo_vk(vk as u32), "{vk:#x}");
+        }
         for key in ["Left", "Enter", "BackTab", "a"] {
             assert_eq!(vocab_base(key), None, "{key}");
         }
