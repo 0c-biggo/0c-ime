@@ -94,7 +94,7 @@ impl Snapshot {
             // 在 TestKeyDown 先送出再放行的話，Windows Terminal 會連同命令一起執行。
             letter && self.text().len() < 48
                 || matches!(key, "Backspace" | "Escape" | "Enter")
-                || (!self.candidates.is_empty() && matches!(key, "Tab" | "Up" | "Down"))
+                || (self.english_suggesting() && matches!(key, "Tab" | "Up" | "Down" | "ShiftDelete" | "ShiftBackspace"))
         } else {
             self.english_can_start && letter
         }
@@ -102,6 +102,12 @@ impl Snapshot {
 
     pub fn composing(&self) -> bool {
         !self.preedit.is_empty() || !self.candidates.is_empty()
+    }
+
+    /// 英文單字有補字候選（#328）：引擎的反悔鍵在英文模式只作用在反白的補字候選上，這時外殼才送
+    /// ShiftDelete／ShiftBackspace（service 的 vocab_keys），english_wants_key 在 TestKeyDown 就吃下。
+    pub fn english_suggesting(&self) -> bool {
+        self.english_pending && !self.candidates.is_empty()
     }
 
     /// 組字區還在標示要加入詞庫的範圍（樣式 marked，#123）：這時的提示是標示說明，留到標示結束。
@@ -803,17 +809,19 @@ mod parse_tests {
             "english_pending": true, "preedit": [{"text":"hel"}],
             "candidates": {"items":[{"id":0,"text":"hello"}]}}}),
         );
-        assert!(s.english_pending);
-        for k in ["h", "H", "Backspace", "Escape", "Enter", "Tab", "Up", "Down"] {
+        assert!(s.english_pending && s.english_suggesting());
+        // #328：補字候選上的反悔鍵在 TestKeyDown 就吃下，不先送出單字。
+        for k in ["h", "H", "Backspace", "Escape", "Enter", "Tab", "Up", "Down", "ShiftDelete", "ShiftBackspace"] {
             assert!(s.english_wants_key(k), "{}", k);
         }
         for k in [
-            " ", ".", "1", "Left", "Right", "Delete", "Home", "End", "PageUp", "PageDown",
+            " ", ".", "1", "Left", "Right", "Delete", "Home", "End", "PageUp", "PageDown", "ShiftLeft", "ShiftRight",
         ] {
             assert!(!s.english_wants_key(k), "must pass host action: {}", k);
         }
         s.candidates.clear();
-        for k in ["Tab", "Up", "Down"] {
+        assert!(!s.english_suggesting());
+        for k in ["Tab", "Up", "Down", "ShiftDelete", "ShiftBackspace"] {
             assert!(!s.english_wants_key(k));
         }
         s.preedit[0].text = "a".repeat(48);

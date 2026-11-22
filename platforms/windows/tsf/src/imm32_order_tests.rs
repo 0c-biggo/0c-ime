@@ -1266,3 +1266,219 @@ fn imm32_keydown_without_testkeydown_never_reposts() {
     assert_eq!(h.doc.committed(), format!("前{word}"));
     assert_eq!(h.app.text(), format!("前{word}"), "字只出現一次");
 }
+
+/// #328 的假引擎：一直是英文模式（自動補字開著）。打到兩個字母以上有一個補字候選 hello，當成學到的詞：反悔鍵
+/// （ShiftDelete／ShiftBackspace）在有候選時忘記它（候選收起、組字不動、handled，提示「不再推薦：hello」）；沒有候選時
+/// 同真的引擎照原本的鍵處理。Backspace 刪一個字母；Delete、← 等其他鍵送出單字、交給程式（handled false）。
+/// 記下收到的每一個按鍵。`vocab_keys`：open 回覆的 info 有沒有 vocab_keys（舊引擎沒有）。
+fn forget_engine(vocab_keys: bool) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    use serde_json::Value;
+    use std::io::{Read, Write};
+    use std::os::windows::io::FromRawHandle;
+    use windows::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
+    use windows::Win32::System::Pipes::{ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT};
+    use windows_core::PCWSTR;
+    let name = format!(
+        r"\\.\pipe\0c-tsf-forget-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+    );
+    let keys = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = keys.clone();
+    let pipe_name = zuin_win_common::wide(&name);
+    let (ready, wait) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let handle = unsafe {
+            CreateNamedPipeW(
+                PCWSTR::from_raw(pipe_name.as_ptr()),
+                PIPE_ACCESS_DUPLEX,
+                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                1,
+                65536,
+                65536,
+                0,
+                None,
+            )
+        };
+        let mut file = unsafe { std::fs::File::from_raw_handle(handle.0) };
+        ready.send(()).unwrap();
+        let _ = unsafe { ConnectNamedPipe(handle, None) };
+        let (mut word, mut forgot) = (String::new(), false);
+        loop {
+            let mut header = [0; 4];
+            if file.read_exact(&mut header).is_err() {
+                break;
+            }
+            let mut body = vec![0; u32::from_le_bytes(header) as usize];
+            file.read_exact(&mut body).unwrap();
+            let request: Value = serde_json::from_slice(&body).unwrap();
+            let reply = if request["op"] == "open" {
+                let info = if vocab_keys { json!({"vocab_keys": "true"}) } else { json!({}) };
+                json!({"ok": true, "session": 7, "info": info})
+            } else if request["op"] == "handle" {
+                let req = &request["req"];
+                let suggesting = word.len() >= 2 && !forgot;
+                let (mut handled, mut commit, mut notices) = (true, String::new(), Vec::<&str>::new());
+                match req["type"].as_str().unwrap_or("") {
+                    "key" => {
+                        let key = req["key"].as_str().unwrap_or("").to_string();
+                        seen.lock().unwrap().push(key.clone());
+                        match key.as_str() {
+                            k if k.len() == 1 && k.as_bytes()[0].is_ascii_alphabetic() => {
+                                word.push_str(k);
+                                forgot = false;
+                            }
+                            "ShiftDelete" | "ShiftBackspace" if suggesting => {
+                                forgot = true;
+                                notices.push("不再推薦：hello");
+                            }
+                            "Backspace" | "ShiftBackspace" if !word.is_empty() => {
+                                word.pop();
+                            }
+                            _ => {
+                                commit = std::mem::take(&mut word);
+                                handled = false;
+                            }
+                        }
+                    }
+                    "commit" => commit = std::mem::take(&mut word),
+                    "cancel" => word.clear(),
+                    _ => {}
+                }
+                let mut snapshot = json!({"handled": handled, "mode": "english", "english_autocomplete": true,
+                    "english_can_start": true, "commit": commit, "notices": notices});
+                if !word.is_empty() {
+                    let n = word.chars().count();
+                    snapshot["english_pending"] = Value::from(true);
+                    snapshot["preedit"] = json!([{"text": word, "style": "normal"}]);
+                    snapshot["cursor"] = json!({"rune": n, "utf16": n});
+                    if word.len() >= 2 && !forgot {
+                        snapshot["candidates"] =
+                            json!({"items": [{"id": 0, "text": "hello"}], "page": 0, "pages": 1, "highlight": 0});
+                    }
+                }
+                json!({"ok": true, "snapshot": snapshot})
+            } else {
+                json!({"ok": true})
+            };
+            if file.write_all(&zuin_win_common::frame(&reply).unwrap()).is_err() {
+                break;
+            }
+        }
+    });
+    wait.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+    (name, keys)
+}
+
+const DELETE: (u32, isize) = (0x2E, 0x153);
+const BACKSPACE: (u32, isize) = (0x08, 0x0E);
+const LEFT: (u32, isize) = (0x25, 0x14B);
+
+impl Host {
+    /// 按著 Shift（只改本執行緒的鍵盤狀態，不經 Shift 鍵本身，不會切換中英）按這一鍵，回傳 TestKeyDown 的答案；
+    /// 說吃時 step 也確認 OnKeyDown 吃下。
+    fn shift_press(&mut self, (vk, scan): (u32, isize), act: Act) -> bool {
+        set_mods(false, false, false, true);
+        let eaten = self.press(vk, scan, act);
+        set_mods(false, false, false, false);
+        eaten
+    }
+    fn suggesting(&self) -> bool {
+        self.service.state.borrow().session.english_state.english_suggesting()
+    }
+    fn shown(&self) -> String {
+        self.service.state.borrow().session.english_state.text()
+    }
+}
+
+#[test]
+fn english_undo_keys_on_a_suggestion_reach_the_engine() {
+    // #328：英文模式的補字候選上，Shift＋Delete／Shift＋⌫ 送新鍵名給引擎忘記這個詞，TestKeyDown 就吃下、不先送出單字。
+    // 修正前外殼在英文模式不送新鍵名：Shift＋⌫ 刪掉一個字母、Shift＋Delete 送出單字，詞都沒忘記。
+    // 自己接 TSF 的程式（記事本）與 IMM32 程式都一樣。
+    for static_flags in [0, TS_SS_TRANSITORY] {
+        plain_keyboard();
+        let _caret = Caret::new();
+        let (pipe, keys) = forget_engine(true);
+        let mut h = open(&pipe, static_flags);
+        let last = || keys.lock().unwrap().last().cloned().unwrap_or_default();
+        h.letters("he");
+        assert!(h.suggesting(), "測試前提：有補字候選 {static_flags}");
+        assert!(h.shift_press(DELETE, Act::Nothing), "Shift＋Delete 吃下 {static_flags}");
+        assert_eq!(last(), "ShiftDelete");
+        assert!(h.pending() && !h.suggesting(), "忘記不送出單字 {static_flags}");
+        assert_eq!((h.shown().as_str(), h.app.text().as_str()), ("he", "前"));
+        h.letters("l");
+        assert!(h.suggesting());
+        assert!(h.shift_press(BACKSPACE, Act::Nothing), "Shift＋⌫ 吃下 {static_flags}");
+        assert_eq!(last(), "ShiftBackspace");
+        assert_eq!(h.shown(), "hel", "忘記不刪字 {static_flags}");
+        // Shift＋←／→ 在英文模式沒有標示加詞：照舊送原本的鍵（送出單字）。
+        h.letters("p");
+        assert!(h.suggesting());
+        let left = h.shift_press(LEFT, Act::Left);
+        assert_eq!(last(), "Left", "{static_flags}");
+        assert!(!h.pending(), "{static_flags}");
+        assert_eq!(h.app.text(), "前help", "{static_flags}");
+        assert_eq!(left, static_flags == TS_SS_TRANSITORY, "IMM32 程式吃下、連同單字送出（#260），記事本交給程式");
+        assert!(!keys.lock().unwrap().iter().any(|k| k == "ShiftLeft"));
+    }
+}
+
+#[test]
+fn english_shift_delete_without_a_suggestion_is_unchanged() {
+    // #328：沒有補字候選、沒在打英文單字時照舊：Shift＋⌫ 刪單字的字母，Shift＋Delete 送出單字後交給程式，
+    // 沒有單字時兩個都交給程式刪字。
+    plain_keyboard();
+    let (pipe, keys) = forget_engine(true);
+    let mut h = open(&pipe, 0);
+    let last = || keys.lock().unwrap().last().cloned().unwrap_or_default();
+    h.letters("h");
+    assert!(h.pending() && !h.suggesting(), "測試前提：一個字母還沒有候選");
+    assert!(h.shift_press(BACKSPACE, Act::Nothing), "單字裡的 Shift＋⌫ 照舊刪字母");
+    assert_eq!(last(), "Backspace");
+    assert!(!h.pending());
+    h.letters("h");
+    assert!(!h.shift_press(DELETE, Act::Nothing), "Shift＋Delete 送出單字、交給程式");
+    assert_eq!(last(), "Delete");
+    assert_eq!(h.app.text(), "前h");
+    assert!(!h.pending());
+    for key in [DELETE, BACKSPACE] {
+        assert!(!h.shift_press(key, Act::Nothing), "沒有單字：交給程式");
+    }
+    assert!(!keys.lock().unwrap().iter().any(|k| k.starts_with("Shift")), "{:?}", keys.lock().unwrap());
+}
+
+#[test]
+fn english_undo_keys_stay_ordinary_for_an_old_engine() {
+    // 舊引擎（open 沒回報 vocab_keys）不認得新鍵名：補字候選上照舊送原本的鍵。
+    plain_keyboard();
+    let (pipe, keys) = forget_engine(false);
+    let mut h = open(&pipe, 0);
+    h.letters("he");
+    assert!(h.suggesting());
+    assert!(h.shift_press(BACKSPACE, Act::Nothing));
+    assert_eq!(h.shown(), "h", "Shift＋⌫ 照舊刪字母");
+    h.letters("e");
+    assert!(!h.shift_press(DELETE, Act::Nothing), "Shift＋Delete 照舊送出單字、交給程式");
+    assert_eq!(h.app.text(), "前he");
+    assert_eq!(*keys.lock().unwrap(), vec!["h", "e", "Backspace", "e", "Delete"]);
+}
+
+#[test]
+fn english_undo_keys_on_a_built_in_word_with_the_real_engine() {
+    // #328：真的引擎（英文自動補字開著）。反白的是內建的詞時反悔鍵沒有作用，照原本的鍵：Shift＋⌫ 刪一個字母；
+    // Shift＋Delete 送出單字。TestKeyDown 已說吃，OnKeyDown 也吃下（step 確認），不會在 WPF 掉鍵。
+    // 用別的測試不打的 qui：別的測試接受過的補字（hel 的 Tab）會變成學到的詞，反悔鍵就會忘記它。
+    let Some(pipe) = engine() else { return };
+    plain_keyboard();
+    let mut h = open(&pipe, 0);
+    h.letters("quie");
+    assert!(h.suggesting(), "測試前提：quie 有內建的補字候選");
+    assert!(h.shift_press(BACKSPACE, Act::Nothing));
+    assert_eq!(h.shown(), "qui");
+    assert!(h.suggesting());
+    assert!(h.shift_press(DELETE, Act::Nothing), "TestKeyDown 吃下");
+    assert!(!h.pending());
+    assert_eq!(h.app.text(), "前qui");
+}

@@ -13,7 +13,7 @@
 
 ### 原始碼套件
 
-- 英文學習（#328）：整段組字只有一串英文、沒有中文時，送出這次不呼叫 `LearnEnglish`；英文模式只有按空白送出的字算確認，Enter、Tab、標點與 `commit` 請求送出的不算，用 ↓ 明確選回原按鍵照常學（`Session.contextualEnglish`）。新增英文建議的反悔鍵（`core/session/english_forget.go`）：英文模式補字候選、混打 Tab 提示與混打 ↓ 候選裡學到的英文詞按 Shift＋Delete／Shift＋⌫ 時 `Model.Forget`（tombstone），「我的詞」的英文詞則 `VocabRemove`；其他情況照舊換回 Delete／Backspace。四個外殼不用改，`user.json` 格式不變。
+- 英文學習（#328）：整段組字只有一串英文、沒有中文時，送出這次不呼叫 `LearnEnglish`；英文模式只有按空白送出的字算確認，Enter、Tab、標點與 `commit` 請求送出的不算，用 ↓ 明確選回原按鍵照常學（`Session.contextualEnglish`）。新增英文建議的反悔鍵（`core/session/english_forget.go`）：英文模式補字候選、混打 Tab 提示與混打 ↓ 候選裡學到的英文詞按 Shift＋Delete／Shift＋⌫ 時 `Model.Forget`（tombstone），「我的詞」的英文詞則 `VocabRemove`；其他情況照舊換回 Delete／Backspace。macOS、Fcitx5、IBus 外殼不用改；Windows 外殼原本在英文模式一律不送新鍵名，改成英文單字有補字候選時 Shift＋Delete／Shift＋Backspace 送 `ShiftDelete`／`ShiftBackspace`，並在 TestKeyDown 就吃下、不先送出單字（`State::vocab_keys`、`keys::undo_vk`、`Snapshot::english_suggesting`）。`user.json` 格式不變。
 - Windows 更新（#329，GitHub #77）：新增 `internal/robustio`，只在 Windows 上對 ACCESS_DENIED、SHARING_VIOLATION、LOCK_VIOLATION 重試改名與刪除（10 ms 起倍增、最長 250 ms、累計最多 10 秒），套用到 `InstallWindows` 的 stage 與 `.broken-` 改名、回復時還原 `user.json`／`vocab.json`、`PrepareCore`、收據（`internal/atomicfile`）與 `engine.json`（`internal/enginedir`）。
 - 設定程式（#330，GitHub #79）：更新頁有進行中的作業時隱藏狀態框，只留進度列；「檢查更新」的提示只說檢查完成。Go 契約不變。
 - 手機 App 用的核心（桌面外殼不送這些請求，行為不變）：觸控鍵盤漏按一鍵的讀音（#335，`SpatialOptions.Missed`，預設 0）；`platforms/neural/qsel/`，在 mmap 的 4-bit 權重上以 C 推論選字模型、不經 onnxruntime（#336，桌面不用，桌面建置不編譯它）；`TestPlainLatticeGolden` 與 `make test-arm64`，在 arm64 對照 amd64 的解碼結果（#325）。
