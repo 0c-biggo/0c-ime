@@ -106,7 +106,9 @@ func (s *Session) englishKey(k string) (handled bool, commit string, active bool
 	if !englishBoundary(k) && !(len(k) == 1 && strings.ContainsAny(k, "\"'()[]{}<>,!?;")) {
 		s.localBlocked = true
 	}
+	s.englishSpaceCommit = k == " "
 	commit = s.commit()
+	s.englishSpaceCommit = false
 	s.englishTokenBlocked = !englishBoundary(k)
 	return false, commit, true
 }

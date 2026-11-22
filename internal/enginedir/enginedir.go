@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/0c-biggo/0c-ime/internal/robustio"
 )
 
 const FileName = "engine.json"
@@ -82,7 +84,7 @@ func Write(base string, c Current) error {
 	if err = f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), filepath.Join(base, FileName))
+	return robustio.Rename(f.Name(), filepath.Join(base, FileName)) // 防毒開著舊指標時重試（#329）
 }
 
 // Remove 刪除指標，外殼回到安裝時的引擎（完整安裝使用）。

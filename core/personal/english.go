@@ -190,6 +190,16 @@ func (m *Model) EnglishKnown(text string) bool {
 	return ok && !m.Store.Tombstones[key] && e.at(m.Store.Time).eligible()
 }
 
+// EnglishLearned 回報 text 有個人英文紀錄（不論是否已達建議門檻）而且沒被忘記；英文建議的反悔鍵用它判斷能不能忘記（#328）。
+func (m *Model) EnglishLearned(text string) bool {
+	if !EnglishToken(text) {
+		return false
+	}
+	key := strings.ToLower(text)
+	_, ok := m.Store.English[key]
+	return ok && !m.Store.Tombstones[key]
+}
+
 // EnglishKnownAs 是 EnglishKnown，而且最後學到的拼法（含大小寫）就是 text。
 func (m *Model) EnglishKnownAs(text string) bool {
 	return m.EnglishKnown(text) && m.Store.English[strings.ToLower(text)].Text == text

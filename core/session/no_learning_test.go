@@ -119,7 +119,7 @@ func TestNoLearningSkipsEnglishWords(t *testing.T) {
 		}
 		key(s, proto.KeyEscape)
 		for i := 0; i < 3; i++ {
-			mixedType(s, "zzqword")
+			mixedType(s, "zzqword ")
 			key(s, proto.KeyEnter)
 		}
 		if got := len(s.model.Store.English) != 0; got == off {

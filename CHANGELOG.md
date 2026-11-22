@@ -2,6 +2,23 @@
 
 每個版本的「公開摘要」與 [官網更新紀錄](https://0c.biggo.com/updates/) 相同；「原始碼套件」記錄 Release 完整 tarball 的內容變化。
 
+## 未發布
+
+### 公開摘要
+
+- 開著「中英混打」或「英文模式自動補字」時，在欄位裡單獨打一串英文就按 Enter、Tab 或點別處送出（例如登入畫面的帳號、密碼），不再學起來，之後也不會出現在補字候選裡。macOS 的 LINE 等程式的密碼欄沒有告訴輸入法這是密碼欄，以前每天登入打一次，幾天後打開頭幾個字就會看到整串密碼。同一個詞出現在句子裡（跟中文一起打，或英文模式打完按空白接著打）照常學。
+- 學到的英文字不想再看到時（例如以前學到的密碼），在它出現的地方按 Shift＋Delete（Mac 也可以按 Shift＋⌫）就會忘記，之後也不會再自動學回來：英文模式的補字候選、中英混打打到一半出現的 Tab 提示都可以，跟中文候選的用法一樣。「我的詞」裡加的英文詞照樣可以這樣刪除，內建的英文字不受影響。
+- Windows：更新時如果防毒軟體剛好在掃描新版的檔案、暫時擋住改名（錯誤訊息是 Access is denied），更新程式會稍等再試，最多 10 秒，不再整個放棄、下次又從頭下載。0.2.14 之後的更新才用得到；從 0.2.13 升到 0.2.14 這一次，還是由舊版的更新程式安裝。
+- 設定程式「更新」頁：下載、核對、安裝進行中只顯示進度列那一句，不再在狀態框和提示裡重複同一句話；按「檢查更新」後的提示只說檢查完成，結果看頁面。
+
+### 原始碼套件
+
+- 英文學習（#328）：整段組字只有一串英文、沒有中文時，送出這次不呼叫 `LearnEnglish`；英文模式只有按空白送出的字算確認，Enter、Tab、標點與 `commit` 請求送出的不算，用 ↓ 明確選回原按鍵照常學（`Session.contextualEnglish`）。新增英文建議的反悔鍵（`core/session/english_forget.go`）：英文模式補字候選、混打 Tab 提示與混打 ↓ 候選裡學到的英文詞按 Shift＋Delete／Shift＋⌫ 時 `Model.Forget`（tombstone），「我的詞」的英文詞則 `VocabRemove`；其他情況照舊換回 Delete／Backspace。四個外殼不用改，`user.json` 格式不變。
+- Windows 更新（#329，GitHub #77）：新增 `internal/robustio`，只在 Windows 上對 ACCESS_DENIED、SHARING_VIOLATION、LOCK_VIOLATION 重試改名與刪除（10 ms 起倍增、最長 250 ms、累計最多 10 秒），套用到 `InstallWindows` 的 stage 與 `.broken-` 改名、回復時還原 `user.json`／`vocab.json`、`PrepareCore`、收據（`internal/atomicfile`）與 `engine.json`（`internal/enginedir`）。
+- 設定程式（#330，GitHub #79）：更新頁有進行中的作業時隱藏狀態框，只留進度列；「檢查更新」的提示只說檢查完成。Go 契約不變。
+- 手機 App 用的核心（桌面外殼不送這些請求，行為不變）：觸控鍵盤漏按一鍵的讀音（#335，`SpatialOptions.Missed`，預設 0）；`platforms/neural/qsel/`，在 mmap 的 4-bit 權重上以 C 推論選字模型、不經 onnxruntime（#336，桌面不用，桌面建置不編譯它）；`TestPlainLatticeGolden` 與 `make test-arm64`，在 arm64 對照 amd64 的解碼結果（#325）。
+- 內附字典與神經模型都沿用 0.2.13：字典 manifest `f2fa260f…`，`models/pairing.lock.json` 不變。
+
 ## 0.2.13（2026-11-19，public-beta）
 
 ### 公開摘要

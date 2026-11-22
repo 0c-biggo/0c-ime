@@ -187,9 +187,14 @@ const continuationRow = 16
 
 // spans 列舉從 start 起、與音節格相容的所有讀音（以詞庫前綴剪枝）。
 func (d *Decoder) spans(lat input.Lattice, start int, fn func(reading []zhuyin.Syllable, cost float64)) {
+	d.markedSpans(lat, start, func(reading []zhuyin.Syllable, cost float64, _ bool) { fn(reading, cost) })
+}
+
+// markedSpans 同 spans，另外回報讀音有沒有經過修正的假設（input.Hyp.Corrected）。
+func (d *Decoder) markedSpans(lat input.Lattice, start int, fn func(reading []zhuyin.Syllable, cost float64, corrected bool)) {
 	limit := MaxLen(d.Lex)
-	var walk func(pos int, reading []zhuyin.Syllable, cost float64)
-	walk = func(pos int, reading []zhuyin.Syllable, cost float64) {
+	var walk func(pos int, reading []zhuyin.Syllable, cost float64, corrected bool)
+	walk = func(pos int, reading []zhuyin.Syllable, cost float64, corrected bool) {
 		if pos == len(lat) || pos-start == limit {
 			return
 		}
@@ -212,11 +217,11 @@ func (d *Decoder) spans(lat input.Lattice, start int, fn func(reading []zhuyin.S
 			if next == nil && !d.Lex.HasPrefix(r) {
 				continue
 			}
-			fn(r, cost+h.Cost)
-			walk(pos+1, r, cost+h.Cost)
+			fn(r, cost+h.Cost, corrected || h.Corrected)
+			walk(pos+1, r, cost+h.Cost, corrected || h.Corrected)
 		}
 	}
-	walk(start, nil, 0)
+	walk(start, nil, 0, false)
 }
 
 // Fits 回報 word 有沒有詞庫讀音放得進 lat 從 start 起的音節，以及那筆是不是自動修正讀音。

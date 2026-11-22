@@ -123,8 +123,9 @@ type Session struct {
 	// MixedWithToneless 由宿主設定（手機）：聲調選填與中英混打共存。聲調選填和簡拼只用在注音鍵
 	// （symbol 請求，手機的注音鍵盤）；實體按鍵照混打規則判斷英文或標準注音。零值時兩者二選一（#150）。
 	MixedWithToneless bool
-	symbolPending     bool                        // 未打完的注音來自注音鍵（symbol 請求）；接著的實體按鍵要先把它完成（finishSymbolPending）
-	sylPrior          map[zhuyin.Syllable]float64 // 簡拼保留讀音用的單音節常用程度（syllablePrior）
+	symbolPending     bool                                  // 未打完的注音來自注音鍵（symbol 請求）；接著的實體按鍵要先把它完成（finishSymbolPending）
+	sylPrior          map[zhuyin.Syllable]float64           // 簡拼保留讀音用的單音節常用程度（syllablePrior）
+	missedMemo        map[zhuyin.Syllable][]zhuyin.Syllable // 打的音節補上一鍵的讀音（missedFor，#335）
 	// MixedInput is opt-in; English is a shared, immutable vocabulary.
 	EnglishAutocomplete   bool
 	MixedInput            bool
@@ -140,6 +141,7 @@ type Session struct {
 	englishWord           bool // 只有本功能開始的英文單字才在邊界送出
 	englishDismissed      bool
 	englishTokenBlocked   bool // 網址／識別字：到下一個空白或導覽前不重新補字
+	englishSpaceCommit    bool // 英文模式這個字是按空白送出的：後面還會接著打，不是單獨打完的一串（#328）
 	mixed                 pendingKeys
 	mixedKeys             map[int]string      // completed phonetic position → original keys, retained until edited/committed
 	mixedOrigins          map[int]mixedOrigin // literal positions: independently typed vs system-assisted
@@ -633,6 +635,9 @@ func (s *Session) key(k string) (handled bool, commit string) {
 		return handled, commit
 	}
 	k = s.normalizeVocabKey(k) // #123 的新鍵名在沒有對應功能時就是原本的鍵
+	if s.englishShiftDelete(k) {
+		return true, ""
+	}
 	// 數字鍵盤永遠不是注音鍵（#75）：英文模式與候選選號同主鍵盤數字；沒在組字交還應用程式；
 	// 組字中以半形插在游標處，未打完的注音保留成符號（同 Shift＋字母）。
 	if c, ok := proto.KeypadChar(k); ok {
@@ -1588,7 +1593,7 @@ func (s *Session) openAt(pos, length int) bool {
 	s.dec.Evidence = s.localEvidence(begin)
 	s.configureCorrections(begin, end, true)
 	// 與視窗相交的跨音鎖定即將被這次選取取代：不補它們的讀音，原音候選只依打出的音查詢。
-	lat := s.lockLattice(s.expand(s.syls), pos, pos+length)
+	lat := s.pathCorrections(s.lockLattice(s.expand(s.syls), pos, pos+length), pos, pos+length)
 	windows := []decode.Window{{Lat: lat[begin:end], Pinned: pinned}}
 	if near, ok := s.nearWindow(lat, pos, length); ok {
 		near.Lat = near.Lat[begin:end]
@@ -1875,7 +1880,7 @@ func (s *Session) commit() string {
 	}
 	// 英文學習跟著混打或英文模式自動補字走（#247）：許氏、倚天、聲調選填不支援混打，英文模式一樣要學得到。
 	if (s.mixedInput() || s.EnglishAutocomplete) && learn && !s.localBlocked {
-		s.model.LearnEnglish(s.mixedEnglishCommits())
+		s.model.LearnEnglish(s.contextualEnglish())
 	}
 	if s.mixedInput() && learn && !s.localBlocked {
 		s.model.LearnZhuyinKeys(s.zhuyinKeyCommits())

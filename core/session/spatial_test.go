@@ -1,8 +1,10 @@
 package session
 
 import (
+	"slices"
 	"testing"
 
+	"github.com/0c-biggo/0c-ime/core/input"
 	"github.com/0c-biggo/0c-ime/core/lexicon"
 	"github.com/0c-biggo/0c-ime/core/lm"
 	"github.com/0c-biggo/0c-ime/core/personal"
@@ -175,5 +177,158 @@ func TestSpatialUntonedAlternativesAreCorrections(t *testing.T) {
 	s.Handle(proto.Request{Type: proto.Key, Key: "'"})
 	if snap := s.Handle(proto.Request{Type: proto.Fix, To: 0, Length: 1, Word: "好"}); len(snap.Notices) == 0 || len(s.locks) != 0 {
 		t.Errorf("fix took a word only a neighbour key reaches: %+v locks %v", snap.Preedit, s.locks)
+	}
+}
+
+func editSession(toneless bool, missed float64) *Session {
+	s := spatialSession(toneless, 1)
+	s.Spatial.Penalty, s.Spatial.Missed = 2, missed
+	return s
+}
+
+func touchKeys(s *Session, keys string) {
+	for _, k := range keys {
+		touch(s, string(k))
+	}
+}
+
+// 你好 打成 ㄋㄧˇㄠˇ（ㄏ 沒按到）：ㄠˇ 沒有字，補上一個注音的讀音 ㄏㄠˇ 讓整句成詞。
+func TestSpatialMissedKeyIsAdded(t *testing.T) {
+	for _, missed := range []float64{0, 4} {
+		s := editSession(false, missed)
+		touchKeys(s, "ㄋㄧˇㄠˇ")
+		got := spatialCommit(s)
+		if missed > 0 && got != "你好" || missed == 0 && got == "你好" {
+			t.Errorf("missed %v: %q", missed, got)
+		}
+	}
+	// 不打聲調時 ㄋㄧㄏㄠ 漏了 ㄏ 是 ㄋㄧㄠ：組成一個合法音節（鳥），音節數跟想打的不同，不在這裡處理。
+	s := editSession(true, 4)
+	touchKeys(s, "ㄋㄧㄠ")
+	if got := spatialCommit(s); got == "你好" {
+		t.Errorf("merged syllables were split: %q", got)
+	}
+}
+
+// 補上一鍵的讀音是修正：候選標 corrected；打的音本身有字時，成本讓它照舊勝出。
+func TestSpatialEditsAreCorrectionsAndCostMore(t *testing.T) {
+	s := editSession(false, 4)
+	touchKeys(s, "ㄋㄧˇㄠˇ")
+	s.Handle(proto.Request{Type: proto.Cursor, To: 1})
+	labels := map[string]string{}
+	for _, it := range s.Handle(proto.Request{Type: proto.Candidates, Length: 1}).Candidates.Items {
+		labels[it.Text] = it.Label
+	}
+	if labels["好"] != proto.CandidateCorrected {
+		t.Errorf("labels %v", labels)
+	}
+	// 小 ㄒㄧㄠˇ 本身有字，補上一鍵的讀音都要多付成本：照打的音。
+	s = editSession(false, 4)
+	touchKeys(s, "ㄒㄧㄠˇ")
+	if got := spatialCommit(s); got != "小" {
+		t.Errorf("typed reading lost: %q", got)
+	}
+}
+
+func TestSpatialEditsNeedSpatial(t *testing.T) {
+	s := editSession(false, 4)
+	s.Spatial.Weight = 0 // 桌面：沒開觸控容錯
+	touchKeys(s, "ㄋㄧˇㄠˇ")
+	if got := spatialCommit(s); got == "你好" || len(s.spatial) != 0 {
+		t.Errorf("edits without spatial: %q %v", got, s.spatial)
+	}
+}
+
+func TestSyllableKeyEdits(t *testing.T) {
+	if got := missedKey()["ㄏㄚ"]; !slices.Contains(got, "ㄏㄨㄚ") || slices.Contains(got, "ㄏㄚ") {
+		t.Errorf("ㄏㄚ missed %v", got)
+	}
+	if got := missedKey()["ㄒㄠ"]; !slices.Equal(got, []zhuyin.Syllable{"ㄒㄧㄠ"}) {
+		t.Errorf("ㄒㄠ (illegal as typed) missed %v", got)
+	}
+}
+
+// 不打聲調時漏按介音：小 打成 ㄒㄠ。ㄒ＋ㄠ 接不上，不補的話拆成 ㄒ（簡拼）＋ㄠ；補上 ㄧ 就是 ㄒㄧㄠ。
+func TestSpatialMissedMedialWhileComposing(t *testing.T) {
+	for _, missed := range []float64{0, 4} {
+		s := editSession(true, missed)
+		touchKeys(s, "ㄒㄠ")
+		got := spatialCommit(s)
+		if missed > 0 && got != "小" || missed == 0 && got == "小" {
+			t.Errorf("missed %v: %q", missed, got)
+		}
+	}
+	// 有接得上的鄰鍵時用鄰鍵，成本再高也一樣：ㄠ 的鄰鍵 ㄧ 讓組音成為 ㄒㄧ，不補介音。
+	for _, cost := range []float64{0.5, 6} {
+		s := editSession(true, 4)
+		touch(s, "ㄒ")
+		touch(s, "ㄠ", proto.NearKey{Symbol: "ㄧ", Cost: cost})
+		if got := s.comp.String(); got != "ㄒㄧ" {
+			t.Errorf("near cost %v: composing %q", cost, got)
+		}
+	}
+}
+
+// 候選清單的音節格：清單位置以外只留路徑走的修正讀音，清單位置上的全部留著。
+func TestSpatialCandidateContextKeepsOnlyThePathCorrections(t *testing.T) {
+	s := editSession(false, 4)
+	touchKeys(s, "ㄋㄧˇ")
+	touch(s, "ㄠ", proto.NearKey{Symbol: "ㄢ", Cost: 1}) // 鄰鍵讀音 ㄢˇ 也是修正
+	touch(s, "ˇ")                                      // 路徑是 你好：位置 1 走補上 ㄏ 的 ㄏㄠˇ
+	s.refresh()
+	full := s.expand(s.syls)
+	corrected := func(row []input.Hyp) (n int, has map[zhuyin.Syllable]bool) {
+		has = map[zhuyin.Syllable]bool{}
+		for _, h := range row {
+			if h.Corrected {
+				n++
+				has[h.Syl] = true
+			}
+		}
+		return n, has
+	}
+	if n, _ := corrected(full[1]); n < 2 {
+		t.Fatalf("position 1 has %d corrected readings", n)
+	}
+	lat := s.pathCorrections(s.expand(s.syls), 0, 1) // 清單在位置 0
+	if n, has := corrected(lat[1]); n != 1 || !has["ㄏㄠˇ"] {
+		t.Errorf("outside the list: %v", lat[1])
+	}
+	lat = s.pathCorrections(s.expand(s.syls), 1, 2)
+	if n, _ := corrected(lat[1]); n != len(full[1])-1 {
+		t.Errorf("inside the list: %d of %d", n, len(full[1]))
+	}
+}
+
+// 補上一鍵的讀音只放在最後 missedWindow 個音節：更前面的只留路徑走的，路徑沒走的就不再放。
+func TestSpatialMissedReadingsOnlyNearTheEnd(t *testing.T) {
+	s := editSession(false, 4)
+	s.model.Lex.(*lexicon.Mem).Add(lexicon.Entry{Surface: "襖", Reading: zhuyin.ParseReading("ㄠˇ"), PRW: 1})
+	s.model.LM.(*lm.Mem).SetUni("襖", 1e-3)
+	touchKeys(s, "ㄠˇ")    // 襖：打的音有字，路徑照打的音
+	touchKeys(s, "ㄋㄧˇㄠˇ") // 你好：位置 2 走補上 ㄏ 的 ㄏㄠˇ
+	for range missedWindow {
+		touchKeys(s, "ㄠˇ")
+	}
+	if got := []rune(s.snapshot().Text()); string(got[:3]) != "襖你好" {
+		t.Fatalf("text %q", string(got))
+	}
+	lat := s.expand(s.syls)
+	count := func(at int) (n int) {
+		for _, h := range lat[at] {
+			if h.Corrected {
+				n++
+			}
+		}
+		return n
+	}
+	if n := count(2); n != 1 {
+		t.Errorf("the path's correction outside the window: %d corrected readings", n)
+	}
+	if n := count(0); n != 0 {
+		t.Errorf("a syllable the path took as typed keeps %d corrected readings", n)
+	}
+	if n := count(len(s.syls) - 1); n == 0 {
+		t.Errorf("the last syllable has no missed-key readings")
 	}
 }

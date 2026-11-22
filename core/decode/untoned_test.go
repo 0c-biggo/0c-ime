@@ -223,3 +223,55 @@ func TestWideRowContinuationsMatchHasPrefix(t *testing.T) {
 		t.Fatalf("Continuations %v\nHasPrefix     %v", fast, slow)
 	}
 }
+
+// 沒打聲調的位置，觸控修正（input.Hyp.Corrected，#335）的弧另外依成本留前 maxCorrectedArcs 個，不跟打的音搶
+// maxUntonedArcs：修正的讀音機率再高，也不能把打的音裡機率最低的字擠掉。打了聲調的位置照舊不裁切。
+func TestCorrectedArcsDoNotCrowdTypedOnes(t *testing.T) {
+	lex := lexicon.NewMem()
+	score := uni{}
+	add := func(k int, r string, p float64) string {
+		w := string(rune(0x4e00 + k))
+		lex.Add(lexicon.Entry{Surface: w, Reading: zhuyin.ParseReading(r), PRW: 1})
+		score[w] = p
+		return w
+	}
+	typed := add(0, "ㄧㄥ", 1e-6) // 鶯：打的音裡唯一的字，機率很低
+	lat := input.Exact{}.Expand([]zhuyin.Syllable{zhuyin.Untone("ㄧㄥ")})
+	for k := 1; k <= 2*maxUntonedArcs; k++ {
+		y := zhuyin.Syllable("ㄅㄧㄥ").WithTone(k%5 + 1)
+		add(k, string(y), 1e-2/float64(k))
+		if !slices.ContainsFunc(lat[0], func(h input.Hyp) bool { return h.Syl == y }) {
+			lat[0] = append(lat[0], input.Hyp{Syl: y, Cost: 5, Corrected: true})
+		}
+	}
+	arcs := d0(lex, score).wordArcs(lat, 0, nil)
+	if !slices.ContainsFunc(arcs, func(a arc) bool { return a.e.Surface == typed }) {
+		t.Fatalf("打的音被修正擠掉")
+	}
+	fixed := 0
+	for _, a := range arcs {
+		if a.e.Surface != typed {
+			fixed++
+		}
+	}
+	if fixed != maxCorrectedArcs {
+		t.Fatalf("修正的弧留 %d 個，應為 %d", fixed, maxCorrectedArcs)
+	}
+	// 打了聲調：修正的弧全部留著。
+	toned := input.Lattice{{{Syl: "ㄧㄥ"}}}
+	for _, h := range lat[0] {
+		if h.Corrected {
+			toned[0] = append(toned[0], h)
+		}
+	}
+	if got := len(d0(lex, score).wordArcs(toned, 0, nil)); got != 1+2*maxUntonedArcs {
+		t.Fatalf("toned arcs %d, want all %d", got, 1+2*maxUntonedArcs)
+	}
+	// 沒有修正的假設時（桌面）一切照舊。
+	plain := input.Exact{}.Expand([]zhuyin.Syllable{zhuyin.Untone("ㄧㄥ")})
+	if got := len(d0(lex, score).wordArcs(plain, 0, nil)); got != 1 {
+		t.Fatalf("plain arcs %d", got)
+	}
+}
+
+func d0(lex lexicon.Source, score uni) *Decoder { return &Decoder{Lex: lex, Score: score} }

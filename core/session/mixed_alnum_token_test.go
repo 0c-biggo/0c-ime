@@ -242,9 +242,9 @@ func TestMixedLearnedCapsTokenKeepsLowercaseReading(t *testing.T) {
 	s.model.Now = func() int64 { return now }
 	for range 3 {
 		now += 86400
-		mixedType(s, "A87 ")
-		if got := key(s, proto.KeyEnter).Commit; got != "A87 " {
-			t.Fatalf("A87 ：%q", got)
+		mixedType(s, "A87 ji3") // 在句子裡才學（#328）
+		if got := key(s, proto.KeyEnter).Commit; got != "A87 我" {
+			t.Fatalf("A87 我：%q", got)
 		}
 	}
 	if !s.model.EnglishKnown("A87") {
