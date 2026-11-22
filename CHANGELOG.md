@@ -2,7 +2,7 @@
 
 每個版本的「公開摘要」與 [官網更新紀錄](https://0c.biggo.com/updates/) 相同；「原始碼套件」記錄 Release 完整 tarball 的內容變化。
 
-## 未發布
+## 0.2.14（2026-11-22，public-beta）
 
 ### 公開摘要
 
