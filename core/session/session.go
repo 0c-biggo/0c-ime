@@ -268,7 +268,9 @@ type Session struct {
 	pathSig        string       // 產生 path 的輸入；輸入沒變就不重新解碼
 	pathGen        int          // 產生 path 時的個人模型世代（model.Gen）；Rescore 用它確認重解不會帶進之後的學習
 	sug            *suggest.Suggestion
-	previewRewrite bool // 使用者要求的同音替換預覽；下一個非 Tab 操作即清除
+	keySug         suggest.Suggestion // 這個按鍵請求開始時畫面上可以接受的補全（沒有時是零值）；句尾的 → 只接受它（#338）
+	keySyls        int                // 同時的音節數；這一鍵收完了別的音節就不再接受
+	previewRewrite bool               // 使用者要求的同音替換預覽；下一個非 Tab 操作即清除
 	cand           *candState
 	rev            int
 }
@@ -393,6 +395,12 @@ func (s *Session) Handle(r proto.Request) proto.Snapshot {
 			s.displayColumns = r.Columns
 		}
 	case proto.Key:
+		// 記下按鍵前畫面上可以接受的補全：還有未打完的注音或九宮格待定的鍵時沒有（這一鍵會先收完那個音節，
+		// 之後的補全使用者還沒看到，原本顯示的也已經不接在組字最後），句尾的 → 只接受記下的這個（#338）。
+		s.keySug, s.keySyls = suggest.Suggestion{}, len(s.syls)
+		if s.sug != nil && s.comp.Empty() && !s.ninePending() {
+			s.keySug = *s.sug
+		}
 		if editsPending(r.Key) {
 			// 編輯鍵作用在未打完的注音（或九宮格的鍵）上：Backspace 刪一個、Esc 清掉，不先收成音節再整個刪掉。
 			handled, commit = s.key(r.Key)
@@ -848,6 +856,15 @@ func (s *Session) key(k string) (handled bool, commit string) {
 	case proto.KeyLeft, proto.KeyRight, proto.KeyHome, proto.KeyEnd:
 		if !s.composing() {
 			return false, ""
+		}
+		// 游標在組字最後時 → 本來不會動，用來接受往後補的 Tab 補全（同 Tab）。同音替換、拼字修正與神經次佳提示
+		// 仍只有 Tab 能接受，免得 → 在句尾意外改字；候選、符號選單開著時 → 照舊是翻頁與移動，在上面已處理。
+		// 只接受按鍵前畫面上已經顯示的那個補全（keySug；九宮格待定的鍵、聲調選填沒完成的音節在這一鍵收完後才算出的
+		// 不算），而且只在 Tab 本來就接受補全的輸入習慣（新酷音的 segment、小麥注音的 cycle 不是，#338）。
+		if k == proto.KeyRight && s.sug != nil && s.shownBeforeKey(s.sug) && s.tabAcceptsCompletion() && !s.ninePending() &&
+			s.sug != nil && s.sug.Replace == "" && !s.english && s.mixed.raw == "" &&
+			s.phonetic == nil && s.cursor == len(s.syls) && s.comp.Empty() && s.cand == nil && s.accept() {
+			return true, ""
 		}
 		s.flushMixed()
 		if s.english {
@@ -1807,6 +1824,21 @@ func (s *Session) fixWord(start, length int, word string) bool {
 
 // accept 接受 Tab 補全：補上尚未輸入的音節並鎖定整個詞。接受是明確操作，
 // 學習時保留補全來源，權重低於主動手選，避免系統建議自我強化。
+// shownBeforeKey：g 跟這個按鍵請求開始時畫面上的補全是同一個（同一個詞、起點與要補的音節；refresh 不用快取時指標會換），
+// 而且這一鍵到目前為止沒有收進別的音節。
+func (s *Session) shownBeforeKey(g *suggest.Suggestion) bool {
+	k := s.keySug
+	if k.Word == "" || len(s.syls) != s.keySyls || k.Word != g.Word || k.Start != g.Start || k.Rest != g.Rest || k.Replace != g.Replace || len(k.Syls) != len(g.Syls) {
+		return false
+	}
+	for i := range k.Syls {
+		if k.Syls[i] != g.Syls[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *Session) accept() bool {
 	if s.englishWord {
 		return s.acceptEnglish()
