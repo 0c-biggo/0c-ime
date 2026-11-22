@@ -849,6 +849,12 @@ func (s *Session) key(k string) (handled bool, commit string) {
 		if !s.composing() {
 			return false, ""
 		}
+		// 游標在組字最後時 → 本來不會動，用來接受往後補的 Tab 補全（同 Tab）。同音替換、拼字修正與神經次佳提示
+		// 仍只有 Tab 能接受，免得 → 在句尾意外改字；候選、符號選單開著時 → 照舊是翻頁與移動，在上面已處理。
+		if k == proto.KeyRight && s.sug != nil && s.sug.Replace == "" && !s.english && s.mixed.raw == "" &&
+			s.phonetic == nil && s.cursor == len(s.syls) && s.comp.Empty() && s.cand == nil && s.accept() {
+			return true, ""
+		}
 		s.flushMixed()
 		if s.english {
 			// 英文模式按畫面字元移動，不能被尚未完成的注音卡住。
