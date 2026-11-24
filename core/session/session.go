@@ -866,6 +866,11 @@ func (s *Session) key(k string) (handled bool, commit string) {
 			s.phonetic == nil && s.cursor == len(s.syls) && s.comp.Empty() && s.cand == nil && s.accept() {
 			return true, ""
 		}
+		// 中英混打的英文（比方說arc → archlinux）同上：句尾的 → 接受往後補的補全。拼字修正（recieve → receive）
+		// 會改已打的字，仍只有 Tab 能接受。
+		if k == proto.KeyRight && s.mixedRightAccepts() {
+			return true, ""
+		}
 		s.flushMixed()
 		if s.english {
 			// 英文模式按畫面字元移動，不能被尚未完成的注音卡住。

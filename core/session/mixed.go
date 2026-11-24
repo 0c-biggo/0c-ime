@@ -261,6 +261,16 @@ func (s *Session) mixedSuggestion() string {
 	return ""
 }
 
+// mixedRightAccepts：游標在組字最後、混打的英文有往後補的補全（建議以已打的按鍵開頭）時，
+// 用 → 接受它（同 Tab）。只在 Tab 本來就接受補全的輸入習慣。
+func (s *Session) mixedRightAccepts() bool {
+	if s.mixed.raw == "" || s.english || s.cand != nil || !s.comp.Empty() || s.cursor != len(s.syls) || !s.tabAcceptsCompletion() {
+		return false
+	}
+	word := s.mixedSuggestion()
+	return word != "" && strings.HasPrefix(word, s.mixed.raw) && s.acceptMixed()
+}
+
 func (s *Session) acceptMixed() bool {
 	if s.cand != nil {
 		return false
