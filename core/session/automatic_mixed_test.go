@@ -440,3 +440,33 @@ func TestMixedLetterIAndNeutralToneParticle(t *testing.T) {
 		t.Fatalf("explicit English i: %+v", snap)
 	}
 }
+
+// 中英混打的英文在組字最後時，→ 同 Tab 接受往後補的補全（我meet → 我meeting）；拼字修正仍只有 Tab 能接受。
+func TestMixedRightArrowAcceptsCompletionAtEnd(t *testing.T) {
+	s := mixedSession()
+	if snap := mixedType(s, "ji3meet"); snap.SuggestedText() != "我meeting" {
+		t.Fatalf("應有補全建議：%+v", snap)
+	}
+	if snap := key(s, proto.KeyRight); !snap.Handled || snap.Text() != "我meeting" {
+		t.Fatalf("→ 沒有接受補全：%+v", snap)
+	}
+	if snap := key(s, proto.KeyEnter); snap.Commit != "我meeting" {
+		t.Fatalf("送出 %+v", snap)
+	}
+
+	s = mixedSession()
+	if snap := mixedType(s, "ji3recieve"); snap.SuggestedText() != "我receive" {
+		t.Fatalf("應有拼字修正：%+v", snap)
+	}
+	if snap := key(s, proto.KeyRight); snap.Text() != "我recieve" {
+		t.Fatalf("→ 接受了拼字修正：%+v", snap)
+	}
+
+	// 游標不在最後時 → 是移游標。
+	s = mixedSession()
+	mixedType(s, "meet")
+	key(s, proto.KeyHome)
+	if snap := key(s, proto.KeyRight); snap.Text() != "meet" {
+		t.Fatalf("→ 不在句尾卻接受了補全：%+v", snap)
+	}
+}
