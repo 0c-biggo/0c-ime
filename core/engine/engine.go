@@ -42,6 +42,7 @@ type Engine struct {
 	ShiftSymbolHalfwidth  bool              // 「Shift＋符號打半形」開著時由宿主設定（#258）；零值時 Shift＋符號照舊打全形標點。
 	AllSymbolsHalfwidth   bool              // 「所有符號鍵打半形」時由宿主設定（#282）；零值時照舊。
 	CJKLatinSpace         bool              // 「中英文之間自動加空格」開著時由宿主設定（#273）；零值時送出的文字不補空格。
+	CJKDigitSpace         bool              // 「中文與數字之間自動加空格」開著時由宿主設定；零值時送出的文字不補空格。
 	NoLearning            bool              // 「記住我選的字詞」關閉時由宿主設定（#297）；選字、神經選字照常，只是不寫進個人資料。
 	CapsLockEnglish       bool              // 「Caps Lock 開著時直接打英文」開著時由宿主設定（#173）；零值時 caps_lock 請求不起作用。
 	Fuzzy                 fuzzy.Config      // 使用者逐對啟用的模糊音；零值全部關閉。
@@ -160,6 +161,7 @@ func (e *Engine) OpenSession() uint64 {
 	e.sessions[e.next].ShiftSymbolHalfwidth = e.ShiftSymbolHalfwidth
 	e.sessions[e.next].AllSymbolsHalfwidth = e.AllSymbolsHalfwidth
 	e.sessions[e.next].CJKLatinSpace = e.CJKLatinSpace
+	e.sessions[e.next].CJKDigitSpace = e.CJKDigitSpace
 	e.sessions[e.next].NoLearning = e.NoLearning
 	e.sessions[e.next].CapsLockEnglish = e.CapsLockEnglish
 	e.sessions[e.next].InputStyle = e.InputStyle

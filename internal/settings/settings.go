@@ -109,6 +109,9 @@ type Settings struct {
 	// CJKLatinSpace：送出時在同一次送出的文字裡，漢字與英文字母直接相連的地方補一個半形空格（#273，「用Python寫」送出
 	// 「用 Python 寫」）。預設 false（缺欄位時也是）。不屬於輸入習慣風格，任何風格都能單獨開關。
 	CJKLatinSpace bool `json:"cjk_latin_space"`
+	// CJKDigitSpace：送出時在同一次送出的文字裡，漢字與半形數字直接相連的地方補一個半形空格（「第2版」送出「第 2 版」）。
+	// 跟 CJKLatinSpace 各自開關。預設 false（缺欄位時也是）。不屬於輸入習慣風格，任何風格都能單獨開關。
+	CJKDigitSpace bool `json:"cjk_digit_space"`
 	// ZhuyinErrorHint：打錯注音時提示（#300）。按了聲調但讀音沒有字（模糊音的近音也沒有）時不收這個聲調，注音停住等修改，
 	// Windows、macOS 發出提示音，Linux 在組字區標示；緊接著再按一次同一個聲調照舊原樣留下。只有一個注音符號時不擋。預設 true（缺欄位時也是）。
 	// 中英混打與不打聲調時不作用。不屬於輸入習慣風格，任何風格都能單獨開關。
@@ -398,7 +401,7 @@ func (s *Settings) UnmarshalJSON(b []byte) error {
 	for _, field := range []struct {
 		key string
 		dst *bool
-	}{{"punctuation", &s.Punctuation}, {"document_context", &s.DocumentContext}, {"mixed_input", &s.MixedInput}, {"english_autocomplete", &s.EnglishAutocomplete}, {"left_shift", &s.LeftShift}, {"esc_clear", &s.EscClear}, {"space_selects", &s.SpaceSelects}, {"advance_after_select", &s.AdvanceAfterSelect}, {"emoji_equals_first", &s.EmojiEqualsFirst}, {"output_simplified", &s.OutputSimplified}, {"simplified_hotkey", &s.SimplifiedHotkey}, {"ctrl_punctuation", &s.CtrlPunctuation}, {"shift_symbol_halfwidth", &s.ShiftSymbolHalfwidth}, {"all_symbols_halfwidth", &s.AllSymbolsHalfwidth}, {"cjk_latin_space", &s.CJKLatinSpace}, {"zhuyin_error_hint", &s.ZhuyinErrorHint}, {"personal_learning", &s.PersonalLearning}, {"caps_lock_english", &s.CapsLockEnglish}, {"toneless", &s.Toneless}} {
+	}{{"punctuation", &s.Punctuation}, {"document_context", &s.DocumentContext}, {"mixed_input", &s.MixedInput}, {"english_autocomplete", &s.EnglishAutocomplete}, {"left_shift", &s.LeftShift}, {"esc_clear", &s.EscClear}, {"space_selects", &s.SpaceSelects}, {"advance_after_select", &s.AdvanceAfterSelect}, {"emoji_equals_first", &s.EmojiEqualsFirst}, {"output_simplified", &s.OutputSimplified}, {"simplified_hotkey", &s.SimplifiedHotkey}, {"ctrl_punctuation", &s.CtrlPunctuation}, {"shift_symbol_halfwidth", &s.ShiftSymbolHalfwidth}, {"all_symbols_halfwidth", &s.AllSymbolsHalfwidth}, {"cjk_latin_space", &s.CJKLatinSpace}, {"cjk_digit_space", &s.CJKDigitSpace}, {"zhuyin_error_hint", &s.ZhuyinErrorHint}, {"personal_learning", &s.PersonalLearning}, {"caps_lock_english", &s.CapsLockEnglish}, {"toneless", &s.Toneless}} {
 		if raw, ok := take(field.key); ok {
 			var v bool
 			if json.Unmarshal(raw, &v) == nil {
@@ -511,7 +514,7 @@ func (s Settings) MarshalJSON() ([]byte, error) {
 	for _, field := range []struct {
 		key   string
 		value any
-	}{{"selection", s.Selection}, {"punctuation", s.Punctuation}, {"document_context", s.DocumentContext}, {"mixed_input", s.MixedInput}, {"english_autocomplete", s.EnglishAutocomplete}, {"left_shift", s.LeftShift}, {"esc_clear", s.EscClear}, {"space_selects", s.SpaceSelects}, {"candidate_cursor", s.CandidateCursor}, {"advance_after_select", s.AdvanceAfterSelect}, {"candidate_layout", s.CandidateLayout}, {"emoji_shortcut", s.EmojiShortcut}, {"emoji_equals_first", s.EmojiEqualsFirst}, {"keyboard_layout", s.KeyboardLayout}, {"selection_keys", s.SelectionKeys}, {"toggle_key", s.ToggleKey}, {"shift_tap_ms", s.ShiftTapMillis()}, {"mode_memory", s.ModeMemory}, {"start_mode", s.StartMode}, {"output_simplified", s.OutputSimplified}, {"simplified_hotkey", s.SimplifiedHotkey}, {"ctrl_punctuation", s.CtrlPunctuation}, {"shift_symbol_halfwidth", s.ShiftSymbolHalfwidth}, {"all_symbols_halfwidth", s.AllSymbolsHalfwidth}, {"cjk_latin_space", s.CJKLatinSpace}, {"zhuyin_error_hint", s.ZhuyinErrorHint}, {"personal_learning", s.PersonalLearning}, {"caps_lock_english", s.CapsLockEnglish}, {"toneless", s.Toneless}} {
+	}{{"selection", s.Selection}, {"punctuation", s.Punctuation}, {"document_context", s.DocumentContext}, {"mixed_input", s.MixedInput}, {"english_autocomplete", s.EnglishAutocomplete}, {"left_shift", s.LeftShift}, {"esc_clear", s.EscClear}, {"space_selects", s.SpaceSelects}, {"candidate_cursor", s.CandidateCursor}, {"advance_after_select", s.AdvanceAfterSelect}, {"candidate_layout", s.CandidateLayout}, {"emoji_shortcut", s.EmojiShortcut}, {"emoji_equals_first", s.EmojiEqualsFirst}, {"keyboard_layout", s.KeyboardLayout}, {"selection_keys", s.SelectionKeys}, {"toggle_key", s.ToggleKey}, {"shift_tap_ms", s.ShiftTapMillis()}, {"mode_memory", s.ModeMemory}, {"start_mode", s.StartMode}, {"output_simplified", s.OutputSimplified}, {"simplified_hotkey", s.SimplifiedHotkey}, {"ctrl_punctuation", s.CtrlPunctuation}, {"shift_symbol_halfwidth", s.ShiftSymbolHalfwidth}, {"all_symbols_halfwidth", s.AllSymbolsHalfwidth}, {"cjk_latin_space", s.CJKLatinSpace}, {"cjk_digit_space", s.CJKDigitSpace}, {"zhuyin_error_hint", s.ZhuyinErrorHint}, {"personal_learning", s.PersonalLearning}, {"caps_lock_english", s.CapsLockEnglish}, {"toneless", s.Toneless}} {
 		if err := typed(field.key, field.value); err != nil {
 			return nil, err
 		}
@@ -566,7 +569,7 @@ func (s Settings) notes() []string {
 	if s.extra != "" {
 		_ = json.Unmarshal([]byte(s.extra), &kept)
 	}
-	for _, key := range []string{"selection", "punctuation", "document_context", "mixed_input", "english_autocomplete", "left_shift", "esc_clear", "space_selects", "candidate_cursor", "advance_after_select", "candidate_layout", "emoji_shortcut", "emoji_equals_first", "keyboard_layout", "selection_keys", "toggle_key", "shift_tap_ms", "mode_memory", "start_mode", "output_simplified", "simplified_hotkey", "ctrl_punctuation", "shift_symbol_halfwidth", "all_symbols_halfwidth", "cjk_latin_space", "zhuyin_error_hint", "personal_learning", "caps_lock_english", "toneless"} {
+	for _, key := range []string{"selection", "punctuation", "document_context", "mixed_input", "english_autocomplete", "left_shift", "esc_clear", "space_selects", "candidate_cursor", "advance_after_select", "candidate_layout", "emoji_shortcut", "emoji_equals_first", "keyboard_layout", "selection_keys", "toggle_key", "shift_tap_ms", "mode_memory", "start_mode", "output_simplified", "simplified_hotkey", "ctrl_punctuation", "shift_symbol_halfwidth", "all_symbols_halfwidth", "cjk_latin_space", "cjk_digit_space", "zhuyin_error_hint", "personal_learning", "caps_lock_english", "toneless"} {
 		if raw, ok := kept[key]; ok {
 			out = append(out, fmt.Sprintf("%s：本版不認得 %s，暫用預設值，存檔時保留原值", strings.ReplaceAll(key, "_", "-"), raw))
 			delete(kept, key)
@@ -972,6 +975,9 @@ func specs() []spec {
 	// #273：同上放在最後；設定程式排在「Shift＋符號打半形」下面。
 	out = append(out, spec{"cjk-latin-space", "中英文之間自動加空格", cjkLatinSpaceDescription, "off", []string{"on", "off"},
 		func(s Settings) string { return onOff(s.CJKLatinSpace) }})
+	// 中文與數字之間自動加空格：同上放在最後；設定程式排在「中英文之間自動加空格」下面。
+	out = append(out, spec{"cjk-digit-space", "中文與數字之間自動加空格", cjkDigitSpaceDescription, "off", []string{"on", "off"},
+		func(s Settings) string { return onOff(s.CJKDigitSpace) }})
 	// #300：同上放在最後；設定程式排在「不打聲調也能選字」上面。
 	out = append(out, spec{"zhuyin-error-hint", "打錯注音時提示", zhuyinErrorHintDescription(runtime.GOOS), "on", []string{"on", "off"},
 		func(s Settings) string { return onOff(s.ZhuyinErrorHint) }})
@@ -1051,6 +1057,10 @@ const (
 // cjkLatinSpaceDescription 是「中英文之間自動加空格」（#273）的說明：什麼時候補、哪裡不補、只看這次送出的字。
 const cjkLatinSpaceDescription = "送出時在中文字和英文字母相連的地方補一個半形空格，例如「用Python寫」送出「用 Python 寫」；組字時照打的顯示。" +
 	"已有空格、標點和數字旁不補；只看這次送出的字，跟前面已經送出的字之間不補"
+
+// cjkDigitSpaceDescription 是「中文與數字之間自動加空格」的說明。
+const cjkDigitSpaceDescription = "送出時在中文字和半形數字相連的地方補一個半形空格，例如「第2版」送出「第 2 版」；組字時照打的顯示。" +
+	"已有空格、標點和全形數字旁不補；只看這次送出的字，跟前面已經送出的字之間不補"
 
 // zhuyinErrorHintDescription 是「打錯注音時提示」（#300）的說明：什麼時候擋、怎麼提示（Windows、macOS 提示音，
 // Linux 的 Fcitx5、IBus 沒有統一的提示音，標示注音）、故意打注音文的退路、哪些情況不作用。
@@ -1343,6 +1353,9 @@ func (s *Settings) set(key, value string) error {
 	case "cjk-latin-space":
 		s.CJKLatinSpace = value == "on"
 		s.forget("cjk_latin_space")
+	case "cjk-digit-space":
+		s.CJKDigitSpace = value == "on"
+		s.forget("cjk_digit_space")
 	case "zhuyin-error-hint":
 		s.ZhuyinErrorHint = value == "on"
 		s.forget("zhuyin_error_hint")

@@ -163,8 +163,9 @@ func serve() string {
 	eng.ShiftSymbolHalfwidth = config.ShiftSymbolHalfwidth // #258
 	eng.AllSymbolsHalfwidth = config.AllSymbolsHalfwidth   // #282
 	eng.CJKLatinSpace = config.CJKLatinSpace               // #273
-	eng.ZhuyinErrorHint = config.ZhuyinErrorHint           // #300
-	eng.NoLearning = !config.PersonalLearning              // #297
+	eng.CJKDigitSpace = config.CJKDigitSpace
+	eng.ZhuyinErrorHint = config.ZhuyinErrorHint // #300
+	eng.NoLearning = !config.PersonalLearning    // #297
 	// #173：Windows、Linux 的設定；macOS 開 Caps Lock 一律切到英文（#84），不看設定檔的值。
 	capsSetting := config.CapsLockEnglish && (settings.CapsLockEnglishSetting(runtime.GOOS) || config.ProfileRules().CapsLetter == "lower")
 	eng.CapsLockEnglish = capsLockRequests(runtime.GOOS, capsSetting)
@@ -479,6 +480,8 @@ func serve() string {
 		"all_symbols_halfwidth": fmt.Sprint(eng.AllSymbolsHalfwidth),
 		// #273：中英文之間自動加空格；外殼不用看（送出的 Commit 已補好），0c-update 拿它跟設定檔比較。
 		"cjk_latin_space": fmt.Sprint(eng.CJKLatinSpace),
+		// 中文與數字之間自動加空格；同上，外殼不用看，0c-update 拿它跟設定檔比較。舊引擎沒有這一項時不猜。
+		"cjk_digit_space": fmt.Sprint(eng.CJKDigitSpace),
 		// #300：打錯注音時提示；外殼不用看（快照的 bell 說這一鍵要提示），0c-update 拿它跟設定檔比較。
 		"zhuyin_error_hint": fmt.Sprint(eng.ZhuyinErrorHint),
 		// #297：記住我選的字詞；外殼不用看（不學的是引擎），0c-update 拿它跟設定檔比較。

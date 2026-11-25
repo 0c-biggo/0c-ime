@@ -183,6 +183,9 @@ type Session struct {
 	// 直接相連的地方補一個半形空格（cjk_latin_space.go）。組字區照打的顯示；學習、前文與簡體對照都用補空格前的文字，
 	// 送給外殼的 Commit 是補過的（外殼核對前文時比對的就是它）。私人欄位不補。零值時不補。
 	CJKLatinSpace bool
+	// CJKDigitSpace 由宿主依「中文與數字之間自動加空格」設定（預設關）：同 CJKLatinSpace，補的是漢字與半形數字之間。
+	// 兩者各自開關。零值時不補。
+	CJKDigitSpace bool
 	// NoLearning 由宿主依「記住我選的字詞」設定（#297，預設開；關閉時為 true）：送出、手選、選表情與符號都不寫進個人資料
 	// （詞的學習、更正、英文單字、中英混打的注音文、最近用過的表情與符號、= 選單的分頁）。其他照常：神經選字、
 	// 依前文選字、英文自動補字的建議，已經學到的資料也照常參與排序；「我的詞彙」的加詞、移除與不再學照常。
@@ -520,10 +523,10 @@ func (s *Session) Handle(r proto.Request) proto.Snapshot {
 		commit = s.output(commit, commit, s.readingPins(commit))
 		s.reset()
 	}
-	if commit != "" && s.CJKLatinSpace && !private {
+	if commit != "" && (s.CJKLatinSpace || s.CJKDigitSpace) && !private {
 		// #273：整個送出的字串一起補，含 Shift＋字母送出組字再打的字母（commit()+k）與符號表直接送出的組字，
 		// 同輸出簡體字；commit() 已用原文學過、記好前文。
-		commit = spaceCJKLatin(commit)
+		commit = spaceCJK(commit, s.CJKLatinSpace, s.CJKDigitSpace)
 	}
 	s.refresh()
 	// 保護狀態／前文確認／撤銷可以在候選窗仍開啟時變更；不能留下過期的個人或關聯標示。

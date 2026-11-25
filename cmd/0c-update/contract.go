@@ -217,6 +217,12 @@ func runningValues(info map[string]string) map[string]string {
 	case "false":
 		out["cjk-latin-space"] = "off"
 	}
+	switch info["cjk_digit_space"] {
+	case "true":
+		out["cjk-digit-space"] = "on"
+	case "false":
+		out["cjk-digit-space"] = "off"
+	}
 	switch info["personal_learning"] { // #297
 	case "true":
 		out["personal-learning"] = "on"
