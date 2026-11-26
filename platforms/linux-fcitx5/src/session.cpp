@@ -14,6 +14,12 @@ nlohmann::json replayView(const nlohmann::json &snapshot) {
 
 // 會產生文字的按鍵：單一字元，或數字鍵盤的 "KP" 加一個字元。
 bool textKey(const std::string &k) { return k.size() == 1 || (k.size() == 3 && k.compare(0, 2, "KP") == 0); }
+
+// 交還應用程式時打出阿拉伯數字的按鍵（主鍵盤 0–9、數字鍵盤 KP0–KP9），同核心的 isDigitKey（#337）。
+bool digitKey(const std::string &k) {
+    const std::string c = k.size() == 3 && k.compare(0, 2, "KP") == 0 ? k.substr(2) : k;
+    return c.size() == 1 && c[0] >= '0' && c[0] <= '9';
+}
 } // namespace
 
 
@@ -26,8 +32,9 @@ Session::Session(Client &client, Trace *trace, bool documentContextEnabled)
 Snapshot Session::activate() {
     traceEvent("activate");
     // 只用現有連線：焦點事件不為此啟動 0c-server（引擎不在時第一個按鍵照常連線，新 session 從開始時的模式起，
-    // 核心也會跟上共用的模式）。目前是英文時照舊連線（以前就會為了回到注音而連線）。
-    if (!(client_.connected() && ensureOpen()) && (!english_ || !client_.connect() || !ensureOpen())) { return Snapshot{}; }
+    // 核心也會跟上共用的模式）。目前是英文時照舊連線（以前就會為了回到注音而連線）。引擎因設定套用重啟過時連上新的引擎，
+    // 重開的 session 帶新設定（鍵盤排列，#357）。
+    if (!(client_.refresh() && ensureOpen()) && (!english_ || !client_.connect() || !ensureOpen())) { return Snapshot{}; }
     if (serverInfo_.value("mode_memory", "") == "shared") { return handle({{"type", "mode"}, {"on", false}}); }
     // native：回到開始時的模式（start-mode，#160；舊引擎沒有回報時是注音）。
     const bool start = serverInfo_.value("start_mode", "") == "english";
@@ -350,6 +357,11 @@ Snapshot Session::handle(const nlohmann::json &request) {
         englishPending_ = s.englishPending;
         capsLock_ = s.capsLock;
         std::string type = request.value("type", "");
+        if (type == "key" && !s.handled) {
+            digitPassed_ = digitKey(request.value("key", ""));
+        } else if (!s.commit.empty() || type == "cancel" || type == "commit") {
+            digitPassed_ = false; // 核心送出或放棄組字時已經清掉
+        }
         // 符號選單可以在空白組字區開啟，也必須重播才能保留選單與反白位置。
         bool composing = !s.preedit.empty() || !s.candidates.empty();
         if (!s.commit.empty() || type == "cancel" || !composing) {

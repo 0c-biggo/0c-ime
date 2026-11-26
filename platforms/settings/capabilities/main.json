@@ -21,6 +21,7 @@
     "allow-models-command",
     "allow-open-url",
     "allow-personal-command",
+    "allow-set-update-mode",
     "core:event:allow-listen",
     "core:event:allow-unlisten"
   ]

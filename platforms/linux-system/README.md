@@ -67,7 +67,7 @@ make install PREFIX=/usr VERSION=0.2.3 DESTDIR=$PWD/debian/tmp
 | `/usr/share/0c/neural/sequence_runtime.py`、`punct_runtime.py` | 神經推論 worker |
 | `/usr/share/0c/neural/pairing.lock.json` | 字典與 Hugging Face 模型的配對清單（#180） |
 | `/usr/share/0c/distribution.json` | 模式標記，例如 `{"schema":1,"updates":"package-manager","version":"0.2.3"}` |
-| `/usr/share/applications/0c-settings.desktop`、`/usr/share/icons/hicolor/…` | 應用程式選單項目、設定程式圖示、注／英狀態圖示 |
+| `/usr/share/applications/0c-settings.desktop`、`/usr/share/icons/hicolor/…` | 應用程式選單項目、設定程式圖示、中／英狀態圖示 |
 
 個人資料照舊在 `~/.local/share/zuin`（`user.json`、詞彙）與 `~/.local/share/0c/settings.json`。
 

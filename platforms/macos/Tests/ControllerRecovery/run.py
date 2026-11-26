@@ -65,6 +65,17 @@ with tempfile.TemporaryDirectory(prefix="caps-", dir="/private/tmp") as temporar
     workers = []
     faults = []
     errors = []
+    # #337：只記 key 請求的 digit_before（true／false／none），不記按鍵或其他內容；測試程式讀最後幾行。
+    digit_log = root / "digit-before"
+    digit_lock = threading.Lock()
+    def note_digit_before(request):
+        envelope = json.loads(request[4:])
+        req = envelope.get("req") or {}
+        if envelope.get("op") != "handle" or req.get("type") != "key":
+            return
+        value = req.get("digit_before")
+        with digit_lock, digit_log.open("a") as log:
+            log.write("none\n" if value is None else ("true\n" if value is True else "false\n"))
     def serve(client):
         try:
             with client, socket.socket(socket.AF_UNIX) as upstream:
@@ -77,6 +88,7 @@ with tempfile.TemporaryDirectory(prefix="caps-", dir="/private/tmp") as temporar
                         # No payload is recorded or forwarded for this one request.
                         time.sleep(1.4)
                         return
+                    note_digit_before(request)
                     upstream.sendall(request)
                     client.sendall(frame(upstream))
         except (EOFError, BrokenPipeError, ConnectionResetError):
@@ -94,7 +106,7 @@ with tempfile.TemporaryDirectory(prefix="caps-", dir="/private/tmp") as temporar
             listener.listen()
             ready.register(listener, selectors.EVENT_READ)
             cold_started = False
-            test = subprocess.Popen([sys.argv[3], proxy, str(fault), cold_proxy, str(start_cold), native_target])
+            test = subprocess.Popen([sys.argv[3], proxy, str(fault), cold_proxy, str(start_cold), native_target, str(digit_log)])
             deadline = time.monotonic() + 40
             while test.poll() is None:
                 if time.monotonic() > deadline:

@@ -145,7 +145,7 @@ pub fn blocked_in_edit(ctx: &ITfContext, ec: u32, ui_less: bool) -> bool {
 }
 
 /// 本執行緒目前的焦點視窗：必須是這個 context 的視窗（或其子視窗）、屬於本行程且可用。
-fn focused_window(ctx: &ITfContext) -> Option<HWND> {
+pub(crate) fn focused_window(ctx: &ITfContext) -> Option<HWND> {
     unsafe {
         let focus = GetFocus();
         if focus.is_invalid() {

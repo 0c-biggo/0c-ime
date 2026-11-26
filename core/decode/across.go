@@ -19,7 +19,7 @@ func (d *Decoder) CompleteAcross(lat input.Lattice, path []Seg, from int) (Compl
 	for _, seg := range path[from:] {
 		displayed += seg.Word
 	}
-	merged := append(path[:from:from], Seg{Word: displayed, Start: path[from].Start, End: len(lat), Partial: true})
+	merged := append(path[:from:from], Seg{Word: displayed, Start: path[from].Start, End: len(lat), Partial: true, Cuts: ref(JoinCuts(path[from:]))})
 	c, group, ok := d.complete(lat, merged)
 	if !ok {
 		return Completion{}, 0, false

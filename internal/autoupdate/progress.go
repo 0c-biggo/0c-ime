@@ -85,6 +85,9 @@ func ReadOperation(base string, target *Target) *Operation {
 }
 
 func (c *Coordinator) phase(s *State, phase string) {
+	if c.dryRun {
+		return // 試算（DryRun）不寫任何檔案
+	}
 	op := Operation{Phase: phase}
 	if s.Target != nil {
 		op.Version, op.SHA256, op.Total = s.Target.Version, s.Target.SHA256, s.Target.Size

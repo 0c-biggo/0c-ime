@@ -86,9 +86,11 @@ struct ApprovalRun {
     var requestedAt: [TimeInterval]
     var elapsed: TimeInterval
 }
+// together：父項被允許時，系統把這些來源一起寫進啟用清單（模式預設啟用，#348）；togetherAfter：晚幾秒才寫進。
 func approvalRun(_ ids: [String], initial: Set<String> = [], approvals: [String: TimeInterval] = [:],
                  forced: String? = nil, unreadable: Bool = false, failing: String? = nil,
-                 lost: Set<String> = []) -> ApprovalRun {
+                 lost: Set<String> = [], together: Set<String> = [], togetherAfter: TimeInterval = 0,
+                 follows: Bool = false) -> ApprovalRun {
     var now: TimeInterval = 0
     var enabled = initial
     var lostOnce = lost
@@ -96,13 +98,14 @@ func approvalRun(_ ids: [String], initial: Set<String> = [], approvals: [String:
     var requests: [String] = []
     var requestedAt: [TimeInterval] = []
     let outcome = InputSourceApproval.run(
-        ids: ids, forced: forced,
+        ids: ids, forced: forced, follows: follows,
         state: {
             for (id, at) in pending where now >= at {
                 // 父項還沒啟用時，模式的「允許」不生效（macOS 26.6.2 實測）
                 if id == ids.last && ids.count > 1 && !enabled.contains(ids[0]) { continue }
                 enabled.insert(id)
                 pending[id] = nil
+                if id == ids.first { for other in together where pending[other] == nil { pending[other] = now + togetherAfter } }
             }
             if unreadable { return nil }
             var state: [String: Bool] = [:]
@@ -155,6 +158,29 @@ expect("啟用回傳錯誤立即停止", error.outcome == .failed("無法啟用 
 let overwritten = approvalRun(both, approvals: [target.id: 1, mode: 1], lost: [mode])
 expect("重新掃描蓋掉剛啟用的模式：再走一次，只補送模式",
        overwritten.outcome == .enabled && overwritten.requests == both + [mode])
+// #348：模式預設啟用（follows），父項的「允許」一起把模式寫進啟用清單，只問一次；模式的要求一律不送。
+let once = approvalRun(both, approvals: [target.id: 2], together: [mode], follows: true)
+expect("模式預設啟用：全新安裝只送父項的要求，允許後模式一起啟用", once.outcome == .enabled && once.requests == [target.id])
+let onceLate = approvalRun(both, approvals: [target.id: 50], together: [mode], follows: true)
+expect("模式預設啟用：晚按（50 秒）也只送父項", onceLate.outcome == .enabled && onceLate.requests == [target.id])
+let onceSlow = approvalRun(both, approvals: [target.id: 2], together: [mode], togetherAfter: 3, follows: true)
+expect("模式晚幾秒才寫進清單：等一下，不送模式的要求", onceSlow.outcome == .enabled && onceSlow.requests == [target.id])
+let onceIgnored = approvalRun(both, follows: true)
+expect("模式預設啟用、父項一直沒按「允許」：只送一次父項，留給之後", onceIgnored.outcome == .pending(target.id) && onceIgnored.requests == [target.id])
+let trap = approvalRun(both, initial: [target.id], approvals: [mode: 2], follows: true)
+expect("啟用清單只有父項（0.2.14 以前晚按、dev.60 以前升級）：不送沒用的模式要求，回報要使用者移除再加入",
+       trap.outcome == .unlisted(mode) && trap.requests.isEmpty)
+let notTogether = approvalRun(both, approvals: [target.id: 2, mode: 1], follows: true)
+expect("允許父項後模式沒有一起進清單：等 follow 秒後回報，不送模式的要求",
+       notTogether.outcome == .unlisted(mode) && notTogether.requests == [target.id]
+       && notTogether.elapsed >= 2 + InputSourceApproval.follow)
+let followsSignature = approvalRun(both, initial: Set(both), forced: target.id, follows: true)
+expect("模式預設啟用、簽章改變：父項重送一次，模式不送", followsSignature.outcome == .enabled && followsSignature.requests == [target.id])
+expect("讀 Info.plist：模式預設啟用時 modeFollowsParent",
+       InputSourcePlan(bundle: target.id, info: ["TISInputSourceID": target.id,
+                       "ComponentInputModeDict": ["tsInputModeListKey": [mode: ["tsInputModeDefaultStateKey": true]],
+                                                  "tsVisibleInputModeOrderedArrayKey": [mode]]])!.modeFollowsParent
+       && !withMode.modeFollowsParent && !withoutMode.modeFollowsParent)
 let topLevel = approvalRun([target.id], approvals: [target.id: 2])
 expect("沒有模式的舊版只送頂層來源", topLevel.outcome == .enabled && topLevel.requests == [target.id])
 expect("整體上限涵蓋兩個來源的等待", InputSourceApproval.deadline > InputSourceApproval.window * 2)
@@ -162,4 +188,36 @@ expect("解析回讀輸出：enabled／selected 算已啟用",
        InputSourceApproval.parse("\(target.id) enabled\n\(mode) disabled\n") == [target.id: true, mode: false]
        && InputSourceApproval.parse("\(target.id) enabled\n\(mode) enabled\n\(mode) selected\n")[mode] == true
        && InputSourceApproval.parse("\(target.id) missing\n")[target.id] == false)
+// #348：「已啟用」要看系統的啟用清單。TIS 對預設啟用的模式一直回報 enabled。
+let parentEntry: [String: Any] = ["Bundle ID": target.id, "InputSourceKind": "Keyboard Input Method"]
+let modeEntry: [String: Any] = ["Bundle ID": target.id, "Input Mode": mode, "InputSourceKind": "Input Mode"]
+let foreign: [String: Any] = ["Bundle ID": "org.openvanilla.inputmethod.McBopomofo", "Input Mode": "org.openvanilla.inputmethod.McBopomofo.Bopomofo", "InputSourceKind": "Input Mode"]
+expect("啟用清單有父項與模式", withMode.listed([modeEntry, parentEntry]) == [target.id: true, mode: true])
+expect("啟用清單只有父項：模式不算", withMode.listed([parentEntry, foreign]) == [target.id: true, mode: false])
+expect("清單是空的：都不算", withMode.listed([]) == [target.id: false, mode: false])
+expect("讀不到清單：判斷不了", withMode.listed(nil) == nil)
+// 全新帳號還沒允許過第三方輸入法：com.apple.inputsources 整個不存在，HIToolbox 只有 Apple 的來源（.13 macOS 15.8.2）。
+// 不能當成判斷不了，否則預設啟用的模式照 TIS 算成已啟用（#348 驗收 S2）。
+let abc: [String: Any] = ["InputSourceKind": "Keyboard Layout", "KeyboardLayout ID": 252, "KeyboardLayout Name": "ABC"]
+let freshAccount = InputSourcePlan.mergeLists(thirdParty: nil, system: [abc])
+expect("全新帳號：沒有第三方清單、系統清單只有 ABC，父項與模式都不算",
+       withMode.listed(freshAccount) == [target.id: false, mode: false]
+       && withMode.effective(tis: [target.id: false, mode: true], listed: withMode.listed(freshAccount)) == [target.id: false, mode: false])
+expect("舊版 macOS 記在 HIToolbox 的也算", withMode.listed(InputSourcePlan.mergeLists(thirdParty: nil, system: [abc, parentEntry, modeEntry]))
+       == [target.id: true, mode: true])
+expect("兩份都讀不到才是判斷不了", InputSourcePlan.mergeLists(thirdParty: nil, system: nil) == nil)
+let following = InputSourcePlan(bundle: target.id, info: ["TISInputSourceID": target.id,
+                                "ComponentInputModeDict": ["tsInputModeListKey": [mode: ["tsInputModeDefaultStateKey": true]],
+                                                           "tsVisibleInputModeOrderedArrayKey": [mode]]])!
+expect("讀不到清單、模式預設啟用：父項還沒啟用時模式不算（重新開機時讀不到清單，#348 驗收 S3）",
+       following.effective(tis: [target.id: false, mode: true], listed: nil) == [target.id: false, mode: false]
+       && following.effective(tis: [target.id: true, mode: true], listed: nil) == [target.id: true, mode: true])
+expect("沒有模式的舊版看頂層那筆", withoutMode.listed([parentEntry]) == [target.id: true])
+expect("Zuin 的清單不算 0c", zuin.listed([parentEntry, modeEntry]) == [legacy.id: false])
+let tisAll = [target.id: true, mode: true]
+expect("TIS 顯示啟用但模式不在清單：模式算未啟用",
+       withMode.effective(tis: tisAll, listed: [target.id: true, mode: false]) == [target.id: true, mode: false])
+expect("讀不到清單時照 TIS", withMode.effective(tis: [target.id: false, mode: true], listed: nil) == [target.id: false, mode: true])
+expect("在清單裡但 TIS 未啟用：不算", withMode.effective(tis: [target.id: false, mode: true], listed: [target.id: true, mode: true])
+       == [target.id: false, mode: true])
 print("\(passed) input source checks passed")

@@ -9,6 +9,7 @@ import plistlib
 from pathlib import Path
 import stat
 import struct
+import subprocess
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -725,7 +726,7 @@ class ReleaseTests(unittest.TestCase):
         packager.copy_english(source, source, "go")
         self.assertEqual(installer.digest(source / "manifest.json"), before)
         manifest = packager.check_english(source)
-        self.assertEqual(manifest["words"], 82015)
+        self.assertEqual((manifest["format"], manifest["words"]), (2, 82559))  # 桌面出貨詞頻包（#358）
         copied = self.root / "copied-data"
         copied.mkdir()
         with patch.object(packager.subprocess, "run", side_effect=AssertionError("Existing packs must be copied")):
@@ -735,6 +736,25 @@ class ReleaseTests(unittest.TestCase):
         (copied / "english/words.bin").write_bytes(b"tampered")
         with self.assertRaisesRegex(ValueError, "雜湊"):
             packager.check_english(copied)
+
+    def test_format1_english_pack_is_replaced_with_the_frequency_pack(self):
+        # 0.2.14 以前的資料包帶格式 1 的英文包：打包時改編詞頻包（格式 2，#358），中文 manifest 不變。
+        source = self.bundle / "data"
+        before = installer.digest(source / "manifest.json")
+        subprocess.run(["go", "run", "./cmd/0c-english", "-source", str(packager.ROOT / "data/english"),
+                        "-out", str(source / "english")], cwd=packager.ROOT, check=True, capture_output=True)
+        self.assertEqual(packager.check_english(source)["format"], 1)
+        copied = self.root / "copied-data"
+        copied.mkdir()
+        packager.copy_english(source, copied, "go")
+        self.assertEqual(packager.check_english(copied)["format"], 2)
+        self.assertTrue((copied / "english/bigram.bin").is_file())
+        packager.copy_english(source, source, "go")
+        self.assertEqual(packager.check_english(source)["format"], 2)
+        self.assertEqual(installer.digest(source / "manifest.json"), before)
+        (source / "english/bigram.bin").write_bytes(b"tampered")
+        with self.assertRaisesRegex(ValueError, "雜湊"):
+            packager.check_english(source)
 
     def test_english_install_downgrade_rollback_and_uninstall_keep_user_data(self):
         data = self.bundle / "data"
@@ -772,6 +792,26 @@ class ReleaseTests(unittest.TestCase):
         self.save_release()
         with self.assertRaisesRegex(ValueError, "英文資料包"):
             installer.verify(self.bundle)
+
+    def test_english_pair_file_is_optional_but_never_alone(self):
+        # 三個檔全有或全無；bigram.bin（格式 2，#358）可有可無，但不能單獨出現。
+        english = self.bundle / "data/english"
+        english.mkdir()
+        for name in ("words.bin", "manifest.json", "NOTICE.txt", "bigram.bin"):
+            (english / name).write_bytes(name.encode())
+        def ship(names):
+            self.release["files"] = {k: v for k, v in self.release["files"].items() if not k.startswith("data/english/")}
+            for name in names:
+                self.release["files"]["data/english/" + name] = installer.digest(english / name)
+            self.save_release()
+        ship(("words.bin", "manifest.json", "NOTICE.txt"))
+        installer.verify(self.bundle)
+        ship(("words.bin", "manifest.json", "NOTICE.txt", "bigram.bin"))
+        installer.verify(self.bundle)
+        for names in (("bigram.bin",), ("words.bin", "bigram.bin"), ("words.bin", "manifest.json", "bigram.bin")):
+            ship(names)
+            with self.assertRaisesRegex(ValueError, "英文資料包"):
+                installer.verify(self.bundle)
 
     def test_one_line_installer_pins_bootstrap_and_rejects_unsafe_values(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -2010,13 +2050,25 @@ class ReleaseTests(unittest.TestCase):
         stable.parent.mkdir(parents=True)
         stable.write_text("old updater")
         stable.chmod(0o700)
-        (self.bundle / "bin/0c-update").write_text("newer updater")
-        self.release["files"]["bin/0c-update"] = installer.digest(self.bundle / "bin/0c-update")
-        self.save_release()
-        installer.install(self.bundle, self.home, self.release)
-        self.assertEqual(stable.read_text(), "newer updater")
+        updater = self.bundle / "bin/0c-update"
+
+        def newer(selftest_exit):
+            # 新版更新器換上前先跑 selftest（#293）：只有結束碼 0 才換。
+            updater.write_text(f"#!/bin/sh\n# newer updater {selftest_exit}\n[ \"$1\" = selftest ] && exit {selftest_exit}\nexit 0\n")
+            updater.chmod(0o755)
+            self.release["files"]["bin/0c-update"] = installer.digest(updater)
+            self.save_release()
+            installer.install(self.bundle, self.home, self.release)
+
+        for failing in (1, 75):  # 自我測試失敗、或連不上索引：保留原本的穩定副本
+            with self.subTest(selftest=failing), redirect_stderr(io.StringIO()) as err:
+                newer(failing)
+                self.assertEqual(stable.read_text(), "old updater")
+                self.assertIn("自我測試", err.getvalue())
+        newer(0)
+        self.assertEqual(stable.read_text(), updater.read_text())
         self.assertEqual(stable.stat().st_mode & 0o777, 0o700, "穩定副本只給使用者執行")
-        self.assertEqual((self.home / ".local/bin/0c-update").read_text(), "newer updater")
+        self.assertEqual((self.home / ".local/bin/0c-update").read_text(), updater.read_text())
         self.assertFalse(installer.refresh_stable_updater(self.bundle, self.home), "相同就不動")
         stable.unlink()
         stable.symlink_to(self.root / "elsewhere")
@@ -2363,6 +2415,22 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "x86"):
             package_windows.check_pe(file, "x86")
         self.assertEqual(package_windows.DLL32, "x86/0c_tsf.dll")
+
+    def test_windows_registration_fingerprint(self):
+        # #294：release.json 的 tsf_registration 是 DLL 註冊內容加上有沒有 32 位元 DLL 的 SHA-256；相同時外殼更新不跳 UAC。
+        import hashlib
+        spec = "0c-tsf-registration 1\nclsid {138C35D0-7F08-4CEF-BA90-C34C16301528} 靈犀注音\n"
+        with_x86 = package_windows.registration_fingerprint(spec, True)
+        self.assertEqual(with_x86, hashlib.sha256((spec + "x86 x86/0c_tsf.dll\n").encode()).hexdigest())
+        self.assertEqual(with_x86, package_windows.registration_fingerprint(spec, True))
+        self.assertNotEqual(with_x86, package_windows.registration_fingerprint(spec, False))
+        self.assertNotEqual(with_x86, package_windows.registration_fingerprint(spec + "category {X}\n", True))
+        for bad in ("", "something else\n", spec.rstrip("\n")):
+            with self.assertRaisesRegex(ValueError, "註冊內容"):
+                package_windows.registration_fingerprint(bad, True)
+        source = (packager.ROOT / "scripts/package_windows.py").read_text(encoding="utf-8")
+        self.assertIn('"tsf_registration": registration_fingerprint(registration_spec(stage / "0c_tsf.dll")', source)
+        self.assertIn("ZcRegistrationSpec", (packager.ROOT / "platforms/windows/tsf/src/lib.rs").read_text(encoding="utf-8"))
 
     def test_windows_binaries_do_not_need_the_visual_cpp_redistributable(self):
         # #261：0.2.7／0.2.8 的 x64 0c_tsf.dll 與 0c-ui.exe 匯入 VCRUNTIME140.dll，沒裝 VC++ 可轉散發套件的電腦

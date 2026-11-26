@@ -111,7 +111,7 @@ func (s *service) simplifiedProperty() property {
 		hidden: !s.update.simplifiedKnown && !s.simplifiedLive}
 }
 
-// setSimplified 在鎖內呼叫：「輸出簡體字」的狀態改變時，選單的勾選與注／英指示（注簡）跟著換。
+// setSimplified 在鎖內呼叫：「輸出簡體字」的狀態改變時，選單的勾選與中／英指示（简）跟著換。
 // live 為真表示來源是回報即時切換的引擎。
 func (s *service) setSimplified(on, live bool) {
 	s.simplifiedLive = s.simplifiedLive || live
@@ -132,6 +132,8 @@ func (s *service) updateProperty() property {
 	row := statusLabel(s.update)
 	if s.update.action == "finish" {
 		row += "（點此完成更新）"
+	} else if s.update.action == "download" {
+		row += "（點此下載）"
 	} else {
 		row += "（點此檢查更新）"
 	}
@@ -140,6 +142,8 @@ func (s *service) updateProperty() property {
 		row = "正在檢查並準備更新"
 	case s.updateRunning == "finish":
 		row = "正在完成已準備好的更新"
+	case s.updateRunning == "download-now":
+		row = "正在下載新版"
 	case s.updateFailure != "":
 		row = s.updateFailure + "（點此重試）"
 	}
@@ -360,8 +364,14 @@ func (s *service) engineMethod(e *engine, member string, body []interface{}) ([]
 		s.focused = e
 		// 每次取得焦點都重新啟用：mode-memory=native 時換視窗回到開始時的模式（start-mode，#160；同 Fcitx5 外殼；GNOME Wayland 上所有視窗
 		// 共用一個輸入框，換視窗只看得到 FocusOut／FocusIn），shared 時由核心回到共用的模式（#115）。
+		mode, english := e.modeProperty(), e.english
 		e.enable()
 		e.registerProperties()
+		// 設定程式換了鍵盤排列時引擎重啟，enable 重開的 session 才拿到新的排列（#357）。GNOME Shell 換 engine 後只收第一個
+		// RegisterProperties，選單的「注音／拼音」要另外以 UpdateProperty 送；模式也變了時 updateMode 已經送過。
+		if p := e.modeProperty(); p != mode && e.english == english {
+			e.emit("UpdateProperty", p.variant())
+		}
 		if time.Since(s.refreshed) > time.Minute {
 			s.queryStatus(nil)
 		}
@@ -532,7 +542,7 @@ func componentXML(exe, icon, setup string) string {
             <longname>靈犀注音</longname>
             <description>靈犀注音</description>
             <rank>80</rank>
-            <symbol>注</symbol>
+            <symbol>中</symbol>
             <setup>` + esc(setup) + ` open-settings</setup>
         </engine>
     </engines>

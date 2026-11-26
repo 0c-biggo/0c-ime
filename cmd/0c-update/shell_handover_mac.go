@@ -317,7 +317,14 @@ type inputSourceRetry struct {
 	Error    string    `json:"error,omitempty"`
 	// Queried：不補做時最後一次查詢（--query-input-source）所在的登入工作階段；一個工作階段只查一次。
 	Queried *loginStamp `json:"queried,omitempty"`
+	// KeepRelogin：安裝時簽章身分改變（舊程式的核准還在、新版要等「允許」），之後補做啟用了也要重新登入才換新版（#348）。
+	KeepRelogin bool `json:"keep_relogin,omitempty"`
 }
+
+// followUpInputSource：同一個登入工作階段裡，安裝時沒等到的「允許」之後才按下時接著啟用模式（#348，
+// input_source_followup_mac.go）。since 是記下補做到現在的時間；接手了（起了背景程式或查過一次）回傳 true。
+// macOS 在 input_source_followup_darwin.go 換成真的；其他平台與 Linux 上的單元測試不做。
+var followUpInputSource = func(base, tool, app string, since time.Duration) bool { return false }
 
 const inputSourceRetrySessions = 3
 
@@ -367,6 +374,7 @@ func inputSourceRetryFile(base string) string {
 func clearInputSource(base string) {
 	os.Remove(inputSourceMarker(base))
 	os.Remove(inputSourceRetryFile(base))
+	os.Remove(inputSourceFollowUpFile(base))
 }
 
 func loadInputSourceRetry(base string) *inputSourceRetry {
@@ -410,6 +418,10 @@ func retryInputSource(base string, cur loginStamp, boot time.Time, query bool, a
 			saveInputSourceRetry(base, *r)
 		}
 		if r.stopped() || !crossed {
+			// 背景排程在安裝後的同一個工作階段：使用者晚一點才按「允許」時接著啟用模式，不必等重新登入（#348）。
+			if query && !r.stopped() && followUpInputSource(base, tool, app, cur.At.Sub(r.At)) {
+				return nil
+			}
 			if query && r.queryDue(base, cur, boot) {
 				r.Queried = &cur
 				saveInputSourceRetry(base, *r)

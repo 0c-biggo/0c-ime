@@ -1,6 +1,7 @@
 // 只有下列指令能從前端呼叫；其他（含 shell、檔案系統）一律不存在。
 const COMMANDS: &[&str] = &["app_info", "get_status", "get_settings", "set_settings", "check_update", "download_update", "install_update", "export_summary",
-    "profile_command", "vocab_request", "export_vocab", "api_command", "vocab_watch", "vocab_unwatch", "models_command", "open_url", "personal_command"];
+    "profile_command", "vocab_request", "export_vocab", "api_command", "vocab_watch", "vocab_unwatch", "models_command", "open_url", "personal_command",
+    "set_update_mode"];
 
 fn main() {
     tauri_build::try_build(

@@ -62,7 +62,7 @@ public:
     int leftShiftTapMs = 300;    // 這次左 Shift 按下時引擎回報的單按門檻
     zuin::DocumentContext context;
     bool active = false;
-    bool shownEnglish = false; // 狀態區（注／英圖示）最近一次畫的模式
+    bool shownEnglish = false; // 狀態區（中／英圖示）最近一次畫的模式
 };
 
 // Fcitx 5.1.9 才有候選附註 CandidateWord::setComment；Ubuntu 24.04 的 5.1.7 沒有，直接連結會讓整個外殼載入失敗。
@@ -79,7 +79,7 @@ SetComment setCommentFunction() {
 }
 
 // Instance::showCustomInputMethodInformation 是 Fcitx 5.1.11 才有的（Ubuntu 24.04 的 5.1.7 沒有）；同 setCommentFunction 在執行時找，
-// 找不到回傳 nullptr，切換提示退回 showInputMethodInformation（顯示子模式的標籤「注簡」）。
+// 找不到回傳 nullptr，切換提示退回 showInputMethodInformation（顯示子模式的標籤「简」）。
 using ShowCustomInformation = void (*)(fcitx::Instance *, fcitx::InputContext *, const std::string &);
 ShowCustomInformation showCustomInformationFunction() {
     static const auto fn = reinterpret_cast<ShowCustomInformation>(dlsym(RTLD_DEFAULT,
@@ -319,6 +319,7 @@ public:
             }
             auto snap = session.bypassEnglish(boundary);
             if (snap.ok) { render(ic, snap); }
+            session.forgetDigit(); // Ctrl＋V 等快捷鍵之後游標前不一定還是數字（#337）
             s->context.clear(); syncContext(ic);
             // 不記應用程式快捷鍵的文字內容；保留原本未支援的導覽鍵，方便檢查組字操作。
             const char *kind = "unmapped_or_modified";
@@ -348,9 +349,12 @@ public:
         }
     }
 
+    // 切換提示「靈犀（注音）」的括號裡（#357）：中文模式照鍵盤排列寫「注音」或「拼音」（#324），簡體輸出（#169）時加「・簡體輸出」。
     std::string subMode(const fcitx::InputMethodEntry &, fcitx::InputContext &ic) override {
-        if (state(&ic)->session.english()) { return "英文"; }
-        return simplified_ ? "注音・簡體輸出" : "注音"; // #169：送出時轉成簡體
+        auto &session = state(&ic)->session;
+        if (session.english()) { return "英文"; }
+        const std::string name = session.pinyin() ? "拼音" : "注音";
+        return simplified_ ? name + "・簡體輸出" : name;
     }
 
     std::string subModeIconImpl(const fcitx::InputMethodEntry &, fcitx::InputContext &ic) override {
@@ -358,11 +362,11 @@ public:
     }
 
     // GNOME Kimpanel always prefers a nonempty label= hint over the supplied icon.
-    // The icon itself contains 注／英; leave the text label empty on both modes.
-    // 「輸出簡體字」開著時（#169）注音模式改用文字「注簡」：誤開時從面板看得出來（組字和候選照樣是繁體，送出才轉）。
-    // 跟 IBus 外殼同樣兩個字（GNOME 頂列的 IBus 指示只採用不到 3 個字的 symbol），換框架時看到的一樣。
+    // The icon itself contains 中／英; leave the text label empty on both modes.
+    // 「輸出簡體字」開著時（#169）中文模式改用文字「简」（簡體字形，同 Windows 的輸入指示器，#357）：誤開時從面板看得出來
+    // （組字和候選照樣是繁體，送出才轉）。跟 IBus 外殼的 symbol 相同（GNOME 頂列的 IBus 指示只採用不到 3 個字），換框架時看到的一樣。
     std::string subModeLabelImpl(const fcitx::InputMethodEntry &, fcitx::InputContext &ic) override {
-        if (simplified_ && !state(&ic)->session.english()) { return "注簡"; }
+        if (simplified_ && !state(&ic)->session.english()) { return "简"; }
         return {};
     }
 
@@ -550,7 +554,7 @@ private:
         ic->updatePreedit();
         ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
         // 模式不是使用者切換而改變時（開始時是英文的新 session 第一個按鍵、共用模式跟上別的輸入框，#160、#115），
-        // 注／英圖示也要跟著換。
+        // 中／英圖示也要跟著換。
         if (state(ic)->shownEnglish != state(ic)->session.english()) {
             state(ic)->shownEnglish = state(ic)->session.english();
             ic->updateUserInterface(fcitx::UserInterfaceComponent::StatusArea);
@@ -638,7 +642,7 @@ private:
 
     bool simplifiedShown() const { return update_.simplifiedKnown || simplifiedLive_; }
 
-    // 「輸出簡體字」的狀態改變：選單打勾、注／英圖示旁的「簡」與子模式文字跟著換。
+    // 「輸出簡體字」的狀態改變：選單打勾、Kimpanel 的「简」與子模式文字跟著換。
     void setSimplified(bool on, fcitx::InputContext *ic = nullptr) {
         simplifiedLive_ = simplifiedLive_ || (ic && state(ic)->session.simplifiedLive());
         if (on == simplified_ && simplifiedAction_.isChecked(nullptr) == on) { return; }
@@ -653,7 +657,7 @@ private:
     }
 
     // 選單的「輸出簡體字」（#169）：引擎能即時切換時直接在這個輸入框的 session 送請求（組字不動、之後送出的字立刻照新設定），
-    // 引擎寫設定檔；提示用輸入法資訊（Fcitx 5.1.11 起顯示「已切換為輸出簡體字」，較舊的版本顯示標籤「注簡」）。
+    // 引擎寫設定檔；提示用輸入法資訊（Fcitx 5.1.11 起顯示「已切換為輸出簡體字」，較舊的版本顯示標籤「简」）。
     // 舊引擎退回 0c-update set output-simplified … -apply -notify（寫設定、交接重啟，0c-update 送桌面通知）。
     void toggleSimplified(fcitx::InputContext *ic) {
         if (!ic) { ic = instance_->mostRecentInputContext(); }
@@ -684,7 +688,7 @@ private:
     void runUpdater(std::vector<std::string> args, std::vector<std::vector<std::string>> following = {}) {
         if (args.empty() && (querying_ || commandRunning_)) { return; }
         if (!args.empty() && commandRunning_) { return; }
-        const bool update = !args.empty() && (args[0] == "auto" || args[0] == "finish");
+        const bool update = !args.empty() && (args[0] == "auto" || args[0] == "finish" || args[0] == "download-now");
         if (!args.empty()) {
             commandRunning_ = true;
             pendingCommand_ = args[0];
@@ -742,8 +746,9 @@ private:
         else if (fallback) { settings += "（模型已退回）"; }
         openSettings_.setShortText(settings);
         // 更新列：執行中顯示進度；上一個更新動作失敗時顯示原因（點此重試）；否則是目前的更新狀態。
-        std::string row = zuin::statusLabel(u) + (u.action == "finish" ? "（點此完成更新）" : "（點此檢查更新）");
+        std::string row = zuin::statusLabel(u) + (u.action == "finish" ? "（點此完成更新）" : u.action == "download" ? "（點此下載）" : "（點此檢查更新）");
         if (commandRunning_ && pendingCommand_ == "auto") { row = "正在檢查並準備更新"; }
+        else if (commandRunning_ && pendingCommand_ == "download-now") { row = "正在下載新版"; }
         else if (commandRunning_ && pendingCommand_ == "finish") { row = "正在完成已準備好的更新"; }
         else if (commandRunning_ && pendingCommand_ == "set") { row = "正在套用設定；若有組字請先完成"; }
         else if (!updateFailure_.empty()) { row = updateFailure_ + "（點此重試）"; }

@@ -337,7 +337,7 @@ func TestProbeWithPreviousWhenChecksKeepFailing(t *testing.T) {
 	}
 }
 
-// 查詢測試只在真的「一直失敗」時做：最近成功過、手動模式、暫停中、還沒輪到查詢、engine 呼叫都不做。
+// 查詢測試只在真的「一直失敗」時做：最近成功過、暫停中、還沒輪到查詢、engine 呼叫都不做。手動更新從 #340 起也在背景查詢，照樣測。
 func TestProbeOnlyWhenChecksReallyKeepFailing(t *testing.T) {
 	now := time.Date(2026, 11, 12, 8, 0, 0, 0, time.UTC)
 	failing := UpdateView{Mode: "auto", LastSuccess: now.Add(-80 * time.Hour), LastCheck: now, NextCheck: now, CheckFailures: 10}
@@ -347,7 +347,6 @@ func TestProbeOnlyWhenChecksReallyKeepFailing(t *testing.T) {
 	for name, mutate := range map[string]func(v *UpdateView){
 		"recent success":  func(v *UpdateView) { v.LastSuccess = now.Add(-10 * time.Hour) },
 		"never succeeded": func(v *UpdateView) { v.LastSuccess = time.Time{} },
-		"manual":          func(v *UpdateView) { v.Mode = "manual" },
 		"paused":          func(v *UpdateView) { v.PausedUntil = now.Add(time.Hour) },
 		"not due":         func(v *UpdateView) { v.NextCheck = now.Add(time.Hour) },
 		"few failures":    func(v *UpdateView) { v.CheckFailures = 1 },
@@ -357,6 +356,11 @@ func TestProbeOnlyWhenChecksReallyKeepFailing(t *testing.T) {
 		if (&State{}).probeDue("auto", &v, now) {
 			t.Errorf("%s: probed", name)
 		}
+	}
+	manual := failing
+	manual.Mode = "manual"
+	if !(&State{}).probeDue("auto", &manual, now) {
+		t.Error("manual mode checks in the background since #340 and should probe like the others")
 	}
 	if (&State{}).probeDue("engine", &failing, now) || (&State{}).probeDue("auto", nil, now) {
 		t.Error("engine call or missing state.json probed")

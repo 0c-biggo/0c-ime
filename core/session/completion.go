@@ -7,7 +7,7 @@ import "github.com/0c-biggo/0c-ime/core/suggest"
 // 就點得到。未打完的注音不算，要先完成：手機是在 PreviewPending 那樣的複本上開候選，那時已經完成。只回傳往後補的
 // 建議，不回傳同音替換（那要清楚預覽才能接受）。
 func (s *Session) Completion() *suggest.Suggestion {
-	if s.english || s.mixed.raw != "" || !s.comp.Empty() || s.ninePending() || len(s.syls) == 0 {
+	if s.english || s.mixed.raw != "" || !s.comp.Empty() || s.keysPending() || len(s.syls) == 0 {
 		return nil
 	}
 	s.refresh()
@@ -31,7 +31,7 @@ func (s *Session) acceptCompletion(word string) bool {
 	if word == "" || s.english || s.mixed.raw != "" {
 		return false
 	}
-	if (!s.comp.Empty() || s.ninePending()) && !s.finishUntoned() {
+	if (!s.comp.Empty() || s.keysPending()) && !s.finishUntoned() {
 		return false
 	}
 	s.cand = nil

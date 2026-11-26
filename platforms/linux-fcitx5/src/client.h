@@ -29,6 +29,9 @@ public:
     // alive 回報連線是否還在：不送請求、不等待，只看另一端關了沒有（引擎退出後讀到 EOF）。
     // 斷了、或有不該有的殘留資料（訊框會錯位）就關掉連線，下一次呼叫照常重連。
     bool alive();
+    // refresh 用在焦點事件：原本有連線、但另一端關了（設定套用時引擎重啟）就連上已在執行的引擎，不啟動 0c-server。
+    // 原本就沒有連線時不連。回報之後是否有連線（#357）。
+    bool refresh() { return fd_ >= 0 && (alive() || connectOnce()); }
 
     // generation 在每次重新連線後遞增；session 屬於某一代連線，代數變了就要重開並重播。
     unsigned generation() const { return generation_; }

@@ -19,7 +19,7 @@ type refusedTone struct {
 // 故意打注音文的退路：緊接著在同一處、同一個注音再按同一個聲調（上一個請求擋下的 toneRetry）就不擋，
 // 照舊原樣留下，ㄏㄟˊ 多按一次仍打得出來，#85 的緊接改韻母也照舊。中英混打與聲調選填不作用。
 func (s *Session) refuseTone(before zhuyin.Composer, done zhuyin.Syllable) bool {
-	if !s.ZhuyinErrorHint || s.mixedInput() || s.toneless() || done.Untoned() || singleSymbol(&before) {
+	if !s.ZhuyinErrorHint || s.mixedInput() || s.toneless() || s.pinyinLayout() || done.Untoned() || singleSymbol(&before) {
 		return false
 	}
 	at := refusedTone{reading: before.String(), tone: done.ToneOf(), cursor: s.cursor}

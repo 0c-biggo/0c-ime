@@ -31,7 +31,9 @@ LICENSE_FILES = {
     "legal/TERMS.md": "TERMS.md",
 }
 DATA_FILES = ("lexicon.bin", "lm.bin", "manifest.json", "NOTICE.txt", "report.txt")
-ENGLISH_FILES = ("words.bin", "manifest.json", "NOTICE.txt")
+# 桌面出貨詞頻英文包（格式 2，#358）：多一份詞對 bigram.bin，桌面先不載入。格式 1 只有前三個。
+ENGLISH_FILES = ("words.bin", "bigram.bin", "manifest.json", "NOTICE.txt")
+ENGLISH_PACK_FILES = {1: {"words.bin", "NOTICE.txt"}, 2: {"words.bin", "bigram.bin", "NOTICE.txt"}}
 
 
 def check_licenses():
@@ -75,12 +77,13 @@ def check_english(data):
         raise ValueError("英文資料包必須是一般目錄")
     manifest = json.loads(regular(directory / "manifest.json").read_text(encoding="utf-8"))
     count = manifest.get("words")
-    if manifest.get("format") != 1 or type(count) is not int or not 0 < count <= 200000 or not manifest.get("ranking"):
+    names = ENGLISH_PACK_FILES.get(manifest.get("format"))
+    if names is None or type(count) is not int or not 0 < count <= 200000 or not manifest.get("ranking"):
         raise ValueError("英文資料包格式或詞數不合法")
     files = manifest.get("files", {})
-    if set(files) != {"words.bin", "NOTICE.txt"}:
+    if set(files) != names:
         raise ValueError("英文資料包檔案清單不合法")
-    for name in ("words.bin", "NOTICE.txt"):
+    for name in sorted(names):
         path = regular(directory / name)
         info = files[name]
         if digest(path) != info.get("sha256") or path.stat().st_size != info.get("size"):
@@ -97,17 +100,28 @@ def check_english(data):
 
 
 def copy_english(source, destination, go):
-    """Stage an independent English pack before sealing/signing; no model re-pairing."""
-    if check_english(source) is not None:
+    """Stage an independent English pack before sealing/signing; no model re-pairing.
+
+    Desktop ships the frequency pack (format 2, #358). A data package that already carries one is copied;
+    one without an English pack, or with the older format 1 (0.2.14 and earlier data packages), gets a pack
+    compiled from data/english instead. The Chinese manifest and its model pairing are untouched either way."""
+    existing = check_english(source)
+    if existing is not None and existing["format"] == 2:
         if source.resolve() != destination.resolve():
             target = destination / "english"
             target.mkdir()
             for name in ENGLISH_FILES:
                 shutil.copy2(regular(source / "english" / name), target / name)
     else:
-        subprocess.run([go, "run", "./cmd/0c-english", "-source", str(ROOT / "data/english"),
-                        "-out", str(destination / "english")], cwd=ROOT, check=True)
-    check_english(destination)
+        target = destination / "english"
+        if target.is_symlink() or target.exists() and not target.is_dir():
+            raise ValueError("英文資料包必須是一般目錄")
+        if target.is_dir():
+            shutil.rmtree(target)
+        subprocess.run([go, "run", "./cmd/0c-english", "-frequency", "-source", str(ROOT / "data/english"),
+                        "-out", str(target)], cwd=ROOT, check=True)
+    if check_english(destination)["format"] != 2:
+        raise ValueError("桌面出貨的英文資料包須為格式 2")
 
 
 def valid_version(version):

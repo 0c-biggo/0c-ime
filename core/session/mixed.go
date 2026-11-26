@@ -251,7 +251,8 @@ func (s *Session) mixedSuggestion() string {
 		return ""
 	}
 	for _, c := range s.englishPrefix(p.raw, 5) {
-		if len(c.Text) >= len(p.raw)+2 {
+		// 打完整個字、比補字常用時，Tab 改成常見寫法（iphone → iPhone，#358）。
+		if len(c.Text) >= len(p.raw)+2 || c.Text != p.raw && strings.EqualFold(c.Text, p.raw) {
 			return c.Text
 		}
 	}
@@ -647,11 +648,17 @@ func (s *Session) mixedBoundary(raw, key string, tone rune) (int, zhuyin.Syllabl
 			continue
 		}
 		score := s.mixedSyllableScore(done)
-		ratio := float64(mixedMoveRatio)
+		need := mixedMoveRatio * bestScore
 		if best > 0 && raw[at:best] == "s" && s.mixedEnglishWord(raw[:at]) {
-			ratio = mixedPluralRatio
+			need = mixedPluralRatio * bestScore
 		}
-		if best == 0 || score > 0 && score >= ratio*bestScore {
+		if best > 0 && englishThenDigits(raw[:best], at) {
+			// #359：英文字（與緊接的數字）後面的數字鍵（1 ㄅ、2 ㄉ、5 ㄓ）組得成字就先算給中文（AI對、GDP比、apple比、gta5著），
+			// 不跟拿掉數字鍵後剩下的按鍵（AI2為、GDP1以、gta55物）比常用程度，跟 #249 的 mixedAfterAlnum 一樣數字鍵先算給中文。
+			// 以聲調鍵結尾的英數詞（ps4、usb4）從詞的後面切開，見 literalTokenPrefix。組成罕用字的（mixedRareFloor）照舊。
+			need = mixedRareFloor
+		}
+		if best == 0 || score > 0 && score >= need {
 			best, bestScore, bestSyl = at, score, done
 		}
 	}
@@ -699,6 +706,13 @@ func (s *Session) mixedBoundary(raw, key string, tone rune) (int, zhuyin.Syllabl
 		return s.mixedAfterLetter(raw, key, tone)
 	}
 	return best, bestSyl, true
+}
+
+// englishThenDigits（#359）：prefix 是英文字母接一串數字，at 落在那串數字裡（apple1 的 1 前面、gta55 的第二個 5 前面），
+// 也就是從 at 起的數字鍵是要讓給中文的那一段（mixedLiteralPrefix 已確認前段是英文字或英文字接數字）。
+func englishThenDigits(prefix string, at int) bool {
+	letters := len(prefix) - len(strings.TrimLeftFunc(prefix, func(r rune) bool { return r <= unicode.MaxASCII && unicode.IsLetter(r) }))
+	return letters > 0 && at >= letters && at < len(prefix) && strings.Trim(prefix[letters:], "0123456789") == ""
 }
 
 // mixedAfterTypo：打錯一鍵的注音（qji3：ㄆㄨㄛˇ 組不成音節）在聲調鍵後仍是待定的按鍵，之後的注音會一路接在後面，
@@ -1531,7 +1545,7 @@ func mixedLetterWord(raw string) bool { return strings.EqualFold(raw, "a") }
 // A full speller also recognizes letter names (t/u/g). They must not turn
 // ordinary one-key first-tone Chinese into English; a and I are actual words.
 func (s *Session) mixedEnglishWord(raw string) bool {
-	return (len(raw) > 1 || strings.EqualFold(raw, "a") || strings.EqualFold(raw, "i")) && (s.English.Has(raw) || s.personalEnglishAllowed() && s.model.EnglishKnown(raw))
+	return (len(raw) > 1 || strings.EqualFold(raw, "a") || strings.EqualFold(raw, "i")) && (s.englishDict().Has(raw) || s.personalEnglishAllowed() && s.model.EnglishKnown(raw))
 }
 
 // mixedKey only handles printable pending input. Navigation/commit/candidates
@@ -1644,16 +1658,16 @@ func (s *Session) personalEnglishAllowed() bool { return !s.private && !s.paused
 
 func (s *Session) englishPrefix(prefix string, limit int) []english.Candidate {
 	if !s.personalEnglishAllowed() {
-		return s.English.Prefix(prefix, limit)
+		return s.englishDict().Prefix(prefix, limit)
 	}
-	return s.model.EnglishPrefix(s.English, prefix, limit)
+	return s.model.EnglishPrefix(s.englishDict(), prefix, limit)
 }
 
 func (s *Session) englishCorrections(text string, limit int) []english.Candidate {
 	if !s.personalEnglishAllowed() {
-		return s.English.Corrections(text, limit)
+		return s.englishDict().Corrections(text, limit)
 	}
-	return s.model.EnglishCorrections(s.English, text, limit)
+	return s.model.EnglishCorrections(s.englishDict(), text, limit)
 }
 
 // zhuyinKey 非零時，這格是單一注音鍵＋空白留下的注音符號，提交時據以更新選過的注音文（zhuyin_keys.go，#208）。
@@ -1764,7 +1778,7 @@ func (s *Session) mixedEnglishCommits() []personal.EnglishCommit {
 			}
 			event.Text = word.String()
 			if tracked && personal.EnglishToken(event.Text) {
-				event.Suspicious = s.English.NearCommon(event.Text, 50)
+				event.Suspicious = s.English.NearCommon(event.Text, englishCommonPrior(s.English))
 				out = append(out, event)
 			}
 			start = pos + 1

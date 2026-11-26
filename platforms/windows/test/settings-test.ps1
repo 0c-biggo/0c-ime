@@ -33,7 +33,8 @@ function RunCapture([string]$exe, [string]$arguments) {
     return @{ code = $p.ExitCode; text = $text }
 }
 function HashOrAbsent([string]$p) { if (Test-Path $p) { return (Get-FileHash $p).Hash }; return 'absent' }
-function Entries { @(Get-ChildItem $base -Force -Recurse -Depth 2 -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }) }
+# 沒裝過的帳號沒有 $base：PS 5.1 的 Get-ChildItem 遇到不存在的路徑，會把最後一段當成篩選字，從上一層整個遞迴、不管 -Depth（會卡十幾分鐘）。
+function Entries { if (-not (Test-Path -LiteralPath $base)) { return @() }; @(Get-ChildItem -LiteralPath $base -Force -Recurse -Depth 2 -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }) }
 
 # 在互動工作階段執行一段 PowerShell（開視窗、截圖都要在使用者看得到的桌面）。
 function Interactive([string]$Script, [int]$Seconds = 40) {

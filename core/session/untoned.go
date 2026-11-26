@@ -135,6 +135,9 @@ func (s *Session) finishUntoned() bool {
 	if s.ninePending() {
 		return s.finishNine(nineToneKey) // 九宮格的鍵：不打聲調就完成（不看聲調選填的設定，九宮格本來就靠解碼定讀音）
 	}
+	if s.pinyinPending() {
+		return s.closePinyin(0, false) // 漢語拼音（#324）：不打聲調就完成，切不成音節的字母照字面留下
+	}
 	if !s.toneless() || s.comp.Empty() {
 		return false
 	}

@@ -23,8 +23,10 @@ assets:
 upgrade:
 	python3 scripts/upgrade.py $(if $(filter 0,$(PULL)),--no-pull,)
 
+# 第二項：S3 上 0.2.0 起每一版的 Linux 0c-update 對新格式索引的相容性（#295；第一次約下載 300 MB，快取在 ~/.cache/0c/old-updaters）。
 test-upgrade:
 	python3 -m unittest discover -s scripts -p 'test_upgrade.py'
+	python3 -m unittest discover -s scripts -p 'test_old_updaters.py'
 
 test-sim:
 	go test -count=1 -timeout 60m -run TestSimulated ./internal/autoupdate/ -sim.seeds=300 -sim.days=21

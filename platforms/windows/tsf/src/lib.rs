@@ -131,6 +131,19 @@ pub extern "system" fn DllRegisterServer() -> HRESULT {
     })
 }
 
+/// 註冊內容（register.rs 的 registration_spec，UTF-8、以 NUL 結尾）。打包程式（scripts/package_windows.py）載入 DLL 讀它，
+/// 算出 release.json 的 `tsf_registration` 指紋（#294）。不碰 COM 與登錄。
+#[no_mangle]
+pub extern "system" fn ZcRegistrationSpec() -> *const u8 {
+    static SPEC: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+    SPEC.get_or_init(|| {
+        let mut v = register::registration_spec().into_bytes();
+        v.push(0);
+        v
+    })
+    .as_ptr()
+}
+
 #[no_mangle]
 pub extern "system" fn DllUnregisterServer() -> HRESULT {
     guard("DllUnregisterServer", || match register::unregister() {

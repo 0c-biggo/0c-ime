@@ -213,6 +213,7 @@ type Session struct {
 	predictedLeft      string   // predictions 接在哪個前詞之後；開頭詞是句首
 	neuralLeft         string   // 外殼確認後的自身提交文字（最多 rerank.MaxContextRunes 字），只給宣告需要前文的評分器
 	pendingNeural      string
+	digitLeft          bool                   // 游標前一個字是阿拉伯數字（#337，digit_before.go）；只在記憶體
 	rerankCache        map[string]rerankEntry // 分段神經決策快取；提交／取消時清空
 	rerankMemo         map[int]segMemo        // 段級輸入摘要：輸入全同的段整段跳過（含 N-best）；提交／取消時清空
 	rerankMemoHits     int                    // rerankMemo 命中次數，只給測試確認打字時真的命中
@@ -234,11 +235,35 @@ type Session struct {
 	spatial        map[int][]input.Hyp
 	pendingSpatial []input.Hyp
 	pendingNear    *spatialSlot // 這次 symbol 呼叫帶的鄰鍵（symbolNear 設定）
+	// 合併弧（merge.go）：merges 是合成的音節（依位置，隨插入、刪除平移）；mergeSig 是上一次重新決定時的輸入，沒變就
+	// 不再解；mergeSearch 是那幾次解碼的逐鍵增量狀態。
+	merges      map[int]mergedSyl
+	mergeSig    string
+	mergeSearch *decode.Search
+	// keyNear 是已完成音節（依位置）每個注音的鄰鍵，合併弧換鍵（SpatialOptions.Rejoin）用；pendingKeys 交給下一次 insert。
+	keyNear     map[int][]spatialSlot
+	pendingKeys []spatialSlot
 	// 注音九宮格（ninekey.go）：nineKeys 是還沒完成音節的鍵組；nine 是已完成的九宮格音節（依位置）的所有讀音，
 	// 隨插入、刪除平移；nineStaged 交給下一次 insert。
-	nineKeys   []string
+	nineKeys []string
+	// pyKeys 是漢語拼音鍵盤（pinyin.go，#324）還沒收成音節的拼音字母與隔音符號 '。
+	pyKeys     string
 	nine       map[int][]zhuyin.Syllable
 	nineStaged []zhuyin.Syllable
+	// NineSegment 由宿主設定（「自動切字」，手機，預設關）：九宮格的鍵連續按、不必按聲調鍵，由解碼在鍵上同時
+	// 決定切法與選字（nine_segment.go）。零值時行為與沒有此功能時相同。
+	NineSegment bool
+	// 自動切字：nineSeg 是九宮格音節（依位置）的鍵、錨點與固定的拼法，隨插入、刪除平移；nineSearch 是各段的逐鍵增量
+	// 解碼狀態（依那段的起點）；nineRowCache 是一串鍵的讀音列。
+	nineSeg      map[int]nineSyl
+	nineSearch   map[int]*decode.Search
+	sylSearch    map[int]*decode.Search      // 有九宮格音節時，顯示用的解碼（decodeWithLiterals）的逐鍵增量狀態
+	singlesOnly  bool                        // appendSingles 列游標那個字的單字：按鍵圖上的候選只留一個字的詞
+	basePriors   map[zhuyin.Syllable]float64 // untonedPrior 的結果（只看系統機率，不變）
+	prefixPriors map[zhuyin.Syllable]float64 // startPrior 的結果
+	nineRowCache map[string]*nineRows
+	nineCutSig   string                 // 上一次重新切字之後的簽章（不含游標）；沒變時不重新切，見 resegment
+	readingMemo  map[string]readingMemo // nineSegReading
 	// lastLearn 是上一次提交（或點聯想詞）學習的復原複本；UndoLearn 用它還原一次（觸控：送出後立刻退格）。
 	lastLearn *personal.Undo
 	dec       *decode.Decoder
@@ -312,7 +337,7 @@ func (s *Session) emojiEquals() bool {
 }
 
 func (s *Session) composing() bool {
-	return s.symbolPrefix || len(s.syls) > 0 || !s.comp.Empty() || s.mixed.raw != "" || s.ninePending()
+	return s.symbolPrefix || len(s.syls) > 0 || !s.comp.Empty() || s.mixed.raw != "" || s.keysPending()
 }
 
 // Composing 回報是否有未提交的組字；引擎交接只在沒有組字時進行。
@@ -378,6 +403,9 @@ func (s *Session) Handle(r proto.Request) proto.Snapshot {
 			s.cand = nil // 不讓已開啟的個人英文候選、最近用過的符號跨入保護狀態。
 		}
 	}
+	if r.DigitBefore != nil && !s.composing() {
+		s.digitLeft = *r.DigitBefore // 外殼讀到的游標前一個字（#337）；組字中游標前是組字，不看
+	}
 	s.model.SyncTime()
 	if r.Type != proto.Key {
 		s.mark = nil // 加詞的標示只跟著按鍵；滑鼠移動游標、切換模式等都取消
@@ -398,7 +426,7 @@ func (s *Session) Handle(r proto.Request) proto.Snapshot {
 		// 記下按鍵前畫面上可以接受的補全：還有未打完的注音或九宮格待定的鍵時沒有（這一鍵會先收完那個音節，
 		// 之後的補全使用者還沒看到，原本顯示的也已經不接在組字最後），句尾的 → 只接受記下的這個（#338）。
 		s.keySug, s.keySyls = suggest.Suggestion{}, len(s.syls)
-		if s.sug != nil && s.comp.Empty() && !s.ninePending() {
+		if s.sug != nil && s.comp.Empty() && !s.keysPending() {
 			s.keySug = *s.sug
 		}
 		if editsPending(r.Key) {
@@ -414,7 +442,9 @@ func (s *Session) Handle(r proto.Request) proto.Snapshot {
 		handled, commit = s.key(r.Key)
 	case proto.Symbol:
 		s.flushMixed()
-		if r.Group != "" || s.ninePending() {
+		if s.NineSegment && (r.Group != "" || s.nineSegOpen()) {
+			handled = s.nineSegSymbol(r.Symbol, r.Group) // 自動切字（nine_segment.go）
+		} else if r.Group != "" || s.ninePending() {
 			handled = s.nineSymbol(r.Symbol, r.Group) // 注音九宮格（ninekey.go）；不看 Near
 		} else {
 			for _, sym := range r.Symbol {
@@ -423,7 +453,11 @@ func (s *Session) Handle(r proto.Request) proto.Snapshot {
 		}
 		s.symbolPending = !s.comp.Empty() || s.ninePending()
 	case proto.NineReading:
-		if !s.fixNineReading(r.To, r.Word) {
+		if s.NineSegment && s.nineSeg != nil {
+			if !s.fixNineSegReading(r.To, r.Word, r.Length) {
+				notices = append(notices, "沒有這個讀音")
+			}
+		} else if !s.fixNineReading(r.To, r.Word) {
 			notices = append(notices, "沒有這個讀音")
 		}
 	case proto.Backspace:
@@ -513,6 +547,7 @@ func (s *Session) Handle(r proto.Request) proto.Snapshot {
 	if r.Type == proto.Toggle || r.Type == proto.Mode || r.Type == proto.CapsLock || !handled && r.Type == proto.Key {
 		s.clearDocumentContext()
 	}
+	s.noteDigitBefore(r, !handled && (r.Type == proto.Key || r.Type == proto.Backspace))
 	if s.paletteCommit {
 		s.paletteCommit = false
 		s.refresh()
@@ -525,6 +560,7 @@ func (s *Session) Handle(r proto.Request) proto.Snapshot {
 		// 同輸出簡體字；commit() 已用原文學過、記好前文。
 		commit = spaceCJKLatin(commit)
 	}
+	s.resegment() // 自動切字：照這次請求之後的鍵重新決定切法（nine_segment.go）；關閉時不做事
 	s.refresh()
 	// 保護狀態／前文確認／撤銷可以在候選窗仍開啟時變更；不能留下過期的個人或關聯標示。
 	if s.cand != nil && !s.cand.mixed && (r.Private || r.Type == proto.Pause || r.Type == proto.Context || r.Type == proto.Forget) {
@@ -579,6 +615,7 @@ func (s *Session) setMode(english, restore bool, stash *pendingStash) {
 	if english && !s.english {
 		s.finishUntoned() // 聲調選填：已是完整音節的注音留在組字區，不當成打到一半清掉（#150）
 		s.nineKeys = nil  // 九宮格組不成音節的鍵同未打完的注音清掉
+		s.pyKeys = ""     // 漢語拼音：finishUntoned 已收完，這裡只是保險
 		s.toggleStash = s.clearPendingZhuyin()
 	}
 	s.flushMixed()
@@ -636,6 +673,9 @@ func (s *Session) key(k string) (handled bool, commit string) {
 	s.retypeLiteral = false
 	run := s.untonedRun // 聲調選填時連續打的注音鍵（#150）：只有緊接著的這一鍵能接續
 	s.untonedRun = nil
+	if consumed, commit := s.pinyinKey(k); consumed {
+		return true, commit // 漢語拼音鍵盤（#324）：字母、聲調、隔音符號；其他鍵之前未收的拼音已完成
+	}
 	if handled, commit, done := s.allSymbolsKey(k); done {
 		return handled, commit
 	}
@@ -814,6 +854,9 @@ func (s *Session) key(k string) (handled bool, commit string) {
 			s.nineKeys = nil // 九宮格還沒完成音節的鍵同未打完的注音
 			return true, ""
 		}
+		if s.nineSegClear() {
+			return true, "" // 自動切字：還沒固定的九宮格鍵同未打完的注音
+		}
 		if !s.composing() {
 			return false, ""
 		}
@@ -829,6 +872,7 @@ func (s *Session) key(k string) (handled bool, commit string) {
 		if s.english {
 			return s.composing(), ""
 		}
+		s.refreshSuggestion(true)
 		if s.phonetic != nil || s.sug != nil {
 			return s.accept() || s.composing(), ""
 		}
@@ -861,7 +905,7 @@ func (s *Session) key(k string) (handled bool, commit string) {
 		// 仍只有 Tab 能接受，免得 → 在句尾意外改字；候選、符號選單開著時 → 照舊是翻頁與移動，在上面已處理。
 		// 只接受按鍵前畫面上已經顯示的那個補全（keySug；九宮格待定的鍵、聲調選填沒完成的音節在這一鍵收完後才算出的
 		// 不算），而且只在 Tab 本來就接受補全的輸入習慣（新酷音的 segment、小麥注音的 cycle 不是，#338）。
-		if k == proto.KeyRight && s.sug != nil && s.shownBeforeKey(s.sug) && s.tabAcceptsCompletion() && !s.ninePending() &&
+		if k == proto.KeyRight && s.sug != nil && s.shownBeforeKey(s.sug) && s.tabAcceptsCompletion() && !s.keysPending() &&
 			s.sug != nil && s.sug.Replace == "" && !s.english && s.mixed.raw == "" &&
 			s.phonetic == nil && s.cursor == len(s.syls) && s.comp.Empty() && s.cand == nil && s.accept() {
 			return true, ""
@@ -1068,6 +1112,7 @@ func (s *Session) completeSyllable(before zhuyin.Composer, done zhuyin.Syllable)
 	decodable := len(s.syls) == 0 || len(s.path) > 0 || s.nearReading
 	saved := s.saveSyllables()
 	s.pendingSpatial = s.spatialAlternatives(before, done)
+	s.pendingKeys = s.keyNears(before)
 	s.compNear = nil
 	s.nineStaged = staged
 	s.insert(done)
@@ -1107,6 +1152,14 @@ func (s *Session) insert(syl zhuyin.Syllable) {
 		s.spatial[at] = alts
 	}
 	s.pendingSpatial = nil
+	if keys := s.pendingKeys; len(keys) > 0 {
+		s.keyNear = maps.Clone(s.keyNear) // 同 spatial
+		if s.keyNear == nil {
+			s.keyNear = map[int][]spatialSlot{}
+		}
+		s.keyNear[at] = keys
+	}
+	s.pendingKeys = nil
 	if readings := s.nineStaged; len(readings) > 0 {
 		s.nine = maps.Clone(s.nine) // 同 spatial：存起來準備還原的那份不跟著改
 		if s.nine == nil {
@@ -1148,10 +1201,20 @@ func (s *Session) backspace() bool {
 		s.nineKeys = slices.Clip(s.nineKeys[:len(s.nineKeys)-1]) // 九宮格：刪最後一顆鍵
 		return true
 	}
+	if s.pinyinPending() {
+		s.pyKeys = s.pyKeys[:len(s.pyKeys)-1] // 漢語拼音：刪最後一個字母（#324）
+		return true
+	}
 	s.restorePendingLiteral()
 	if !s.comp.Empty() {
 		s.comp = s.layout.Backspace(s.comp) // 許氏退掉最後一鍵，那一鍵順便改掉的聲母一起還原（#183）
 		return true
+	}
+	if s.nineSegBackspace() {
+		return true // 自動切字：一次退一顆九宮格鍵（nine_segment.go）
+	}
+	if s.mergeBackspace() {
+		return true // 合併弧合成的音節：拆回打出來的音節，刪掉最後那個（merge.go）
 	}
 	if s.cursor == 0 {
 		return s.composing()
@@ -1178,7 +1241,10 @@ func (s *Session) shiftLocks(at, delta int) {
 	s.shiftMixedKeys(at, delta)
 	s.literalKeys = shiftKeys(s.literalKeys, at, delta)
 	s.spatial = shiftKeys(s.spatial, at, delta)
+	s.merges = shiftKeys(s.merges, at, delta)
+	s.keyNear = shiftKeys(s.keyNear, at, delta)
 	s.nine = shiftKeys(s.nine, at, delta)
+	s.nineSeg = shiftKeys(s.nineSeg, at, delta)
 	s.shiftMixedOrigins(at, delta)
 	s.shiftLiterals(at, delta)
 	s.shiftPendingLiterals(at, delta)
@@ -1208,7 +1274,7 @@ func (s *Session) shiftLocks(at, delta int) {
 
 func (s *Session) moveTo(to int) {
 	s.finishUntoned()
-	if !s.comp.Empty() || s.ninePending() {
+	if !s.comp.Empty() || s.keysPending() {
 		return // 音節打到一半不移動游標
 	}
 	s.cursor = s.literalFloor(max(0, min(to, len(s.syls))))
@@ -1249,10 +1315,13 @@ func (s *Session) signature() string {
 	b.WriteByte('|')
 	b.WriteString(strconv.Quote(s.neuralContext()))
 	b.WriteByte('|')
+	b.WriteString(strconv.FormatBool(s.digitBefore()))
+	b.WriteByte('|')
 	b.WriteString(strconv.FormatFloat(s.Opt.DocumentContextWeight, 'g', -1, 64))
 	b.WriteByte('|')
 	// 九宮格音節的讀音決定音節格；沒有時是空字串
 	b.WriteString(s.nineSignature())
+	b.WriteString(s.nineSegSignature())
 	if s.Fuzzy.AutoEnabled() { // 自動修正的規則、模式與門檻都決定顯示路徑；關閉時簽章與沒有此功能時相同
 		b.WriteString("fuzzy:" + s.Fuzzy.Key() + ":" + fmt.Sprintf("%v", s.Opt.FuzzyAuto) + "|")
 	}
@@ -1290,6 +1359,7 @@ func (s *Session) signature() string {
 }
 
 func (s *Session) refresh() {
+	s.remerge() // 合併弧：窗內的音節改變時重新決定哪幾對要合（merge.go）；關閉時不做事
 	for at, lock := range s.locks {
 		boundary := at - 1
 		if lock.LiteralBoundary > 0 {
@@ -1332,6 +1402,16 @@ func (s *Session) refresh() {
 		s.nearReading = false
 	}
 	s.sug = nil
+	s.refreshSuggestion(false)
+	s.refreshPhoneticHint()
+}
+
+// refreshSuggestion 算補全建議（快照的 suggestion，Tab 接受）。自動切字（手機）時 refresh 不算：手機的外殼不看快照的
+// suggestion，候選列要的補全另外呼叫 Completion；每一鍵都算一次尾端詞條要多花將近 1 ms。Tab（force）時照算。
+func (s *Session) refreshSuggestion(force bool) {
+	if !force && s.NineSegment && len(s.nineSeg) > 0 || force && s.sug != nil {
+		return
+	}
 	if !s.english && s.mixed.raw == "" && s.cursor == len(s.syls) && s.comp.Empty() && s.cand == nil && !s.autoFuzzed() {
 		// refresh 每鍵最多跑三次；輸入沒變就沿用上次的建議。
 		key := s.sugKey()
@@ -1342,7 +1422,6 @@ func (s *Session) refresh() {
 			s.sugPrev, s.sugPrevKey = s.sug, key
 		}
 	}
-	s.refreshPhoneticHint()
 }
 
 // sugKey 是補全搜尋的輸入摘要。pathSig 在神經模式不含個人版本（#101），所以 Gen 與 Store.Time 另列。
@@ -1397,7 +1476,7 @@ func (s *Session) openCandidates(length int) {
 		s.openMixedCandidates()
 		return
 	}
-	if s.ninePending() && !s.finishUntoned() {
+	if s.keysPending() && !s.finishUntoned() {
 		return // 九宮格的鍵組不成音節：沒有候選
 	}
 	if !s.comp.Empty() && !s.finishUntoned() {
@@ -1563,7 +1642,10 @@ func (s *Session) openAnchored(anchor, length int, before bool) bool {
 // 兩段各自查詢、各自算顯示原因，所以排序、近音附註、原始按鍵與原樣注音都與單獨開啟時相同。
 func (s *Session) appendSingles(at int) {
 	words := s.cand
-	if !s.openAt(at, 1) {
+	s.singlesOnly = true // 自動切字：按鍵圖上一個音節的鍵也排得進多字的詞，這裡只要單字（nineCandidates）
+	opened := s.openAt(at, 1)
+	s.singlesOnly = false
+	if !opened {
 		s.cand = words
 		return
 	}
@@ -1614,18 +1696,24 @@ func (s *Session) openAt(pos, length int) bool {
 	s.configureDocumentContext(begin)
 	s.dec.Evidence = s.localEvidence(begin)
 	s.configureCorrections(begin, end, true)
-	// 與視窗相交的跨音鎖定即將被這次選取取代：不補它們的讀音，原音候選只依打出的音查詢。
-	lat := s.pathCorrections(s.lockLattice(s.expand(s.syls), pos, pos+length), pos, pos+length)
-	windows := []decode.Window{{Lat: lat[begin:end], Pinned: pinned}}
-	if near, ok := s.nearWindow(lat, pos, length); ok {
-		near.Lat = near.Lat[begin:end]
-		windows = append(windows, near) // 近音版本與原音版本共用同一份前後文計算
+	var found [][]decode.Candidate
+	if s.nineSegTouches(pos, pos+length) {
+		// 自動切字：還沒固定的九宮格鍵在按鍵圖上列詞，字數可以跟目前的音節數不同（nine_segment.go）
+		found = [][]decode.Candidate{s.nineCandidates(pos, length, pinned, s.singlesOnly)}
+	} else {
+		// 與視窗相交的跨音鎖定即將被這次選取取代：不補它們的讀音，原音候選只依打出的音查詢。
+		lat := s.pathCorrections(s.lockLattice(s.expand(s.syls), pos, pos+length), pos, pos+length)
+		windows := []decode.Window{{Lat: lat[begin:end], Pinned: pinned}}
+		if near, ok := s.nearWindow(lat, pos, length); ok {
+			near.Lat = near.Lat[begin:end]
+			windows = append(windows, near) // 近音版本與原音版本共用同一份前後文計算
+		}
+		if repair, ok := s.phoneticWindow(lat, pos, length); ok {
+			repair.Lat = repair.Lat[begin:end]
+			windows = append(windows, repair)
+		}
+		found = s.dec.CandidatesInContextWindows(lat[begin:end], pos-begin, length, locks, windows...)
 	}
-	if repair, ok := s.phoneticWindow(lat, pos, length); ok {
-		repair.Lat = repair.Lat[begin:end]
-		windows = append(windows, repair)
-	}
-	found := s.dec.CandidatesInContextWindows(lat[begin:end], pos-begin, length, locks, windows...)
 	items := found[0]
 	s.orderPronounCandidates(items, pos, length, pinned)
 	var matched []string
@@ -1660,7 +1748,7 @@ func (s *Session) openAt(pos, length int) bool {
 		}
 	}
 	if length == 1 {
-		items = append(items, rawCandidate(s.syls[pos].Text()))
+		items = append(items, rawCandidate(s.syllableDisplay(s.syls[pos])))
 		if matched != nil {
 			matched = append(matched, "")
 		}
@@ -1752,7 +1840,25 @@ func (s *Session) selectCandidate(id int) bool {
 		return s.selectLiteral(id)
 	}
 	start, length := s.cand.span(id)
-	c, end := s.cand.items[id].Entry, start+length
+	c := s.cand.items[id].Entry
+	shown, auto := s.path, s.autoLog
+	var rejected *[]personal.RejectedSeg
+	if s.nineSegTouches(start, start+length) {
+		// 自動切字：照選的詞的讀音切開、固定那幾顆鍵，詞的字數可以跟原本的音節數不同（nine_segment.go）。
+		// 畫面上的路徑與被換掉的詞（拒絕）換到新的切法（reshown）。
+		cand := s.cand
+		n, ok := s.nineMaterialize(start, length, c.Reading)
+		if !ok {
+			s.cand = cand
+			return false
+		}
+		s.cand = cand
+		var rej []personal.RejectedSeg
+		shown, auto, rej = reshown(shown, auto, start, length, n, c.Surface)
+		rejected = &rej
+		length = n
+	}
+	end := start + length
 	lock := decode.Lock{Word: c.Surface, Len: length}
 	if id < len(s.cand.matched) {
 		lock.Matched = s.cand.matched[id] // 跨音手選：鎖定連同它的讀音，近音路徑持續到鎖定解除
@@ -1765,17 +1871,27 @@ func (s *Session) selectCandidate(id int) bool {
 		}
 	}
 	s.cand = nil
-	s.lockSelection(start, lock, c.Correction)
+	s.lockSelectionShown(start, lock, c.Correction, shown, auto, rejected)
 	return true
 }
 
 // lockSelection 鎖定手選的詞並重新解碼；被換掉的原區段記下來供學習使用。
 func (s *Session) lockSelection(start int, lock decode.Lock, correction bool) {
+	s.lockSelectionShown(start, lock, correction, s.path, s.autoLog, nil)
+}
+
+// lockSelectionShown 同 lockSelection，shown、auto 是使用者選字時畫面上的路徑與自動修正；rejected 非 nil 時是
+// 被換掉的詞（自動切字改了切法時，呼叫端用 reshown 換到新的位置），nil 時照 shown 找。
+func (s *Session) lockSelectionShown(start int, lock decode.Lock, correction bool, shown []decode.Seg, auto []AutoChange, rejected *[]personal.RejectedSeg) {
 	end := start + lock.Len
-	shown, auto := slices.Clone(s.path), slices.Clone(s.autoLog)
-	for _, g := range s.path {
-		if g.Start <= start && start < g.End && (g.Word != lock.Word || g.Start != start || g.End != end) {
-			s.rejected = append(s.rejected, personal.RejectedSeg{Word: g.Word, Start: g.Start, End: g.End, Correction: g.Correction})
+	shown, auto = slices.Clone(shown), slices.Clone(auto)
+	if rejected != nil {
+		s.rejected = append(s.rejected, *rejected...)
+	} else {
+		for _, g := range shown {
+			if g.Start <= start && start < g.End && (g.Word != lock.Word || g.Start != start || g.End != end) {
+				s.rejected = append(s.rejected, personal.RejectedSeg{Word: g.Word, Start: g.Start, End: g.End, Correction: g.Correction})
+			}
 		}
 	}
 	for st, l := range s.locks {
@@ -1792,6 +1908,9 @@ func (s *Session) lockSelection(start int, lock decode.Lock, correction bool) {
 // 詞放不進這幾個音節（例如只靠近音才對得上）時什麼都不改，回報失敗，外殼改走候選。
 func (s *Session) fixWord(start, length int, word string) bool {
 	end := start + length
+	if s.NineSegment && start >= 0 && length > 0 && end <= len(s.syls) && s.nineSegTouches(start, end) {
+		return s.fixNineSegWord(start, length, word) // 自動切字：詞的字數可以跟音節數不同（nine_segment.go）
+	}
 	if start < 0 || length <= 0 || utf8.RuneCountInString(word) != length {
 		return false
 	}
@@ -1805,7 +1924,7 @@ func (s *Session) fixWord(start, length int, word string) bool {
 		return false
 	}
 	s.finishUntoned() // 同送出與開候選：最後一個沒打聲調的音節先完成
-	if end > len(s.syls) || !s.comp.Empty() || s.ninePending() {
+	if end > len(s.syls) || !s.comp.Empty() || s.keysPending() {
 		return fail()
 	}
 	for at := start; at < end; at++ {
@@ -2032,6 +2151,7 @@ func (s *Session) reset() {
 	s.toneKeyDone = ""
 	s.toneRefused, s.toneRetry = nil, nil
 	s.clearDocumentContext()
+	s.digitLeft = false
 	s.rerankCache = nil
 	s.rerankMemo = nil
 	s.sugPrev, s.sugPrevKey = nil, ""
@@ -2044,7 +2164,11 @@ func (s *Session) reset() {
 	s.comp.Reset()
 	s.syls, s.cursor, s.locks, s.rejected, s.cand = nil, 0, map[int]decode.Lock{}, nil, nil
 	s.spatial, s.compNear, s.pendingSpatial = nil, nil, nil
+	s.merges, s.mergeSig, s.mergeSearch = nil, "", nil
+	s.keyNear, s.pendingKeys = nil, nil
 	s.nineKeys, s.nine, s.nineStaged = nil, nil, nil
+	s.pyKeys = ""
+	s.nineSeg, s.nineSearch, s.sylSearch = nil, nil, nil
 	s.literals = nil
 	s.pendingLiterals = nil
 	s.displayed = nil
@@ -2065,11 +2189,14 @@ func (s *Session) snapshot() proto.Snapshot {
 	if s.ninePending() {
 		pending = s.ninePendingText() // 九宮格：目前最可能的拼法
 	}
+	if s.pinyinPending() {
+		pending = s.pyKeys // 漢語拼音：照打的字母（#324）
+	}
 	split := pending != ""
 	// commitComposed 不照畫面送出的未打完注音（#322）：見 proto.Segment.Unfinished。
 	unfinished := false
 	switch {
-	case s.ninePending():
+	case s.keysPending():
 		unfinished = true
 	case s.mixed.raw != "":
 		_, unfinished = s.mixedPending(pending)
@@ -2188,7 +2315,7 @@ func (s *Session) snapshot() proto.Snapshot {
 				item.Text = phraseLabel(item.Text)
 			}
 			if id < len(s.cand.matched) {
-				item.Note = nearNote(s.cand.matched[id]) // 原音項目是空字串
+				item.Note = nearNote(s.readingDisplay(s.cand.matched[id])) // 原音項目是空字串
 			}
 			if e := s.cand.items[id].Entry; item.Note == "" && s.cand.kind == "" && len(e.Reading) > 0 && s.model.VocabReading(e.Surface, e.Reading) {
 				item.Note = "我的詞彙" // 讓人知道這是自己加的詞、按反悔鍵會刪掉（比照 Apple 注音標「常用」）
@@ -2207,6 +2334,7 @@ func (s *Session) snapshot() proto.Snapshot {
 		snap.Candidates = cl
 	}
 	snap.NineReadings = s.nineSnapshot()
+	snap.NineSegments = s.nineSegments()
 	s.mixedSnapshot(&snap)
 	return snap
 }

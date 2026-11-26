@@ -34,6 +34,15 @@ int main() {
     EXPECT(zuin::statusLabel(consent) == "有新版本 0.1.0-dev.19 — 立即安裝");
     EXPECT(zuin::statusCommand(consent) == (std::vector<std::string>{"finish", "-notify"}));
 
+    // #340 手動更新查到新版：第一列「立即下載」，只執行 download-now -notify；舊版 0c-update 沒有 download 動作時照舊。
+    auto found = zuin::parseStatus(R"({"installed":"0.2.14","mode":"manual","stage":"found",
+        "target":{"version":"0.2.15","kind":"core"},"blocked":{"reason":"needs_download","detail":"x"},"action":"download"})");
+    EXPECT(zuin::statusLabel(found) == "有新版本 0.2.15 — 立即下載");
+    EXPECT(zuin::statusCommand(found) == (std::vector<std::string>{"download-now", "-notify"}));
+    auto oldFound = zuin::parseStatus(R"({"mode":"manual","target":{"version":"0.2.15"},"blocked":{"reason":"needs_download"}})");
+    EXPECT(zuin::statusLabel(oldFound) == "0.2.15 更新中");
+    EXPECT(zuin::statusCommand(oldFound)[0] == "auto");
+
     auto relogin = zuin::parseStatus(R"({"stage":"pending","target":{"version":"0.1.0-dev.19"},
         "blocked":{"reason":"needs_relogin","detail":"登出再登入時自動完成安裝"}})");
     EXPECT(zuin::statusLabel(relogin) == "0.1.0-dev.19：登出再登入時自動完成安裝");

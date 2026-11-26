@@ -183,7 +183,25 @@ final class EngineSession {
         self.connection = connection
         self.inputAllowed = inputAllowed
     }
-    func reset() { id = nil; connection.disconnect() }
+    func reset() { id = nil; digitPassed = false; connection.disconnect() }
+    /// 核心記著「游標前一個字是阿拉伯數字」（#337）：上一個交還 App 的按鍵是數字，或外殼在開始組字時讀到數字（digit_before）。
+    /// 之後不經過核心的事（快捷鍵、App 結束組字＝點到別處）時游標可能已經離開數字，見 forgetDigit。
+    private(set) var digitPassed = false
+
+    /// 交還 App 時打出阿拉伯數字的按鍵（主鍵盤 0–9、數字鍵盤 KP0–KP9），同核心的 isDigitKey。
+    static func digitKey(_ key: String?) -> Bool {
+        guard var k = key else { return false }
+        if k.hasPrefix("KP") { k.removeFirst(2) }
+        return k.count == 1 && k.unicodeScalars.allSatisfy { $0.value >= 0x30 && $0.value <= 0x39 }
+    }
+
+    /// 沒在組字時送 cancel，讓核心清掉「游標前一個字是數字」（#337）。只在 session 開著時送，不為此啟動引擎。
+    func forgetDigit() {
+        guard digitPassed else { return }
+        digitPassed = false
+        guard id != nil else { return }
+        _ = try? handle(Request(type: "cancel"))
+    }
     func ready() -> Bool { inputAllowed() && connection.ready() }
     /// A new engine session does not know earlier commit tokens.
     var isOpen: Bool { id != nil }
@@ -294,6 +312,12 @@ final class EngineSession {
             guard let id,
                   let snapshot = try connection.call(Envelope(op: "handle", session: id, req: request)).snapshot else {
                 throw EngineError.invalidFrame
+            }
+            if let digit = request.digitBefore { digitPassed = digit } // 核心照外殼讀到的記（#337），交還的鍵照下一行
+            if request.type == "key", !snapshot.handled {
+                digitPassed = Self.digitKey(request.key)
+            } else if snapshot.commit?.isEmpty == false || request.type == "cancel" || request.type == "commit" {
+                digitPassed = false // 核心送出或放棄組字時已經清掉
             }
             return snapshot
         } catch { reset(); throw error }

@@ -162,14 +162,21 @@ type Manifest struct {
 // 手機外殼自己用 rerank.UnknownTonesDeclared 決定。桌面評估過要開時，改成 rerank.UnknownTonesDeclared(m.Schema, m.TonePolicy)。
 func (m Manifest) desktopUnknownTones() bool { return false }
 
-// options 是套件宣告的融合設定；Worker 與 Supervisor 共用。權重照 manifest（PF512 為 2.0），不設 ContextlessWeight；
-// Bases 讓字表外的讀音在本機就照統計引擎；Chars 讓含字表外字元的候選在本機拿掉。
+// options 是套件宣告的融合設定；Worker 與 Supervisor 共用。有前文的權重照 manifest（出貨套件為 2.0）；沒前文用桌面的
+// rerank.DesktopContextlessWeight（#337），截到 manifest 的 weight；Bases 讓字表外的讀音在本機就照統計引擎；Chars 讓含字表外字元的候選在本機拿掉。
 func (m Manifest) options(scorer rerank.Scorer) rerank.Options {
 	return rerank.Options{Scorer: scorer, Weight: m.Weight, Margin: m.Margin, AllowPartial: m.AllowPartial,
 		ContextRunes: contextRunes(m), HintGap: m.HintGap, TextWeight: m.TextWeight, TextMargin: m.TextMargin,
 		NeutralExpand: m.NeutralExpand, NeutralBases: neutralBases(m),
-		UnknownTones: m.desktopUnknownTones(), Bases: m.bases, Chars: m.chars}
+		UnknownTones: m.desktopUnknownTones(), Bases: m.bases, Chars: m.chars,
+		ContextlessWeight: min(m.Weight, rerank.DesktopContextlessWeight), ShortContextlessWeight: min(m.Weight, rerank.DesktopShortContextlessWeight),
+		ShortContextlessSyllables: rerank.DesktopShortContextlessSyllables, DigitContext: contextRunes(m) > 0}
 }
+
+// DigitContext 是 rerank.Request.DigitBefore 送給序列模型時的前文（#337）：固定的 "1"，不是使用者打的數字。
+// 選字模型只認得文字前文。阿拉伯數字之後的量詞片段（模型 4a80caf1）：試算時送真正的數字 26.9% → 12.8%、
+// 固定的 "1" 13.4%；照外殼順序經 0c-server 重播，量詞字錯誤率 24.9% → 13.3%。
+const DigitContext = "1"
 
 // supports 是送出前的檢查（rerank.Options.Supports）：桌面不送 tone_known，字表外的基底與字不送。不建 NeutralBases，每次請求都走。
 func (m Manifest) supports(r rerank.Request) bool {
@@ -415,7 +422,10 @@ func (w *Worker) Score(r rerank.Request) ([]float64, error) {
 		return nil, errors.New("unsupported neural request")
 	}
 	if contextRunes(w.manifest) == 0 {
-		r.Context = "" // 未宣告前文的套件永遠收不到文件文字
+		r.Context, r.DigitBefore = "", false // 未宣告前文的套件永遠收不到文件文字
+	}
+	if r.DigitBefore {
+		r.Context, r.DigitBefore = DigitContext, false // 模型的協定沒有旗標，換成固定的前文
 	}
 	started := time.Now()
 	defer func() { w.stats.TotalUS += time.Since(started).Microseconds() }()

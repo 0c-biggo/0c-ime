@@ -17,7 +17,7 @@ var benchmarkSnapshot proto.Snapshot
 
 func BenchmarkEnglishPackLoad(b *testing.B) {
 	dir := filepath.Join(b.TempDir(), "pack")
-	if err := englishpack.Compile("../../data/english", dir); err != nil {
+	if err := englishpack.CompileRanked("../../data/english", dir); err != nil {
 		b.Fatal(err)
 	}
 	runtime.GC()

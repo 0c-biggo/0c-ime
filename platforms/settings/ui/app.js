@@ -12,7 +12,7 @@
 
   const state = {
     info: null, status: null, settings: null, error: null,
-    busy: new Set(), profileBusy: false, checking: false, updating: null, repairAsk: false, exporting: false, summary: null,
+    busy: new Set(), profileBusy: false, checking: false, updating: null, modeBusy: false, repairAsk: false, exporting: false, summary: null,
   };
   let page = 'overview';
   let toastTimer = null;
@@ -94,7 +94,7 @@
   const MODEL_REASON = {
     missing_runtime: '（缺少系統元件：Visual C++ 執行階段）', timeout: '（模型載入逾時）', failed: '（模型程式無法啟動）',
   };
-  const updateMode = () => window.ZcUpdateMode(state.status?.mode, state.info?.platform);
+  const updateMode = () => window.ZcUpdateMode(state.status?.mode, state.info?.platform, !!state.status?.features?.update_mode);
   // 由系統套件管理員更新（#181，Linux 發行版的套件）：0c-update 不檢查、不下載、不安裝，這裡也不提供這些按鈕。
   const packageManaged = () => state.status?.updates === 'package-manager';
   const PACKAGE_MANAGED = '由系統套件管理員更新';
@@ -108,7 +108,7 @@
     failed: '該版本檢查失敗，已暫停',
   };
   const BLOCKED = {
-    needs_consent: '等待你確認安裝', engine_busy: '正在組字，閒置時才會更新', needs_relogin: '重新登入後生效',
+    needs_consent: '等待你確認安裝', needs_download: '等你按「立即下載」', engine_busy: '正在組字，閒置時才會更新', needs_relogin: '重新登入後生效',
     install_failed: '安裝沒有完成', health_failed: '新版檢查失敗，已回復原版',
   };
   // 與 internal/autoupdate 的 OldShellDetail 相同：重新登入後系統仍開著更新前留下的舊版輸入法（#98）。只有 macOS 會出現。
@@ -120,7 +120,7 @@
   const SHELL_RETIRING_HELP = '新版已安裝，鎖定螢幕或離開電腦時換上，不必登出；在那之前照常可以打字。';
   const SHELL_RETIRING_NOTE = '不必登出，在那之前照常可以打字。';
   const OLD_SHELL_HELP = '新版已安裝，但系統仍開著更新前留下的舊版輸入法。請先儲存工作，登出再登入一次就會改用新版；如果之後仍看到這則訊息，請到「問題排解」匯出狀態摘要回報。';
-  const VALUE = { neural: '神經選字', statistical: '統計引擎', off: '關閉', select: '僅供選字', auto: '自動修正（實驗）', vertical: '直排', grid: '多排', before: '游標前方', after: '游標後方', standard: '標準', eten: '倚天 41 鍵', hsu: '許氏' };
+  const VALUE = { neural: '神經選字', statistical: '統計引擎', off: '關閉', select: '僅供選字', auto: '自動修正（實驗）', vertical: '直排', grid: '多排', before: '游標前方', after: '游標後方', standard: '標準', eten: '倚天 41 鍵', hsu: '許氏', pinyin: '漢語拼音' };
   const ERROR = {
     read_only: '設定檔來自較新版本的靈犀注音，這個版本只能查看，不能修改。',
     corrupt: '設定檔無法解析。可到「總覽」修復。',
@@ -274,6 +274,35 @@
       await refresh();
     }
   }
+
+  // 更新頁的「更新方式」下拉選單（#340）：0c-update mode auto|ask|manual -json，只改狀態檔，不連網。
+  const MODE_CHANGED = {
+    auto: '已改成自動更新。',
+    ask: '已改成下載後詢問：有新版本時會通知你，按「立即安裝」才更新。',
+    manual: '已改成手動更新：有新版本時會通知你，不會自己下載。',
+  };
+  async function setUpdateMode(mode) {
+    if (state.modeBusy || mode === state.status?.mode) return;
+    state.modeBusy = true;
+    render();
+    try {
+      const result = await invoke('set_update_mode', { mode });
+      if (!result.ok) toast('沒有改成：' + errorText(result.error), 'error');
+      else toast(MODE_CHANGED[mode] || '已改好。', 'ok');
+    } catch (error) {
+      toast('沒有改成：' + String(error), 'error');
+    } finally {
+      state.modeBusy = false;
+      await refresh();
+    }
+    // 處理中選單停用，焦點掉到頁面上；鍵盤操作的人接著在選單上繼續（同 changePairs）。
+    if (document.activeElement === document.body) {
+      const control = document.querySelector('[data-focus="update-mode"]');
+      if (control && !control.disabled) control.focus();
+    }
+  }
+  // 0.2.15 起的 0c-update 才接受 mode -json（status 的 features.update_mode）；舊版只顯示更新方式。
+  const updateModeSelect = () => !!(state.status?.features?.update_mode && typeof state.status.mode === 'string' && state.status.mode);
 
   let pollingStatus = false;
   async function pollUpdate() {
@@ -597,7 +626,7 @@
           : blocked?.detail === OLD_SHELL ? OLD_SHELL_HELP : retiringDetail(blocked?.detail) ? SHELL_RETIRING_NOTE
           : '新版已安裝；請儲存工作後登出再登入，讓應用程式載入新版輸入法。')
         : view.stage === 'pending' ? '正在確認新版引擎是否可用。' : (view.stage === 'found' && !updateMode().background(status.paused_until) ? '可立即下載' : STAGE[view.stage] || ('進度：' + view.stage)) + '。') : null,
-      blocked && !op && view.stage !== 'pending' && !(view.stage === 'found' && ['needs_relogin', 'needs_consent'].includes(blocked.reason))
+      blocked && !op && view.stage !== 'pending' && !(view.stage === 'found' && ['needs_relogin', 'needs_consent', 'needs_download'].includes(blocked.reason))
         ? h('p', {}, blocked.detail || BLOCKED[blocked.reason] || '更新暫時受阻。') : null));
     if (op) {
       const downloading = ['downloading', 'retrying'].includes(op.phase);
@@ -613,21 +642,36 @@
       h('button', { type: 'button', class: 'secondary', disabled: state.checking || !!state.updating || !!op, 'data-focus': 'check', onclick: checkNow }, state.checking ? '檢查中…' : '檢查更新'),
       canDownload ? h('button', { type: 'button', class: 'primary', disabled: !!state.updating, 'data-focus': 'download', onclick: () => updateNow('download') }, state.updating === 'download' ? '下載中…' : op ? '立即加速下載' : '立即下載') : null,
       canInstall ? h('button', { type: 'button', class: 'primary', disabled: !!state.updating, 'data-focus': 'install', onclick: () => updateNow('install') }, state.updating === 'install' ? '安裝中…' : '立即安裝') : null));
+    const mode = updateMode();
+    const selectable = updateModeSelect();
+    if (selectable) {
+      // 三種更新方式（#340）：選到的那項底下一句說明。不認得的值（較新版本寫的）照實列出、不能選回。
+      const options = mode.options.map((o) => h('option', { value: o.value, selected: o.value === status.mode }, o.label));
+      if (!mode.known) options.push(h('option', { value: status.mode, selected: true, disabled: true }, mode.label));
+      root.append(h('div', { class: 'card' }, row(
+        h('div', {}, h('label', { class: 'label', id: 'label-update-mode', for: 'update-mode' }, '更新方式'),
+          h('div', { class: 'desc', id: 'update-mode-note' }, mode.note || '目前的更新方式是「' + mode.label + '」。')),
+        h('select', {
+          id: 'update-mode', class: 'update-mode', 'aria-labelledby': 'label-update-mode', 'aria-describedby': 'update-mode-note',
+          'data-focus': 'update-mode', disabled: state.modeBusy || !!state.updating || state.checking,
+          onchange: (event) => setUpdateMode(event.target.value),
+          onblur: () => { if (renderLater) setTimeout(render); },
+        }, ...options))));
+    }
     const facts = [
       ['上次檢查', fmtTime(view.last_check)],
       ['上次成功', fmtTime(view.last_success)],
     ];
-    // 手動檢查時排程不查詢（狀態檔留著的時間不算數）。
+    // 舊版 0c-update 的手動檢查排程不查詢（狀態檔留著的時間不算數）；#340 起手動更新也照排程查詢。
     if (updateMode().scheduled) facts.push(['下次排定檢查', fmtTime(view.next_check)]);
     if (view.check_failures) facts.push(['連續失敗', view.check_failures + ' 次（' + (view.error || '原因不明') + '）']);
     if (view.latest) facts.push(['索引最新版本', view.latest.version]);
     if (status.paused_until) facts.push(['暫停到', fmtTime(status.paused_until)]);
-    const mode = updateMode();
-    facts.push(['更新方式', mode.label]);
+    // 有下拉選單時它就說明了目前的方式；舊版 0c-update（沒有 features.update_mode）照舊列出方式與說明。
+    if (!selectable) facts.push(['更新方式', mode.label]);
     root.append(h('h2', {}, '詳細資訊'), h('div', { class: 'card' }, h('dl', { class: 'facts' }, ...facts.flatMap(([k, v]) => [h('dt', {}, k), h('dd', {}, v)]))));
-    if (mode.note) root.append(h('p', { class: 'muted', id: 'update-mode-note' }, mode.note));
-    // Windows「自動」的說明已經寫了裝好不必登出，其他方式才在這裡補。
-    const elevation = isWindows() ? '，可能要求系統管理員確認' + (/重新開啟/.test(mode.note) ? '' : '；裝好不必登出，已經開著的應用程式要重新開啟才會換成新版') : '';
+    if (!selectable && mode.note) root.append(h('p', { class: 'muted', id: 'update-mode-note' }, mode.label + '：' + mode.note));
+    const elevation = isWindows() ? '，可能要求系統管理員確認；裝好不必登出，已經開著的應用程式要重新開啟才會換成新版' : '';
     root.append(h('p', { class: 'muted' }, '「檢查更新」查詢新版；「立即下載」現在下載並核對套件。完成後可按「立即安裝」' + elevation + '。'));
   }
 
@@ -702,9 +746,15 @@
     mode: (root) => settingsPage('mode', root), candidates: (root) => settingsPage('candidates', root), keyboard: (root) => settingsPage('keyboard', root),
   };
 
+  // 更新頁每秒重畫（pollUpdate）；「更新方式」下拉選單（#340）有焦點時重畫會換掉正在打開的選單，所以先不畫，
+  // 離開選單（blur）時補畫。改方式時（modeBusy）照常畫。
+  let renderLater = false;
+  const holdingUpdateMode = () => page === 'update' && !state.modeBusy && document.activeElement?.dataset?.focus === 'update-mode';
   function render() {
     // 名稱輸入仍在組字時保留原欄位；背景 refresh 的結果等 compositionend 再畫。
     if (page === 'styles' && styles?.composing()) return;
+    if (holdingUpdateMode()) { renderLater = true; return; }
+    renderLater = false;
     const main = document.querySelector('main');
     const scroll = { top: main.scrollTop, left: main.scrollLeft };
     const focused = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.focus : null;

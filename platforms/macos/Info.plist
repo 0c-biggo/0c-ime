@@ -26,8 +26,10 @@
     <key>TISIconIsTemplate</key><true/>
     <!-- 輸入模式（#87）：系統登記、啟用與選取的是模式 com.biggo.inputmethod.0c.Bopomofo，頂層 ID 只是父項。
          沒有模式時系統把它當成不分模式的輸入法，備忘錄等標準文字視圖從選單列切換會崩潰；模式名稱在 InfoPlist.strings。
-         預設狀態必須是 false：設成 true 時，從沒有模式的版本升級後系統只把模式「視為」已啟用，不寫入啟用清單，
-         重新登入後選單列就沒有靈犀注音（macOS 26.6.2 實測）；false 時由安裝程式明確啟用並經使用者允許後才會記錄。 -->
+         預設啟用（#348，同小麥注音、鼠鬚管）：安裝程式只送父項的要求，使用者按一次「允許」系統就把父項與模式一起寫進
+         啟用清單（false 時要依序允許兩次）。代價是 TIS 一直把模式顯示成已啟用，即使它不在啟用清單裡（從沒有模式的版本
+         升級、0.2.14 以前只允許了父項）：那樣重新登入後選單列沒有靈犀注音（#87）。所以安裝程式與 0c-update 都改看
+         com.apple.inputsources 的 AppleEnabledThirdPartyInputSources，模式不在清單裡就明確送出模式的要求。 -->
     <key>ComponentInputModeDict</key><dict>
         <key>tsInputModeListKey</key><dict>
             <key>com.biggo.inputmethod.0c.Bopomofo</key><dict>
@@ -36,7 +38,7 @@
                 <key>tsInputModeCharacterRepertoireKey</key><array><string>Hant</string><string>Han</string></array>
                 <key>tsInputModeScriptKey</key><string>smTradChinese</string>
                 <key>tsInputModePrimaryInScriptKey</key><true/>
-                <key>tsInputModeDefaultStateKey</key><false/>
+                <key>tsInputModeDefaultStateKey</key><true/>
                 <key>tsInputModeIsVisibleKey</key><true/>
                 <key>tsInputModeMenuIconFileKey</key><string>0c.tiff</string>
                 <key>tsInputModeAlternateMenuIconFileKey</key><string>0c.tiff</string>

@@ -4,6 +4,7 @@
 The bundle also carries an i686 TSF DLL at x86/0c_tsf.dll for 32-bit applications (#112); the engine,
 candidate window and updater stay x64."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -34,6 +35,42 @@ TARGET32 = "i686-pc-windows-msvc"
 DLL32 = "x86/0c_tsf.dll"  # 與 internal/update 的 WindowsDLL32 相同
 PLATFORM = ROOT / "platforms/windows"
 PE_MACHINE = {"x64": b"\x64\x86", "x86": b"\x4c\x01"}
+
+
+# TSF 註冊指紋（#294）：0c_tsf.dll 匯出的 ZcRegistrationSpec 是它註冊時寫入登錄的內容（register.rs 的 registration_spec），
+# 加上有沒有 32 位元 DLL 後取 SHA-256，寫進 release.json 的 tsf_registration。更新器看新舊版本的指紋相同，就以一般權限
+# 只換固定路徑的 DLL，不跳 UAC；不同才以系統管理員重新註冊。
+REGISTRATION_EXPORT = "ZcRegistrationSpec"
+REGISTRATION_HEADER = "0c-tsf-registration "
+
+
+def registration_fingerprint(spec, x86):
+    if not spec.startswith(REGISTRATION_HEADER) or not spec.endswith("\n"):
+        raise ValueError("0c_tsf.dll 的註冊內容格式不對")
+    text = spec + (f"x86 {DLL32}\n" if x86 else "")
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def registration_spec(dll):
+    """載入建好的 x64 0c_tsf.dll，讀它的註冊內容。DllMain 只記下模組控制代碼，ZcRegistrationSpec 不碰 COM 與登錄；
+    載入的是暫存複本，釋放後才刪，簽章與打包用的檔案不會被鎖住。"""
+    import ctypes
+    from ctypes import wintypes
+    if struct.calcsize("P") != 8:
+        raise ValueError("要用 64 位元的 Python 才能載入 x64 的 0c_tsf.dll 讀註冊內容")
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.FreeLibrary.argtypes = [wintypes.HMODULE]
+    with tempfile.TemporaryDirectory(prefix="0c-tsf-spec-") as temp:
+        copy = Path(temp) / "0c_tsf.dll"
+        shutil.copyfile(regular(dll), copy)
+        library = ctypes.WinDLL(str(copy))
+        try:
+            export = getattr(library, REGISTRATION_EXPORT)
+            export.argtypes, export.restype = [], ctypes.c_char_p
+            raw = export()  # c_char_p 回傳複本，釋放 DLL 後仍可用
+        finally:
+            kernel32.FreeLibrary(library._handle)
+    return raw.decode("utf-8")
 
 
 def check_pe(path, machine="x64"):
@@ -383,6 +420,7 @@ def build(args):
                    "channel": "internal-preview" if args.preview else "public-beta", "os": "windows", "arch": "amd64",
                    "revision": revision, "dirty": dirty, "build_platform": platform.platform(),
                    "data_format": manifest["format"], "data_manifest_sha256": digest(stage / "data/manifest.json"),
+                   "tsf_registration": registration_fingerprint(registration_spec(stage / "0c_tsf.dll"), (stage / DLL32).is_file()),
                    "files": {p.relative_to(stage).as_posix(): digest(p) for p in sorted(stage.rglob("*")) if p.is_file()}}
         (stage / "release.json").write_text(json.dumps(release, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         subprocess.run([str(stage / "0c-update.exe"), "verify", "-bundle", str(stage)], check=True)

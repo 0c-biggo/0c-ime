@@ -49,7 +49,7 @@ func testSavedEnglishAutocomplete(t *testing.T, full bool) {
 		if err := englishpack.Compile("../../data/english", filepath.Join(target, "english")); err != nil {
 			t.Fatal(err)
 		}
-		data, words = target, 82015
+		data, words = target, 82045
 	}
 	sock := filepath.Join(dir, "autocomplete.sock")
 	config := settings.Default()

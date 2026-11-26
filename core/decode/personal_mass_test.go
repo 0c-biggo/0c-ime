@@ -112,26 +112,26 @@ func TestMassScaleKeptPerVersionAndBounded(t *testing.T) {
 	if len(d.massScale) == 0 {
 		t.Fatal("測試前提：前綴保護應算出 massScale")
 	}
-	d.massScale["保留"] = 1
+	d.massScale[massKey{left: "保留"}] = 1
 	d.Decode(lat, nil, false)
-	if _, ok := d.massScale["保留"]; !ok {
+	if _, ok := d.massScale[massKey{left: "保留"}]; !ok {
 		t.Fatal("版本沒變，massScale 應保留")
 	}
 	score.gen++
 	d.Decode(lat, nil, false)
-	if _, ok := d.massScale["保留"]; ok {
+	if _, ok := d.massScale[massKey{left: "保留"}]; ok {
 		t.Fatal("版本變了，massScale 應重建")
 	}
-	full := map[string]float64{} // 已滿、而且沒有這次要用的鍵：下一個新鍵要讓它整份清掉
+	full := map[massKey]float64{} // 已滿、而且沒有這次要用的鍵：下一個新鍵要讓它整份清掉
 	for i := range maxMassKeys {
-		full[string(rune(0x4e00+i))] = 1
+		full[massKey{left: string(rune(0x4e00 + i))}] = 1
 	}
 	d.massScale = full
 	d.Decode(lat, nil, false)
 	if n := len(d.massScale); n == 0 || n > maxMassKeys {
 		t.Fatalf("massScale 有 %d 筆，應清掉重算而不超過 %d", n, maxMassKeys)
 	}
-	if _, ok := d.massScale[string(rune(0x4e00+maxMassKeys-1))]; ok {
+	if _, ok := d.massScale[massKey{left: string(rune(0x4e00 + maxMassKeys - 1))}]; ok {
 		t.Fatal("超過上限時應整份清掉")
 	}
 }

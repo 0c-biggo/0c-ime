@@ -192,6 +192,8 @@ func (s *Session) segRerankDigest(start, end int, shown, before string) string {
 	b.WriteByte('|')
 	b.WriteString(s.neuralContext())
 	b.WriteByte('|')
+	b.WriteString(strconv.FormatBool(start == 0 && s.digitBefore()))
+	b.WriteByte('|')
 	b.WriteString(s.contextLeft(start))
 	fmt.Fprintf(&b, "|%d|%v|%d|%v|%v|%v|%v|%v|%d|%g|%g|%g|%g|%g|%g|%g|%s|%v|%d|%d",
 		s.model.Gen, s.model.Store.Time, s.Rerank.ContextRunes, s.Opt.SeparateContinuation, s.Opt.PrefixAware, s.Opt.FuzzyAuto, s.documentEnabled,
@@ -199,7 +201,8 @@ func (s *Session) segRerankDigest(start, end int, shown, before string) string {
 		s.Rerank.Weight, s.Rerank.Margin, s.Rerank.HintGap, s.Rerank.TextWeight, s.Rerank.TextMargin,
 		s.Fuzzy.Key(), s.Rerank.AllowPartial, start, end)
 	// 手機：沒前文的權重、未知聲調與九宮格讀音（固定讀音會改音節格，音節本身可能不變）。
-	fmt.Fprintf(&b, "|%g|%v|%s", s.Rerank.ContextlessWeight, s.Rerank.UnknownTones, s.nineSignature())
+	fmt.Fprintf(&b, "|%g|%g|%d|%v|%s|%v", s.Rerank.ContextlessWeight, s.Rerank.ShortContextlessWeight, s.Rerank.ShortContextlessSyllables,
+		s.Rerank.UnknownTones, s.nineSignature(), s.Rerank.TextAnyLength)
 	return b.String()
 }
 
@@ -230,9 +233,18 @@ func (s *Session) rerankSegmentBody(lat input.Lattice, start, end int, shown, be
 	}
 	req := rerank.Request{AllowPartial: opt.AllowPartial, Revision: s.rev + 1, Context: context, Reading: slices.Clone(s.syls[start:end]), Candidates: rows}
 	req.Reading, req.ToneKnown = rerank.MaskTones(req.Reading)
-	weight, margin := opt.WeightFor(req.Context), opt.Margin
+	// 游標前一個字是阿拉伯數字（#337）：組字的第一段、沒有前文時帶一個位元，權重照有前文（WeightOf）。
+	req.DigitBefore = opt.DigitContext && opt.ContextRunes > 0 && start == 0 && context == "" && end-start >= 2 && s.digitBefore()
+	weight, margin := opt.WeightOf(req), opt.Margin
 	if end-start == 1 {
 		req.Mode, weight, margin = rerank.ModeText, opt.TextWeight, opt.TextMargin
+	}
+	// 九宮格位置有多種拼法時，N-best 的候選跨拼法；讀音評分的分數是 log P(字 | 讀音)，不同讀音之間不能比，
+	// 所以宣告 TextAnyLength 的評分器改用文字評分（不看讀音），融合權重與門檻照讀音評分。
+	spellings := end-start >= 2 && opt.TextAnyLength && s.nineSpellings(start, end)
+	if spellings {
+		req.Mode, req.DigitBefore = rerank.ModeText, false
+		weight = opt.WeightOf(req)
 	}
 	if !opt.Supports(req) {
 		return nil, true
@@ -242,7 +254,7 @@ func (s *Session) rerankSegmentBody(lat input.Lattice, start, end int, shown, be
 	key := rerankKey(req) + rerank.ToneKnownKey(req) + vetoInputs(rows) + s.abbrevVetoKey(start, end, rows)
 	entry, cached := s.rerankCache[key]
 	if !cached || entry.gen != s.model.Gen || entry.time != s.model.Store.Time {
-		abbrevVeto, ok := vetoAbbrev(s, lat, start, end, rows) // 簡拼位置的讀音不准改（rerank_abbrev.go）
+		abbrevVeto, ok := vetoAbbrev(s, lat, start, end, rows, spellings) // 簡拼位置的讀音不准改（rerank_abbrev.go）
 		if !ok {
 			return nil, true
 		}
@@ -683,6 +695,8 @@ func vetoInputs(rows []decode.Hypothesis) string {
 func rerankKey(r rerank.Request) string {
 	var b strings.Builder
 	b.WriteString(strconv.Quote(r.Context))
+	b.WriteByte('|')
+	b.WriteString(strconv.FormatBool(r.DigitBefore))
 	b.WriteByte('|')
 	b.WriteString(zhuyin.Key(r.Reading))
 	b.WriteByte('|')

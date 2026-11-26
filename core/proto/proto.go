@@ -46,6 +46,8 @@ const (
 	// 移除其他讀音（左欄「注音選擇」）。To 是快照 nine_readings.at：pending 時（To 等於游標、還有沒完成的鍵）固定的是那串鍵
 	// 的拼法，之後照常按聲調鍵完成；否則是第 To 個已完成的音節，蓋到它的手選解除、重新解碼。Word 不是那個位置的讀音時
 	// 什麼都不改，Notices 帶「沒有這個讀音」。
+	// 自動切字（引擎的 NineSegment）時另有 Length：這個拼法佔幾顆鍵（快照 nine_readings.keys 的那一項），0 是目前的鍵數。
+	// 效果是固定第 To 個音節的切點與拼法（nine_segments 的 fixed），後面的鍵重新切；拼法與鍵數對不上時同樣不改。
 	NineReading = "nine_reading"
 )
 
@@ -153,7 +155,14 @@ type Request struct {
 	// 或指定聲調（Symbol 是單一聲調符號）時，核心把每顆鍵各取一個注音組成合法音節，全部放進音節格由解碼依前後文挑。
 	// 有沒完成的九宮格鍵時，不帶 Group 的單一注音（長按選的）當成只有那個注音的一顆鍵。
 	// 沒有 Group（也沒有沒完成的九宮格鍵）時行為與沒有此功能時相同。
+	//
+	// 自動切字（引擎的 NineSegment）時鍵一律接上、不必按聲調鍵：接不上目前音節的鍵由核心切成新的音節，
+	// 聲調鍵是錨點（音節在那裡結束；只有一個聲調時那個音節帶那個聲調），Backspace 一次刪一顆鍵（先刪錨點）。
 	Group string `json:"group,omitempty"`
+	// DigitBefore（#337）：外殼讀到的游標前一個字是不是阿拉伯數字；nil 是外殼沒讀或讀不到。核心只在沒有組字時看，
+	// 記成選字模型的一個位元（見 rerank.Request.DigitBefore），不記數字本身。外殼看不到英數模式的按鍵時才需要送
+	// （Windows TSF 在開始組字的第一個按鍵讀）；其他外殼的英數按鍵都經過核心，由核心自己記。
+	DigitBefore *bool `json:"digit_before,omitempty"`
 }
 
 // NearKey 是一次點按的鄰鍵假設。
@@ -283,16 +292,37 @@ type Snapshot struct {
 	Bell bool `json:"bell,omitempty"`
 	// NineReadings（注音九宮格）：左欄「注音選擇」要畫的讀音；沒有九宮格的鍵或音節時省略。
 	NineReadings *NineReadings `json:"nine_readings,omitempty"`
+	// NineSegments（注音九宮格自動切字）：組字裡每個九宮格音節目前的切法，依序；沒開自動切字或沒有九宮格的鍵時省略。
+	// 組字條照它畫，外殼不自己從送出的鍵推。
+	NineSegments []NineSegment `json:"nine_segments,omitempty"`
+}
+
+// NineSegment 是自動切字時組字裡的一個九宮格音節。
+type NineSegment struct {
+	At   int `json:"at"`   // 音節位置，同 cursor、nine_reading.to、候選範圍用的位置
+	Key  int `json:"key"`  // 這個音節從組字裡第幾顆九宮格鍵開始（從 0 起算，固定過的音節的鍵也算）
+	Keys int `json:"keys"` // 佔幾顆鍵
+	// Reading 是畫面寫法（沒打聲調的不帶聲調、一聲不標），一定不是空字串；還沒打完時是目前最可能的開頭拼法，Partial 為 true。
+	Reading string `json:"reading"`
+	Anchor  bool   `json:"anchor"` // 這個音節後面按了聲調鍵
+	Fixed   bool   `json:"fixed"`  // 使用者用 nine_reading、選字或 fix 固定過，切點與拼法不會再被解碼改掉
+	Partial bool   `json:"partial,omitempty"`
 }
 
 // NineReadings 是一個九宮格音節可以選的讀音（注音，沒打聲調的不帶聲調、一聲不標）。
 // 有還沒完成的九宮格鍵時是那串鍵目前可能的拼法（Pending，音節的開頭），At 是游標（那個音節會插入的位置）；
 // 否則是游標前那個有多個讀音的九宮格音節，At 是它的位置。外殼點了其中一項送 nine_reading（To 為 At、Word 為那一項）。
+//
+// 自動切字時列的是從左邊數來第一個還沒固定的九宮格音節（全部固定時省略）：Readings 包含不同鍵數的拼法（目前的鍵數在前，
+// 其餘依鍵數；同鍵數依常用程度），Keys 與它一一對應是每一項佔幾顆鍵，Key 是這個音節第一顆鍵的位置（同 nine_segments.key）。
+// 還沒打完的尾端音節是它的鍵的開頭拼法（Pending）。外殼點了送 nine_reading（To 為 At、Word 為那一項、Length 為對應的 Keys）。
 type NineReadings struct {
 	At       int      `json:"at"`
 	Pending  bool     `json:"pending,omitempty"`
 	Readings []string `json:"readings"` // 依常用程度；Pending 時第一項是組字區畫的那個
 	Current  int      `json:"current"`  // 組字目前用的那一項（Readings 的索引）；Pending 時一律 0
+	Key      int      `json:"key,omitempty"`
+	Keys     []int    `json:"keys,omitempty"`
 }
 
 // SuggestedText 回傳按 Tab 接受後預覽的完整組字；無建議或範圍不合法時為空。

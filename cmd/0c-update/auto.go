@@ -38,6 +38,8 @@ type system struct {
 	consent   bool          // 使用者親自執行 finish：可以做需要確認的安裝
 	shellIdle time.Duration // 外殼切換前重新核對的閒置門檻
 	atLogin   bool          // 登入時、桌面啟動前（Linux login 單元）：可以換外殼
+	// archiveSHA 是正在安裝的外殼套件的 SHA-256（自我測試的紀錄用，#293）
+	archiveSHA string
 }
 
 func (p *system) Installed() (string, error) {
@@ -128,13 +130,18 @@ func (p *system) InstallShell(ctx context.Context, archive string) (bool, error)
 	if !p.ReloadsShell() && deferShell() && !p.atLogin {
 		return false, autoupdate.ErrAtLogin
 	}
-	if !p.consent && !p.atLogin && !shellUnattended() {
+	if !p.consent && !p.atLogin && !shellUnattended() && !shellKeepsRegistration(p.base, archive) {
 		return false, autoupdate.ErrNeedsConsent
 	}
 	s, err := autoupdate.Load(p.base)
 	if err != nil || s.Target == nil {
 		return false, fmt.Errorf("沒有待安裝的版本")
 	}
+	// 這個套件裡的新版更新器上次自我測試無法判定、還在冷卻：不必再解開套件（#293）。
+	if result, detail, ok := stagedVerdict(p.base, s.Target.SHA256); ok && result == selftestInconclusive && handsOver(s.Target.Version) {
+		return false, fmt.Errorf("新版更新器自我測試無法完成，稍後再試（%s）", detail)
+	}
+	p.archiveSHA = s.Target.SHA256
 	goos, arch := p.Target()
 	root, cleanup, err := update.StageIn(scratchRoot(), archive, s.Target.SHA256, goos, arch)
 	if err != nil {
@@ -148,12 +155,22 @@ func (p *system) InstallShell(ctx context.Context, archive string) (bool, error)
 	if r.Version != s.Target.Version {
 		return false, fmt.Errorf("套件版本 %s 與索引 %s 不符", r.Version, s.Target.Version)
 	}
+	// #292：這一版只核對，安裝交給套件裡新版的 0c-update（Windows 要系統管理員時提權的也是新版）。還沒有交接命令的
+	// 舊套件（回復、特殊規則）照舊在這個行程裡安裝。
+	if handsOver(r.Version) {
+		return p.handOverInstall(ctx, root, r)
+	}
+	return p.installStaged(ctx, root, r)
+}
+
+// installStaged 在這個行程裡安裝已核對的套件：交接後的新版（install-staged）與還沒有交接命令的舊套件都走這裡。
+func (p *system) installStaged(ctx context.Context, root string, r *update.Release) (bool, error) {
 	if p.ReloadsShell() {
 		return p.installReloadableShell(ctx, root, r)
 	}
 	// 沒有使用者親自確認的安裝（背景自動更新）：macOS 只在使用者離開時交接輸入法程式（#178）。
 	unattendedInstall = !p.consent
-	if err = install(root, r); err != nil {
+	if err := install(root, r); err != nil {
 		return false, err
 	}
 	afterInstall()
@@ -165,6 +182,12 @@ func (p *system) InstallShell(ctx context.Context, archive string) (bool, error)
 func (p *system) ReloadsShell() bool { return reloadableShell() }
 
 func (p *system) ShellNeedsIdle() bool { return runtime.GOOS == "darwin" }
+
+// ShellNeedsIdleFor（autoupdate.ShellArchiveIdleGate）：Windows 背景排程能以一般權限裝好的外殼更新（TSF 註冊不變，#294）
+// 同核心更新一樣等使用者閒置；要改註冊的不等，馬上停在 needs_consent 通知使用者。使用者親自按「立即安裝」時不等。
+func (p *system) ShellNeedsIdleFor(archive string) bool {
+	return !p.consent && !shellUnattended() && shellKeepsRegistration(p.base, archive)
+}
 
 // Conditions：OS 無法判斷閒置時（Wayland 非 GNOME、無桌面等），以引擎距上次按鍵的時間代替；
 // 引擎沒有執行即視為閒置。
@@ -193,7 +216,8 @@ func (p *system) Activated(t autoupdate.Target, dir string) {
 	if dir != "" {
 		src := filepath.Join(p.base, filepath.FromSlash(dir), filepath.Base(updaterName()))
 		if _, err := os.Stat(src); err == nil {
-			_ = replaceStableUpdater(src, p.base)
+			// 先自我測試才換（#293）；沒通過時保留原本的穩定副本，之後的背景喚起再試。
+			_ = adoptStableUpdater(src, t.Version, p.base)
 		}
 	}
 	refreshStableMCP(p.base)      // 核心目錄附了新的 0c-mcp 時換上（Windows）
@@ -322,10 +346,28 @@ func autoCommand(action string, args []string) (resultErr error) {
 	base := basePath()
 	switch action {
 	case "mode":
-		if len(args) != 1 || (args[0] != autoupdate.ModeAuto && args[0] != autoupdate.ModeAsk && args[0] != autoupdate.ModeManual) {
-			return fmt.Errorf("用法：0c-update mode auto|ask|manual")
+		// 設定程式的「更新方式」下拉選單（#340）加 -json：成功回 {schema,ok,mode}，錯誤照契約格式。
+		values := make([]string, 0, len(args))
+		for _, arg := range args {
+			if !isJSONFlag(arg) {
+				values = append(values, arg)
+			}
 		}
-		return editState(base, func(s *autoupdate.State) { s.Mode = args[0] })
+		if len(values) != 1 || (values[0] != autoupdate.ModeAuto && values[0] != autoupdate.ModeAsk && values[0] != autoupdate.ModeManual) {
+			return fmt.Errorf("用法：0c-update mode auto|ask|manual [-json]")
+		}
+		if !jsonRequested {
+			return editState(base, func(s *autoupdate.State) { s.Mode = values[0] })
+		}
+		s, err := autoupdate.EditState(base, func(s *autoupdate.State) error { s.Mode = values[0]; return nil })
+		if err != nil {
+			return err
+		}
+		return emitJSON(os.Stdout, struct {
+			Schema int    `json:"schema"`
+			OK     bool   `json:"ok"`
+			Mode   string `json:"mode"`
+		}{contractSchema, true, s.Mode})
 	case "pause":
 		if len(args) != 1 {
 			return fmt.Errorf("用法：0c-update pause <天數>，例如 pause 7")
@@ -358,9 +400,13 @@ func autoCommand(action string, args []string) (resultErr error) {
 			notifyOutcome(nil, err)
 			return err
 		}
+		if command == "download-now" {
+			return downloadNowCommand(commandArgs)
+		}
 		return autoCommand(command, commandArgs)
 	case "notify-action":
-		// 由有按鈕的通知啟動：等使用者回應，按下「立即安裝」就執行 finish 並回報結果。
+		// 由有按鈕的通知啟動：等使用者回應，按下「立即安裝」就執行 finish 並回報結果；手動更新的「立即下載」（#340）
+		// 執行 download-now，下載好後再送「立即安裝」的通知。
 		flags := flag.NewFlagSet(action, flag.ContinueOnError)
 		n := autoupdate.Notice{}
 		flags.StringVar(&n.Title, "title", "", "")
@@ -376,6 +422,9 @@ func autoCommand(action string, args []string) (resultErr error) {
 		chosen, err := notifyWithAction(ctx, n)
 		if err == nil && chosen == "later" {
 			return autoupdate.SnoozeNotice(base, n.TargetVersion, n.TargetSHA256, time.Now())
+		}
+		if err == nil && chosen == "download" && n.Action == "download" {
+			return downloadNowCommand([]string{"-notify", "-target", n.TargetVersion, "-target-sha256", n.TargetSHA256})
 		}
 		if err != nil || chosen != "finish" {
 			return err
@@ -492,7 +541,9 @@ func autoCommand(action string, args []string) (resultErr error) {
 			return fmt.Errorf("通知更新目標無效")
 		}
 	}
-	if action == "finish" && !elevatedOK() && pendingShell(base) {
+	// 註冊不變的外殼更新（#294）不必 UAC：已下載的套件指紋與已安裝的相同時，以一般權限直接在這個程序完成。
+	// 待安裝的外殼有交接命令（#292）時也不提權自己：協調器以一般權限執行，新版判斷要不要系統管理員，要時提權的是新版。
+	if action == "finish" && !elevatedOK() && pendingShell(base) && !pendingShellKeepsRegistration(base) && !pendingHandsOver(base) {
 		args := []string{"finish"}
 		if *feed != "" {
 			args = append(args, "-feed", *feed)
@@ -563,6 +614,11 @@ func autoCommand(action string, args []string) (resultErr error) {
 	ensureEngineService(base)
 	// Windows：背景完整更新由舊的穩定更新器安裝，它不會請舊版的 0c-ui 結束；新版的穩定副本每次喚起時補上。
 	handOverUI(uiWaitAuto)
+	if action == "auto" && !*login && !*asJSON && !*report {
+		// #351 macOS：安裝後舊的輸入法程式交接完，檢查一次靈犀注音的輸入來源仍可選取，不行就重新登記。背景更新由舊版的
+		// 更新器安裝，這一步要等新版的穩定副本下一次喚起才做，所以放在每次背景喚起、每次安裝只做一次。
+		checkInputSourceAfterHandover(base)
+	}
 	if *login {
 		return nil
 	}
@@ -578,12 +634,19 @@ func autoCommand(action string, args []string) (resultErr error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 	s, err := co.Run(ctx)
+	if err == nil && installCancelled != nil {
+		err = installCancelled // 使用者在新版的 UAC 按了「否」：待辦保留，照實回報（結束碼 75，見 launcher_exit.go）
+	}
 	refreshPathUpdater(base)
 	if action == "auto" && !*asJSON && !*report {
 		// #179：安裝後啟動的背景清理沒做完（關機、被結束）時由排程補做；這次裝了新版就在這裡一起清，不另外啟動。
 		// 只在背景排程做，選單、設定程式等著結果的呼叫不做。
 		pruneInstalls(base)
 		pruneFrom = ""
+		// #293：上次沒通過自我測試（例如當時連不上索引）而沒換上的穩定副本，冷卻時間過了再試一次。
+		retryPendingUpdater(base)
+		// #295：索引給這台電腦「只換更新器」的資產時，在這裡換（不影響協調器的待辦）。
+		applyUpdaterOffer(base)
 	}
 	if *report {
 		notifyOutcome(s, err)
@@ -636,6 +699,11 @@ func outcomeBody(s *autoupdate.State, err error, installed string, now time.Time
 		return s.Target.Version + " " + s.Blocked.Detail + "。"
 	case s.Blocked != nil && s.Blocked.Reason == "needs_relogin":
 		return s.Target.Version + " " + s.Blocked.Detail + "。"
+	case s.Blocked != nil && s.Blocked.Reason == "needs_download" && s.Target != nil:
+		// 手動更新（#340）在選單按「檢查更新」查到新版：不下載，說明怎麼下載。
+		return "有新版本 " + s.Target.Version + "，從輸入法選單或設定程式的「更新」頁按「立即下載」。"
+	case s.Blocked != nil && s.Blocked.Reason == "needs_consent" && s.Target != nil && s.Stage == autoupdate.StagePrepared:
+		return s.Target.Version + " 已下載，按「立即安裝」完成更新。"
 	case s.Blocked != nil && s.Blocked.Reason == "engine_busy":
 		if s.Mode == autoupdate.ModeAuto {
 			return "請先完成組字，閒置時會再嘗試更新至 " + s.Target.Version + "。"
@@ -694,6 +762,12 @@ func settleInstalledShell(base string) {
 		case <-time.After(time.Second):
 		}
 	}
+}
+
+// pendingHandsOver：待安裝的外殼版本有交接命令（install-staged，#292）。
+func pendingHandsOver(base string) bool {
+	s, err := autoupdate.Load(base)
+	return err == nil && s.Target != nil && handsOver(s.Target.Version)
 }
 
 // pendingShell 回報待完成的是否為還沒裝好的外殼更新（Windows 需要系統管理員；核心更新不需要）。已裝好的只差新引擎接手，
@@ -798,7 +872,7 @@ func editState(base string, change func(*autoupdate.State)) error {
 
 // modeLine 是狀態輸出的第一列（#244）：顯示名稱與選單相同，方括號是 0c-update mode 接受的值。
 func modeLine(mode string) string {
-	label := map[string]string{autoupdate.ModeAuto: "自動（建議）", autoupdate.ModeAsk: "下載後詢問", autoupdate.ModeManual: "手動檢查"}[mode]
+	label := map[string]string{autoupdate.ModeAuto: "自動更新（建議）", autoupdate.ModeAsk: "下載後詢問", autoupdate.ModeManual: "手動更新"}[mode]
 	if label == "" {
 		return "更新方式：" + mode
 	}
@@ -822,6 +896,8 @@ func printState(s *autoupdate.State) {
 		switch s.Blocked.Reason {
 		case "needs_consent":
 			fmt.Println("執行 0c-update finish 完成安裝。")
+		case "needs_download":
+			fmt.Println("執行 0c-update download-now 下載，下載好後再執行 0c-update finish 安裝。")
 		case "needs_relogin":
 			if !shellWithoutRelogin {
 				fmt.Println("登出再登入後生效。")
@@ -941,6 +1017,8 @@ func actionFor(s *autoupdate.State) string {
 		return ""
 	case s.Blocked.Reason == "needs_consent", s.Stage == autoupdate.StagePrepared, s.Blocked.Reason == "engine_busy":
 		return "finish"
+	case s.Blocked.Reason == "needs_download" && s.Stage == autoupdate.StageFound:
+		return "download" // 手動更新查到新版（#340）：選單第一列「立即下載」，執行 0c-update download-now -notify
 	}
 	return ""
 }

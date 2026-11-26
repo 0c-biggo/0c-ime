@@ -177,6 +177,8 @@ pub fn status_label(s: &UpdateStatus) -> String {
         }
         return match s.blocked.as_str() {
             "needs_consent" => format!("有新版本 {t} — 立即安裝"),
+            // 手動更新查到新版（#340）：按下只下載，下載好後這一列變成「立即安裝」。
+            "needs_download" if s.action == "download" => format!("有新版本 {t} — 立即下載"),
             "health_failed" => format!("{t} 更新未完成，已保留原版本"),
             _ if s.action == "finish" => format!("{t} 已準備好 — 現在完成更新"),
             "metered_network" => format!("{t} 等待非計量網路下載"),
@@ -205,7 +207,7 @@ fn engine_behind(s: &UpdateStatus) -> bool {
 
 pub fn needs_attention(s: &UpdateStatus) -> bool {
     // 已裝好、等新引擎接手不用使用者處理，不亮提示。
-    model_fallback(s) || !s.updater.is_empty() || !s.target.is_empty() && !s.shell_installed && (s.action == "finish" || s.blocked == "health_failed")
+    model_fallback(s) || !s.updater.is_empty() || !s.target.is_empty() && !s.shell_installed && (s.action == "finish" || s.action == "download" || s.blocked == "health_failed")
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -227,6 +229,8 @@ pub fn menu_items(s: &UpdateStatus) -> Vec<MenuItem> {
         args(&["schedule", "repair", "-notify"])
     } else if s.action == "finish" || engine_behind(s) {
         args(&["finish", "-notify"])
+    } else if s.action == "download" {
+        download_command()
     } else {
         args(&["auto", "-now", "-notify"])
     };
@@ -244,9 +248,9 @@ pub fn menu_items(s: &UpdateStatus) -> Vec<MenuItem> {
         (status_label(s), false, false, first),
         ("檢查更新".into(), false, false, args(&["auto", "-now", "-notify"])),
         (String::new(), false, true, vec![]),
-        ("更新方式：自動（建議）".into(), s.mode == "auto", false, args(&["mode", "auto"])),
+        ("更新方式：自動更新（建議）".into(), s.mode == "auto", false, args(&["mode", "auto"])),
         ("更新方式：下載後詢問".into(), s.mode == "ask", false, args(&["mode", "ask"])),
-        ("更新方式：手動檢查".into(), s.mode == "manual", false, args(&["mode", "manual"])),
+        ("更新方式：手動更新".into(), s.mode == "manual", false, args(&["mode", "manual"])),
         if s.paused_until.is_empty() {
             ("暫停自動更新 7 天".into(), false, false, args(&["pause", "7"]))
         } else {
@@ -268,6 +272,11 @@ pub fn menu_items(s: &UpdateStatus) -> Vec<MenuItem> {
         .collect()
 }
 
+/// 手動更新查到新版時第一列的「立即下載」（#340）：下載目前待辦的那一版並核對，不安裝；下載好後 0c-update 送「立即安裝」的通知。
+pub fn download_command() -> Vec<String> {
+    args(&["download-now", "-notify"])
+}
+
 /// 這個選單命令會開視窗給使用者操作，所以按下時要把前景權限傳下去（#251）。
 /// 其他命令在背景執行，不開放這個權限，免得別的程式趁機蓋到使用者正在打字的視窗上面。
 pub fn opens_window(a: &[String]) -> bool {
@@ -282,6 +291,7 @@ pub fn allowed_command(a: &[String]) -> bool {
         ["open-settings"]
             | ["open-settings", "vocab"]
             | ["finish", "-notify"]
+            | ["download-now", "-notify"]
             | ["auto", "-now", "-notify"]
             | ["mode", "auto" | "ask" | "manual"]
             | ["pause", "7"]
@@ -322,13 +332,14 @@ mod tests {
     }
 
     // #244：「自動更新：手動」語意矛盾；這三列是更新方式，勾選跟著實際設定、選了送的值不變。
+    // #340：名稱與設定程式的下拉選單統一成自動更新（建議）／下載後詢問／手動更新。
     #[test]
     fn update_method_items() {
         for (mode, checked) in [("auto", 0), ("ask", 1), ("manual", 2)] {
             let s = parse_status(&format!(r#"{{"mode":"{mode}"}}"#));
             let items = menu_items(&s);
-            let at = items.iter().position(|i| i.label == "更新方式：自動（建議）").unwrap();
-            for (n, (label, value)) in [("更新方式：自動（建議）", "auto"), ("更新方式：下載後詢問", "ask"), ("更新方式：手動檢查", "manual")].iter().enumerate() {
+            let at = items.iter().position(|i| i.label == "更新方式：自動更新（建議）").unwrap();
+            for (n, (label, value)) in [("更新方式：自動更新（建議）", "auto"), ("更新方式：下載後詢問", "ask"), ("更新方式：手動更新", "manual")].iter().enumerate() {
                 let item = &items[at + n];
                 assert_eq!(item.label, *label);
                 assert_eq!(item.checked, n == checked, "{mode}：{label}");
@@ -336,6 +347,27 @@ mod tests {
             }
             assert!(items.iter().all(|i| !i.label.starts_with("自動更新：")), "{mode}");
         }
+    }
+
+    // #340：手動更新查到新版時，第一列是「立即下載」，按下只下載（download-now -notify）；下載好後才是「立即安裝」。
+    #[test]
+    fn manual_mode_offers_download_first() {
+        let found = parse_status(r#"{"mode":"manual","stage":"found","target":{"version":"0.2.15","kind":"core","sha256":"aa"},"blocked":{"reason":"needs_download","detail":"有新版本，按立即下載"},"action":"download"}"#);
+        assert_eq!(status_label(&found), "有新版本 0.2.15 — 立即下載");
+        assert!(needs_attention(&found));
+        assert_eq!(menu_items(&found)[2].args, vec!["download-now", "-notify"]);
+        assert!(allowed_command(&download_command()));
+        // 下載命令不接受其他參數（版本、-json 等）：不讓沙箱內的宿主改變它。
+        for extra in [&["download-now"][..], &["download-now", "-notify", "-json"], &["download-now", "-target", "0.2.15"]] {
+            assert!(!allowed_command(&extra.iter().map(|x| x.to_string()).collect::<Vec<_>>()), "{extra:?}");
+        }
+        // 舊版 0c-update 沒有 download 動作：不會出現「立即下載」。
+        let old = parse_status(r#"{"mode":"manual","target":{"version":"0.2.15"},"blocked":{"reason":"needs_download"}}"#);
+        assert_eq!(status_label(&old), "0.2.15 更新中");
+        assert_eq!(menu_items(&old)[2].args, vec!["auto", "-now", "-notify"]);
+        let ready = parse_status(r#"{"mode":"manual","stage":"prepared","target":{"version":"0.2.15"},"blocked":{"reason":"needs_consent"},"action":"finish"}"#);
+        assert_eq!(status_label(&ready), "有新版本 0.2.15 — 立即安裝");
+        assert_eq!(menu_items(&ready)[2].args, vec!["finish", "-notify"]);
     }
 
     #[test]

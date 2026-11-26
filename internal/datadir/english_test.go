@@ -22,7 +22,8 @@ func toyWithEnglish(t testing.TB) string {
 			t.Fatal(err)
 		}
 	}
-	if err := englishpack.Compile("../../data/english", filepath.Join(dir, "english")); err != nil {
+	// 桌面出貨的詞頻英文包（格式 2，#358）。
+	if err := englishpack.CompileRanked("../../data/english", filepath.Join(dir, "english")); err != nil {
 		t.Fatal(err)
 	}
 	return dir
@@ -154,7 +155,7 @@ func TestFullEnglishPackEnglishModeTabCompletionAndCorrection(t *testing.T) {
 	e.EnglishAutocomplete = true
 	e.MixedInput = true
 	for _, tc := range []struct{ typed, want string }{
-		{"hel", "hello"}, {"recieve", "receive"}, {"teh", "the"},
+		{"hel", "help"}, {"recieve", "receive"}, {"teh", "the"}, {"iphone", "iPhone"}, {"monday", "Monday"},
 		{"configuraton", "configuration"}, {"notifcation", "notification"},
 		{"RECIEVE", "RECEIVE"}, {"Recieve", "Receive"},
 	} {

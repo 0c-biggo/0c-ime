@@ -1,9 +1,10 @@
 package update
 
 // macOS 安裝：InputMethodKit 只從 ~/Library/Input Methods 載入輸入法，App 內附引擎、配對字典與神經模型，
-// 因此整個 0c.app 是一個版本單位。新版先在支援目錄暫存並逐檔核對，再以改名切換；舊 App 移入備份供回復。
+// 因此整個 0c.app 是一個版本單位。新版先在支援目錄暫存並逐檔核對，再與原本的 0c.app 原子交換（不支援時以改名切換，
+// 見 placeApp）；舊 App 移入備份供回復。
 // 0.1.0-dev.21 以前的 App 叫 Zuin.app（bundle ID org.zuin.inputmethod.Zuin），升級時一併移入備份，回復時照原名放回。
-// 邏輯與作業系統無關，測試以暫存目錄進行。
+// 除了交換（swap_*.go）之外與作業系統無關，測試以暫存目錄進行。
 import (
 	"encoding/json"
 	"fmt"
@@ -24,6 +25,12 @@ const (
 )
 
 var macApps = []string{MacApp, LegacyMacApp}
+
+// macRename、macSwap 是搬移與交換 App 的方式；測試換成會在每一步檢查 0c.app 是否還在的版本（#354）。
+var (
+	macRename = os.Rename
+	macSwap   = swapPaths
+)
 
 // MacReceipt 記錄目前安裝的 App 與可回復的上一版。
 type MacReceipt struct {
@@ -273,34 +280,78 @@ func readMacReceipt(file string) (*MacReceipt, error) {
 // validMacApp：收據的 App 欄位只能是兩個已知名稱（空值為 Zuin.app），不能指到 Input Methods 以外。
 func validMacApp(name string) bool { return name == "" || name == MacApp || name == LegacyMacApp }
 
-// backupApp 把目前的 App 與收據移入新的備份目錄，回傳相對於支援目錄的路徑。
+// newMacBackup 建立新的備份目錄並寫入目前的收據，回傳絕對路徑與相對於支援目錄的路徑。
 // 收據寫好之後由 pruneMacBackups 只留收據 previous 指到的那一份（#179）。
-func backupApp(p MacPaths, current *MacReceipt) (string, error) {
+func newMacBackup(p MacPaths, current *MacReceipt) (dir, rel string, err error) {
 	backups := filepath.Join(p.Support, "backups")
-	if err := noLinks(backups); err != nil {
-		return "", err
+	if err = noLinks(backups); err != nil {
+		return "", "", err
 	}
-	if err := os.MkdirAll(backups, 0o700); err != nil {
-		return "", err
+	if err = os.MkdirAll(backups, 0o700); err != nil {
+		return "", "", err
 	}
-	dir, err := os.MkdirTemp(backups, "macos-"+time.Now().UTC().Format("20060102-150405")+"-")
+	if dir, err = os.MkdirTemp(backups, "macos-"+time.Now().UTC().Format("20060102-150405")+"-"); err != nil {
+		return "", "", err
+	}
+	if err = writeJSON(filepath.Join(dir, "previous.json"), current); err != nil {
+		return "", "", err
+	}
+	if rel, err = filepath.Rel(p.Support, dir); err != nil {
+		return "", "", err
+	}
+	return dir, filepath.ToSlash(rel), nil
+}
+
+// moveAppsToBackup 把 Input Methods 裡的 names（存在的才搬）移入備份目錄 dir。
+func moveAppsToBackup(p MacPaths, dir string, names ...string) error {
+	for _, name := range names {
+		if _, err := os.Lstat(p.appNamed(name)); err == nil {
+			if err = macRename(p.appNamed(name), filepath.Join(dir, name)); err != nil {
+				return err
+			}
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+// backupApp 把目前的 App 與收據移入新的備份目錄，回傳相對於支援目錄的路徑。用於移除：沒有新的 App 要放回原路徑。
+func backupApp(p MacPaths, current *MacReceipt) (string, error) {
+	dir, rel, err := newMacBackup(p, current)
 	if err != nil {
 		return "", err
 	}
-	if err = writeJSON(filepath.Join(dir, "previous.json"), current); err != nil {
-		return "", err
+	return rel, moveAppsToBackup(p, dir, macApps...)
+}
+
+// placeApp 把 incoming（與 Input Methods 同一個卷宗的 0c.app）放到 Input Methods/0c.app，原本的 App（任一名稱）
+// 移入備份目錄 dir，回傳是否以交換完成。
+//
+// 原本有 0c.app 時先把 incoming 改名到備份裡 0c.app 的位置，再以 renamex_np(RENAME_SWAP) 與原路徑交換（#354）：
+// 新版一步就位，舊版直接落在備份，原路徑沒有空檔。先移走再放入的做法在中間有一段 0c.app 不在，LaunchServices／
+// TextInputMenuAgent 可能正好在這時把輸入來源登記拿掉（#351）。交換失敗（不同卷宗、檔案系統不支援，或其他原因）時
+// 什麼都沒變，把 incoming 改名回來，退回先移走再放入。舊名 Zuin.app 與新版名稱不同，不能交換，照舊移入備份。
+func placeApp(p MacPaths, dir, incoming string) (swapped bool, err error) {
+	if err = moveAppsToBackup(p, dir, LegacyMacApp); err != nil {
+		return false, err
 	}
-	for _, name := range macApps {
-		if _, err = os.Lstat(p.appNamed(name)); err == nil {
-			if err = os.Rename(p.appNamed(name), filepath.Join(dir, name)); err != nil {
-				return "", err
-			}
-		} else if !os.IsNotExist(err) {
-			return "", err
+	if fileIsDir(p.app()) {
+		slot := filepath.Join(dir, MacApp)
+		if err = macRename(incoming, slot); err != nil {
+			return false, err
+		}
+		if macSwap(slot, p.app()) == nil {
+			return true, nil
+		}
+		if err = macRename(slot, incoming); err != nil {
+			return false, err
 		}
 	}
-	rel, err := filepath.Rel(p.Support, dir)
-	return filepath.ToSlash(rel), err
+	if err = moveAppsToBackup(p, dir, MacApp); err != nil {
+		return false, err
+	}
+	return false, macRename(incoming, p.app())
 }
 
 // installedMac 讀取收據並核對目前 App；沒有收據時接受 0c 以前的原型 App（整包移入備份即可回復）。
@@ -365,17 +416,23 @@ func InstallMac(bundle, arch string, p MacPaths) (app string, changed error, err
 	if err = verifyTree(staged, files); err != nil {
 		return "", nil, err
 	}
-	previous, err := backupApp(p, current)
+	dir, previous, err := newMacBackup(p, current)
 	if err != nil {
 		return "", nil, err
 	}
 	restore := func(cause error) error { return fmtJoin(cause, restoreApps(p, previous)) }
-	if err = os.Rename(staged, p.app()); err != nil {
+	swapped, err := placeApp(p, dir, staged)
+	if err != nil {
 		return "", nil, restore(err)
 	}
 	next := &MacReceipt{Schema: 1, Product: "0c", Version: release.Version, App: MacApp, Files: files, Previous: previous, Active: true, SessionASID: p.SessionASID}
 	if err = writeJSON(p.receipt(), next); err != nil {
-		_ = os.RemoveAll(p.app())
+		// 交換過的再交換回來，原路徑一直有舊版；交換不回來時才先拿掉新版再放回。
+		if slot := filepath.Join(dir, MacApp); swapped && macSwap(slot, p.app()) == nil {
+			_ = os.RemoveAll(slot)
+		} else {
+			_ = os.RemoveAll(p.app())
+		}
 		return "", nil, restore(err)
 	}
 	pruneMacBackups(p, previous)
@@ -388,12 +445,18 @@ func restoreApps(p MacPaths, backup string) error {
 	for _, name := range macApps {
 		saved := filepath.Join(p.Support, filepath.FromSlash(backup), name)
 		if _, e := os.Lstat(saved); e == nil {
-			if e = os.Rename(saved, p.appNamed(name)); e != nil {
+			if e = macRename(saved, p.appNamed(name)); e != nil {
 				errs = fmtJoin(e, errs)
 			}
 		}
 	}
 	return errs
+}
+
+// fileIsDir：p 本身是目錄（不跟隨連結）。
+func fileIsDir(p string) bool {
+	info, err := os.Lstat(p)
+	return err == nil && info.IsDir()
 }
 
 func fmtJoin(a, b error) error {
@@ -474,9 +537,17 @@ func RollbackMac(p MacPaths) (MacRollback, error) {
 		return result, err
 	}
 	saved := current.Previous
-	back, err := backupApp(p, current)
+	dir, back, err := newMacBackup(p, current)
 	if err != nil {
 		return result, err
+	}
+	// 放回的是 0c.app 時與目前的 App 交換（#354），原路徑沒有空檔；放回 Zuin.app 或原型時照舊先移走再放入。
+	if savedApp := filepath.Join(p.Support, filepath.FromSlash(saved), MacApp); noLinks(savedApp) == nil && fileIsDir(savedApp) {
+		if _, err = placeApp(p, dir, savedApp); err != nil {
+			return result, fmtJoin(err, restoreApps(p, back))
+		}
+	} else if err = moveAppsToBackup(p, dir, macApps...); err != nil {
+		return result, fmtJoin(err, restoreApps(p, back))
 	}
 	if err = restoreApps(p, saved); err != nil {
 		return result, fmtJoin(err, restoreApps(p, back))

@@ -1,0 +1,47 @@
+# 只補常見寫法（#358）：詞必須已經在英文字典裡（ESDB、technical.tsv 或語料），否則編譯失敗。
+# 不加詞，不改權重、旗標與混打認不認；只有詞頻資料包（格式 2）讀這個檔，格式 1 不受影響。
+# 欄位：小寫詞<TAB>寫法（只能差大小寫）。手寫的寫法優先於語料；technical.tsv 第三欄已有寫法的詞不能再列。
+
+# 地名、語言
+taiwan	Taiwan
+taipei	Taipei
+japan	Japan
+china	China
+chinese	Chinese
+english	English
+american	American
+
+# 品牌、服務
+google	Google
+facebook	Facebook
+netflix	Netflix
+microsoft	Microsoft
+samsung	Samsung
+instagram	Instagram
+android	Android
+windows	Windows
+linux	Linux
+mac	Mac
+intel	Intel
+tesla	Tesla
+twitter	Twitter
+telegram	Telegram
+bitcoin	Bitcoin
+amazon	Amazon
+sony	Sony
+
+# 縮寫
+dram	DRAM
+ram	RAM
+bios	BIOS
+fps	FPS
+ssh	SSH
+id	ID
+hp	HP
+qr	QR
+lg	LG
+
+# 羅馬數字
+ii	II
+iii	III
+iv	IV

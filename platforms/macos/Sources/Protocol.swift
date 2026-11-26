@@ -10,10 +10,14 @@ struct Request: Codable {
     var contextID: UInt64? = nil
     /// toggle：上一次切換之後沒有任何按鍵或其他操作，請核心放回切到英文時清掉的未打完注音（#90）。
     var restore: Bool? = nil
+    /// key：游標前一個字是不是阿拉伯數字（#337，proto.Request.DigitBefore）。外殼在開始組字的第一鍵讀到時才帶，
+    /// 只有是／不是，不送那個字；nil（沒讀或讀不到）時沒有這個欄位，引擎照它自己記的。
+    var digitBefore: Bool? = nil
     enum CodingKeys: String, CodingKey {
         case type, key, index, on, restore
         case contextEnabled = "context_enabled"
         case contextID = "context_id"
+        case digitBefore = "digit_before"
     }
 }
 

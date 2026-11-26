@@ -275,7 +275,7 @@ func TestDiscoveryRulesWithdrawnRolloutBackoffAndManual(t *testing.T) {
 	co.Force = false
 	p.calls = nil
 	if run(t, co); len(p.calls) != 0 {
-		t.Fatal("manual mode must not check automatically")
+		t.Fatal("manual mode checks on the same schedule as other modes, not on every run (#340)")
 	}
 }
 
@@ -650,7 +650,8 @@ func TestLiveShellTakesOverOldPendingAndDoesNotTrustEngineAlone(t *testing.T) {
 	}
 }
 
-func TestExplicitCheckInManualModePreparesButWaitsForFinish(t *testing.T) {
+// #340：手動更新時選單的「檢查更新」只檢查、標出可下載，不下載；明確的 finish（立即安裝）照常下載並安裝。
+func TestExplicitCheckInManualModeFindsButWaitsForDownload(t *testing.T) {
 	p := &fakePlatform{installed: "0.1.0-dev.40", running: "0.1.0-dev.40", feed: feedFor("0.1.0-dev.41", "shell", 100), cond: Conditions{IdleKnown: true, Idle: time.Hour}}
 	co, _ := newCoordinator(t, p)
 	co.Platform = &liveShellFake{p, co.Base, t}
@@ -659,7 +660,7 @@ func TestExplicitCheckInManualModePreparesButWaitsForFinish(t *testing.T) {
 	_ = Save(co.Base, s)
 	co.Force = true
 	s = run(t, co)
-	if s.Mode != ModeManual || s.Stage != StagePrepared || s.Blocked.Reason != "needs_consent" || strings.Join(p.calls, " ") != "fetch download" {
+	if s.Mode != ModeManual || s.Stage != StageFound || s.Blocked.Reason != "needs_download" || strings.Join(p.calls, " ") != "fetch" {
 		t.Fatalf("%+v %v", s, p.calls)
 	}
 	co.Force = false

@@ -2,6 +2,7 @@ import Foundation
 
 /// 輸入法外殼的診斷計數（#266）：喚醒後打不出中文時，分辨按鍵有沒有進到輸入法。
 /// 只記次數、時間與浮動組字（#84）用在哪些 App（bundle ID），不記按鍵、文字或欄位內容。
+/// 安全輸入卡住（#349）只記次數與時間，不記是哪個程式。
 /// 寫進 ~/Library/Application Support/0c/input-method-stats.json，由 0c-update status -json -diagnostics
 /// 附在「匯出狀態」的 shell.input_method_stats。合併寫入：有變化後最多每 writeDelay 秒寫一次。
 final class ShellStats {
@@ -23,6 +24,10 @@ final class ShellStats {
         var floatingRescues = 0
         var floatingFields = 0
         var floatingApps: [String: Int] = [:]
+        var secureStuck = 0
+        var secureWarnings = 0
+        var lastSecureStuck: Date?
+        var lastSecureReleased: Date?
     }
 
     private(set) var counts = Counts()
@@ -81,6 +86,19 @@ final class ShellStats {
         changed(soon: true)
     }
 
+    /// 安全輸入被背景程式卡住（#349，SecureInputWatch）：確定卡住的次數與時間、跳出提醒的次數，以及放掉的時間。
+    func noteSecureInputStuck(warned: Bool) {
+        counts.secureStuck += 1
+        if warned { counts.secureWarnings += 1 }
+        counts.lastSecureStuck = now()
+        changed(soon: true)
+    }
+
+    func noteSecureInputReleased() {
+        counts.lastSecureReleased = now()
+        changed(soon: true)
+    }
+
     private func changed(soon: Bool = false) {
         if soon {
             pending?.invalidate()
@@ -109,6 +127,10 @@ final class ShellStats {
             "keys_since_wake": counts.keysSinceWake,
             "floating": ["rescues": counts.floatingRescues, "fields": counts.floatingFields, "apps": counts.floatingApps],
         ]
+        var secure: [String: Any] = ["stuck": counts.secureStuck, "warnings": counts.secureWarnings]
+        if let date = counts.lastSecureStuck { secure["last_stuck_at"] = format.string(from: date) }
+        if let date = counts.lastSecureReleased { secure["last_released_at"] = format.string(from: date) }
+        out["secure_input"] = secure
         if let version = Bundle.main.object(forInfoDictionaryKey: "ZCBuildVersion") as? String { out["version"] = version }
         for (key, date) in [("last_activate_at", counts.lastActivate), ("last_key_at", counts.lastKey),
                             ("last_wake_at", counts.lastWake), ("last_sleep_at", counts.lastSleep)] {

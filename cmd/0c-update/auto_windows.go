@@ -43,7 +43,7 @@ func coreLayout() (autoupdate.CoreLayout, bool) {
 	return autoupdate.CoreLayout{Server: "0c-server.exe", Update: "0c-update.exe", Settings: "0c-settings.exe", MCP: "0c-mcp.exe", Launcher: launcherName}, true
 }
 
-// 外殼更新要改 TSF 註冊，需要系統管理員；排程以一般權限執行，所以要使用者確認。
+// 外殼更新要改 TSF 註冊時需要系統管理員；排程以一般權限執行，所以要使用者確認。註冊不變的見 shellKeepsRegistration（#294）。
 func shellUnattended() bool { return windows.GetCurrentProcessToken().IsElevated() }
 func elevatedOK() bool      { return windows.GetCurrentProcessToken().IsElevated() }
 
@@ -201,7 +201,7 @@ func registerToastApp() error {
 	return err
 }
 
-// notify 以 ToastGeneric 顯示通知；n.Action 非空時加「立即安裝／稍後」按鈕：「立即安裝」以 zc-update: 協定
+// notify 以 ToastGeneric 顯示通知；n.Action 非空時加「立即安裝（手動更新的新版是立即下載）／稍後」按鈕：前者以 zc-update: 協定
 // 啟動 0c-update（見 registerProtocol），「稍後 1 小時」保存同一資產的提醒。
 // 在行程內以 WinRT 送出（internal/winshell），不再開 powershell.exe -EncodedCommand（#289）。
 func notify(n autoupdate.Notice) error {
@@ -209,7 +209,7 @@ func notify(n autoupdate.Notice) error {
 	if registerToastApp() != nil {
 		app = `{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe` // 無法註冊時借用系統已註冊的 AUMID，仍要送達
 	}
-	t := winshell.Toast{Title: n.Title, Body: n.Body}
+	t := winshell.Toast{Title: n.Title, Body: n.Body, ActionLabel: noticeButtonLabel(n.Action)}
 	if n.Action != "" {
 		var err error
 		if t.Action, err = noticeActionURL(n.Action, n.TargetVersion, n.TargetSHA256); err != nil {
@@ -304,18 +304,21 @@ func installSchedule(base string) error {
 	if err != nil {
 		return err
 	}
+	version := buildVersion
 	if bundleUpdater != "" {
 		// 外殼更新由舊的穩定副本自己執行：改用剛安裝的版本目錄裡的，之後的排程與選單才是新版。
-		self = bundleUpdater
+		self, version = bundleUpdater, bundleVersion
 	}
-	return installScheduleFrom(base, self)
+	return installScheduleFrom(base, self, version)
 }
 
 // installScheduleFrom 以 source 換上穩定副本（與它旁邊的啟動器），並讓排程是目前程式的定義（相同就不寫，見 ensureTask）。
 // 0.2.11 以前提權建立的排程只開放讀取，一般權限改不了，舊的 conhost 定義要等提權的完整安裝；這一版起提權建立的排程
 // 開放給本人，之後定義再變，一般權限的 schedule repair 就換得掉（refreshTaskDefinitions）。
-func installScheduleFrom(base, source string) error {
-	if err := replaceStableUpdater(source, base); err != nil {
+//
+// 換穩定副本前先讓 source 自我測試（#293）：沒通過就保留原本的穩定副本，排程照樣建立（指著同一個位置），不讓安裝失敗。
+func installScheduleFrom(base, source, version string) error {
+	if err := adoptStableUpdater(source, version, base); err != nil && !errors.Is(err, errNotQualified) && !errors.Is(err, errStableNewer) {
 		return err
 	}
 	if err := installLauncherBeside(source, stableLauncher(base)); err != nil {
@@ -326,12 +329,16 @@ func installScheduleFrom(base, source string) error {
 		return err
 	}
 	changed, err := ensureTask(taskName(), updateTaskXML(u.Username, u.Uid, base), u.Uid, elevatedOK())
-	if err != nil {
+	switch {
+	case errors.Is(err, errTaskReadOnly):
+		// 註冊不變的外殼更新以一般權限安裝（#294）：舊的提權排程照舊執行（它跑的是剛換上的穩定副本），
+		// 不擋後面的登入排程與引擎。
+		fmt.Fprintln(os.Stderr, "0c-update: 自動更新排程沒有換成目前的定義：", err)
+	case err != nil:
 		return err
-	}
-	if changed {
+	case changed:
 		fmt.Println("已建立自動更新排程（工作排程器 " + taskName() + "）")
-	} else {
+	default:
 		fmt.Println("自動更新排程已是目前的定義（工作排程器 " + taskName() + "）")
 	}
 	// 引擎排程與自動更新分開：使用者關掉自動更新（schedule remove）時引擎仍要在登入時啟動。

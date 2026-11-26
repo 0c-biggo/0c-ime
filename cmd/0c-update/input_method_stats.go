@@ -9,6 +9,7 @@ import (
 
 // macOS 輸入法外殼的診斷計數（#266）：外殼寫在個人資料目錄的 input-method-stats.json（platforms/macos/Sources/ShellStats.swift），
 // 匯出狀態時附在 shell.input_method_stats。只有次數、時間與浮動組字（#84）用在哪些 App 的 bundle ID，沒有按鍵或文字內容。
+// secure_input 是安全輸入被背景程式卡住的次數、提醒過幾次與最近的時間（#349），不記是哪個程式；舊外殼沒有這一項。
 // 只照抄認得的欄位，檔案太大、壞掉或不存在時不附。
 const (
 	inputMethodStatsFile  = "input-method-stats.json"
@@ -46,6 +47,12 @@ func inputMethodStats(base string) map[string]any {
 			Fields  int            `json:"fields"`
 			Apps    map[string]int `json:"apps"`
 		} `json:"floating"`
+		SecureInput *struct {
+			Stuck          int    `json:"stuck"`
+			Warnings       int    `json:"warnings"`
+			LastStuckAt    string `json:"last_stuck_at"`
+			LastReleasedAt string `json:"last_released_at"`
+		} `json:"secure_input"`
 	}
 	if json.Unmarshal(data, &raw) != nil || raw.Schema != 1 {
 		return nil
@@ -71,5 +78,14 @@ func inputMethodStats(base string) map[string]any {
 		}
 	}
 	out["floating"] = map[string]any{"rescues": raw.Floating.Rescues, "fields": raw.Floating.Fields, "apps": apps}
+	if s := raw.SecureInput; s != nil {
+		secure := map[string]any{"stuck": s.Stuck, "warnings": s.Warnings}
+		for key, value := range map[string]string{"last_stuck_at": s.LastStuckAt, "last_released_at": s.LastReleasedAt} {
+			if value != "" {
+				secure[key] = value
+			}
+		}
+		out["secure_input"] = secure
+	}
 	return out
 }
