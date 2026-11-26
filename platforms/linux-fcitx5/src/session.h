@@ -126,7 +126,10 @@ public:
     bool english() const { return english_; }
     // 引擎目前的鍵盤排列是漢語拼音（open 回覆的 keyboard_layout，#324）：切換提示與子模式文字寫「拼音」而不是「注音」（#357）。
     // 隨 session 快取，換排列（引擎重啟）後下一個請求或下一次聚焦重開 session 時更新；舊引擎沒有這一項時為 false。
-    bool pinyin() const { return serverInfo_.value("keyboard_layout", "") == "pinyin"; }
+    bool pinyin() const {
+        const std::string l = serverInfo_.value("keyboard_layout", "");
+        return l == "pinyin" || l == "xiaohe"; // 雙拼也是拼音
+    }
     // 引擎目前載入的中英切換鍵設定（toggle-key，#117）。每次向引擎查詢，設定套用（引擎重啟）後立即生效。
     ShiftKeys shiftKeys();
     // 引擎是否認得 0.2.0 的加詞與反悔鍵名（open 回覆的 vocab_keys，#123）。值隨 session 快取，

@@ -59,7 +59,7 @@ func main() {
 	outputSimplified := flag.Bool("output-simplified", false, "送出時轉成簡體字（組字與候選仍是繁體）")
 	spaceSelects := flag.Bool("space-selects", true, "注音打完按空白選字；關閉時空白輸入空格、↓ 選字。重播需使用相同開關")
 	selectionKeys := flag.String("selection-keys", "1234567890", "選字鍵：1234567890、1234qweras 或 asdfghjkl;（數字仍照位置選字）。重播需使用相同選字鍵")
-	keyboardLayout := flag.String("keyboard-layout", "standard", "鍵盤排列：standard、eten（倚天 41 鍵，停用混打與 = 開 Emoji）、hsu（許氏，停用混打）或 pinyin（漢語拼音，停用混打）。重播需使用相同排列")
+	keyboardLayout := flag.String("keyboard-layout", "standard", "鍵盤排列：standard、eten（倚天 41 鍵，停用混打與 = 開 Emoji）、hsu（許氏，停用混打）、pinyin（漢語拼音，停用混打）或 xiaohe（小鶴雙拼，停用混打）。重播需使用相同排列")
 	flag.Parse()
 
 	eng, err := datadir.Open(*data)

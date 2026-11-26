@@ -36,6 +36,7 @@ const (
 	LayoutETen     = "eten"     // 倚天 41 鍵（#83）
 	LayoutHsu      = "hsu"      // 許氏（#183）
 	LayoutPinyin   = "pinyin"   // 漢語拼音（#324）
+	LayoutXiaohe   = "xiaohe"   // 小鶴雙拼
 )
 
 // 讀取結果的檔案狀態。
@@ -429,7 +430,7 @@ func (s *Settings) UnmarshalJSON(b []byte) error {
 		{"candidate_cursor", &s.CandidateCursor, []string{"before", "after"}},
 		{"candidate_layout", &s.CandidateLayout, []string{"vertical", "grid", "horizontal"}},
 		{"emoji_shortcut", &s.EmojiShortcut, []string{"off", "equals"}},
-		{"keyboard_layout", &s.KeyboardLayout, []string{LayoutStandard, LayoutETen, LayoutHsu, LayoutPinyin}},
+		{"keyboard_layout", &s.KeyboardLayout, []string{LayoutStandard, LayoutETen, LayoutHsu, LayoutPinyin, LayoutXiaohe}},
 		{"selection_keys", &s.SelectionKeys, []string{SelectDigits, SelectQwer, SelectHome}},
 		{"toggle_key", &s.ToggleKey, []string{ToggleRight, ToggleBoth, ToggleLeft, ToggleNone}},
 		{"mode_memory", &s.ModeMemory, []string{ModeNative, ModeShared}},
@@ -779,7 +780,7 @@ func (s Settings) valueLabels(key string) map[string]string {
 	case "mode-memory":
 		return map[string]string{ModeNative: modeNativeLabel(runtime.GOOS, s.StartsEnglish()), ModeShared: "全部共用同一個模式"}
 	case "keyboard-layout":
-		return map[string]string{LayoutStandard: "標準", LayoutETen: "倚天 41 鍵", LayoutHsu: "許氏", LayoutPinyin: "漢語拼音"}
+		return map[string]string{LayoutStandard: "標準", LayoutETen: "倚天 41 鍵", LayoutHsu: "許氏", LayoutPinyin: "漢語拼音", LayoutXiaohe: "小鶴雙拼"}
 	case "shift-tap-ms": // #319
 		out := map[string]string{}
 		for _, ms := range ShiftTapChoices {
@@ -840,6 +841,9 @@ func (s Settings) disabledReasonOn(goos, key string) string {
 		if s.KeyboardLayout == LayoutPinyin && key == "mixed-input" {
 			return pinyinMixedReason // 字母都是拼音（#324）
 		}
+		if s.KeyboardLayout == LayoutXiaohe && key == "mixed-input" {
+			return shuangpinMixedReason // 字母都是雙拼鍵
+		}
 		if key == "mixed-input" && s.EffectiveToneless() {
 			return "不打聲調時關閉" // 聲調選填與混打二選一（#150）
 		}
@@ -875,7 +879,7 @@ func (s Settings) disabledReasonOn(goos, key string) string {
 	case "zhuyin-error-hint":
 		// 聲調選填（#150）與中英混打（#78）有自己處理沒有字的注音的方式，這一項不作用（#300）。
 		// 兩者本身停用（倚天、許氏、所有符號鍵打半形、輸入習慣衝突）時照常；聲調選填開著時混打也停用，原因寫聲調選填。
-		if s.Toneless && s.disabledReasonOn(goos, "toneless") == "" && s.KeyboardLayout != LayoutPinyin {
+		if s.Toneless && s.disabledReasonOn(goos, "toneless") == "" && s.KeyboardLayout != LayoutPinyin && s.KeyboardLayout != LayoutXiaohe {
 			return "不打聲調時關閉" // 漢語拼音不打聲調時照樣用它提示收不成音節的聲調（#324）
 		}
 		if s.MixedInput && s.disabledReasonOn(goos, "mixed-input") == "" {
@@ -887,6 +891,9 @@ func (s Settings) disabledReasonOn(goos, key string) string {
 
 // pinyinMixedReason：漢語拼音鍵盤（#324）的字母都是拼音，中英混打不作用；英文用 Shift 切換。
 const pinyinMixedReason = "漢語拼音時關閉"
+
+// shuangpinMixedReason：雙拼的字母都是拼音鍵，中英混打不作用；英文用 Shift 切換。
+const shuangpinMixedReason = "雙拼時關閉"
 
 // zhuyinHintMixedReason：中英混打開著時「打錯注音時提示」不作用（#300）。
 const zhuyinHintMixedReason = "中英混打時關閉"
@@ -907,7 +914,7 @@ func disabledBy(reason string) string {
 		return rule // 輸入習慣的規則（#233）
 	}
 	switch reason {
-	case "倚天 41 鍵時關閉", "許氏排列時關閉", pinyinMixedReason:
+	case "倚天 41 鍵時關閉", "許氏排列時關閉", pinyinMixedReason, shuangpinMixedReason:
 		return "keyboard-layout"
 	case startModeLockedReason, shiftTapUnusedReason:
 		return "toggle-key"
@@ -962,7 +969,8 @@ func specs() []spec {
 		{"emoji-equals-first", "將 = 放在第一項", "開啟時選單第一項是 =；關閉時第一項直接是表情。開或關都可以連按兩下 = 輸入一個 =；想單按 = 就打出等號，請關閉 Emoji 選單", "on", []string{"on", "off"}, func(s Settings) string { return onOff(s.EmojiEqualsFirst) }},
 		{"keyboard-layout", "鍵盤排列", "注音鍵盤排列。倚天 41 鍵的 = 是 ㄦ、' 是 ㄘ，頓號改按 \\，這時不提供 Emoji 選單與中英混打。許氏只用字母鍵：同一鍵依位置代表聲母或韻母，聲調是 d f j s、一聲按空白，, . ; 直接打「，。；」，這時不提供中英混打。" +
 			"漢語拼音用拼音打繁體：ni3hao3 是「你好」，數字 1–4 是四聲、5 是輕聲、空白是一聲，ü 打 v，xi'an 的 ' 分開音節；沒打聲調的字依前後文決定，" +
-			", . ; 直接打「，。；」，這時不提供中英混打", LayoutStandard, []string{LayoutStandard, LayoutETen, LayoutHsu, LayoutPinyin},
+			", . ; 直接打「，。；」，這時不提供中英混打。" +
+			"小鶴雙拼每兩鍵一個音節（ni hc 是「你好」，zh＝v、ch＝i、sh＝u），聲調與標點同漢語拼音；建議同時開「不打聲調也能選字」", LayoutStandard, []string{LayoutStandard, LayoutETen, LayoutHsu, LayoutPinyin, LayoutXiaohe},
 			func(s Settings) string { return s.KeyboardLayout }},
 		{"selection-keys", "選字鍵", "候選窗用哪一排鍵選第 1 到第 10 個字；換成字母鍵時，數字鍵仍可照位置選字", SelectDigits, []string{SelectDigits, SelectQwer, SelectHome},
 			func(s Settings) string { return s.SelectionKeys }},

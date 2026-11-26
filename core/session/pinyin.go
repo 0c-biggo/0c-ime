@@ -28,7 +28,33 @@ import (
 // zhuyin.SplitPinyin 的規則（拼音正詞法：a o e 開頭的音節前沒打 ' 就不這樣切）。
 
 // pinyinLayout 回報目前是不是漢語拼音鍵盤。
-func (s *Session) pinyinLayout() bool { return s.layout == layout.Pinyin }
+// 雙拼（layout.Xiaohe 等）也走這條路：字母先照打存在 pyKeys，收成音節時每兩鍵換成一個拼音（shuangpinKeys）。
+func (s *Session) pinyinLayout() bool { return layout.PinyinFamily(s.layout) }
+
+// shuangpinLive 回報是否用雙拼逐字轉換：雙拼排列而且開了「不打聲調也能選字」。每兩鍵一個音節、沒有切法歧義，
+// 所以不必等空白，第二鍵就收成音節（打聲調時第二鍵後面可能還有聲調數字，照舊等聲調或空白）。
+func (s *Session) shuangpinLive() (*layout.Shuangpin, bool) {
+	sp, ok := layout.AsShuangpin(s.layout)
+	return sp, ok && s.Toneless
+}
+
+// shuangpinKeys 在雙拼排列把按鍵換成以 ' 分開的拼音（nihc → ni'hao）；不是雙拼時原樣回傳。
+// 按鍵是奇數個或有一組拼不成音節時 ok 為 false。
+func (s *Session) shuangpinKeys(keys string) (string, bool) {
+	sp, ok := layout.AsShuangpin(s.layout)
+	if !ok {
+		return keys, true
+	}
+	return sp.ToPinyin(keys)
+}
+
+// pinyinPreview 是組字區顯示的未收按鍵：全拼照打的字母，雙拼換成拼音（nihc 顯示 ni hao）。
+func (s *Session) pinyinPreview() string {
+	if sp, ok := layout.AsShuangpin(s.layout); ok {
+		return sp.Preview(s.pyKeys)
+	}
+	return s.pyKeys
+}
 
 // pinyinPending 回報是否有還沒收成音節的拼音字母。
 func (s *Session) pinyinPending() bool { return s.pyKeys != "" }
@@ -46,7 +72,37 @@ func (s *Session) pinyinKey(k string) (consumed bool, commit string) {
 	single := len(rs) == 1
 	switch {
 	case single && zhuyin.PinyinLetter(rs[0]):
+		if sp, live := s.shuangpinLive(); live && len(s.pyKeys) == 1 {
+			// 雙拼逐字轉換：第二鍵一按下就收成一個沒打聲調的音節，組字區立刻顯示字。拼不成音節的第二鍵不收、響鈴。
+			if _, ok := sp.Pair(s.pyKeys + k); !ok {
+				s.bell = s.ZhuyinErrorHint
+				return true, ""
+			}
+			s.pyKeys += k
+			s.closePinyin(0, true)
+			return true, ""
+		}
 		s.pyKeys += k
+		return true, ""
+	case k == " " && !s.pinyinPending() && s.composing():
+		if _, live := s.shuangpinLive(); live {
+			return true, s.commit() // 雙拼逐字轉換：字已經在組字區，空白送出整段（同不打聲調的全拼）
+		}
+		return false, ""
+	case k == proto.KeyBackspace && !s.pinyinPending() && s.cursor > 0 && s.cursor == len(s.syls) && !s.literals[s.cursor-1]:
+		sp, live := s.shuangpinLive()
+		if !live {
+			return false, ""
+		}
+		// 雙拼逐字轉換：退格刪掉最後一個字，留下它的聲母鍵，只要重打韻母鍵（同雙拼輸入法一次退一鍵）。
+		first := sp.Keys(zhuyin.Untone(s.syls[s.cursor-1]))
+		n := len(s.syls)
+		if !s.backspace() {
+			return false, ""
+		}
+		if len(s.syls) == n-1 && first != "" {
+			s.pyKeys = first[:1]
+		}
 		return true, ""
 	case !s.pinyinPending():
 		return false, ""
@@ -88,7 +144,11 @@ func (s *Session) closePinyin(tone int, strict bool) bool {
 	if keys == "" {
 		return false
 	}
-	parts, ok := s.splitPinyin(keys, tone)
+	py, ok := s.shuangpinKeys(keys)
+	var parts []string
+	if ok {
+		parts, ok = s.splitPinyin(py, tone)
+	}
 	if !ok {
 		if strict {
 			s.bell = s.ZhuyinErrorHint

@@ -2193,7 +2193,7 @@ func (s *Session) snapshot() proto.Snapshot {
 		pending = s.ninePendingText() // 九宮格：目前最可能的拼法
 	}
 	if s.pinyinPending() {
-		pending = s.pyKeys // 漢語拼音：照打的字母（#324）
+		pending = s.pinyinPreview() // 漢語拼音：照打的字母（#324）；雙拼換成拼音
 	}
 	split := pending != ""
 	// commitComposed 不照畫面送出的未打完注音（#322）：見 proto.Segment.Unfinished。
