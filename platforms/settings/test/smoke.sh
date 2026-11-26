@@ -611,7 +611,7 @@ items={x['key']:x for x in json.load(open(sys.argv[1]))['items']}
 disabled=[k for k,x in items.items() if x.get('disabled') and k!='start-mode']
 ok=disabled==['mixed-input','toneless'] and items['mixed-input'].get('disabled_reason')=='許氏排列時關閉' and items['mixed-input']['value']=='on'
 ok=ok and items['toneless'].get('disabled_reason')=='許氏排列時關閉'  # 不打聲調只在標準排列有效（#150）
-ok=ok and items['keyboard-layout']['value']=='hsu' and items['keyboard-layout']['values']==['standard','eten','hsu','pinyin']
+ok=ok and items['keyboard-layout']['value']=='hsu' and items['keyboard-layout']['values']==['standard','eten','hsu','pinyin','xiaohe']
 ok=ok and items['keyboard-layout'].get('value_labels',{}).get('hsu')=='許氏'
 sys.exit(0 if ok else 1)
 PY_HSU
