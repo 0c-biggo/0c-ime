@@ -65,6 +65,8 @@ func (s *Session) keysPending() bool { return s.ninePending() || s.pinyinPending
 // pinyinKey 在漢語拼音鍵盤處理一個按鍵。consumed 為 true 時按鍵已處理完；false 時照一般規則繼續（未收的拼音已經完成）。
 // commit 是這一鍵送出的文字（不打聲調時的空白）。
 func (s *Session) pinyinKey(k string) (consumed bool, commit string) {
+	tone := s.spTone // 只對緊接著的這一鍵有效
+	s.spTone = shuangpinTone{}
 	if !s.pinyinLayout() || s.english || s.cand != nil {
 		return false, ""
 	}
@@ -74,16 +76,24 @@ func (s *Session) pinyinKey(k string) (consumed bool, commit string) {
 	case single && zhuyin.PinyinLetter(rs[0]):
 		if sp, live := s.shuangpinLive(); live && len(s.pyKeys) == 1 {
 			// 雙拼逐字轉換：第二鍵一按下就收成一個沒打聲調的音節，組字區立刻顯示字。拼不成音節的第二鍵不收、響鈴。
-			if _, ok := sp.Pair(s.pyKeys + k); !ok {
+			pair := s.pyKeys + k
+			if _, ok := sp.Pair(pair); !ok {
 				s.bell = s.ZhuyinErrorHint
 				return true, ""
 			}
-			s.pyKeys += k
-			s.closePinyin(0, true)
+			s.pyKeys = pair
+			if s.closePinyin(0, true) {
+				s.spTone = shuangpinTone{at: s.cursor, keys: pair}
+			}
 			return true, ""
 		}
 		s.pyKeys += k
 		return true, ""
+	case single && rs[0] >= '1' && rs[0] <= '5' && tone.at > 0 && !s.pinyinPending():
+		if s.toneShuangpin(tone, int(rs[0]-'0')) {
+			return true, ""
+		}
+		return false, ""
 	case k == " " && !s.pinyinPending() && s.composing():
 		if _, live := s.shuangpinLive(); live {
 			return true, s.commit() // 雙拼逐字轉換：字已經在組字區，空白送出整段（同不打聲調的全拼）
@@ -134,6 +144,29 @@ func (s *Session) pinyinKey(k string) (consumed bool, commit string) {
 	}
 	s.closePinyin(0, false)
 	return false, ""
+}
+
+// shuangpinTone 是雙拼逐字轉換剛收成的音節：at 是它後面的游標位置，keys 是打出它的兩鍵。
+type shuangpinTone struct {
+	at   int
+	keys string
+}
+
+// toneShuangpin 替雙拼逐字轉換剛收成的音節標聲調 tone（1–5）：不打聲調時第二鍵就收成沒打聲調的音節，緊接著的數字
+// 跟打聲調時一樣是這個音節的聲調（ni3hc 是「你好」、你是三聲；nihc3 的 3 標在「好」）。做法是拿掉那個音節、
+// 把兩鍵帶聲調重新收一次，結果同打聲調時的 ni3。這個聲調沒有字（hw2）時同漢語拼音的 hei2：不收、響鈴（提示開著時），
+// 音節照舊不打聲調，下一個數字還可以再試。音節已經不在游標前（例如中間的請求改了組字）時回傳 false，數字照一般規則。
+func (s *Session) toneShuangpin(t shuangpinTone, tone int) bool {
+	if t.at != s.cursor || s.cursor == 0 || s.cursor > len(s.syls) || s.literals[s.cursor-1] || !s.syls[s.cursor-1].Untoned() {
+		return false
+	}
+	s.eraseBeforeCursor()
+	s.pyKeys = t.keys
+	if !s.closePinyin(tone, true) {
+		s.closePinyin(0, true) // 放回原本不打聲調的音節；Bell 已由上面設定
+		s.spTone = t
+	}
+	return true
 }
 
 // closePinyin 把還沒收的拼音收成音節：tone 1–5 是最後一個音節的聲調，0 是都不打聲調。strict（聲調鍵、空白）時切不成
