@@ -105,7 +105,7 @@ func main() {
 	eng.SelectionKeys = *selectionKeys
 	kb, ok := layout.ByName(*keyboardLayout)
 	if !ok {
-		check(fmt.Errorf("未知鍵盤排列 %q（standard、eten、hsu、pinyin）", *keyboardLayout))
+		check(fmt.Errorf("未知鍵盤排列 %q（standard、eten、hsu、pinyin、xiaohe）", *keyboardLayout))
 	}
 	eng.Layout = kb
 	for _, id := range strings.FieldsFunc(*fuzzyPairs, func(r rune) bool { return r == ',' }) {

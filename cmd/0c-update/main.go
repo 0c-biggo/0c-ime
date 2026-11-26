@@ -101,8 +101,8 @@ func listSettings(w io.Writer, r settings.Report, path string) {
 	if settings.CapsLockEnglishSetting(runtime.GOOS) {
 		fmt.Fprintf(w, "caps-lock-english=%s（Caps Lock 開著時直接打英文：字母大寫、數字與符號半形，關掉回到注音；關閉時注音模式不理 Caps Lock）\n", onOff(s.CapsLockEnglish))
 	}
-	fmt.Fprintf(w, "toneless=%s（不打聲調也能選字：沒打聲調的字依前後文決定，有打的照聲調，組字中的 ' 切字；只在標準排列有效；開啟時中英混打停用）\n", onOff(s.Toneless))
-	fmt.Fprintf(w, "keyboard-layout=%s（鍵盤排列：standard 標準；eten 倚天 41 鍵，這時不提供 Emoji 選單與中英混打；hsu 許氏，這時不提供中英混打；pinyin 漢語拼音，數字標調、這時不提供中英混打）\n", s.KeyboardLayout)
+	fmt.Fprintf(w, "toneless=%s（不打聲調也能選字：沒打聲調的字依前後文決定，有打的照聲調，組字中的 ' 切字；在標準排列、漢語拼音與小鶴雙拼有效，小鶴雙拼每兩鍵就換成字、音節後可打 1–5 補聲調；開啟時中英混打停用）\n", onOff(s.Toneless))
+	fmt.Fprintf(w, "keyboard-layout=%s（鍵盤排列：standard 標準；eten 倚天 41 鍵，這時不提供 Emoji 選單與中英混打；hsu 許氏，這時不提供中英混打；pinyin 漢語拼音，數字標調、這時不提供中英混打；xiaohe 小鶴雙拼，每兩鍵一個音節、聲調同漢語拼音，這時不提供中英混打）\n", s.KeyboardLayout)
 	for _, it := range s.Items() {
 		if strings.HasPrefix(it.Key, "style-") {
 			fmt.Fprintf(w, "%s=%s（%s）\n", it.Key, it.Value, it.Label)

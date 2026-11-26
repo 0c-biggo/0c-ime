@@ -87,7 +87,7 @@ type Settings struct {
 	CandidateLayout    string `json:"candidate_layout"`
 	EmojiShortcut      string `json:"emoji_shortcut"`
 	EmojiEqualsFirst   bool   `json:"emoji_equals_first"`
-	KeyboardLayout     string `json:"keyboard_layout"` // standard（預設）、eten（倚天 41 鍵，#83）、hsu（許氏，#183）或 pinyin（漢語拼音，#324）
+	KeyboardLayout     string `json:"keyboard_layout"` // standard（預設）、eten（倚天 41 鍵，#83）、hsu（許氏，#183）、pinyin（漢語拼音，#324）或 xiaohe（小鶴雙拼）
 	// OutputSimplified：送出時把繁體轉成簡體（#118）；組字、候選與學習仍是繁體。預設 false。
 	OutputSimplified bool `json:"output_simplified"`
 	// SimplifiedHotkey：按 SimplifiedHotkeyLabel 的快捷鍵切換「輸出簡體字」（#192）。預設 false：外殼不攔這個鍵，
@@ -855,7 +855,7 @@ func (s Settings) disabledReasonOn(goos, key string) string {
 		if s.symbolWidth() == "all" {
 			return allSymbolsTonelessReason
 		}
-		// 只在標準排列生效（#150）：倚天 41 鍵的 ' 是 ㄘ、沒有分隔鍵，許氏一個鍵兼聲母、韻母與聲調。
+		// 標準排列、漢語拼音與小鶴雙拼生效（#150）：倚天 41 鍵的 ' 是 ㄘ、沒有分隔鍵，許氏一個鍵兼聲母、韻母與聲調。
 		switch s.KeyboardLayout {
 		case LayoutETen:
 			return "倚天 41 鍵時關閉"
@@ -880,7 +880,7 @@ func (s Settings) disabledReasonOn(goos, key string) string {
 		// 聲調選填（#150）與中英混打（#78）有自己處理沒有字的注音的方式，這一項不作用（#300）。
 		// 兩者本身停用（倚天、許氏、所有符號鍵打半形、輸入習慣衝突）時照常；聲調選填開著時混打也停用，原因寫聲調選填。
 		if s.Toneless && s.disabledReasonOn(goos, "toneless") == "" && s.KeyboardLayout != LayoutPinyin && s.KeyboardLayout != LayoutXiaohe {
-			return "不打聲調時關閉" // 漢語拼音不打聲調時照樣用它提示收不成音節的聲調（#324）
+			return "不打聲調時關閉" // 漢語拼音與小鶴雙拼不打聲調時照樣用它提示收不成音節的聲調（#324）
 		}
 		if s.MixedInput && s.disabledReasonOn(goos, "mixed-input") == "" {
 			return zhuyinHintMixedReason
@@ -1027,8 +1027,9 @@ const personalLearningDescription = "選過的字詞會排到前面，常用的�
 // tonelessDescription 是「不打聲調也能選字」（#150）的說明：怎麼切音節、空白還是一聲、混打停用。
 const tonelessDescription = "聲調可打可不打：ㄋㄧㄏㄠ 就是「你好」，沒打聲調的字依前後文決定，有打聲調的字照聲調；少打聲調時選字比較容易錯，拿不定的字可以補聲調。" +
 	"接不上前一個音節的注音會開始新的字；ㄒㄧㄢ 是一個字，要「西安」請打 ㄒㄧ'ㄢ（組字中的 ' 用來切字，頓號改按 \\）或在 ㄒㄧ 後面補聲調。" +
-	"沒打完的注音按空白仍是一聲，送出請按 Enter。開啟時中英混打停用，英文請用 Shift 切換，「我的詞彙」裡的英文詞照樣認得。只在標準排列與漢語拼音有效；" +
-	"漢語拼音本來就可以不打聲調，開啟時空白把拼音換成字並送出（關閉時空白是一聲）；要先看字再送出，請按 ↓ 或方向鍵"
+	"沒打完的注音按空白仍是一聲，送出請按 Enter。開啟時中英混打停用，英文請用 Shift 切換，「我的詞彙」裡的英文詞照樣認得。只在標準排列、漢語拼音與小鶴雙拼有效；" +
+	"漢語拼音本來就可以不打聲調，開啟時空白把拼音換成字並送出（關閉時空白是一聲）；要先看字再送出，請按 ↓ 或方向鍵。" +
+	"小鶴雙拼開啟時每兩鍵就換成字，空白送出；音節後緊接著打 1–5 可以補聲調"
 
 // CapsLockEnglishSetting 回報這個平台有沒有「Caps Lock 開著時直接打英文」（#173）：Windows、Linux 有；
 // macOS 開 Caps Lock 一律切到英文大寫（#84、#67），沒有這一項，設定檔裡的值也不用。
