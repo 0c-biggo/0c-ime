@@ -21,8 +21,69 @@ const clockSkew = 10 * time.Minute
 
 type SignedAsset struct {
 	Asset
-	// Kind：core 只更新引擎、字典與神經模型，外殼不變；shell 需要更換外殼（DLL／addon／app）。
+	// Kind：core 只更新引擎、字典與神經模型，外殼不變；shell 需要更換外殼（DLL／addon／app）；
+	// updater（只出現在 Rules，#295）只換排程用的穩定更新器，套件仍是完整的 core 或 shell 套件。
 	Kind string `json:"kind"`
+	// Version 是這個資產的套件版本；只用在 Rules（空字串為規則或索引的版本）。舊格式的 Assets 不寫。
+	Version string `json:"version,omitempty"`
+}
+
+// 資產種類。舊格式的 Assets 只能是 core 或 shell：0.2.14 以前的更新器看到別的種類會拒絕整份索引。
+const (
+	KindCore    = "core"
+	KindShell   = "shell"
+	KindUpdater = "updater"
+)
+
+// FeedRule（#295）依已安裝的外殼版本與更新器版本，給一個平台不同的資產。客戶端由上往下找第一條符合的規則，
+// 沒有符合的才用舊格式的 Assets。0.2.14 以前的更新器不認得 rules（JSON 忽略未知欄位），只看 Assets，所以：
+//   - Assets 永遠要是舊更新器能接受的內容（每個平台一個、種類只有 core／shell）；
+//   - 規則只能加欄位、不能改既有欄位的意義；客戶端讀不懂的規則（版本格式不對、網址不安全）整條略過，讀不懂的資產種類
+//     略過該資產，不拒絕整份索引——之後新增的種類與欄位不會讓這一版的更新器停擺。
+//
+// 版本範圍：min 含、below 不含，空字串表示不限。installed 是完整安裝（外殼）的版本，讀不到（例如 zuin 舊版）時
+// 視為比任何版本都舊；updater 是執行查詢的 0c-update 版本，開發建置視為比任何版本都舊。
+type FeedRule struct {
+	OS             string `json:"os"`
+	Arch           string `json:"arch"`
+	InstalledMin   string `json:"installed_min,omitempty"`
+	InstalledBelow string `json:"installed_below,omitempty"`
+	UpdaterMin     string `json:"updater_min,omitempty"`
+	UpdaterBelow   string `json:"updater_below,omitempty"`
+	// Version 是這條規則提供的版本；空字串為索引的 version。
+	Version string `json:"version,omitempty"`
+	// Assets 最多一個 core 或 shell（要裝的版本）加一個 updater；沒有 core／shell 表示這個條件下不提供更新。
+	Assets []SignedAsset `json:"assets"`
+	// Comment 是給人看的說明，客戶端不看。
+	Comment string `json:"comment,omitempty"`
+
+	// unknown 是這一版不認得的鍵：一律當成新的條件，這一版判斷不了，所以整條規則當成不符合（往下找）。
+	// 之後加條件（例如 #294 的 TSF 註冊指紋）就不會讓舊客戶端忽略條件、拿到不該拿的資產。
+	unknown []string
+}
+
+var ruleKeys = map[string]bool{"os": true, "arch": true, "installed_min": true, "installed_below": true, "updater_min": true,
+	"updater_below": true, "version": true, "assets": true, "comment": true}
+
+// UnmarshalJSON 記下這一版不認得的鍵（見 unknown）。
+func (r *FeedRule) UnmarshalJSON(b []byte) error {
+	type plain FeedRule
+	var p plain
+	if err := json.Unmarshal(b, &p); err != nil {
+		return err
+	}
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(b, &keys); err != nil {
+		return err
+	}
+	*r = FeedRule(p)
+	r.unknown = nil
+	for k := range keys {
+		if !ruleKeys[k] {
+			r.unknown = append(r.unknown, k)
+		}
+	}
+	return nil
 }
 
 type SignedFeed struct {
@@ -36,14 +97,19 @@ type SignedFeed struct {
 	Rollout   int           `json:"rollout"`   // 0–100：分批比例，依安裝識別碼決定資格
 	Withdrawn []string      `json:"withdrawn"` // 已撤回的版本：未開始套用的工作要停止
 	Assets    []SignedAsset `json:"assets"`
+	// Rules（#295）：依版本給資產的規則，見 FeedRule。0.2.15 起的更新器才看。
+	Rules []FeedRule `json:"rules,omitempty"`
 }
 
 // TrustedKeys 回傳本建置信任的發行公鑰（正式金鑰；e2etest 建置另加測試金鑰）。
 func TrustedKeys() []ed25519.PublicKey { return trustedKeys() }
 
-// SignFeed 簽署索引，回傳索引位元組與 base64 簽章（發布端使用）。
+// SignFeed 簽署索引，回傳索引位元組與 base64 簽章（發布端使用）。規則在這裡嚴格檢查：客戶端只略過讀不懂的規則。
 func SignFeed(f *SignedFeed, key ed25519.PrivateKey) ([]byte, []byte, error) {
 	if err := f.check(); err != nil {
+		return nil, nil, err
+	}
+	if err := f.checkRules(); err != nil {
 		return nil, nil, err
 	}
 	body, err := json.MarshalIndent(f, "", "  ")
@@ -108,7 +174,7 @@ func (f *SignedFeed) check() error {
 	seen := map[string]bool{}
 	for _, a := range f.Assets {
 		key := a.OS + "/" + a.Arch
-		if seen[key] || (a.Kind != "core" && a.Kind != "shell") || !hashPattern.MatchString(a.SHA256) || a.Size <= 0 || a.Size > MaxArchive {
+		if seen[key] || (a.Kind != KindCore && a.Kind != KindShell) || !hashPattern.MatchString(a.SHA256) || a.Size <= 0 || a.Size > MaxArchive {
 			return fmt.Errorf("invalid or duplicate asset %s", key)
 		}
 		if err := secureURL(a.URL); err != nil {
@@ -117,6 +183,151 @@ func (f *SignedFeed) check() error {
 		seen[key] = true
 	}
 	return nil
+}
+
+// checkRules 是發布端的嚴格檢查：每條規則都要讀得懂、每個資產都要是已知種類，否則不簽。
+func (f *SignedFeed) checkRules() error {
+	for i, r := range f.Rules {
+		if err := r.problem(f.Version, true); err != nil {
+			return fmt.Errorf("rule %d (%s/%s): %w", i, r.OS, r.Arch, err)
+		}
+	}
+	return nil
+}
+
+func validAsset(a SignedAsset) error {
+	if !hashPattern.MatchString(a.SHA256) || a.Size <= 0 || a.Size > MaxArchive {
+		return fmt.Errorf("invalid asset hash or size")
+	}
+	if a.Version != "" && !ValidVersion(a.Version) {
+		return fmt.Errorf("invalid asset version")
+	}
+	return secureURL(a.URL)
+}
+
+// problem 回報規則讀不懂的地方。strict（發布端）時未知的資產種類也算錯；客戶端只略過那個資產。
+func (r FeedRule) problem(feedVersion string, strict bool) error {
+	if r.OS == "" || r.Arch == "" {
+		return fmt.Errorf("missing os/arch")
+	}
+	if len(r.unknown) > 0 {
+		return fmt.Errorf("unknown rule conditions %v", r.unknown)
+	}
+	for _, v := range []string{r.InstalledMin, r.InstalledBelow, r.UpdaterMin, r.UpdaterBelow, r.Version} {
+		if v != "" && !ValidVersion(v) {
+			return fmt.Errorf("invalid version %q", v)
+		}
+	}
+	if emptyRange(r.InstalledMin, r.InstalledBelow) || emptyRange(r.UpdaterMin, r.UpdaterBelow) {
+		return fmt.Errorf("empty version range")
+	}
+	main, updater := 0, 0
+	for _, a := range r.Assets {
+		switch a.Kind {
+		case KindCore, KindShell:
+			main++
+		case KindUpdater:
+			updater++
+		default:
+			if strict {
+				return fmt.Errorf("unknown asset kind %q", a.Kind)
+			}
+			continue
+		}
+		if a.OS != "" && (a.OS != r.OS || a.Arch != r.Arch) {
+			return fmt.Errorf("asset for %s/%s in a rule for %s/%s", a.OS, a.Arch, r.OS, r.Arch)
+		}
+		if err := validAsset(a); err != nil {
+			return err
+		}
+		if strict && a.Kind != KindUpdater && a.Version != "" && a.Version != r.version(feedVersion) {
+			return fmt.Errorf("asset version %s differs from rule version %s", a.Version, r.version(feedVersion))
+		}
+	}
+	if main > 1 || updater > 1 {
+		return fmt.Errorf("at most one core/shell asset and one updater asset")
+	}
+	return nil
+}
+
+func emptyRange(min, below string) bool {
+	if min == "" || below == "" {
+		return false
+	}
+	order, err := CompareVersion(min, below)
+	return err != nil || order >= 0
+}
+
+func (r FeedRule) version(feedVersion string) string {
+	if r.Version != "" {
+		return r.Version
+	}
+	return feedVersion
+}
+
+// inRange：v 是否在 [min, below) 裡。v 讀不懂（空字串、開發建置）時視為比任何版本都舊。
+func inRange(v, min, below string) bool {
+	known := ValidVersion(v)
+	if min != "" {
+		if !known {
+			return false
+		}
+		if order, err := CompareVersion(v, min); err != nil || order < 0 {
+			return false
+		}
+	}
+	if below != "" && known {
+		if order, err := CompareVersion(v, below); err != nil || order >= 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// Offer 是索引給這台電腦的內容（Resolve）。
+type Offer struct {
+	Version string       // 要更新到的版本
+	Asset   *SignedAsset // 要裝的套件（core 或 shell）；nil 表示這個條件下沒有
+	Updater *SignedAsset // 只換更新器的套件（Version 已填）；nil 表示沒有
+	Rule    int          // 符合的規則；-1 是舊格式的 Assets
+}
+
+// Resolve 依規則選出這台電腦的資產（#295）：installed 是完整安裝（外殼）的版本，updater 是執行查詢的 0c-update 版本。
+// 沒有符合的規則時照舊以 Assets 選（與 0.2.14 以前的更新器相同）。沒有資產的規則表示「這個條件下不提供更新」；
+// 有資產但全是這一版不認得的種類時，這條規則略過。
+func (f *SignedFeed) Resolve(goos, arch, installed, updater string) Offer {
+	for i, r := range f.Rules {
+		if r.OS != goos || r.Arch != arch || r.problem(f.Version, false) != nil ||
+			!inRange(installed, r.InstalledMin, r.InstalledBelow) || !inRange(updater, r.UpdaterMin, r.UpdaterBelow) {
+			continue
+		}
+		o := Offer{Version: r.version(f.Version), Rule: i}
+		for j := range r.Assets {
+			a := r.Assets[j]
+			a.OS, a.Arch = goos, arch
+			switch {
+			case (a.Kind == KindCore || a.Kind == KindShell) && o.Asset == nil:
+				a.Version = o.Version
+				o.Asset = &a
+			case a.Kind == KindUpdater && o.Updater == nil:
+				if a.Version == "" {
+					a.Version = o.Version
+				}
+				o.Updater = &a
+			}
+		}
+		if len(r.Assets) > 0 && o.Asset == nil && o.Updater == nil {
+			continue // 只有這一版不認得的種類：這條規則不是給這一版的，往下找
+		}
+		return o
+	}
+	o := Offer{Version: f.Version, Rule: -1}
+	if a, err := f.Select(goos, arch); err == nil {
+		c := *a
+		c.Version = f.Version
+		o.Asset = &c
+	}
+	return o
 }
 
 // Select 回傳本平台的資產。

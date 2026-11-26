@@ -673,6 +673,22 @@ impl Session {
         self.handle(json!({"type": "key", "key": key}))
     }
 
+    /// 開始組字的第一鍵帶外殼讀到的「游標前一個字是不是阿拉伯數字」（#337，proto.Request.DigitBefore）：
+    /// 英文模式的按鍵不經過引擎，引擎自己不知道。`None` 是沒讀或讀不到，請求與 `key` 相同。
+    pub fn key_after(&mut self, key: &str, digit_before: Option<bool>) -> Snapshot {
+        let mut request = json!({"type": "key", "key": key});
+        if let Some(digit) = digit_before {
+            request["digit_before"] = Value::Bool(digit);
+        }
+        self.handle(request)
+    }
+
+    /// 要不要讀游標前一個字（#337）：外殼開了前文確認（ZUIN_DOCUMENT_CONTEXT 不是 0）而且不是私人欄位。
+    /// 使用者的前文設定、暫停由引擎決定（同前文確認）。
+    pub fn wants_digit_before(&self) -> bool {
+        self.context_enabled && !self.private
+    }
+
     /// 單按 Shift 或輸入指示器按鈕切換中英。上一次切換之後沒有任何按鍵或其他請求時帶 restore，
     /// 核心才放回切到英文時清掉的未打完注音（#90 防誤觸）。
     pub fn toggle(&mut self) -> Snapshot {
@@ -1097,6 +1113,21 @@ mod tests {
         assert!(enter.handled && !enter.english_pending);
         assert!(!s.english_state.english_wants_key("Enter"));
         assert!(!s.key("Enter").handled);
+    }
+
+    /// #337：開始組字的第一鍵才帶 digit_before；讀不到時請求與 key 相同。
+    #[test]
+    fn key_after_carries_only_the_bit() {
+        let Some(mut s) = session() else {
+            eprintln!("略過：沒有 ZUIN_TEST_PIPE");
+            return;
+        };
+        for digit in [Some(true), Some(false), None] {
+            let first = s.key_after("s", digit);
+            assert!(first.ok && first.handled, "{:?}", digit);
+            assert_eq!(s.log[0].get("digit_before").and_then(Value::as_bool), digit);
+            s.handle(json!({"type": "cancel"}));
+        }
     }
 
     #[test]

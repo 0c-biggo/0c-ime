@@ -6,8 +6,10 @@
 Checks scores against the float64 reference (qsel_reference.py) on random legal
 inputs with odd sizes (vocabulary, rows and positions not multiples of the tiles),
 that 1, 2 and 3 threads give the same bits, that the packed entry point matches,
-that a row with nothing allowed is weighed as onnxruntime does, and that bad
-inputs and damaged files are refused. Needs numpy.
+that a row with nothing allowed is weighed as onnxruntime does, that the prefix
+cache gives the same bits as scoring without it (typing sequences, and inputs where
+the prefix must not be reused), and that bad inputs and damaged files are refused.
+Needs numpy.
 """
 import argparse
 import ctypes
@@ -20,7 +22,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import qsel_convert as conv  # noqa: E402
 import qsel_reference as ref  # noqa: E402
-from qsel_parity import NAMES, Inputs, Qsel, pack, random_inputs  # noqa: E402
+from qsel_parity import NAMES, Inputs, Qsel, build_inputs, pack, random_inputs  # noqa: E402
 
 CFG = dict(hidden=128, layers=2, heads=2, head_dim=64, inter=96, vocab=301, n_bases=20, n_tones=6, n_types=3,
            block=16, reading_type=1, eps=float(np.float32(1e-5)), attn_scale=0.125)
@@ -74,6 +76,97 @@ def build(path, seed=1):
         f.write(h + b'\0' * (conv.DATA_ALIGN - len(h)) + data)
 
 
+def typing(rng, steps):
+    """同一句打字時的請求：前文不變，讀音一次多一個音節或換掉最後一個音節，候選每次都變。"""
+    V = CFG['vocab']
+    ctx = [int(rng.integers(8, V)) for _ in range(int(rng.choice([0, int(rng.integers(1, 30))])))]
+    sounds = [(int(rng.integers(2, CFG['n_bases'])), int(rng.integers(0, 6)))]
+    out = []
+    while len(out) < steps:
+        if len(sounds) < 2 or rng.random() < 0.6:
+            sounds.append((int(rng.integers(2, CFG['n_bases'])), int(rng.integers(0, 6))))
+        else:
+            sounds[-1] = (int(rng.integers(2, CFG['n_bases'])), int(rng.integers(0, 6)))
+        n = len(sounds)
+        first = [int(rng.integers(8, V)) for _ in range(n)]
+        cands = {tuple(first)}
+        while len(cands) < int(rng.integers(2, 9)):
+            cands.add(tuple(first[i] if rng.random() < 0.6 else int(rng.integers(8, V)) for i in range(n)))
+        text = rng.random() < 0.1
+        neutral = not text and sounds[-1][1] not in (0, 5) and rng.random() < 0.3
+        out.append(build_inputs(ctx, sounds, [list(c) for c in sorted(cands)], text, neutral))
+    return out
+
+
+def prefix_tests(lib, path, check):
+    """前綴快取的分數跟不開快取逐位元相同，而且只在確定相同的地方沿用。"""
+    plain = Qsel(lib, path, None, 1)
+    cached = [Qsel(lib, path, None, t) for t in (1, 3)]
+    check(cached[0].prefix_cache(-1) == 3, 'negative prefix rows accepted')
+    check(cached[0].prefix_cache(1000) == 0 and cached[1].prefix_cache(24) == 0, 'prefix cache refused')
+    rng = np.random.default_rng(336)
+    reused = rows = calls = 0
+    seqs = [typing(rng, int(rng.integers(3, 9))) for _ in range(12)]
+    # 中間插入：重複上一個請求、另一句的請求、候選樹有一列整列遮掉的請求
+    seqs.insert(3, [seqs[2][-1]])
+    y = {k: v.copy() for k, v in seqs[5][-1].items()}
+    y['mask'][0, 0, -1, :] = False
+    seqs.insert(6, [y])
+    for seq in seqs:
+        for x in seq:
+            want = plain.score(x).view(np.uint32)
+            for q in cached:
+                check(np.array_equal(q.score(x).view(np.uint32), want), f'prefix cache changed the scores (call {calls})')
+            r, kept, nbytes = cached[0].prefix_info()
+            check(kept <= x['ids'].shape[-1] and nbytes > 0, f'call {calls}: kept {kept} rows, {nbytes} bytes')
+            check(cached[1].prefix_info()[1] <= 24, 'the cache kept more rows than allowed')
+            reused, rows, calls = reused + r, rows + x['ids'].shape[-1], calls + 1
+    check(reused > rows // 4, f'typing reused only {reused} of {rows} rows')
+    print(f'prefix cache: {calls} calls in {len(seqs)} sentences, same bits, {reused} of {rows} rows reused')
+
+    # 輸入大多相同、但不能全部沿用的情況：沿用的話快取的列會算錯。
+    base = typing(np.random.default_rng(5), 3)[-1]
+    L = base['ids'].shape[-1]
+    S = int(np.nonzero(base['ids'][0] == 3)[0][0]) - 1  # 最後一個音節分支之前的列數
+    proj0 = int(base['proj_pos'].min())
+
+    def edited(name, fn, want_reused):
+        y = {k: v.copy() for k, v in base.items()}
+        fn(y)
+        want = plain.score(y).view(np.uint32)
+        q = cached[0]
+        q.score(base)
+        got = q.score(y).view(np.uint32)
+        r = q.prefix_info()[0]
+        check(np.array_equal(got, want), f'{name}: scores differ from scoring without the cache')
+        check(r == want_reused, f'{name}: reused {r} rows, want {want_reused}')
+        q.score(y)  # 反過來：快取 y，再算 base
+        check(np.array_equal(q.score(base).view(np.uint32), plain.score(base).view(np.uint32)), f'{name}: back to base differs')
+    r = S // 2
+    edited('same inputs', lambda y: None, proj0)
+    edited('a tone changed', lambda y: y['tones'].__setitem__((0, r), (y['tones'][0, r] + 1) % 6), r)
+    edited('a position changed', lambda y: y['positions'].__setitem__((0, r), y['positions'][0, r] + 1), r)
+    edited('a prefix row attends past the prefix', lambda y: y['mask'].__setitem__((0, 0, r, L - 1), True), r)
+    edited('a prefix row attends less', lambda y: y['mask'].__setitem__((0, 0, r, 0), False), r)
+    edited('a prefix row attends nothing', lambda y: y['mask'].__setitem__((0, 0, r, slice(None)), False), r)
+    edited('a projected row in the prefix', lambda y: y.__setitem__('proj_pos', np.concatenate([[r], y['proj_pos']])), r)
+
+    # 記憶體要還得回來：關掉快取時，以及記憶體警告（release_pages）時。
+    q = cached[0]
+    q.score(base)
+    check(q.prefix_info()[2] > 0, 'nothing kept')
+    q.release_pages()
+    check(q.prefix_info()[1:] == (0, 0), 'release_pages kept the prefix')
+    q.score(base)
+    q.score(base)
+    check(q.prefix_info()[0] > 0, 'no reuse after release_pages')
+    check(q.prefix_cache(0) == 0 and q.prefix_info()[1:] == (0, 0), 'turning the cache off kept it')
+    q.score(base)
+    check(q.prefix_info() == (0, 0, 0), 'a cache that is off kept rows')
+    for h in [plain] + cached:
+        h.close()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--lib', required=True)
@@ -114,6 +207,7 @@ def main():
                                               ctypes.byref(n))
                 check(rc == 0 and n.value == want.size and np.array_equal(out, got[0]), f'case {i}: packed (shift {shift})')
         print(f'{args.cases} random cases, largest relative difference from float64 {worst:.2e}')
+        prefix_tests(args.lib, path, check)
 
         # refused inputs
         x, _ = random_inputs(rng, vocab=CFG['vocab'], n_bases=CFG['n_bases'], max_syllables=6)

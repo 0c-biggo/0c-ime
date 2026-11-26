@@ -21,7 +21,7 @@ func (s *Session) commitShown(text string) (string, bool) {
 		return "", false
 	}
 	s.finishUntoned()
-	if !s.comp.Empty() || s.ninePending() {
+	if !s.comp.Empty() || s.keysPending() {
 		return "", false // 音節補不完（例如只有聲調）：照原本的送出處理
 	}
 	if s.Rerank.Scorer == nil {

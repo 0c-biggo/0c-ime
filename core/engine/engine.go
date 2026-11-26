@@ -50,6 +50,7 @@ type Engine struct {
 	ZhuyinErrorHint       bool              // 「打錯注音時提示」開著時由宿主設定（#300，預設開）；零值時沒有字的音節照舊原樣留下。
 	Abbreviation          bool              // 聲調選填時只打聲母或介音也能選字；只在 Toneless 時作用。
 	MixedWithToneless     bool              // 聲調選填與混打共存（手機）：注音鍵走聲調選填，實體按鍵走混打。
+	NineSegment           bool              // 注音九宮格「自動切字」（手機，預設關）：九宮格的鍵不必按聲調鍵，由核心切音節。
 	EnglishAutocomplete   bool
 	MixedInput            bool                // opt-in bilingual keys; disabled preserves legacy behavior.
 	English               *english.Dictionary // nil uses the authored prototype vocabulary.
@@ -170,6 +171,7 @@ func (e *Engine) OpenSession() uint64 {
 	e.sessions[e.next].ZhuyinErrorHint = e.ZhuyinErrorHint
 	e.sessions[e.next].Abbreviation = e.Abbreviation
 	e.sessions[e.next].MixedWithToneless = e.MixedWithToneless
+	e.sessions[e.next].NineSegment = e.NineSegment
 	e.sessions[e.next].EnglishAutocomplete = e.EnglishAutocomplete
 	e.sessions[e.next].MixedInput = e.MixedInput
 	e.sessions[e.next].EmojiShortcut = e.EmojiShortcut

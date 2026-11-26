@@ -17,14 +17,32 @@ type Hyp struct {
 	// 改用較小的上限（decode.maxAbbreviatedArcs）。要明確標記：沒打聲調加模糊音、鄰鍵或九宮格的一列也可能有幾十個
 	// 假設，不能從列長推斷是不是簡拼。
 	Abbreviated bool
-	// Corrected：這個假設是觸控鍵盤的修正（換成鄰鍵、補上漏按的鍵、去掉多按的鍵，session.SpatialOptions），不是打的音。
+	// Span 是這個假設佔幾個位置；0 與 1 都是一個位置。一般的音節格每個位置就是一個音節，Span 一律是 0。
+	// 注音九宮格自動切字時位置是九宮格的鍵，一個音節佔 1–3 顆鍵：音節格變成有向圖，
+	// 從位置 i 出發的假設走到 i+Span，同一串鍵的不同切法是圖上不同的路徑。
+	Span int
+	// Corrected：這個假設是觸控鍵盤的修正（換成鄰鍵、補上漏按的鍵，session.SpatialOptions），不是打的音。
 	// 沒打聲調的位置，解碼器把經過它的弧另外依成本裁切（decode.maxCorrectedArcs），不跟打的音搶同一個上限：那裡依
 	// 無上下文機率只留前 64 個弧，修正的讀音一多，打的音裡機率較低的字（鶯）會被擠掉。桌面沒有這種假設。
 	Corrected bool
 }
 
-// Lattice 的每個元素是一個位置的所有假設。
+// Width 是假設佔的位置數（Span，至少 1）。
+func (h Hyp) Width() int { return max(h.Span, 1) }
+
+// Lattice 的每個元素是一個位置的所有假設（從這個位置出發；佔多個位置的假設見 Hyp.Span）。
 type Lattice [][]Hyp
+
+// Width 是音節格裡最寬的假設佔幾個位置：一般的音節格是 1，九宮格自動切字的按鍵圖最多是 3。
+func (lat Lattice) Width() int {
+	w := 1
+	for _, row := range lat {
+		for _, h := range row {
+			w = max(w, h.Span)
+		}
+	}
+	return w
+}
 
 // Frontend 把使用者輸入的音節序列展開成音節格。
 type Frontend interface {

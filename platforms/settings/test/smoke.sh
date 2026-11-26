@@ -53,7 +53,7 @@ run_update() { local name=$1; shift; HOME=$(home_of "$name") "$UPDATE_BIN" "$@";
 NAV=11
 tabs() { local n=$1; local keys=(); for _ in $(seq "$n"); do keys+=(Tab); done; xdotool key --delay 120 "${keys[@]}"; }
 
-# SMOKE_ONLY=vocab／models／styles／scroll／personal：只跑「我的詞彙」（vocab.sh）、「模型」（models.sh）等其中一部分，開發時省時間。
+# SMOKE_ONLY=vocab／models／styles／scroll／personal／update：只跑「我的詞彙」（vocab.sh）、「模型」（models.sh）等其中一部分，開發時省時間。
 if [ -z "${SMOKE_ONLY:-}" ]; then
 
 # ---- 場景 A：全新安裝，沒有設定檔也沒有引擎 ----
@@ -611,7 +611,7 @@ items={x['key']:x for x in json.load(open(sys.argv[1]))['items']}
 disabled=[k for k,x in items.items() if x.get('disabled') and k!='start-mode']
 ok=disabled==['mixed-input','toneless'] and items['mixed-input'].get('disabled_reason')=='許氏排列時關閉' and items['mixed-input']['value']=='on'
 ok=ok and items['toneless'].get('disabled_reason')=='許氏排列時關閉'  # 不打聲調只在標準排列有效（#150）
-ok=ok and items['keyboard-layout']['value']=='hsu' and items['keyboard-layout']['values']==['standard','eten','hsu']
+ok=ok and items['keyboard-layout']['value']=='hsu' and items['keyboard-layout']['values']==['standard','eten','hsu','pinyin']
 ok=ok and items['keyboard-layout'].get('value_labels',{}).get('hsu')=='許氏'
 sys.exit(0 if ok else 1)
 PY_HSU
@@ -628,6 +628,22 @@ else bad "hsu/mode 視窗沒有出現"; cat /tmp/app-hsu-mode.log; fi
 stop_app
 check "許氏時從混打的說明跳過去，沒有改到任何設定" test ! -e "$(settings_of hsu)"
 shoot hsu keyboard
+
+# ---- 漢語拼音（#324）：只有中英混打反灰並提示原因，不打聲調照常；鍵盤排列有「漢語拼音」選項 ----
+new_home pinyin
+printf '{"schema":1,"keyboard_layout":"pinyin","mixed_input":true,"toneless":true}\n' > "$(base_of pinyin)/settings.json"
+run_update pinyin settings -json > "$OUT/pinyin-settings.json"
+check "漢語拼音時契約只標示混打停用並附原因，值保留，不打聲調照常" python3 - "$OUT/pinyin-settings.json" <<'PY_PINYIN'
+import json,sys
+items={x['key']:x for x in json.load(open(sys.argv[1]))['items']}
+disabled=[k for k,x in items.items() if x.get('disabled') and k!='start-mode']
+ok=disabled==['mixed-input'] and items['mixed-input'].get('disabled_reason')=='漢語拼音時關閉' and items['mixed-input']['value']=='on'
+ok=ok and items['toneless']['value']=='on' and not items['toneless'].get('disabled')
+ok=ok and items['keyboard-layout']['value']=='pinyin' and items['keyboard-layout'].get('value_labels',{}).get('pinyin')=='漢語拼音'
+sys.exit(0 if ok else 1)
+PY_PINYIN
+shoot pinyin keyboard
+shoot pinyin mode
 
 # ---- 不打聲調（#150）：中英混打反灰並附原因，設定檔的 mixed_input 保留 ----
 new_home toneless
@@ -815,6 +831,9 @@ if [ "${SMOKE_ONLY:-styles}" = styles ]; then . "$(dirname "$0")/styles.sh"; fi
 
 # ---- 捲動位置（#268）----
 if [ "${SMOKE_ONLY:-scroll}" = scroll ]; then . "$(dirname "$0")/scroll.sh"; fi
+
+# ---- 更新頁的「更新方式」下拉選單（#340）----
+if [ "${SMOKE_ONLY:-update}" = update ]; then . "$(dirname "$0")/update-mode.sh"; fi
 
 # ---- 清除學習紀錄（#301）----
 if [ "${SMOKE_ONLY:-personal}" = personal ]; then . "$(dirname "$0")/personal.sh"; fi

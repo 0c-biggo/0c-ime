@@ -402,6 +402,11 @@ func removeLegacy(base string, keep ...*Receipt) []string {
 // InstallWindows installs a verified bundle and returns its directory and any old program files
 // that could not be removed yet.
 func InstallWindows(bundle, base, arch string, reg Registrar) (string, []string, error) {
+	return installWindows(bundle, base, arch, reg, nil)
+}
+
+// installWindows：keep 不為 nil 時不改註冊（InstallWindowsKeepingRegistration，#294）。
+func installWindows(bundle, base, arch string, reg Registrar, keep *keepMode) (string, []string, error) {
 	release, err := Verify(bundle, "windows", arch)
 	if err != nil {
 		return "", nil, err
@@ -418,6 +423,12 @@ func InstallWindows(bundle, base, arch string, reg Registrar) (string, []string,
 	previous, err := installed(base, reg)
 	if err != nil {
 		return "", nil, err
+	}
+	if keep != nil {
+		// 在安裝鎖內、動到任何檔案之前核對；要改註冊就整個不做，由呼叫端請使用者確認系統管理員權限。
+		if err = keepsRegistration(base, previous, release, reg); err != nil {
+			return "", nil, err
+		}
 	}
 	manifestHash, err := Hash(filepath.Join(bundle, "release.json"))
 	if err != nil {
@@ -494,7 +505,11 @@ func InstallWindows(bundle, base, arch string, reg Registrar) (string, []string,
 	if err != nil {
 		return "", nil, err
 	}
-	if err = switchRegistration(base, previous, next, reg); err != nil {
+	if keep != nil {
+		if err = swapFixed(base, previous, next, keep.probe); err != nil {
+			return "", nil, fmt.Errorf("換上新版輸入法元件失敗，已換回原本的版本：%w", err)
+		}
+	} else if err = switchRegistration(base, previous, next, reg); err != nil {
 		return "", nil, fmt.Errorf("registration failed; attempted to restore previous registration: %w", err)
 	}
 	// 舊版本目錄與備份不在這裡清：由呼叫端啟動的背景行程以 PruneWindows 清（#179）。

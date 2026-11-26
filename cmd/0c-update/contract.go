@@ -141,13 +141,16 @@ type features struct {
 	Vocab bool `json:"vocab"` // 0.2.0：「我的詞彙」頁、選單入口、我的片語
 	// PersonalReset：0c-update personal reset（#301，0.2.12）；設定程式看到它才顯示「清除學習紀錄」。
 	PersonalReset bool `json:"personal_reset,omitempty"`
+	// UpdateMode：0c-update mode … -json（#340）；設定程式看到它才在更新頁顯示「更新方式」下拉選單，舊版只顯示更新方式。
+	// 同一版起手動更新（manual）也在背景查詢、通知新版（needs_download），不自己下載。
+	UpdateMode bool `json:"update_mode,omitempty"`
 	// 引擎服務（#120，只在 status -json）：是否常駐（0.2.0 起恆為 true）、定義是否存在（installed／absent）與服務管理員的狀態。
 	EngineService      bool   `json:"engine_service,omitempty"`
 	EngineServiceState string `json:"engine_service_state,omitempty"`
 	EngineServiceUnit  string `json:"engine_service_unit,omitempty"`
 }
 
-func featuresOf() features { return features{Vocab: true, PersonalReset: true} }
+func featuresOf() features { return features{Vocab: true, PersonalReset: true, UpdateMode: true} }
 
 // runningValues 把引擎 health 回報的啟動配置換成設定的命令列寫法；沒有回報的項目不出現。
 func runningValues(info map[string]string) map[string]string {
@@ -347,7 +350,7 @@ type setOptions struct {
 	repair bool // 設定檔壞掉時改名保留，從預設值重新開始
 }
 
-const setUsage = "用法：0c-update set selection neural|statistical、set punctuation on|off、set document-context on|off、set mixed-input on|off、set english-autocomplete on|off、set left-shift on|off、set shift-tap-ms 200|300|400|500|600、set esc-clear on|off、set space-selects on|off、set candidate-cursor before|after、set advance-after-select on|off、set output-simplified on|off、set simplified-hotkey on|off、set ctrl-punctuation on|off、set shift-symbol-halfwidth off|on|all、set cjk-latin-space on|off、set zhuyin-error-hint on|off、set personal-learning on|off、set caps-lock-english on|off（Windows、Linux）、set toneless on|off、set keyboard-layout standard|eten|hsu、set fuzzy-z-zh|fuzzy-c-ch|fuzzy-s-sh|fuzzy-en-eng off|select|auto [鍵 值 ...] [-apply] [-notify] [-json] [-repair]"
+const setUsage = "用法：0c-update set selection neural|statistical、set punctuation on|off、set document-context on|off、set mixed-input on|off、set english-autocomplete on|off、set left-shift on|off、set shift-tap-ms 200|300|400|500|600、set esc-clear on|off、set space-selects on|off、set candidate-cursor before|after、set advance-after-select on|off、set output-simplified on|off、set simplified-hotkey on|off、set ctrl-punctuation on|off、set shift-symbol-halfwidth off|on|all、set cjk-latin-space on|off、set zhuyin-error-hint on|off、set personal-learning on|off、set caps-lock-english on|off（Windows、Linux）、set toneless on|off、set keyboard-layout standard|eten|hsu|pinyin、set fuzzy-z-zh|fuzzy-c-ch|fuzzy-s-sh|fuzzy-en-eng off|select|auto [鍵 值 ...] [-apply] [-notify] [-json] [-repair]"
 
 func parseSetArgs(args []string) (setOptions, error) {
 	var o setOptions

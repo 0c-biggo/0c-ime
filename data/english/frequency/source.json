@@ -1,0 +1,8 @@
+{
+  "name": "0c 英文詞頻與跨中英詞對",
+  "artifact": "english-corpus-20261123-r5",
+  "schema": "0c-english-source-stats-v1",
+  "url": "https://github.com/0c-biggo/0c-ime/tree/main/data/english/frequency",
+  "manifest_sha256": "936303fa8cf961961fe10c7a92b2b779b891554760a9b977a0442fdb93abc5b7",
+  "attribution": "Funmula Co., Limited"
+}

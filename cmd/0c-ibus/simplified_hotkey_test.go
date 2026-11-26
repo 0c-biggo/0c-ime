@@ -31,7 +31,7 @@ func TestSimplifiedHotkeyMatchesOnlyCtrlShiftF11(t *testing.T) {
 }
 
 // #192：設定「用快捷鍵切換簡體字」關著（引擎沒回報 simplified_hotkey）時 Ctrl＋Shift＋F11 照一般快捷鍵交給應用程式，
-// 什麼都不切換；開著時吃掉這個鍵，跟選單一樣即時切換：組字不動、提示列「已切換為輸出簡體字」、指示「注簡」，之後送出簡體。
+// 什麼都不切換；開著時吃掉這個鍵，跟選單一樣即時切換：組字不動、提示列「已切換為輸出簡體字」、指示「简」，之後送出簡體。
 func TestSimplifiedHotkeySwitchesLikeTheMenu(t *testing.T) {
 	e, rec, sock := newTestEngine(t)
 	eng, saved := liveSimplifiedEngine(t)
@@ -68,8 +68,8 @@ func TestSimplifiedHotkeySwitchesLikeTheMenu(t *testing.T) {
 	if commits := commitTexts(t, sig); len(commits) != 0 {
 		t.Fatalf("切換不送出組字：%v", commits)
 	}
-	if p, ok := propertyUpdate(sig, propInputMode); !ok || variantText(t, p.Symbol) != "注簡" {
-		t.Fatalf("注／英指示：%+v", p)
+	if p, ok := propertyUpdate(sig, propInputMode); !ok || variantText(t, p.Symbol) != "简" {
+		t.Fatalf("中／英指示：%+v", p)
 	}
 	if p, ok := propertyUpdate(sig, propSimplified); !ok || p.State != propStateChecked {
 		t.Fatalf("選單打勾：%+v", p)

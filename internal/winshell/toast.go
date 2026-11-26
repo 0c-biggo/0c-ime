@@ -17,6 +17,7 @@ import (
 type Toast struct {
 	Title, Body string
 	Action      string // 「立即安裝」的網址；空字串表示沒有按鈕
+	ActionLabel string // Action 按鈕的文字；空字串為「立即安裝」（手動更新的新版是「立即下載」，#340）
 	Snooze      string // 「稍後 1 小時」的網址
 }
 
@@ -37,7 +38,11 @@ func ToastXML(t Toast) string {
 	b.WriteString(`><visual><binding template="ToastGeneric"><text>` + esc(t.Title) + `</text><text>` + esc(t.Body) + `</text></binding></visual>`)
 	if t.Action != "" {
 		b.WriteString(`<actions>`)
-		b.WriteString(`<action content="立即安裝" activationType="protocol" arguments="` + esc(t.Action) + `"/>`)
+		label := t.ActionLabel
+		if label == "" {
+			label = "立即安裝"
+		}
+		b.WriteString(`<action content="` + esc(label) + `" activationType="protocol" arguments="` + esc(t.Action) + `"/>`)
 		b.WriteString(`<action content="稍後 1 小時" activationType="protocol" arguments="` + esc(t.Snooze) + `"/>`)
 		b.WriteString(`</actions>`)
 	}

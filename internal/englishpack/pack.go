@@ -82,7 +82,7 @@ func LoadWithTransform(dir string, transform func([]byte) ([]byte, error)) (*eng
 		return nil, nil, err
 	}
 	files := map[string][]byte{}
-	for _, name := range []string{"words.bin", "NOTICE.txt"} {
+	for _, name := range []string{"words.bin", "NOTICE.txt"} { // 格式 2 的 bigram.bin 由 LoadBigrams 讀
 		limit := int64(64 << 10)
 		if name == "words.bin" {
 			limit = english.MaxPackBytes + 64
@@ -115,11 +115,23 @@ func LoadWithTransform(dir string, transform func([]byte) ([]byte, error)) (*eng
 	return d, &m, nil
 }
 
+// packFiles 是各格式的檔案：格式 1 是桌面的詞表，格式 2 是詞頻資料包（ranked.go），多一份詞對。
+func packFiles(format int) []string {
+	switch format {
+	case 1:
+		return []string{"words.bin", "NOTICE.txt"}
+	case 2:
+		return []string{"words.bin", "bigram.bin", "NOTICE.txt"}
+	}
+	return nil
+}
+
 func (m Manifest) validate() error {
-	if m.Format != 1 || m.Words < 1 || m.Words > english.MaxPackWords || m.Ranking == "" || len(m.Sources) == 0 || len(m.Files) != 2 {
+	names := packFiles(m.Format)
+	if names == nil || m.Words < 1 || m.Words > english.MaxPackWords || m.Ranking == "" || len(m.Sources) == 0 || len(m.Files) != len(names) {
 		return fmt.Errorf("英文 manifest 格式不合法")
 	}
-	for _, name := range []string{"words.bin", "NOTICE.txt"} {
+	for _, name := range names {
 		f, ok := m.Files[name]
 		if !ok || f.Size < 1 || !hashOK(f.SHA256) {
 			return fmt.Errorf("英文 manifest 缺少 %s 雜湊或大小", name)
@@ -144,16 +156,38 @@ func hashOK(s string) bool {
 // Write publishes a complete pack by renaming a temporary directory. Existing
 // nonempty outputs are refused; callers select a fresh build/staging directory.
 func Write(dir string, d *english.Dictionary, m Manifest, notice []byte) error {
+	if d.Ranked() {
+		return fmt.Errorf("詞頻字典請用 CompileRanked")
+	}
 	m.Format, m.Words = 1, d.Len()
 	binary := d.Encode()
-	m.Files = map[string]File{"words.bin": {Sum(binary), int64(len(binary))}, "NOTICE.txt": {Sum(notice), int64(len(notice))}}
-	if err := m.validate(); err != nil {
-		return err
-	}
 	if _, err := english.Decode(binary); err != nil {
 		return err
 	}
-	if strings.TrimSpace(string(notice)) == "" {
+	return publish(dir, m, map[string][]byte{"words.bin": binary, "NOTICE.txt": notice})
+}
+
+func writeRanked(dir string, d *english.Dictionary, b *english.Bigrams, m Manifest, notice []byte) error {
+	m.Format, m.Words = 2, d.Len()
+	words, pairs := d.Encode(), b.Encode()
+	if back, err := english.Decode(words); err != nil || !back.Ranked() || back.Len() != d.Len() {
+		return fmt.Errorf("詞頻字典編碼後讀不回來：%v", err)
+	}
+	if back, err := english.DecodeBigrams(pairs); err != nil || back.Len() != b.Len() {
+		return fmt.Errorf("英文詞對編碼後讀不回來：%v", err)
+	}
+	return publish(dir, m, map[string][]byte{"words.bin": words, "bigram.bin": pairs, "NOTICE.txt": notice})
+}
+
+func publish(dir string, m Manifest, files map[string][]byte) error {
+	m.Files = map[string]File{}
+	for name, data := range files {
+		m.Files[name] = File{Sum(data), int64(len(data))}
+	}
+	if err := m.validate(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(files["NOTICE.txt"])) == "" {
 		return fmt.Errorf("英文授權聲明不可空白")
 	}
 	if info, err := os.Lstat(dir); err == nil && info.Mode()&os.ModeSymlink != 0 {
@@ -176,8 +210,8 @@ func Write(dir string, d *english.Dictionary, m Manifest, notice []byte) error {
 	if err != nil {
 		return err
 	}
-	mb = append(mb, '\n')
-	for name, data := range map[string][]byte{"words.bin": binary, "NOTICE.txt": notice, "manifest.json": mb} {
+	files["manifest.json"] = append(mb, '\n')
+	for name, data := range files {
 		if err := os.WriteFile(filepath.Join(tmp, name), data, 0644); err != nil {
 			return err
 		}
@@ -186,4 +220,35 @@ func Write(dir string, d *english.Dictionary, m Manifest, notice []byte) error {
 		return err
 	}
 	return os.Rename(tmp, dir)
+}
+
+// LoadBigrams 讀詞頻資料包（格式 2）的英文與跨中英詞對；transform 同 LoadWithTransform。
+func LoadBigrams(dir string, transform func([]byte) ([]byte, error)) (*english.Bigrams, error) {
+	b, err := read(filepath.Join(dir, "manifest.json"), 64<<10)
+	if err != nil {
+		return nil, err
+	}
+	var m Manifest
+	if err = json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+	if err = m.validate(); err != nil {
+		return nil, err
+	}
+	if m.Format != 2 {
+		return nil, fmt.Errorf("英文資料包沒有詞對")
+	}
+	data, err := read(filepath.Join(dir, "bigram.bin"), english.MaxPackBytes+64)
+	if err != nil {
+		return nil, err
+	}
+	if transform != nil {
+		if data, err = transform(data); err != nil {
+			return nil, err
+		}
+	}
+	if info := m.Files["bigram.bin"]; info.Size != int64(len(data)) || info.SHA256 != Sum(data) {
+		return nil, fmt.Errorf("英文 bigram.bin 與 manifest 不符")
+	}
+	return english.DecodeBigrams(data)
 }

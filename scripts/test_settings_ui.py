@@ -23,7 +23,7 @@ def main():
     parser.add_argument("--out", type=Path, default=ROOT / "build/settings/smoke")
     parser.add_argument("--rust", default="1.99.0")
     parser.add_argument("--go", default="go")
-    parser.add_argument("--only", choices=["vocab", "models", "styles", "scroll", "personal"], help="只跑一部分（vocab：我的詞彙；models：模型；scroll：捲動位置；personal：清除學習紀錄）")
+    parser.add_argument("--only", choices=["vocab", "models", "styles", "scroll", "personal", "update"], help="只跑一部分（vocab：我的詞彙；models：模型；scroll：捲動位置；personal：清除學習紀錄；update：更新方式下拉選單）")
     args = parser.parse_args()
     out = args.out.resolve()
     bin_dir = out / "bin"

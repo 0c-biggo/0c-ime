@@ -105,3 +105,36 @@ func TestTextModeNeedsSingleSyllableAndContext(t *testing.T) {
 		t.Fatal("text mode must stay single-syllable")
 	}
 }
+
+// 多字的文字評分（九宮格挑拼法）只送給宣告 TextAnyLength 的評分器；前文可以是空的。單音節的文字評分不論宣告與否
+// 都要有前文，讀音評分的條件不變。
+func TestTextAnyLengthIsDeclared(t *testing.T) {
+	text := func(context string, n int) Request {
+		r := fixture()
+		r.Mode, r.Context = ModeText, context
+		r.Reading = zhuyin.ParseReading(strings.TrimSpace(strings.Repeat("ㄐㄧㄚˇ ", n)))
+		for i, ch := range []string{"甲", "假"} {
+			w := strings.Repeat(ch, n)
+			r.Candidates[i].Text, r.Candidates[i].Segments = w, []decode.Seg{{Word: w, Start: 0, End: n}}
+		}
+		return r
+	}
+	off, on := Options{}, Options{TextAnyLength: true}
+	for _, c := range []struct {
+		r       Request
+		off, on bool
+	}{
+		{fixture(), true, true},
+		{text("", 2), false, true},
+		{text("前文", 2), false, true},
+		{text("", 32), false, true},
+		{text("", 33), false, false},
+		{text("前文", 1), true, true},
+		{text("", 1), false, false},
+	} {
+		if Supported(c.r) != c.off || off.Supports(c.r) != c.off || on.Supports(c.r) != c.on {
+			t.Fatalf("%d syllables, context %q: Supported %v, off %v, on %v; want off %v on %v",
+				len(c.r.Reading), c.r.Context, Supported(c.r), off.Supports(c.r), on.Supports(c.r), c.off, c.on)
+		}
+	}
+}

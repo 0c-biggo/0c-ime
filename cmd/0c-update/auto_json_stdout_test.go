@@ -110,3 +110,36 @@ func TestOnlyScheduledAutoQueriesInputSource(t *testing.T) {
 		}
 	}
 }
+
+// #351：交接後的輸入來源檢查只在背景排程的 auto 做（重新登記可能要等系統詢問）；設定程式「立即安裝」、選單、
+// 等著結果的 -json／-report 不等它。
+func TestOnlyScheduledAutoChecksInputSource(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	base := basePath()
+	if err := os.MkdirAll(base, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := autoupdate.EditState(base, func(s *autoupdate.State) error {
+		s.Mode, s.Feed = autoupdate.ModeAsk, "https://127.0.0.1:1/feed.json"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	saved := checkInputSourceAfterHandover
+	t.Cleanup(func() { checkInputSourceAfterHandover = saved })
+	var got []string
+	checkInputSourceAfterHandover = func(b string) { got = append(got, b) }
+	for _, c := range []struct {
+		action string
+		args   []string
+		want   int
+	}{{"finish", []string{"-json"}, 0}, {"auto", []string{"-json"}, 0}, {"auto", []string{"-report"}, 0}, {"auto", nil, 1}} {
+		got = nil
+		_, _ = captureStdout(t, func() error { return autoCommand(c.action, c.args) })
+		if len(got) != c.want || c.want == 1 && got[0] != base {
+			t.Errorf("%s %v: checks = %v, want %d", c.action, c.args, got, c.want)
+		}
+	}
+}

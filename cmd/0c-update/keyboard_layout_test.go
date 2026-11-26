@@ -32,6 +32,27 @@ func TestKeyboardLayoutContract(t *testing.T) {
 	}
 }
 
+// #324：漢語拼音只停用中英混打，不打聲調與 Emoji 選單照舊。
+func TestKeyboardLayoutContractPinyin(t *testing.T) {
+	base := t.TempDir()
+	writeSettings(t, base, `{"keyboard_layout":"pinyin","mixed_input":true,"toneless":true}`)
+	doc := buildSettingsDoc(base, modelStatusDial(map[string]string{"keyboard_layout": "pinyin", "mixed_input": "true", "toneless": "true", "emoji_shortcut": "equals"}, true))
+	if it := item(t, doc, "keyboard-layout"); it.Value != "pinyin" || it.Pending || it.ValueLabels["pinyin"] != "漢語拼音" {
+		t.Fatalf("漢語拼音已套用：%+v", it)
+	}
+	if it := item(t, doc, "mixed-input"); !it.Disabled || it.DisabledReason != "漢語拼音時關閉" || it.DisabledBy != "keyboard-layout" || it.Value != "on" {
+		t.Fatalf("混打停用、值保留：%+v", it)
+	}
+	for _, key := range []string{"toneless", "emoji-shortcut", "zhuyin-error-hint"} {
+		if it := item(t, doc, key); it.Disabled {
+			t.Fatalf("%s 在漢語拼音照舊可用：%+v", key, it)
+		}
+	}
+	if o, err := parseSetArgs([]string{"keyboard-layout", "pinyin"}); err != nil || len(o.pairs) != 1 {
+		t.Fatalf("%+v %v", o, err)
+	}
+}
+
 // #183：許氏只停用中英混打，Emoji 選單照舊。
 func TestKeyboardLayoutContractHsu(t *testing.T) {
 	base := t.TempDir()

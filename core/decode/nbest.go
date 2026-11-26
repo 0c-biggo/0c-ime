@@ -87,25 +87,32 @@ func offer(rows []Hypothesis, h Hypothesis, seg Seg, delta float64, capped, weak
 	return keep(rows, next, k)
 }
 
-// tailChars 是音節格最後一個位置（各個假設）自己的字（不含修正讀音），供 weakPrefix 判斷：
+// tailChars 是音節格最後一個音節（走到終點的各個假設）自己的字（不含修正讀音），供 weakPrefix 判斷：
 // 尾端前綴段 [n-1, n) 只是「打了一個音節的長詞開頭」，顯示的字不在其中、而其中有字（ㄟ 的「工」只出現在
 // 「工口 ㄟ ㄌㄨㄛˊ」，ㄟ 自己有「欸」）。就此停下時畫面上是讀音不對的字，只有一個音節對上長詞也不足以
 // 說明使用者要的是它。統計分數本來就讓它與完整的字依機率競爭（突然的「突」、諷刺的「諷」照樣會贏）；
 // 這個標記只讓只看文字的評分器不能把完整的字換成它（#107）。打了兩個以上音節的前綴（跆拳→跆拳道）不算。
 func (d *Decoder) tailChars(lat input.Lattice) map[string]bool {
 	own := map[string]bool{}
-	for _, h := range lat[len(lat)-1] {
-		for _, e := range d.Lex.Exact([]zhuyin.Syllable{h.Syl}) {
-			if !e.Correction {
-				own[e.Surface] = true
+	n := len(lat)
+	for p := max(0, n-lat.Width()); p < n; p++ {
+		for _, h := range lat[p] {
+			if p+h.Width() != n {
+				continue // 按鍵圖：只看走到終點的假設
+			}
+			for _, e := range d.Lex.Exact([]zhuyin.Syllable{h.Syl}) {
+				if !e.Correction {
+					own[e.Surface] = true
+				}
 			}
 		}
 	}
 	return own
 }
 
-func weakPrefix(own map[string]bool, at, n int, display string) bool {
-	return n-at == 1 && len(own) > 0 && !own[display]
+// weakPrefix：k 是尾端前綴段已經打了的音節數。
+func weakPrefix(own map[string]bool, k int, display string) bool {
+	return k == 1 && len(own) > 0 && !own[display]
 }
 
 // repeatArc 判斷詞面 w 的弧可能怎樣被 capRepeat 改分：單字（接在同一個單字後面時）或兩個相同的字；
@@ -149,31 +156,40 @@ func (d *Decoder) wordArcs(lat input.Lattice, at int, locks map[int]Lock) []arc 
 	var pooled map[int][]arc // 經過沒打聲調位置的弧（#150），依終點分組，最後各留前 maxUntonedArcs 個
 	var abbrev map[int][]arc // 經過簡拼位置的弧，各留前 maxAbbreviatedArcs 個
 	var fixed map[int][]arc  // 經過沒打聲調位置、又走了觸控修正讀音的弧（input.Hyp.Corrected），各留前 maxCorrectedArcs 個
-	d.markedSpans(lat, at, func(reading []zhuyin.Syllable, cost float64, corrected bool) {
-		end := at + len(reading)
+	d.spans(lat, at, func(sp span) {
+		reading, cost, end := sp.reading, sp.cost, sp.end
 		free := !lockTouches(locks, at, end)
-		pool := free && untonedSpan(lat, at, end)
-		short := pool && abbreviatedSpan(lat, at, end)
+		var pool, short bool
+		if d.width > 1 {
+			// 按鍵圖：看這條讀音實際走過的假設；同一個位置有不同寬度的假設，看位置會把沒走簡拼展開的弧也算進去。
+			pool = sp.untoned && free
+			short = pool && sp.abbrev
+		} else {
+			pool = untonedSpan(lat, at, end) && free
+			short = pool && abbreviatedSpan(lat, at, end)
+		}
+		cuts := ref(sp.cuts)
 		for _, e := range d.Lex.Exact(reading) {
-			if allowed(locks, at, end, e.Surface) {
+			if allowed(locks, at, end, e.Surface, sp.cuts) {
+				a := arc{end, e, cost, cuts}
 				switch {
-				case corrected && pool:
+				case sp.corrected && pool:
 					if fixed == nil {
 						fixed = map[int][]arc{}
 					}
-					fixed[end] = append(fixed[end], arc{end, e, cost})
+					fixed[end] = append(fixed[end], a)
 				case short:
 					if abbrev == nil {
 						abbrev = map[int][]arc{}
 					}
-					abbrev[end] = append(abbrev[end], arc{end, e, cost})
+					abbrev[end] = append(abbrev[end], a)
 				case pool:
 					if pooled == nil {
 						pooled = map[int][]arc{}
 					}
-					pooled[end] = append(pooled[end], arc{end, e, cost})
+					pooled[end] = append(pooled[end], a)
 				default:
-					arcs = append(arcs, arc{end, e, cost})
+					arcs = append(arcs, a)
 				}
 			}
 		}
@@ -239,13 +255,13 @@ func (d *Decoder) NBest(lat input.Lattice, locks map[int]Lock, prefix bool, k in
 			st := states[at][idx]
 			for _, a := range arcs {
 				score := d.arcLog(at, a.j, st.last, a.e, a.cost)
-				seg := Seg{Word: a.e.Surface, Start: at, End: a.j, Correction: a.e.Correction, Matched: segMatched(lat, at, a.e, a.cost)}
+				seg := Seg{Word: a.e.Surface, Start: at, End: a.j, Correction: a.e.Correction, Matched: segMatched(lat, at, a.e, a.cost, deref(a.cuts)), Cuts: a.cuts}
 				repeat := repeatKind(a.e.Surface)
 				for _, h := range st.rows {
 					stats.ScoredExtensions++
 					delta, capped := score, false
 					if repeat.mayCap(h.Segments, at, a.e.Surface) {
-						delta, capped = d.capRepeat(lat, locks, h.Segments, at, a.j, a.e.Surface, score)
+						delta, capped = d.capRepeat(lat, locks, lastOf(h.Segments), at, a.j, a.e.Surface, score, deref(a.cuts))
 					}
 					put(a.j, a.e.Surface, h, seg, delta, capped)
 				}
@@ -268,24 +284,26 @@ func (d *Decoder) NBest(lat input.Lattice, locks map[int]Lock, prefix bool, k in
 			if lockedIn(locks, at, n) || len(states[at]) == 0 {
 				continue
 			}
-			entries := d.tailEntries(lat, at)
+			groups := tailGroups(nil, d.tailEntries(lat, at), at, n)
 			order := append([]hypotheses(nil), states[at]...)
 			sort.SliceStable(order, func(i, j int) bool { return order[i].rows[0].LogScore > order[j].rows[0].LogScore })
 			for _, st := range order[:min(topB, len(order))] {
-				for _, t := range d.group(entries, n-at, st.last, d.Continue) {
-					if !t.longer {
-						continue
-					}
-					score := math.Log(d.evidenceMass(at, n, st.last, t.display, t.mass))
-					seg := Seg{Word: t.display, Start: at, End: n, Partial: true, Matched: partialMatched(lat, at, n, t)}
-					weak, repeat := weakPrefix(own, at, n, t.display), repeatKind(t.display)
-					for _, h := range st.rows {
-						stats.ScoredExtensions++
-						delta, capped := score, false
-						if repeat.mayCap(h.Segments, at, t.display) {
-							delta, capped = d.capRepeat(lat, locks, h.Segments, at, n, t.display, score)
+				for _, g := range groups {
+					for _, t := range d.group(g.cands, g.k, st.last, d.Continue) {
+						if !t.longer {
+							continue
 						}
-						result = offer(result, h, seg, delta, capped, weak, k)
+						score := math.Log(d.evidenceMass(at, n, st.last, t.display, t.mass))
+						seg := Seg{Word: t.display, Start: at, End: n, Partial: true, Matched: partialMatched(lat, at, t, deref(g.cuts)), Cuts: g.cuts}
+						weak, repeat := weakPrefix(own, g.k, t.display), repeatKind(t.display)
+						for _, h := range st.rows {
+							stats.ScoredExtensions++
+							delta, capped := score, false
+							if repeat.mayCap(h.Segments, at, t.display) {
+								delta, capped = d.capRepeat(lat, locks, lastOf(h.Segments), at, n, t.display, score, deref(g.cuts))
+							}
+							result = offer(result, h, seg, delta, capped, weak, k)
+						}
 					}
 				}
 			}
@@ -310,6 +328,9 @@ type TargetAudit struct {
 // 詞庫前綴。這能區分讀音不可達、詞池裁切及後續搜尋／排名，而非把 N-best miss
 // 一律當作缺詞。SurfaceSegmentable 指可由詞（含單字）組成，不保證有完整長詞。
 func (d *Decoder) AuditTarget(lat input.Lattice, locks map[int]Lock, prefix bool, text string) TargetAudit {
+	if lat.Width() > 1 {
+		return TargetAudit{} // 離線診斷只支援一個位置一個音節的音節格；按鍵圖的位置不是字
+	}
 	d.prepareMass(lat)
 	d.resetRepeats()
 	n := len(lat)
@@ -360,14 +381,15 @@ func (d *Decoder) AuditTarget(lat input.Lattice, locks map[int]Lock, prefix bool
 			}
 			for _, left := range lefts {
 				h := states[at][left]
-				put(a.j, a.e.Surface, extend(h, Seg{Word: a.e.Surface, Start: at, End: a.j, Correction: a.e.Correction, Matched: segMatched(lat, at, a.e, a.cost)}, d.repeatScore(lat, locks, h.Segments, at, a.j, a.e.Surface, d.arcLog(at, a.j, left, a.e, a.cost))))
+				put(a.j, a.e.Surface, extend(h, Seg{Word: a.e.Surface, Start: at, End: a.j, Correction: a.e.Correction, Matched: segMatched(lat, at, a.e, a.cost, nil)}, d.repeatScore(lat, locks, lastOf(h.Segments), at, a.j, a.e.Surface, d.arcLog(at, a.j, left, a.e, a.cost), nil)))
 			}
 		}
 		if !prefix || lockedIn(locks, at, n) {
 			continue
 		}
 		if reachable[at] {
-			d.spans(lat, at, func(reading []zhuyin.Syllable, cost float64) {
+			d.spans(lat, at, func(sp span) {
+				reading, cost := sp.reading, sp.cost
 				if len(reading) != n-at || math.IsInf(cost, 0) {
 					return
 				}
@@ -383,7 +405,7 @@ func (d *Decoder) AuditTarget(lat input.Lattice, locks map[int]Lock, prefix bool
 			for _, t := range d.group(entries, n-at, left, d.Continue) {
 				if t.longer && t.display == string(runes[at:]) {
 					h := states[at][left]
-					consider(extend(h, Seg{Word: t.display, Start: at, End: n, Partial: true, Matched: partialMatched(lat, at, n, t)}, d.repeatScore(lat, locks, h.Segments, at, n, t.display, math.Log(d.evidenceMass(at, n, left, t.display, t.mass)))))
+					consider(extend(h, Seg{Word: t.display, Start: at, End: n, Partial: true, Matched: partialMatched(lat, at, t, nil)}, d.repeatScore(lat, locks, lastOf(h.Segments), at, n, t.display, math.Log(d.evidenceMass(at, n, left, t.display, t.mass)), nil)))
 				}
 			}
 		}

@@ -163,17 +163,21 @@ final class LingxiInputController: IMKInputController {
             confirmDocumentContext(client)
             if send(Request(type: "key", key: ctrl), to: client, characters: KeyMapping.ctrlPunctText[ctrl]) { return true }
             if !flushQueuedEnglish(to: client) { commitNow(client) }
+            forgetDigit(client)
             return false
         }
         guard let key = KeyMapping.key(code: event.keyCode, characters: event.characters,
                                        modifiers: event.modifierFlags, vocabKeys: session.vocabKeys,
                                        styleShiftSpace: session.styleShiftSpace, capsLower: session.styleCapsLower) else {
             if !flushQueuedEnglish(to: client) { commitNow(client) }
+            forgetDigit(client) // ⌘V 等快捷鍵之後游標前不一定還是數字（#337）
             return false
         }
         confirmDocumentContext(client)
+        let characters = KeyMapping.text(for: key)
         // 英文模式下沒有組字時引擎交還字母，App 照 Caps Lock 收到大寫，與右 Shift 的英文模式同一條路。
-        return send(Request(type: "key", key: key), to: client, characters: KeyMapping.text(for: key))
+        return send(Request(type: "key", key: key, digitBefore: digitBefore(client, characters: characters)),
+                    to: client, characters: characters)
     }
 
     // 輸入法選單（選單列的輸入來源選單）：背景執行被關閉時固定顯示回去的入口，不只靠通知。
@@ -231,11 +235,17 @@ final class LingxiInputController: IMKInputController {
     /// 舊引擎或引擎還沒起來時退回 0c-update set output-simplified … -apply -notify。
     @objc func simplifiedMenuAction(_ sender: Any?) {
         let on = !(Self.simplifiedState() ?? false)
+        // 跟按鍵一樣在 queued.perform 裡請求與畫出：組字中切換時 render 要把換過字的組字交給 App（queued.present），
+        // 不在 perform 裡就踩到 RequestQueue 的 precondition，整個輸入法當掉（#347）。
         if EngineSession.simplifiedLive, let client = client(), !bypassSecureInput(client), !queued.isProcessing, queued.isEmpty,
-           let next = try? session.handle(Request(type: "output_simplified", on: on)), next.handled {
-            var shown = next
-            shown.notices = nil // 提示用游標旁的小面板，不留在候選窗
-            render(shown, to: client)
+           let next = try? queued.perform({ () throws -> Snapshot? in
+               let next = try session.handle(Request(type: "output_simplified", on: on))
+               guard next.handled else { return nil }
+               var shown = next
+               shown.notices = nil // 提示用游標旁的小面板，不留在候選窗
+               render(shown, to: client)
+               return next
+           }) {
             EngineSession.note(next)
             if let notice = next.visibleNotices.first {
                 hint.level = panel.level
@@ -296,6 +306,7 @@ final class LingxiInputController: IMKInputController {
     override func commitComposition(_ sender: Any!) {
         toggleArmed = false // 點到別處等由系統結束組字的時機；沒有組字時也不再放回注音
         guard let client = sender as? IMKTextInput else { return }
+        forgetDigit(client) // 點到別處：游標不一定還在剛打的數字後面（#337）；組字中由下面的送出清掉
         let composing = snapshot?.composing == true && queued.isEmpty && !queued.isProcessing
         let shown = shownMarked?.text.string
         // App 回報的組字位置：Chrome 這時已結束組字，回報的仍是剛結束的那段（殘字的位置）。只在可能救回時才問。
@@ -320,6 +331,13 @@ final class LingxiInputController: IMKInputController {
         }
     }
 
+    /// #337：上一個交還 App 的是數字，之後又有不經過核心的事時，沒在組字、沒有排隊的請求才讓核心清掉那個位元。
+    private func forgetDigit(_ client: IMKTextInput) {
+        guard session.digitPassed, !queued.isProcessing, queued.isEmpty, !rendering,
+              snapshot?.composing != true, !bypassSecureInput(client) else { return }
+        session.forgetDigit()
+    }
+
     private func commitNow(_ client: IMKTextInput) {
         toggleArmed = false
         guard !bypassSecureInput(client), snapshot?.composing == true || !queued.isEmpty else { return }
@@ -342,13 +360,23 @@ final class LingxiInputController: IMKInputController {
         guard !queued.isProcessing, queued.isEmpty, !rendering,
               snapshot?.composing != true, let pending = pendingContext else { return }
         pendingContext = nil
-        let length = (pending.text as NSString).length
-        let selection = client.selectedRange()
-        guard session.isOpen, length > 0, selection.location != NSNotFound, selection.length == 0,
-              selection.location >= length,
-              client.attributedSubstring(from: NSRange(location: selection.location - length, length: length))?.string == pending.text
+        guard session.isOpen,
+              CaretText.before(selection: client.selectedRange(), length: (pending.text as NSString).length,
+                               read: { client.attributedSubstring(from: $0)?.string }) == pending.text
         else { return }
         _ = try? session.handle(Request(type: "context", on: true, contextID: pending.id))
+    }
+
+    /// 游標前一個字是不是阿拉伯數字（#337）：沒在組字時有字的按鍵（可能開始組字）才讀，只把是／不是交給引擎，不送、不記那個字。
+    /// 在 ABC 打的數字（macOS 預設不用 Shift 切換）完全不經過輸入法；沒在組字時點到別處 IMKit 也不通知輸入法——
+    /// 這兩種都只有讀游標前一個字才知道，讀到「不是數字」就讓引擎清掉英文模式交還數字時記下的位元。同 Windows 外殼。
+    /// 英文模式（右 Shift、Caps Lock）、組字中、前文確認關閉（ZUIN_DOCUMENT_CONTEXT=0）、還有排隊或處理中的請求時不讀；
+    /// 使用者的前文設定、暫停由引擎決定。私人欄位：密碼欄位系統切到 ABC、不經過輸入法，終端機的安全輸入在 handle 開頭就放行了。
+    /// 讀法、限制與已確認前文相同（CaretText）。
+    private func digitBefore(_ client: IMKTextInput, characters: String?) -> Bool? {
+        guard characters != nil, session.contextEnabled, !capsMode, snapshot?.mode != "english",
+              snapshot?.composing != true, !queued.isProcessing, queued.isEmpty, !rendering else { return nil }
+        return CaretText.digitBefore(selection: client.selectedRange(), read: { client.attributedSubstring(from: $0)?.string })
     }
 
     private func dropQueued() {

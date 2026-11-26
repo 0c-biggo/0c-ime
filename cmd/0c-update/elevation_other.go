@@ -10,3 +10,12 @@ func validateElevationOrigin(_, sid, base string) error {
 	}
 	return nil
 }
+
+// 其他平台的外殼更新不需要 UAC（shellUnattended 已是 true），這兩個判斷用不到。
+func shellKeepsRegistration(_, _ string) bool     { return false }
+func pendingShellKeepsRegistration(_ string) bool { return false }
+
+// validateHandoverOrigin：只有 Windows 的提權交接會帶原使用者。
+func validateHandoverOrigin(sid, base string) error {
+	return validateElevationOrigin("finish", sid, base)
+}

@@ -60,8 +60,25 @@ int qsel_score_packed(qsel_model *m, const void *buf, size_t len, float *scores,
 size_t qsel_workspace_bytes(const qsel_model *m, int64_t L, int64_t P, int64_t R, int64_t N);
 
 /* Drop the model's resident file pages (e.g. on a memory warning); the next call
- * reads them back from the file. The handle stays valid. */
+ * reads them back from the file. The handle stays valid.
+ * 也清空前綴快取。 */
 void qsel_release_pages(qsel_model *m);
+
+/* 前綴快取：每次呼叫把前面最多 max_rows 列每一層的 key、value 留給同一個 handle 的
+ * 下一次呼叫，下一次只算兩次共同前綴之後的列。一列能沿用的條件是輸入與遮罩列相同、
+ * 前綴裡沒有列看前綴之後（見 qsel.c prefix_reuse）；這時分數跟不開快取逐位元相同
+ * （Accelerate 版因 sgemm 分塊，只在捨入誤差內相同）。APP 的輸入把前文與讀音放在前面，
+ * 每一列只看前面的列，同一句繼續打字時這段就是共同前綴。
+ *
+ * 呼叫之間每列佔 層數 × 2 × hidden × 4 bytes（q4x-b16 是 32 KiB），加上這些列的輸入與
+ * 遮罩；下一次呼叫或 qsel_release_pages 會還回不需要的部分。max_rows 0（預設）關掉並
+ * 釋放。同一個 handle 的呼叫本來就一個一個跑，快取不需要另外上鎖；兩個執行緒在同一個
+ * handle 上算不同句子，只會互相換掉對方的前綴，分數仍正確。
+ * max_rows 超出 0..4096 回 QSEL_EINPUT。 */
+int qsel_set_prefix_cache(qsel_model *m, int max_rows);
+
+/* 上一次呼叫沿用幾列、快取現在留幾列、佔幾 bytes（指標可為 NULL）。 */
+void qsel_prefix_info(qsel_model *m, int *reused, int *kept, size_t *bytes);
 
 const char *qsel_strerror(int code);
 

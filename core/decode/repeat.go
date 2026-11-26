@@ -8,8 +8,6 @@ import (
 
 	"github.com/0c-biggo/0c-ime/core/input"
 	"github.com/0c-biggo/0c-ime/core/lexicon"
-	"github.com/0c-biggo/0c-ime/core/lm"
-	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // repeatMargin 是非詞疊字至少要輸給同讀音詞庫詞的幅度（自然對數，e 倍）。與小麥注音「長詞彙權重
@@ -53,22 +51,23 @@ type PairObserved interface {
 // 不輸給詞庫詞，疊字可能是另一個詞，照常交給神經選字。
 //
 // 疊字本身是詞庫（或個人）詞、這段沒有其他詞、鎖定排除了那些詞、或使用者提交過 X 後接 X 時不改分數。
-// segs 是走到 start 為止的路徑。
-func (d *Decoder) capRepeat(lat input.Lattice, locks map[int]Lock, segs []Seg, start, end int, word string, score float64) (float64, bool) {
-	var at int
+// prev 是走到 start 為止的路徑的最後一段（沒有時是 nil）；cuts 是這一段每個音節結束的位置（見 Seg.Cuts）。按鍵圖上一個音節可以佔
+// 好幾個位置，所以「兩個音節」看音節數，第二個音節從 mid 開始。
+func (d *Decoder) capRepeat(lat input.Lattice, locks map[int]Lock, prev *Seg, start, end int, word string, score float64, cuts []int) (float64, bool) {
+	var at, mid int
 	var single, left string
 	first, size := utf8.DecodeRuneInString(word)
+	n := syllables(start, end, cuts)
 	switch {
-	case size == len(word) && end == start+1 && len(segs) > 0:
-		prev := &segs[len(segs)-1]
-		if prev.Word != word || prev.Partial || prev.Start != start-1 || prev.End != start {
+	case size == len(word) && n == 1 && prev != nil:
+		if prev.Word != word || prev.Partial || prev.Syllables() != 1 || prev.End != start {
 			return score, false
 		}
-		at, single = start-1, word
-	case end == start+2 && size < len(word) && word[size:] == word[:size] && first != utf8.RuneError:
-		at, single, left = start, word[:size], d.InitialLeft()
-		if len(segs) > 0 {
-			left = segs[len(segs)-1].Word
+		at, mid, single = prev.Start, start, word
+	case n == 2 && size < len(word) && word[size:] == word[:size] && first != utf8.RuneError:
+		at, mid, single, left = start, sylStart(start, cuts, 1), word[:size], d.InitialLeft()
+		if prev != nil {
+			left = prev.Word
 		}
 	default:
 		return score, false
@@ -76,7 +75,7 @@ func (d *Decoder) capRepeat(lat input.Lattice, locks map[int]Lock, segs []Seg, s
 	if o, ok := d.Score.(PairObserved); ok && o.ObservedPair(single, single) {
 		return score, false
 	}
-	r := d.repeatWords(lat, locks, at, start, end, single)
+	r := d.repeatWords(lat, locks, at, mid, start, end, single)
 	unit, word2, isWord := r.unit, r.word2, r.isWord
 	if !isWord && at == start {
 		word2 = d.repeatWordFrom(r, at, end, left)
@@ -106,8 +105,8 @@ func (d *Decoder) capRepeat(lat input.Lattice, locks map[int]Lock, segs []Seg, s
 // XX 本身成段時的詞庫詞分數另依前詞快取。每次搜尋開始時由 resetRepeats 清空。結果與不快取逐位元相同：
 // 列舉與取最大值的順序都不變。
 type repeatKey struct {
-	at, start, end int
-	single         string
+	at, mid, start, end int
+	single              string
 }
 
 type repeatWords struct {
@@ -127,17 +126,14 @@ func (d *Decoder) resetRepeats() {
 	clear(d.contests)
 }
 
-// repeatWords 列舉 [at, end) 的詞庫讀音：unit 是第一個字的先驗（只用於兩個單字），word2 是同讀音
+// repeatWords 列舉 [at, end) 的詞庫讀音（第一個音節是 [at, mid)）：unit 是第一個字的先驗（只用於兩個單字），word2 是同讀音
 // 詞庫詞的最佳對數分數（兩個單字的來路；XX 成段時見 repeatWordFrom），isWord 表示疊字本身就是詞。
-func (d *Decoder) repeatWords(lat input.Lattice, locks map[int]Lock, at, start, end int, single string) *repeatWords {
-	k := repeatKey{at, start, end, single}
+func (d *Decoder) repeatWords(lat input.Lattice, locks map[int]Lock, at, mid, start, end int, single string) *repeatWords {
+	k := repeatKey{at, mid, start, end, single}
 	if r, ok := d.repeats[k]; ok {
 		return r
 	}
-	prior := func(w string) float64 { return d.Score.Prob(lm.BOS, w) }
-	if p, ok := d.Score.(Prior); ok {
-		prior = p.Prior
-	}
+	prior := d.repeatPrior()
 	pair := single + single
 	r := &repeatWords{word2: math.Inf(-1)}
 	if d.repeats == nil {
@@ -146,22 +142,22 @@ func (d *Decoder) repeatWords(lat input.Lattice, locks map[int]Lock, at, start, 
 	word := math.Inf(-1) // 同讀音詞庫詞不含前文的最佳對數先驗
 	var words []string
 	var logs []float64 // words 各自不含前文的對數先驗
-	for _, c := range d.repeatSpan(lat, at, end) {
+	for _, c := range d.repeatSpan(lat, at, mid, end) {
 		e := c.e
 		switch {
 		case c.n == 1 && at < start && e.Surface == single:
-			r.unit = max(r.unit, prior(e.Surface)*e.PRW*math.Exp(-c.cost))
-		case c.n != end-at:
+			r.unit = max(r.unit, c.prior*e.PRW*math.Exp(-c.cost))
+		case c.n != 2:
 		case e.Surface == pair:
 			r.isWord = true
-		case !e.Correction && allowed(locks, at, end, e.Surface):
-			lp := math.Log(prior(e.Surface)*e.PRW) - c.cost
+		case !e.Correction && allowed(locks, at, end, e.Surface, pairCuts(at, mid, end)):
+			lp := math.Log(c.prior*e.PRW) - c.cost
 			word = max(word, lp)
 			words, logs = append(words, e.Surface), append(logs, lp)
 			if at < start {
 				r.word2 = word
 			} else {
-				r.arcs = append(r.arcs, arc{end, e, c.cost})
+				r.arcs = append(r.arcs, arc{end, e, c.cost, ref(pairCuts(at, mid, end))})
 			}
 		}
 	}
@@ -169,7 +165,7 @@ func (d *Decoder) repeatWords(lat input.Lattice, locks map[int]Lock, at, start, 
 		d.repeats[k] = r
 		return r
 	}
-	r.wins, r.common, r.lexical = d.contest(lat, locks, at, single, word, words, logs, prior)
+	r.wins, r.common, r.lexical = d.contest(lat, locks, at, mid, end, single, word, words, logs, prior)
 	if b, ok := d.Score.(SystemBigram); ok && at < start {
 		if p := d.systemProb(single, single); p > 0 {
 			r.seen = min(b.SystemBigram(single, single)/p, 1)
@@ -195,8 +191,8 @@ func (d *Decoder) repeatWords(lat input.Lattice, locks map[int]Lock, at, start, 
 // log P(X|X)/P(X) 高出 repeatMargin 以上（都是不含前文的系統機率；讀音權重與音節格成本在兩邊各自
 // 消去）。比的是扣掉字頻之後的成詞證據。0.2.0 詞庫裡嗯嗯比恩恩更像一個詞（7.0 對 3.7），每每卻沒有
 // 比美美更像（2.9 對 2.3），單單、下下更不如丹丹、嚇嚇。
-func (d *Decoder) contest(lat input.Lattice, locks map[int]Lock, at int, single string, word float64, words []string, logs []float64, prior func(string) float64) (wins, common, lexical bool) {
-	c := d.spanContest(lat, locks, at, word, words, prior)
+func (d *Decoder) contest(lat input.Lattice, locks map[int]Lock, at, mid, end int, single string, word float64, words []string, logs []float64, prior func(string) float64) (wins, common, lexical bool) {
+	c := d.spanContest(lat, locks, at, mid, end, word, words, prior)
 	x1, x2 := c.best(false, single), c.best(true, single)
 	assoc := math.Inf(1) // X→X 的成詞程度：log P(X|X)/P(X)
 	if p, q := d.systemProb(single, single), prior(single); q > 0 {
@@ -223,40 +219,50 @@ type spanContest struct {
 	firsts, seconds []spanEntry
 	p1, p2          []float64 // firsts、seconds 各自不含前文的對數先驗（含讀音權重與音節格成本）
 	beat            []string
+	b1, b2          map[string]float64 // best 的結果：每個字面在 p1、p2 裡的最大值
 }
 
 func (c *spanContest) best(second bool, w string) float64 {
-	cs, ps := c.firsts, c.p1
+	m := c.b1
 	if second {
-		cs, ps = c.seconds, c.p2
+		m = c.b2
 	}
-	v := math.Inf(-1)
-	for i, e := range cs {
-		if e.e.Surface == w {
-			v = max(v, ps[i])
-		}
+	if v, ok := m[w]; ok {
+		return v
 	}
-	return v
+	return math.Inf(-1)
 }
 
-func (d *Decoder) spanContest(lat input.Lattice, locks map[int]Lock, at int, word float64, words []string, prior func(string) float64) *spanContest {
-	if c, ok := d.contests[at]; ok {
+// bests 是每個字面在 ps 裡的最大值（best 每次掃過整份清單，連續同一顆鍵的位置每個 X、每個詞都掃一次）。
+func bests(cs []spanEntry, ps []float64) map[string]float64 {
+	m := make(map[string]float64, len(cs))
+	for i, e := range cs {
+		if v, ok := m[e.e.Surface]; !ok || ps[i] > v {
+			m[e.e.Surface] = ps[i]
+		}
+	}
+	return m
+}
+
+func (d *Decoder) spanContest(lat input.Lattice, locks map[int]Lock, at, mid, end int, word float64, words []string, prior func(string) float64) *spanContest {
+	if c, ok := d.contests[[3]int{at, mid, end}]; ok {
 		return c
 	}
-	singles := func(pos int) ([]spanEntry, []float64) {
+	singles := func(entries []spanEntry, pos, to int) ([]spanEntry, []float64) {
 		var out []spanEntry
 		var ps []float64
-		for _, c := range d.repeatSpan(lat, pos, at+2) {
-			if c.n == 1 && !c.e.Correction && allowed(locks, pos, pos+1, c.e.Surface) {
+		for _, c := range entries {
+			if c.n == 1 && !c.e.Correction && allowed(locks, pos, to, c.e.Surface, oneCut(pos, to)) {
 				out = append(out, c)
-				ps = append(ps, math.Log(prior(c.e.Surface)*c.e.PRW)-c.cost)
+				ps = append(ps, math.Log(c.prior*c.e.PRW)-c.cost)
 			}
 		}
 		return out, ps
 	}
 	c := &spanContest{}
-	c.firsts, c.p1 = singles(at)
-	c.seconds, c.p2 = singles(at + 1)
+	c.firsts, c.p1 = singles(d.repeatSpan(lat, at, mid, end), at, mid)
+	c.seconds, c.p2 = singles(d.repeatSpan(lat, mid, end, end), mid, end)
+	c.b1, c.b2 = bests(c.firsts, c.p1), bests(c.seconds, c.p2)
 	path := func(i, j int) float64 {
 		a, b := c.firsts[i].e, c.seconds[j]
 		return c.p1[i] + math.Log(d.systemProb(a.Surface, b.e.Surface)*b.e.PRW) - b.cost
@@ -283,12 +289,18 @@ func (d *Decoder) spanContest(lat input.Lattice, locks map[int]Lock, at int, wor
 			}
 		}
 	}
+	// path(i, j) 不超過 p1[i] + log(PRW_B) - cost_B（P(B|A) ≤ 1，浮點運算也保持大小順序）：上限已經比詞庫詞低的
+	// 組合不必查 bigram，結果相同。
+	upper := make([]float64, len(c.seconds))
+	for j, b := range c.seconds {
+		upper[j] = math.Log(b.e.PRW)
+	}
 	for i, a := range c.firsts {
 		if c.p1[i] < lex { // P(B|A) ≤ 1：這條讀法不會超過詞庫詞
 			continue
 		}
 		for j, b := range c.seconds {
-			if path(i, j) < lex || isWord(a.e.Surface, b.e.Surface) {
+			if c.p1[i]+upper[j]-b.cost < lex || path(i, j) < lex || isWord(a.e.Surface, b.e.Surface) {
 				continue
 			}
 			if text := a.e.Surface + b.e.Surface; !slices.Contains(c.beat, text) {
@@ -302,9 +314,9 @@ func (d *Decoder) spanContest(lat input.Lattice, locks map[int]Lock, at int, wor
 		}
 	}
 	if d.contests == nil {
-		d.contests = map[int]*spanContest{}
+		d.contests = map[[3]int]*spanContest{}
 	}
-	d.contests[at] = c
+	d.contests[[3]int{at, mid, end}] = c
 	return c
 }
 
@@ -316,32 +328,60 @@ func (d *Decoder) systemProb(left, w string) float64 {
 	return d.Score.Prob(left, w)
 }
 
-// repeatSpan 列舉 [at, end) 起點的詞庫讀音（依 spans 與 Exact 的順序），只留單音節與剛好到 end 的詞條；
-// 與 X 無關，同一次搜尋內每個位置只列舉一次。
-func (d *Decoder) repeatSpan(lat input.Lattice, at, end int) []spanEntry {
-	k := [2]int{at, end}
+// repeatSpan 列舉 at 起點的詞庫讀音（依 spans 與 Exact 的順序），只留結束在 mid 的單音節，以及第一個音節結束在 mid、
+// 第二個結束在 end 的兩音節詞條（mid 等於 end 時只有 [at, end) 的單音節）；與 X 無關，同一次搜尋內只列舉一次。
+// 一般的音節格 mid 是 at+1、end 是 at+2。
+func (d *Decoder) repeatSpan(lat input.Lattice, at, mid, end int) []spanEntry {
+	k := [3]int{at, mid, end}
 	if es, ok := d.repeatSpans[k]; ok {
 		return es
 	}
 	var es []spanEntry
-	d.spans(lat[:end], at, func(reading []zhuyin.Syllable, cost float64) {
-		if n := len(reading); n == 1 || n == end-at {
-			for _, e := range d.Lex.Exact(reading) {
-				es = append(es, spanEntry{n, e, cost})
+	prior := d.repeatPrior()
+	d.spans(lat[:end], at, func(sp span) {
+		n := len(sp.reading)
+		if n == 1 && sp.end == mid || n == 2 && mid < end && sp.end == end && sylStart(at, sp.cuts, 1) == mid {
+			for _, e := range d.Lex.Exact(sp.reading) {
+				es = append(es, spanEntry{n, e, sp.cost, prior(e.Surface)})
 			}
 		}
 	})
 	if d.repeatSpans == nil {
-		d.repeatSpans = map[[2]int][]spanEntry{}
+		d.repeatSpans = map[[3]int][]spanEntry{}
 	}
 	d.repeatSpans[k] = es
 	return es
 }
 
+// oneCut 是一個音節 [at, end) 的 Cuts：只佔一個位置時是 nil。
+func oneCut(at, end int) []int {
+	if end == at+1 {
+		return nil
+	}
+	return []int{end}
+}
+
+// pairCuts 是兩個音節 [at, mid)、[mid, end) 的 Cuts：每個音節都只佔一個位置時是 nil（見 Seg.Cuts）。
+func pairCuts(at, mid, end int) []int {
+	if mid == at+1 && end == mid+1 {
+		return nil
+	}
+	return []int{mid, end}
+}
+
 type spanEntry struct {
-	n    int // 讀音音節數
-	e    lexicon.Entry
-	cost float64
+	n     int // 讀音音節數
+	e     lexicon.Entry
+	cost  float64
+	prior float64 // repeatPrior 的詞面先驗（不含讀音權重），每個 X 都要用，列舉時算一次
+}
+
+// repeatPrior 是疊字上限用的不含前文的先驗：評分源有 Prior 時用它，否則用句首的機率。
+func (d *Decoder) repeatPrior() func(string) float64 {
+	if p, ok := d.Score.(Prior); ok {
+		return p.Prior
+	}
+	return d.bosProb
 }
 
 // repeatWordFrom 是 XX 成段時，從前詞 left 走同讀音詞庫詞的最佳對數分數。
@@ -361,7 +401,7 @@ func (d *Decoder) repeatWordFrom(r *repeatWords, at, end int, left string) float
 }
 
 // repeatScore 是 capRepeat 的分數，供只需要分數的搜尋使用。
-func (d *Decoder) repeatScore(lat input.Lattice, locks map[int]Lock, segs []Seg, start, end int, word string, score float64) float64 {
-	score, _ = d.capRepeat(lat, locks, segs, start, end, word, score)
+func (d *Decoder) repeatScore(lat input.Lattice, locks map[int]Lock, prev *Seg, start, end int, word string, score float64, cuts []int) float64 {
+	score, _ = d.capRepeat(lat, locks, prev, start, end, word, score, cuts)
 	return score
 }

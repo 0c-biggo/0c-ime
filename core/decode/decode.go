@@ -3,6 +3,7 @@ package decode
 
 import (
 	"math"
+	"slices"
 	"sort"
 	"unicode/utf8"
 
@@ -44,6 +45,85 @@ type Seg struct {
 	// Matched 是這個詞實際走的詞庫讀音（空白分隔）：只有讀音與使用者打的音不同（經有成本的近音假設
 	// 到達）時才填，其餘為空字串。session 依它辨識近音路徑，不進學習。
 	Matched string
+	// Cuts 是每個音節結束的位置（注音九宮格自動切字：位置是鍵，一個音節佔 1–3 顆鍵），用 Ends 讀。每個音節
+	// 都只佔一個位置時是 nil；一般的音節格永遠是 nil，序列化的結果跟沒有這個欄位時相同。存指標是為了不讓 Seg 變大：
+	// 解碼時路徑一直在複製，一般的音節格每一段只多一個 nil 指標。
+	Cuts *[]int `json:",omitempty"`
+}
+
+// Ends 是 Cuts 的內容；每個音節佔一個位置時是 nil。
+func (g Seg) Ends() []int { return deref(g.Cuts) }
+
+// Syllables 是這一段的音節數：Cuts 的長度，或每個音節佔一個位置時的 End-Start。
+func (g Seg) Syllables() int { return syllables(g.Start, g.End, deref(g.Cuts)) }
+
+func deref(c *[]int) []int {
+	if c == nil {
+		return nil
+	}
+	return *c
+}
+
+// ref 是 Cuts 存在 Seg、弧與尾端詞條裡的樣子：nil 時不配置。
+func ref(c []int) *[]int {
+	if c == nil {
+		return nil
+	}
+	return &c
+}
+
+func syllables(start, end int, cuts []int) int {
+	if cuts != nil {
+		return len(cuts)
+	}
+	return end - start
+}
+
+// charAt 回報位置 pos 在從 start 起、音節結束於 cuts（nil 時每個音節佔一個位置）的讀音裡是第幾個音節的開頭；
+// pos 不是音節邊界時回傳 false。pos 是讀音的終點時回傳音節數。
+func charAt(start int, cuts []int, pos int) (int, bool) {
+	if cuts == nil {
+		return pos - start, true
+	}
+	if pos == start {
+		return 0, true
+	}
+	for k, c := range cuts {
+		if c == pos {
+			return k + 1, true
+		}
+	}
+	return 0, false
+}
+
+// sylStart 是從 start 起、音節結束於 cuts 的讀音裡第 k 個音節開頭的位置。
+func sylStart(start int, cuts []int, k int) int {
+	if cuts == nil || k == 0 {
+		return start + k
+	}
+	return cuts[k-1]
+}
+
+// JoinCuts 接起相鄰幾段的 Cuts；每一段都是 nil（每個音節佔一個位置）時回傳 nil。
+func JoinCuts(segs []Seg) []int {
+	graph := false
+	for _, g := range segs {
+		graph = graph || g.Cuts != nil
+	}
+	if !graph {
+		return nil
+	}
+	var out []int
+	for _, g := range segs {
+		if g.Cuts != nil {
+			out = append(out, *g.Cuts...)
+			continue
+		}
+		for at := g.Start + 1; at <= g.End; at++ {
+			out = append(out, at)
+		}
+	}
+	return out
 }
 
 // Lock 是使用者鎖定的區間：從某位置起 Len 個音節必須是 Word。硬條件。
@@ -60,13 +140,29 @@ type Lock struct {
 }
 
 // matchedReading 回傳詞條讀音相對於使用者打的音（音節格第一個假設）有差異時的讀音鍵，沒有差異為空字串。
-func matchedReading(lat input.Lattice, start int, reading []zhuyin.Syllable) string {
+// cuts 是讀音每個音節結束的位置（nil 時每個音節佔一個位置，見 Seg.Cuts）。
+func matchedReading(lat input.Lattice, start int, reading []zhuyin.Syllable, cuts []int) string {
 	for k, y := range reading {
-		if at := start + k; at < len(lat) && len(lat[at]) > 0 && lat[at][0].Syl != y && !untonedHyp(lat[at], y) {
+		if at := sylStart(start, cuts, k); at < len(lat) && len(lat[at]) > 0 && (lat[at][0].Syl != y && !untonedHyp(lat[at], y) || correctedOnly(lat[at], y)) {
 			return zhuyin.Key(reading)
 		}
 	}
 	return ""
+}
+
+// correctedOnly 回報 y 在這個位置只是觸控修正的讀音（input.Hyp.Corrected）。一般的位置第一個假設是打的音，修正讀音都
+// 跟它不同，上面的比較已經算到；觸控鍵盤的合併弧（session 的 merge.go）合成的位置整列都是修正，第一個也是。
+func correctedOnly(row []input.Hyp, y zhuyin.Syllable) bool {
+	found := false
+	for _, h := range row {
+		if h.Syl == y {
+			if !h.Corrected {
+				return false
+			}
+			found = true
+		}
+	}
+	return found
 }
 
 // untonedHyp 回報 y 是否為這個位置沒打聲調或簡拼展開出來的讀音：那是使用者打的音，不是近音。
@@ -80,11 +176,11 @@ func untonedHyp(row []input.Hyp, y zhuyin.Syllable) bool {
 }
 
 // segMatched 是弧的 Matched：只有走了有成本的假設才可能與打的音不同，零成本弧不必比對。
-func segMatched(lat input.Lattice, start int, e lexicon.Entry, cost float64) string {
+func segMatched(lat input.Lattice, start int, e lexicon.Entry, cost float64, cuts []int) string {
 	if cost <= 0 {
 		return ""
 	}
-	return matchedReading(lat, start, e.Reading)
+	return matchedReading(lat, start, e.Reading, cuts)
 }
 
 // MaxWordLen 是詞條讀音長度的搜尋上限。
@@ -124,24 +220,39 @@ type Decoder struct {
 	// OnlyCosted 讓候選查詢只列舉經由有成本的假設（成本大於 0，例如近音）到達的讀音，
 	// 成本 0 的讀音（使用者打的音）略過。與 MaxCandidates 併用時，名額只計有成本的詞面。
 	OnlyCosted bool
-	// PrefixCacheKeys 是尾端前綴快取（topPrefixed）最多保留幾個讀音，每個讀音存前 TopM 個詞條；滿了整份清掉重算。
+	// PrefixCacheKeys 是尾端前綴快取（topPrefixed）最多保留幾個讀音，每個讀音存前 TopM 個詞條。
 	// 0 表示預設 4096，負數不快取。快取只影響速度、不影響答案（#307），手機用較小的上限壓住記憶體。
 	PrefixCacheKeys int
 
-	cache     map[string][]lexicon.Entry // 尾端讀音 → 依先驗排序的前 M 個系統詞條
-	cacheKey  prefixKey                  // cache 的失效條件（prefixVersion）
-	massScale map[string]float64
-	longerEnd []int
+	// cache 是尾端讀音 → 依先驗排序的前 M 個系統詞條，分兩代：新的一代滿了（上限的一半）就變成舊的一代、舊的丟掉；
+	// 查到舊一代的讀音搬回新的一代。常用的短讀音（一個音節的開頭有上千個詞條，最貴）因此一直留著，不會每到上限就
+	// 整份清掉重算（自動切字每一鍵要查上百個讀音，512 的上限下一半以上落空）。
+	cache, cacheOld map[string][]lexicon.Entry
+	cacheKey        prefixKey // cache 的失效條件（prefixVersion）
+	massScale       map[massKey]float64
+	homophones      map[string]homophones // languageProbability 的同音詞，跟 massScale 一起失效
+	homLex          lexicon.Source
+	// bosProb 的快取：bosMemo 依 BestSearch 的 searchKey（評分源與它的版本）保存，bos 只在 BestSearch 裡指向它。
+	bos, bosMemo map[string]float64
+	bosKey       searchKey
+	longerEnd    []int
+	// prepareMass 的 longerFrom 記在 longerMemo（依起點那一列的編號），rowIDs 是列的內容 → 編號。
+	longerMemo    map[uint32][]longerEntry
+	rowIDs        map[string]uint32
+	longerMemoKey longerMemoKey
 	// FreshMass 讓每次搜尋都重建 massScale，不跨搜尋保留；給快取開／關比對的測試用。
 	FreshMass bool
+	// width 是目前搜尋的音節格最寬的假設佔幾個位置（input.Lattice.Width）；大於 1 是按鍵圖（自動切字），
+	// 由 prepareMass 設定。
+	width int
 	// massScale 的失效條件：評分源與個人資料版本（MassVersion）。
 	massScorer any
 	massGen    int
 	massTime   int64
 	// capRepeat 的列舉結果，只在同一次搜尋內有效（見 resetRepeats）
 	repeats     map[repeatKey]*repeatWords
-	repeatSpans map[[2]int][]spanEntry
-	contests    map[int]*spanContest
+	repeatSpans map[[3]int][]spanEntry
+	contests    map[[3]int]*spanContest
 }
 
 const (
@@ -185,18 +296,43 @@ func MaxLen(lex lexicon.Source) int {
 // 寬列都適用）。弧數上限與裁切方式看的是簡拼的明確標記（abbreviatedSpan），不是這個數。
 const continuationRow = 16
 
-// spans 列舉從 start 起、與音節格相容的所有讀音（以詞庫前綴剪枝）。
-func (d *Decoder) spans(lat input.Lattice, start int, fn func(reading []zhuyin.Syllable, cost float64)) {
-	d.markedSpans(lat, start, func(reading []zhuyin.Syllable, cost float64, _ bool) { fn(reading, cost) })
+// span 是 spans 列舉的一條讀音：結束在 end，cuts 是每個音節結束的位置（每個音節都只佔一個位置時是 nil，
+// 一般的音節格永遠是 nil，見 Seg.Cuts），cost 是走過的假設成本總和。
+type span struct {
+	reading []zhuyin.Syllable
+	end     int
+	cuts    []int
+	cost    float64
+	// untoned／abbrev：路徑走過 input.Hyp.Untoned／Abbreviated 的假設。按鍵圖用它們決定弧數上限：
+	// 同一個位置有好幾種寬度的假設，看位置會把沒走簡拼展開的弧也算進去。一般的音節格照舊看位置（untonedSpan）。
+	untoned, abbrev bool
+	// corrected：路徑走過觸控修正的假設（input.Hyp.Corrected）。
+	corrected bool
 }
 
-// markedSpans 同 spans，另外回報讀音有沒有經過修正的假設（input.Hyp.Corrected）。
-func (d *Decoder) markedSpans(lat input.Lattice, start int, fn func(reading []zhuyin.Syllable, cost float64, corrected bool)) {
+// spans 列舉從 start 起、與音節格相容的所有讀音（以詞庫前綴剪枝）。佔多個位置的假設（input.Hyp.Span，按鍵圖）
+// 走到 pos+Span，超出音節格的不走；一般的音節格每個假設佔一個位置，end 一律是 start+len(reading)。
+func (d *Decoder) spans(lat input.Lattice, start int, fn func(sp span)) {
+	d.spansSeen(lat, start, fn, nil)
+}
+
+// spansSeen 同 spans；seen 不是 nil 時每讀一列就以那一列的位置呼叫一次，結果跟音節格的長度有關（走到結尾、
+// 假設超出結尾）時以 -1 呼叫。給 longerFrom 的記憶用：結果只取決於讀過的列與那時的長度。
+func (d *Decoder) spansSeen(lat input.Lattice, start int, fn func(sp span), seen func(pos int)) {
 	limit := MaxLen(d.Lex)
-	var walk func(pos int, reading []zhuyin.Syllable, cost float64, corrected bool)
-	walk = func(pos int, reading []zhuyin.Syllable, cost float64, corrected bool) {
-		if pos == len(lat) || pos-start == limit {
+	var walk func(pos int, reading []zhuyin.Syllable, cuts []int, cost float64, untoned, abbrev, corrected bool)
+	walk = func(pos int, reading []zhuyin.Syllable, cuts []int, cost float64, untoned, abbrev, corrected bool) {
+		if len(reading) == limit {
 			return
+		}
+		if pos >= len(lat) {
+			if seen != nil {
+				seen(-1)
+			}
+			return
+		}
+		if seen != nil {
+			seen(pos)
 		}
 		// 寬列（簡拼展開的位置有上百個讀音）：先列出詞庫裡接得上的音節，不逐一試 HasPrefix。
 		var next map[zhuyin.Syllable]bool
@@ -207,6 +343,16 @@ func (d *Decoder) markedSpans(lat input.Lattice, start int, fn func(reading []zh
 			}
 		}
 		for _, h := range lat[pos] {
+			end := pos + 1
+			if h.Span > 1 {
+				end = pos + h.Span
+				if end > len(lat) {
+					if seen != nil {
+						seen(-1)
+					}
+					continue
+				}
+			}
 			if d.MaxCost > 0 && cost+h.Cost > d.MaxCost {
 				continue
 			}
@@ -217,23 +363,41 @@ func (d *Decoder) markedSpans(lat input.Lattice, start int, fn func(reading []zh
 			if next == nil && !d.Lex.HasPrefix(r) {
 				continue
 			}
-			fn(r, cost+h.Cost, corrected || h.Corrected)
-			walk(pos+1, r, cost+h.Cost, corrected || h.Corrected)
+			c := cuts
+			if h.Span > 1 || cuts != nil {
+				if cuts == nil {
+					c = make([]int, len(reading), len(reading)+1)
+					for k := range c {
+						c[k] = start + k + 1
+					}
+				}
+				c = append(c[:len(c):len(c)], end)
+			}
+			u, a, x := untoned || h.Untoned, abbrev || h.Abbreviated, corrected || h.Corrected
+			fn(span{r, end, c, cost + h.Cost, u, a, x})
+			walk(end, r, c, cost+h.Cost, u, a, x)
 		}
 	}
-	walk(start, nil, 0, false)
+	walk(start, nil, nil, 0, false, false, false)
 }
 
 // Fits 回報 word 有沒有詞庫讀音放得進 lat 從 start 起的音節，以及那筆是不是自動修正讀音。
 // 只算使用者打的音（含沒打聲調、簡拼的展開），不算近音：同候選裡不帶 Matched 的詞。
 // 不評分，給不開候選、直接固定詞的手選用（session.fixWord）。
 func (d *Decoder) Fits(lat input.Lattice, start int, word string) (fits, correction bool) {
+	return d.FitsIn(lat, start, start+utf8.RuneCountInString(word), word)
+}
+
+// FitsIn 同 Fits，但 word 佔的是位置 [start, end)：按鍵圖（自動切字）的位置是鍵，詞的字數跟位置數不同，
+// 只要有一種切法讓詞庫讀音剛好走到 end 就算放得進。
+func (d *Decoder) FitsIn(lat input.Lattice, start, end int, word string) (fits, correction bool) {
 	length := utf8.RuneCountInString(word)
-	if start < 0 || length == 0 || start+length > len(lat) {
+	if start < 0 || length == 0 || end > len(lat) || end <= start {
 		return false, false
 	}
-	d.spans(lat[:start+length], start, func(reading []zhuyin.Syllable, cost float64) {
-		if fits && !correction || len(reading) != length || matchedReading(lat, start, reading) != "" {
+	d.spans(lat[:end], start, func(sp span) {
+		reading := sp.reading
+		if fits && !correction || len(reading) != length || sp.end != end || matchedReading(lat, start, reading, sp.cuts) != "" {
 			return
 		}
 		for _, e := range d.Lex.Exact(reading) {
@@ -248,13 +412,55 @@ func (d *Decoder) Fits(lat input.Lattice, start int, word string) (fits, correct
 type state struct {
 	last  string
 	score float64
-	path  []Seg
+	path  *pathNode
+}
+
+// pathNode 是前向狀態走過的路徑，由最後一段往回接：延伸一段只配置一個節點，前面的部分共用，選出最佳路徑後才攤平
+// （segs）。一直複製整條 []Seg 的話，配置量跟路徑長度的平方成正比。
+type pathNode struct {
+	seg  Seg
+	prev *pathNode
+}
+
+func (p *pathNode) push(seg Seg) *pathNode { return &pathNode{seg, p} }
+
+// last 是路徑的最後一段；空路徑是 nil。
+func (p *pathNode) last() *Seg {
+	if p == nil {
+		return nil
+	}
+	return &p.seg
+}
+
+func (p *pathNode) segs() []Seg {
+	n := 0
+	for q := p; q != nil; q = q.prev {
+		n++
+	}
+	if n == 0 {
+		return nil
+	}
+	out := make([]Seg, n)
+	for q := p; q != nil; q = q.prev {
+		n--
+		out[n] = q.seg
+	}
+	return out
+}
+
+// lastOf 是 segs 的最後一段；空的時候是 nil。
+func lastOf(segs []Seg) *Seg {
+	if len(segs) == 0 {
+		return nil
+	}
+	return &segs[len(segs)-1]
 }
 
 // allowed 判斷詞 w 佔 [i, j) 是否符合鎖定。鎖定限制的是「那幾個音節的字」，不是斷詞：
 // 詞完整包住鎖定區間、且該位置的字與鎖定相同時也允許（選「今天」的「天」不會把「今」拆成單字重猜）。
 // 被字面文字切開的暫時邊界（LiteralBoundary）仍要求剛好是那個詞。
-func allowed(locks map[int]Lock, i, j int, w string) bool {
+// cuts 是詞的讀音每個音節結束的位置（nil 時每個音節佔一個位置）：按鍵圖裡鎖定的兩端必須同時是這個詞的音節邊界。
+func allowed(locks map[int]Lock, i, j int, w string, cuts []int) bool {
 	var runes []rune
 	for s, l := range locks {
 		if s < i || s >= j || s == i && l.Word == w && l.Len == j-i {
@@ -264,7 +470,9 @@ func allowed(locks map[int]Lock, i, j int, w string) bool {
 			if runes == nil {
 				runes = []rune(w)
 			}
-			if len(runes) == j-i && utf8.RuneCountInString(l.Word) == l.Len && string(runes[s-i:s-i+l.Len]) == l.Word {
+			a, okA := charAt(i, cuts, s)
+			b, okB := charAt(i, cuts, s+l.Len)
+			if okA && okB && len(runes) == syllables(i, j, cuts) && utf8.RuneCountInString(l.Word) == b-a && string(runes[a:b]) == l.Word {
 				continue
 			}
 		}
@@ -277,6 +485,7 @@ type arc struct {
 	j    int
 	e    lexicon.Entry
 	cost float64
+	cuts *[]int // 每個音節結束的位置；每個音節佔一個位置時是 nil（見 Seg.Cuts）
 }
 
 // Decode 回傳最佳路徑。prefix 為真時，組字尾端可以是「更長的詞的前綴」，
@@ -294,8 +503,13 @@ func (d *Decoder) Best(lat input.Lattice, locks map[int]Lock, prefix bool) ([]Se
 	if n == 0 {
 		return nil, 0
 	}
-	best := d.forward(lat, locks)
+	return d.finish(lat, locks, prefix, d.forward(lat, locks), nil)
+}
 
+// finish 從前向狀態挑出最佳路徑；prefix 時尾端可以是更長的詞的前綴。dead 非 nil 時，回報 true 的起點確定沒有走到
+// 音節格終點的讀音（增量搜尋已經知道），不必列舉尾端詞條；結果跟列舉了相同。
+func (d *Decoder) finish(lat input.Lattice, locks map[int]Lock, prefix bool, best [][]state, dead func(int) bool) ([]Seg, float64) {
+	n := len(lat)
 	var winner *state
 	consider := func(st state) {
 		if winner == nil || st.score > winner.score {
@@ -311,7 +525,7 @@ func (d *Decoder) Best(lat input.Lattice, locks map[int]Lock, prefix bool) ([]Se
 			topB = defaultTopB
 		}
 		for i := 0; i < n; i++ {
-			if lockedIn(locks, i, n) || len(best[i]) == 0 {
+			if lockedIn(locks, i, n) || len(best[i]) == 0 || dead != nil && dead(i) {
 				continue
 			}
 			cands := d.tailEntries(lat, i)
@@ -323,14 +537,18 @@ func (d *Decoder) Best(lat input.Lattice, locks map[int]Lock, prefix bool) ([]Se
 			if len(sts) > topB {
 				sts = sts[:topB]
 			}
+			var one [1]tailGroup
+			groups := tailGroups(one[:0], cands, i, n)
 			for _, st := range sts {
-				for _, t := range d.group(cands, n-i, st.last, d.Continue) {
-					if !t.longer {
-						continue
+				for _, g := range groups {
+					for _, t := range d.group(g.cands, g.k, st.last, d.Continue) {
+						if !t.longer {
+							continue
+						}
+						seg := Seg{Word: t.display, Start: i, End: n, Partial: true, Matched: partialMatched(lat, i, t, deref(g.cuts)), Cuts: g.cuts}
+						sc := d.repeatScore(lat, locks, st.path.last(), i, n, t.display, math.Log(d.evidenceMass(i, n, st.last, t.display, t.mass)), deref(g.cuts))
+						consider(state{t.display, st.score + sc, st.path.push(seg)})
 					}
-					seg := Seg{Word: t.display, Start: i, End: n, Partial: true, Matched: partialMatched(lat, i, n, t)}
-					sc := d.repeatScore(lat, locks, st.path, i, n, t.display, math.Log(d.evidenceMass(i, n, st.last, t.display, t.mass)))
-					consider(state{t.display, st.score + sc, append(st.path[:len(st.path):len(st.path)], seg)})
 				}
 			}
 		}
@@ -338,7 +556,7 @@ func (d *Decoder) Best(lat input.Lattice, locks map[int]Lock, prefix bool) ([]Se
 	if winner == nil {
 		return nil, math.Inf(-1)
 	}
-	return winner.path, winner.score
+	return winner.path.segs(), winner.score
 }
 
 // forward 建立所有位置的前向狀態，供整段解碼與候選上下文評分共用。
@@ -370,9 +588,9 @@ func (d *Decoder) forward(lat input.Lattice, locks map[int]Lock) [][]state {
 		arcs := d.wordArcs(lat, i, locks)
 		for _, st := range d.frontier(best[i]) {
 			for _, a := range arcs {
-				sc := st.score + d.repeatScore(lat, locks, st.path, i, a.j, a.e.Surface, d.arcLog(i, a.j, st.last, a.e, a.cost))
-				seg := Seg{Word: a.e.Surface, Start: i, End: a.j, Correction: a.e.Correction, Matched: segMatched(lat, i, a.e, a.cost)}
-				put(a.j, state{a.e.Surface, sc, append(st.path[:len(st.path):len(st.path)], seg)})
+				sc := st.score + d.repeatScore(lat, locks, st.path.last(), i, a.j, a.e.Surface, d.arcLog(i, a.j, st.last, a.e, a.cost), deref(a.cuts))
+				seg := Seg{Word: a.e.Surface, Start: i, End: a.j, Correction: a.e.Correction, Matched: segMatched(lat, i, a.e, a.cost, deref(a.cuts)), Cuts: a.cuts}
+				put(a.j, state{a.e.Surface, sc, st.path.push(seg)})
 			}
 		}
 	}
@@ -428,28 +646,66 @@ type tail struct {
 type tailEntry struct {
 	e    lexicon.Entry
 	cost float64
+	cuts *[]int // 已打部分每個音節結束的位置；每個音節佔一個位置時是 nil（見 Seg.Cuts）
 }
 
+// typed 是從 start 起、走到 end 的這筆尾端詞條已經打了幾個音節。
+func (t tailEntry) typed(start, end int) int { return syllables(start, end, deref(t.cuts)) }
+
 // tailEntries 回傳「讀音以 lat[i:] 開頭」的詞：系統詞取依先驗排序的前 M 個（快取），
-// 個人片語全部加入（不快取，學習立即生效）。
+// 個人片語全部加入（不快取，學習立即生效）。按鍵圖有好幾種切法走到終點，各自的 k、cuts 不同。
 func (d *Decoder) tailEntries(lat input.Lattice, i int) []tailEntry {
-	k := len(lat) - i
 	var out []tailEntry
-	d.spans(lat, i, func(reading []zhuyin.Syllable, cost float64) {
-		if len(reading) != k {
+	d.spans(lat, i, func(sp span) {
+		if sp.end != len(lat) {
 			return
 		}
+		reading, cost, cuts := sp.reading, sp.cost, ref(sp.cuts)
 		sys, adjust, personal := d.Lex, func(es []lexicon.Entry) []lexicon.Entry { return es }, []lexicon.Entry(nil)
 		if l, ok := d.Lex.(Layered); ok {
 			sys, adjust, personal = l.System(), l.Adjust, l.PersonalPrefixed(reading)
 		}
 		for _, e := range adjust(d.topPrefixed(sys, reading)) {
-			out = append(out, tailEntry{e, cost})
+			out = append(out, tailEntry{e, cost, cuts})
 		}
 		for _, e := range personal {
-			out = append(out, tailEntry{e, cost})
+			out = append(out, tailEntry{e, cost, cuts})
 		}
 	})
+	return out
+}
+
+// tailGroup 是尾端從同一個起點、以同一種切法走到音節格終點的詞條：k 是已經打了的音節數，cuts 是切法。
+// 一般的音節格只有一組（k 是剩下的位置數、cuts 是 nil），順序跟 tailEntries 相同。
+type tailGroup struct {
+	k     int
+	cuts  *[]int
+	cands []tailEntry
+}
+
+// tailGroups 把從 start 起走到 end 的尾端詞條依切法分組，接在 buf 後面。沒有任何一筆佔多個位置（一般的音節格）時
+// 不重新分組，整份就是一組。
+func tailGroups(buf []tailGroup, cands []tailEntry, start, end int) []tailGroup {
+	plain := true
+	for i := range cands {
+		if cands[i].cuts != nil {
+			plain = false
+			break
+		}
+	}
+	if plain {
+		return append(buf, tailGroup{k: end - start, cands: cands})
+	}
+	out := buf
+	for _, c := range cands {
+		k := c.typed(start, end)
+		i := slices.IndexFunc(out, func(g tailGroup) bool { return g.k == k && slices.Equal(deref(g.cuts), deref(c.cuts)) })
+		if i < 0 {
+			i = len(out)
+			out = append(out, tailGroup{k: k, cuts: c.cuts})
+		}
+		out[i].cands = append(out[i].cands, c)
+	}
 	return out
 }
 
@@ -479,8 +735,8 @@ func (d *Decoder) prefixVersion() {
 		gen, at := v.MassVersion()
 		key.version, key.time, key.mass = uint64(gen), at, true
 	}
-	if d.cache != nil && key != d.cacheKey {
-		d.cache = nil
+	if (d.cache != nil || d.cacheOld != nil) && key != d.cacheKey {
+		d.cache, d.cacheOld = nil, nil
 	}
 	d.cacheKey = key
 }
@@ -489,6 +745,10 @@ func (d *Decoder) topPrefixed(sys lexicon.Source, reading []zhuyin.Syllable) []l
 	key := zhuyin.Key(reading)
 	d.prefixVersion()
 	if es, ok := d.cache[key]; ok {
+		return es
+	}
+	if es, ok := d.cacheOld[key]; ok {
+		d.cachePut(key, es)
 		return es
 	}
 	es := append([]lexicon.Entry(nil), sys.Prefixed(reading)...)
@@ -516,27 +776,39 @@ func (d *Decoder) topPrefixed(sys lexicon.Source, reading []zhuyin.Syllable) []l
 	for k, x := range idx {
 		top[k] = es[x]
 	}
+	d.cachePut(key, top)
+	return top
+}
+
+// cachePut 把讀音 key 的前 M 名放進新的一代（見 Decoder.cache）；兩代加起來不超過 PrefixCacheKeys。
+func (d *Decoder) cachePut(key string, top []lexicon.Entry) {
 	limit := d.PrefixCacheKeys
 	if limit == 0 {
 		limit = maxCacheKeys
 	}
 	if limit < 0 {
-		d.cache = nil
-		return top
+		d.cache, d.cacheOld = nil, nil
+		return
 	}
-	if d.cache == nil || len(d.cache) >= limit {
+	if limit < 2 {
+		d.cacheOld = nil
+	}
+	if d.cache == nil || len(d.cache) >= max(1, limit/2) {
+		if limit >= 2 {
+			d.cacheOld = d.cache
+		}
 		d.cache = map[string][]lexicon.Entry{}
 	}
 	d.cache[key] = top
-	return top
 }
 
-// partialMatched 是尾端前綴段的 Matched：取最佳詞條讀音中對應已輸入音節的部分。
-func partialMatched(lat input.Lattice, start, end int, t *tail) string {
-	if t.bestCost <= 0 || len(t.best.Reading) < end-start {
+// partialMatched 是尾端前綴段的 Matched：取最佳詞條讀音中對應已輸入音節的部分。cuts 是已輸入部分的切法（見 Seg.Cuts）。
+func partialMatched(lat input.Lattice, start int, t *tail, cuts []int) string {
+	k := syllables(start, len(lat), cuts)
+	if t.bestCost <= 0 || len(t.best.Reading) < k {
 		return ""
 	}
-	return matchedReading(lat, start, t.best.Reading[:end-start])
+	return matchedReading(lat, start, t.best.Reading[:k], cuts)
 }
 
 // group 依顯示字串（詞的前 k 個字）彙總尾端詞條的機率；更長的詞乘上 cont（0 表示不打折）。
@@ -584,8 +856,8 @@ type Completion struct {
 // 信心以「要補成更長詞」為條件，不是使用者一定會繼續輸入的機率。
 // 同一詞面的多讀音只保留最佳路徑，避免重複詞條灌高先驗或個人證據。
 func (d *Decoder) CompleteHomophones(lat input.Lattice, start int, left string) (Completion, bool) {
-	typed := len(lat) - start
-	if typed < 2 || typed >= MaxLen(d.Lex) {
+	// 按鍵圖上每種切法打了的音節數不同，逐筆看；一般的音節格每筆都是剩下的位置數。
+	if typed := len(lat) - start; lat.Width() == 1 && (typed < 2 || typed >= MaxLen(d.Lex)) {
 		return Completion{}, false
 	}
 	xp, _ := d.Score.(Explicit)
@@ -597,7 +869,7 @@ func (d *Decoder) CompleteHomophones(lat input.Lattice, start int, left string) 
 	seen := map[string]int{}
 	ev, _ := d.Score.(Evidenced)
 	for _, c := range d.tailEntries(lat, start) {
-		if len(c.e.Reading) <= typed || c.e.Correction || c.e.Rare {
+		if k := c.typed(start, len(lat)); k < 2 || k >= MaxLen(d.Lex) || len(c.e.Reading) <= k || c.e.Correction || c.e.Rare {
 			continue
 		}
 		prior := d.Score.Prob(left, c.e.Surface)
@@ -665,7 +937,7 @@ func (d *Decoder) complete(lat input.Lattice, path []Seg) (Completion, float64, 
 	if len(path) > 1 {
 		left = path[len(path)-2].Word
 	}
-	k := last.End - last.Start
+	k := last.Syllables()
 	ev, _ := d.Score.(Evidenced)
 	xp, _ := d.Score.(Explicit)
 	type member struct {
@@ -676,7 +948,7 @@ func (d *Decoder) complete(lat input.Lattice, path []Seg) (Completion, float64, 
 	var priorSum, cSum float64
 	seen := map[string]int{}
 	for _, c := range d.tailEntries(lat, last.Start) {
-		if string([]rune(c.e.Surface)[:k]) != last.Word {
+		if c.typed(last.Start, len(lat)) != k || !slices.Equal(deref(c.cuts), last.Ends()) || string([]rune(c.e.Surface)[:k]) != last.Word {
 			continue
 		}
 		m := member{e: c.e}
@@ -888,20 +1160,25 @@ func (d *Decoder) CandidatesInContextWindows(lat input.Lattice, start, length in
 // 的字就排到前面。鍵是候選詞面與讀音（innerKey）；fw 是 forward(lat[:start]) 的結果。
 func (d *Decoder) innerScores(lat input.Lattice, fw [][]state, start, end int, kept map[int]Lock, suffix func(int, string) float64) map[string]float64 {
 	out := map[string]float64{}
-	limit := MaxLen(d.Lex)
+	limit := MaxLen(d.Lex) * lat.Width() // 按鍵圖的一個音節最多佔 Width 個位置
 	for s := max(0, end-limit); s <= start; s++ {
 		if len(fw[s]) == 0 {
 			continue
 		}
 		states := d.frontier(fw[s])
-		d.spans(lat, s, func(reading []zhuyin.Syllable, cost float64) {
-			j := s + len(reading)
+		d.spans(lat, s, func(sp span) {
+			reading, cost, j := sp.reading, sp.cost, sp.end
 			if j < end || s == start && j == end {
 				return
 			}
+			a, okA := charAt(s, sp.cuts, start)
+			b, okB := charAt(s, sp.cuts, end)
+			if !okA || !okB {
+				return // 候選範圍的兩端不是這個讀音的音節邊界
+			}
 			for _, e := range d.Lex.Exact(reading) {
 				runes := []rune(e.Surface)
-				if len(runes) != j-s || !allowed(kept, s, j, e.Surface) {
+				if len(runes) != len(reading) || !allowed(kept, s, j, e.Surface, sp.cuts) {
 					continue
 				}
 				best := math.Inf(-1)
@@ -912,7 +1189,7 @@ func (d *Decoder) innerScores(lat input.Lattice, fw [][]state, start, end int, k
 				if math.IsInf(score, -1) {
 					continue
 				}
-				k := innerKey(string(runes[start-s:end-s]), reading[start-s:end-s])
+				k := innerKey(string(runes[a:b]), reading[a:b])
 				if v, ok := out[k]; !ok || score > v {
 					out[k] = score
 				}
@@ -941,8 +1218,9 @@ func (d *Decoder) candidates(lat input.Lattice, start, length int, score func(le
 		}
 	}
 	var pool []tailEntry
-	d.spans(lat[:start+length], start, func(reading []zhuyin.Syllable, cost float64) {
-		if len(reading) != length || d.OnlyCosted && (cost <= 0 || matchedReading(lat, start, reading) == "") {
+	d.spans(lat[:start+length], start, func(sp span) {
+		reading, cost := sp.reading, sp.cost
+		if sp.end != start+length || d.OnlyCosted && (cost <= 0 || matchedReading(lat, start, reading, sp.cuts) == "") {
 			return // 只列近音時，簡拼展開的成本不算
 		}
 		for _, e := range d.Lex.Exact(reading) {
@@ -950,7 +1228,7 @@ func (d *Decoder) candidates(lat input.Lattice, start, length int, score func(le
 				continue
 			}
 			if d.MaxCandidates > 0 {
-				pool = append(pool, tailEntry{e, cost})
+				pool = append(pool, tailEntry{e: e, cost: cost})
 				continue
 			}
 			consider(e, cost)

@@ -230,6 +230,14 @@ pub fn personal_args(action: &str) -> Result<(Vec<String>, u64), String> {
     }
 }
 
+/// 更新頁的「更新方式」下拉選單（#340）：只接受 0c-update mode 的三個值 auto（自動更新）／ask（下載後詢問）／manual（手動更新）。
+pub fn update_mode_args(mode: &str) -> Result<Vec<String>, String> {
+    match mode {
+        "auto" | "ask" | "manual" => Ok(vec!["mode".to_string(), mode.to_string(), "-json".to_string()]),
+        _ => Err("未知的更新方式".to_string()),
+    }
+}
+
 /// 設定視窗本身不離開本機頁面（local_origin），外部網址交給系統瀏覽器；只放行 Hugging Face 的模型頁
 /// （0c-update models status 的 url），字元限制在網址路徑用得到的範圍，不會被當成參數或指令。
 pub fn browser_url(url: &str) -> Result<&str, String> {
@@ -805,6 +813,16 @@ mod tests {
             std::thread::sleep(Duration::from_millis(25));
         }
         assert_eq!(value.unwrap()["got"]["op"], "list");
+    }
+
+    #[test]
+    fn update_mode_args_only_known_modes() {
+        for mode in ["auto", "ask", "manual"] {
+            assert_eq!(update_mode_args(mode).unwrap(), strings(&["mode", mode, "-json"]));
+        }
+        for bad in ["", "off", "on", "auto -json", "-json", "AUTO", "pause"] {
+            assert!(update_mode_args(bad).is_err(), "{bad:?}");
+        }
     }
 
     #[test]

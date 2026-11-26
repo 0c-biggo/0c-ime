@@ -403,8 +403,174 @@ let officeResult: [String: Any] = ["menu_marked_length": (menuMarked as NSString
                                    "closed_clean": closedClean, "symbol_marked": symbolMarked, "committed": symbolCommitted,
                                    "clicked_away": clickedAway, "switched_away": switchedAway, "leaked": office.leaked.count]
 
-let passed = capsOK && compositionOK && coldOK && englishHintOK && chineseHintOK && coldHintOK && nativeOK && floatingOK && officeOK
+// #347：組字中從選單或 ⌃⇧F11 切「輸出簡體字」。App 回報不出 markedRange（NSNotFound，浮動組字一類的 App）時
+// 組字一定重送給 App；這一步不在請求佇列的處理中，RequestQueue.present 的 precondition 會讓整個輸入法當掉。
+final class NoMarkedRangeClient: IMKTextInput {
+    var document = ""
+    var marked = ""
+    var setMarkedCount = 0
+    func bundleIdentifier() -> String! { "test.no-marked-range" }
+    func overrideKeyboard(withKeyboardNamed: String!) {}
+    func insertText(_ text: Any!, replacementRange: NSRange) {
+        document += (text as? String) ?? (text as? NSAttributedString)?.string ?? ""
+        marked = ""
+    }
+    func selectedRange() -> NSRange { NSRange(location: (document as NSString).length, length: 0) }
+    func markedRange() -> NSRange { NSRange(location: NSNotFound, length: 0) }
+    func attributedSubstring(from range: NSRange) -> NSAttributedString! { nil }
+    func attributes(forCharacterIndex: Int, lineHeightRectangle: UnsafeMutablePointer<NSRect>!) -> [AnyHashable: Any]! { [:] }
+    func firstRect(forCharacterRange: NSRange, actualRange: NSRangePointer!) -> NSRect { .zero }
+    func windowLevel() -> Int32 { 0 }
+    func setMarkedText(_ text: Any!, selectionRange: NSRange, replacementRange: NSRange) {
+        marked = (text as? NSAttributedString)?.string ?? (text as? String) ?? ""
+        setMarkedCount += 1
+    }
+}
+let loose = NoMarkedRangeClient()
+controller = LingxiInputController(client: loose)
+func looseKey(_ characters: String, code: UInt16 = 0) {
+    let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil,
+                                 characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)!
+    _ = controller.handle(event, client: loose)
+}
+for k in ["a", "8", "6"] { looseKey(k) }
+let looseComposing = !loose.marked.isEmpty && loose.document.isEmpty
+let simplifiedLiveKnown = EngineSession.simplifiedLive
+let markedBeforeSwitch = loose.setMarkedCount
+controller.simplifiedMenuAction(nil)
+let switchedOn = EngineSession.outputSimplified && loose.setMarkedCount > markedBeforeSwitch && !loose.marked.isEmpty && loose.document.isEmpty
+controller.simplifiedMenuAction(nil)
+let switchedOff = !EngineSession.outputSimplified && !loose.marked.isEmpty && loose.document.isEmpty
+let composedBeforeCommit = loose.marked
+looseKey("\r", code: 36)
+let simplifiedSwitchOK = looseComposing && simplifiedLiveKnown && switchedOn && switchedOff &&
+    !composedBeforeCommit.isEmpty && loose.document == composedBeforeCommit && loose.marked.isEmpty
+let simplifiedSwitchResult: [String: Any] = ["composing": looseComposing, "live": simplifiedLiveKnown, "on": switchedOn,
+                                             "off": switchedOff, "committed": loose.document]
+controller.inputControllerWillClose()
+
+// #337：開始組字的第一鍵讀游標前一個字是不是阿拉伯數字，只帶 digit_before 是／不是。在 ABC 打的數字不經過輸入法，
+// 沒在組字時點到別處 IMKit 也不通知輸入法，這裡用改文件內容代替（不呼叫控制器）。代理只記每個 key 請求的 digit_before。
+final class CaretClient: IMKTextInput {
+    var document = ""
+    var marked = ""
+    var selectionLength = 0
+    var readable = true
+    var reads = 0
+    func bundleIdentifier() -> String! { "test.caret" }
+    func overrideKeyboard(withKeyboardNamed: String!) {}
+    func insertText(_ text: Any!, replacementRange: NSRange) {
+        document += (text as? String) ?? (text as? NSAttributedString)?.string ?? ""
+        marked = ""
+    }
+    func selectedRange() -> NSRange {
+        NSRange(location: (document as NSString).length - selectionLength, length: selectionLength)
+    }
+    func markedRange() -> NSRange {
+        marked.isEmpty ? NSRange(location: NSNotFound, length: 0)
+            : NSRange(location: (document as NSString).length, length: (marked as NSString).length)
+    }
+    func attributedSubstring(from range: NSRange) -> NSAttributedString! {
+        reads += 1
+        guard readable, range.location != NSNotFound, NSMaxRange(range) <= (document as NSString).length else { return nil }
+        return NSAttributedString(string: (document as NSString).substring(with: range))
+    }
+    func attributes(forCharacterIndex: Int, lineHeightRectangle: UnsafeMutablePointer<NSRect>!) -> [AnyHashable: Any]! { [:] }
+    func firstRect(forCharacterRange: NSRange, actualRange: NSRangePointer!) -> NSRect { .zero }
+    func windowLevel() -> Int32 { 0 }
+    func setMarkedText(_ text: Any!, selectionRange: NSRange, replacementRange: NSRange) {
+        marked = (text as? NSAttributedString)?.string ?? (text as? String) ?? ""
+    }
+}
+let digitLog = URL(fileURLWithPath: CommandLine.arguments[6])
+func digitLines() -> [String] {
+    ((try? String(contentsOf: digitLog, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
+}
+let caret = CaretClient()
+func caretKey(_ characters: String, code: UInt16, caps: Bool = false) -> [String] {
+    let before = digitLines().count
+    let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: caps ? [.capsLock] : [], timestamp: 0,
+                                 windowNumber: 0, context: nil, characters: characters, charactersIgnoringModifiers: characters,
+                                 isARepeat: false, keyCode: code)!
+    _ = controller.handle(event, client: caret)
+    return Array(digitLines().dropFirst(before))
+}
+func caretCaps(_ on: Bool) {
+    let event = CGEvent(keyboardEventSource: nil, virtualKey: 57, keyDown: true)!
+    event.type = .flagsChanged
+    event.flags = on ? .maskAlphaShift : []
+    _ = controller.handle(NSEvent(cgEvent: event)!, client: caret)
+}
+func caretShift() {
+    for flags: CGEventFlags in [.maskShift, []] {
+        let event = CGEvent(keyboardEventSource: nil, virtualKey: 60, keyDown: true)!
+        event.type = .flagsChanged
+        event.flags = flags
+        event.timestamp = CGEventTimestamp(ProcessInfo.processInfo.systemUptime * 1_000_000_000)
+        _ = controller.handle(NSEvent(cgEvent: event)!, client: caret)
+    }
+    Thread.sleep(forTimeInterval: 0.6)
+}
+let esc = "\u{1b}"
+ControllerTestHost.socketPath = CommandLine.arguments[1]
+controller = LingxiInputController(client: caret)
+var digitCases: [String: Any] = [:]
+caret.document = "3" // 在 ABC 打的 3
+let afterDigit = caretKey("5", code: 23) // ㄓ
+let digitRead = caret.reads
+let composingKey = caretKey("j", code: 38) // 組字中：不讀、不帶
+let digitTrue = afterDigit == ["true"] && digitRead == 1 && composingKey == ["none"] && caret.reads == 1 && !caret.marked.isEmpty
+_ = caretKey(esc, code: 53)
+caret.document = "3\n" // 點到沒有數字的空行（沒有組字，IMKit 不通知輸入法）
+let afterClick = caretKey("5", code: 23)
+let digitFalse = afterClick == ["false"] && caret.reads == 2
+_ = caretKey(esc, code: 53)
+caret.document = ""
+let atStart = caretKey("5", code: 23)
+_ = caretKey(esc, code: 53)
+caret.document = "3"
+caret.selectionLength = 1
+let readsBeforeSelection = caret.reads
+let withSelection = caretKey("5", code: 23)
+let selectionNone = withSelection == ["none"] && caret.reads == readsBeforeSelection
+_ = caretKey(esc, code: 53)
+caret.selectionLength = 0
+caret.readable = false
+let unreadable = caretKey("5", code: 23)
+_ = caretKey(esc, code: 53)
+caret.readable = true
+let readsBeforeCaps = caret.reads
+caretCaps(true)
+let capsEnglish = caretKey("5", code: 23, caps: true) // 英文模式：數字交還 App，不讀
+caretCaps(false)
+let capsNotRead = capsEnglish == ["none"] && caret.reads == readsBeforeCaps
+controller.inputControllerWillClose()
+// 右 Shift 的英文模式也不讀（每欄位記模式、右 Shift 切換的引擎）；切回注音再讀。
+ControllerTestHost.socketPath = CommandLine.arguments[5]
+controller = LingxiInputController(client: caret)
+caret.document = "a"
+_ = caretKey("5", code: 23) // 先讓快照知道是注音
+_ = caretKey(esc, code: 53)
+let readsBeforeShift = caret.reads
+caretShift()
+_ = caretKey("3", code: 20)
+let shiftNotRead = caret.reads == readsBeforeShift && caret.marked.isEmpty
+caretShift()
+_ = caretKey("5", code: 23)
+let shiftBackRead = caret.reads == readsBeforeShift + 1
+_ = caretKey(esc, code: 53)
+controller.inputControllerWillClose()
+let digitBeforeOK = digitTrue && digitFalse && atStart == ["false"] && selectionNone && unreadable == ["none"] && capsNotRead &&
+    shiftNotRead && shiftBackRead
+digitCases = ["after_digit": afterDigit, "composing": composingKey, "after_click": afterClick, "document_start": atStart,
+              "selection": withSelection, "unreadable": unreadable, "caps_english": capsEnglish, "caps_not_read": capsNotRead,
+              "shift_not_read": shiftNotRead, "shift_back_read": shiftBackRead, "reads": caret.reads]
+
+let passed = capsOK && compositionOK && coldOK && englishHintOK && chineseHintOK && coldHintOK && nativeOK && floatingOK && officeOK &&
+    simplifiedSwitchOK && digitBeforeOK
 let output: [String: Any] = ["passed": passed, "floating": floatingOK, "floating_cases": floatingResult,
+                          "digit_before": digitBeforeOK, "digit_before_cases": digitCases,
+                          "simplified_switch_composing": simplifiedSwitchOK, "simplified_switch_cases": simplifiedSwitchResult,
                           "symbol_menu_office": officeOK, "symbol_menu_cases": officeResult,
                           "caps_recovery": capsOK, "composition_preserved_once": compositionOK,
                           "native_caps_restore": nativeOK, "native_cases": nativeResults,

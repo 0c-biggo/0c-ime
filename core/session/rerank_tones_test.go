@@ -138,6 +138,27 @@ func TestContextlessWeightAppliesWithoutContext(t *testing.T) {
 	}
 }
 
+// 沒前文時，讀音不超過 ShortContextlessSyllables 個音節才用 ShortContextlessWeight（桌面，#337）：
+// 「ㄏㄨㄟㄧ」兩個音節，短讀音上限 2 時用短讀音的權重，上限 1 時照 ContextlessWeight。
+func TestShortContextlessWeightFollowsReadingLength(t *testing.T) {
+	for _, c := range []struct {
+		short    float64
+		syllable int
+		want     string
+	}{
+		{1, 2, "回憶"},
+		{1, 1, "會議"},
+		{0, 2, "會議"}, // 沒設：照 ContextlessWeight
+	} {
+		var seen []rerank.Request
+		s := tonelessNeural(rerank.Options{UnknownTones: true, Weight: 1, ContextlessWeight: .1,
+			ShortContextlessWeight: c.short, ShortContextlessSyllables: c.syllable}, &seen)
+		if got := commitBare(s, "ㄏㄨㄟㄧ"); got != c.want {
+			t.Fatalf("%+v：%q", c, got)
+		}
+	}
+}
+
 // 簡拼位置的讀音不准評分器改：開了簡拼，沒打聲調的 ㄧ 是「ㄧ 開頭」；統計首選「會議」在那裡讀 ㄧ，
 // 評分器偏好讀 ㄧㄠ 的「會要」也不能換過去（它在候選裡，是被排除，不是沒送）。
 // 都讀 ㄧ 的候選之間照樣可以換（TestFullSyllableAbbreviationIsScoredAsUntoned）。
@@ -183,9 +204,9 @@ func TestAbbreviationKeepsStatisticalReading(t *testing.T) {
 func TestAbbreviationVetoIsCachedWithTheRerank(t *testing.T) {
 	calls := 0
 	saved := vetoAbbrev
-	vetoAbbrev = func(s *Session, lat input.Lattice, start, end int, rows []decode.Hypothesis) ([]bool, bool) {
+	vetoAbbrev = func(s *Session, lat input.Lattice, start, end int, rows []decode.Hypothesis, spellings bool) ([]bool, bool) {
 		calls++
-		return saved(s, lat, start, end, rows)
+		return saved(s, lat, start, end, rows, spellings)
 	}
 	defer func() { vetoAbbrev = saved }()
 	var seen []rerank.Request

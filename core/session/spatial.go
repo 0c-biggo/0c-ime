@@ -15,9 +15,9 @@ import (
 //
 // 漏按一鍵（#335）：完成的音節旁另放「補上一個沒打到的注音」的讀音（ㄏㄚ → ㄏㄨㄚ、ㄠˇ → ㄏㄠˇ），成本是固定的
 // SpatialOptions.Missed；不打聲調時 ㄒ＋ㄠ 這種接不上的組音，在組音時補上介音（ㄒㄧㄠ）。
-// 多按一鍵（重複按到、多碰到鄰鍵）不在這裡處理：聲調選填時多出來的鍵幾乎都自成一個音節（ㄗㄨㄨㄥ 是 ㄗㄨ＋ㄨㄥ），
-// 要跨兩個位置合併，一個位置一個音節的音節格表示不了；在音節裡去掉一鍵的讀音在 APP 的模擬只多救回 1%，
-// 卻讓沒打錯的句子被改壞（#335 的量測）。
+// 多按一鍵、按錯順序不在這裡處理：聲調選填時多出來的鍵幾乎都自成一個音節（ㄗㄨㄨㄥ 是 ㄗㄨ＋ㄨㄥ、ㄠㄏ 是 ㄠ＋ㄏ），
+// 要把兩個打出來的音節合成一個，見 merge.go 的合併弧（SpatialOptions.Swap 等）；在音節裡去掉一鍵的讀音在 APP 的
+// 模擬只多救回 1%，卻讓沒打錯的句子被改壞（#335 的量測）。
 
 // SpatialOptions 由宿主設定。Weight 是鄰鍵成本乘上的權重，0 關閉整個功能（桌面不送 Near，也一樣）。
 // Penalty 是換成鄰鍵的固定成本，加在乘過權重的成本上：打到的鍵永遠不加成本，修正要明顯勝出才會取代它
@@ -26,17 +26,29 @@ import (
 //
 // Missed 是漏按一鍵的讀音成本（自然對數單位，同鄰鍵成本與語言模型），0 不放這種讀音。漏掉的鍵沒有觸控位置，
 // 成本只能是固定的，大約是 -ln(每鍵漏按的機率)，由 APP 的 TestTypoReplay 調。只在 Weight > 0 時有作用。
+//
+// Swap 是合併弧（merge.go，APP#25）：相鄰兩、三個打出來的音節，對調其中一組相鄰的鍵就合成一個音節（ㄠ＋ㄏ → ㄏㄠ、
+// ㄏˇ＋ㄠ → ㄏㄠˇ），成本固定是 Swap；0 不放。Repeat 同 Swap，是「重複按了一鍵」：去掉連續兩個相同的鍵之一就合成
+// 一個音節（ㄏ＋ㄏㄠ → ㄏㄠ、ㄗㄨ＋ㄨㄥ → ㄗㄨㄥ）。Rejoin 是「按到鄰鍵，切法跟著變了」：其中一鍵換成它的鄰鍵就合成
+// 一個音節（ㄖ＋ㄧㄤ → ㄒㄧㄤ，想打「向」），成本是 Weight×鄰鍵成本＋Rejoin（取代 Penalty）。同 Missed，都只在 Weight > 0
+// 時有作用。
 type SpatialOptions struct {
 	Weight  float64
 	Penalty float64
 	MaxCost float64
 	Missed  float64
+	Swap    float64
+	Repeat  float64
+	Rejoin  float64
 }
 
 // DefaultSpatialMaxCost：比打到的鍵多 8 個自然對數單位以上的鄰鍵，機率不到三千分之一，不值得解碼。
 const DefaultSpatialMaxCost = 8.0
 
 func (o SpatialOptions) on() bool { return o.Weight > 0 }
+
+// merging 回報合併弧（merge.go）有沒有開。
+func (o SpatialOptions) merging() bool { return o.on() && (o.Swap > 0 || o.Repeat > 0 || o.Rejoin > 0) }
 
 func (o SpatialOptions) maxCost() float64 {
 	if o.MaxCost > 0 {
@@ -122,6 +134,9 @@ func (s *Session) spatialSubstitute(sym rune, near []spatialKey) (rune, []spatia
 			}
 		}
 	}
+	if bestCost >= 0 && s.rejoinsLoneInitial(sym, bestCost) {
+		return sym, near, false
+	}
 	// 漏按介音（#335）：ㄒ＋ㄣ 接不上，補上 ㄧ 就是 ㄒㄧㄣ。只在沒有接得上的鄰鍵時補：組音這一步只能挑一種，
 	// 按錯鄰鍵比漏按常見得多，比成本挑補鍵會把 ㄉ＋ㄝ（的，ㄜ 按到 ㄝ）補成 ㄉㄧㄝ（爹）；APP 的模擬裡兩種挑法救回的
 	// 漏按一樣多，比成本的少救回 2 句換鍵（#335 的量測）。
@@ -153,6 +168,37 @@ func (s *Session) spatialSubstitute(sym rune, near []spatialKey) (rune, []spatia
 	}
 	return bestSym, rest, true
 }
+
+// rejoinsLoneInitial 回報打的鍵接不上、組音只有一個要有韻母的聲母（ㄏ）時，要不要把換鍵留給合併弧（APP#36）。cost 是
+// 最可能的鄰鍵的觸控成本。只打首音時這是正常的打法：「好意」是 ㄏ＋ㄧ，ㄏ 是簡拼、ㄧ 是下一個音節，不是按錯 ㄒ。組音這一步
+// 換鍵沒有成本、也不經語言模型，換錯就整句改壞（3000 句的觸控雜訊裡，沒打錯卻被改壞的只打首音句子有 26 句都是這樣）。
+// 開著換鍵的合併弧（Rejoin）時：
+//   - 正在連續簡拼（前一個音節也是只打聲母的簡拼，同合併弧的 runAbbreviated）時一律不換；
+//   - 其他時候（句首、完整音節之後）觸控成本超過 loneSubstituteMax 時不換。
+//
+// 不換的時候兩個音節照打的樣子放，合併弧在整句裡比較「簡拼＋下一個音節」與「換鍵合成一個音節」兩種切法（ㄒ＋ㄚ 換成
+// 哈 照樣救得回來）。沒開 Rejoin 時照原本在組音時換。單獨就是音節的（ㄕ、ㄧ）在這之前就不算接不上（spatialSubstitute 的 alone）。
+func (s *Session) rejoinsLoneInitial(sym rune, cost float64) bool {
+	if !s.Spatial.merging() || s.Spatial.Rejoin <= 0 || !s.abbreviation() || zhuyin.ClassOf(sym) == zhuyin.Tone ||
+		!zhuyin.Abbreviable(zhuyin.Syllable(s.comp.String())) {
+		return false
+	}
+	return cost > loneSubstituteMax || s.cursor > 0 && !s.literals[s.cursor-1] && runAbbreviated(s.syls[s.cursor-1])
+}
+
+// loneSubstituteMax：組音只有一個要有韻母的聲母、又不是正在連續簡拼時，觸控明顯偏向鄰鍵（成本不超過這個值）就照舊在組音時
+// 換，其他留給合併弧（rejoinsLoneInitial）。APP 的模擬（CV 3000 句、Gboard 觸控雜訊、APP 的設定 Rejoin 3；同合併弧在只打
+// 首音的一串裡不換鍵）：
+//
+//	門檻         只打首音改壞/1864  打聲調救回/2220  不打聲調救回/1901
+//	原本（不分）  26                1121            833
+//	一律不換      0                 1098            787
+//	2            1（會議場所）      1117            809
+//
+// 一律不換時，組音時換鍵不用付合併的成本、有些句子靠它救回，在整句比較時卻輸給簡拼的讀法（近年 的 ㄐ 按成 ㄍ，整句是
+// 「過癮年」）；打錯的句子留著兩個音節，每鍵都要重新比較合併，本機不打聲調每鍵 P95 多 15%。門檻 2 救回只少 1–3%，
+// 延遲跟原本差不多。
+const loneSubstituteMax = 2.0
 
 // missedMedial 是補進組音之後讓 sym 接得上的介音（Missed 開啟時；第一個合法的，其他放在 others、成本 0）。
 // 只補介音：組音只有聲母、打的是韻母或介音時，中間漏掉的只能是介音。
@@ -203,6 +249,31 @@ func (s *Session) noteSpatial(sym rune, near []spatialKey) {
 type spatialSlot struct {
 	sym  rune
 	near []spatialKey
+}
+
+// keyNears 是剛完成的音節每個注音（照「聲母 介音 韻母」）的鄰鍵，給合併弧換鍵用（merge.go）；沒開或都沒有鄰鍵時是 nil。
+func (s *Session) keyNears(before zhuyin.Composer) []spatialSlot {
+	if !s.Spatial.merging() || s.Spatial.Rejoin <= 0 || len(s.compNear) == 0 {
+		return nil
+	}
+	var out []spatialSlot
+	found := false
+	for cl := zhuyin.Initial; cl <= zhuyin.Final; cl++ {
+		r := before.Slot(cl)
+		if r == 0 {
+			continue
+		}
+		slot := spatialSlot{sym: r}
+		if n, ok := s.compNear[cl]; ok && n.sym == r {
+			slot.near = n.near
+			found = found || len(n.near) > 0
+		}
+		out = append(out, slot)
+	}
+	if !found {
+		return nil
+	}
+	return out
 }
 
 // spatialAlternatives 是剛完成的音節換掉一鍵（鄰鍵）的合法讀音與成本。before 是完成前的組音狀態（打聲調完成時不含聲調）。
@@ -459,9 +530,9 @@ func (s *Session) pathReadings() map[int]zhuyin.Syllable {
 	return taken
 }
 
-// labelSpatial 標出開著的候選裡、讀音要靠鄰鍵替換或補上一鍵才得到的那些（proto.CandidateCorrected）。
+// labelSpatial 標出開著的候選裡、讀音要靠鄰鍵替換、補上一鍵或合併弧才得到的那些（proto.CandidateCorrected）。
 func (s *Session) labelSpatial(pos int) {
-	if len(s.spatial) == 0 && (!s.Spatial.on() || s.Spatial.Missed <= 0) || s.cand == nil {
+	if len(s.spatial) == 0 && len(s.merges) == 0 && (!s.Spatial.on() || s.Spatial.Missed <= 0) || s.cand == nil {
 		return
 	}
 	base := s.front.Expand(s.syls)
@@ -471,6 +542,10 @@ func (s *Session) labelSpatial(pos int) {
 		}
 		for k, y := range c.Entry.Reading {
 			at := pos + k
+			if _, ok := s.mergedAt(at); ok {
+				s.cand.labels[i] = proto.CandidateCorrected // 合併弧合成的音節（merge.go）：讀音整個是修正
+				break
+			}
 			if at >= len(base) || slices.ContainsFunc(base[at], func(h input.Hyp) bool { return h.Syl == y }) {
 				continue
 			}

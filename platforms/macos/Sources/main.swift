@@ -11,6 +11,9 @@ if arguments.count == 3, arguments[1] == "--confirm-input-source" {
 if arguments.count == 3, arguments[1] == "--query-input-source" {
     exit(InputSourceSetup.reportState(appPath: arguments[2], select: false))
 }
+if arguments.count == 3, arguments[1] == "--inspect-input-source" {
+    exit(InputSourceSetup.inspect(appPath: arguments[2]))
+}
 if arguments.count == 3, arguments[1] == "--update-agent" {
     exit(UpdateAgent.run(arguments[2]))
 }
@@ -38,6 +41,11 @@ ShellStats.shared.write()
 RetireMonitor.shared.start { LingxiInputController.anyComposing() }
 HandoverMonitor.shared.start()
 UpdateAgentMonitor.shared.start()
+// #350：使用者在用靈犀、剛停手且沒有組字時正式詢問一次通知權限（之後更新通知以橫幅出現）。
+NotificationPermissionMonitor.shared.start(composing: { LingxiInputController.anyComposing() },
+                                           lastKey: { ShellStats.shared.counts.lastKey },
+                                           servedHere: { HandoverMonitor.shared.atLaunchPath })
 UpdateMenuMonitor.shared.start()
 ModelStatusMonitor.shared.start()
+SecureInputMonitor.shared.start() // #349：安全輸入被背景程式卡住時提醒怎麼恢復
 withExtendedLifetime(server) { application.run() }

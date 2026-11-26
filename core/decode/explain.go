@@ -2,10 +2,10 @@ package decode
 
 import (
 	"math"
+	"slices"
 
 	"github.com/0c-biggo/0c-ime/core/input"
 	"github.com/0c-biggo/0c-ime/core/lexicon"
-	"github.com/0c-biggo/0c-ime/core/zhuyin"
 )
 
 // Contribution 分開列出實際語言模型、純系統模型、讀音成本與輸入成本。
@@ -83,14 +83,17 @@ func (d *Decoder) ExplainBest(lat input.Lattice, locks map[int]Lock, prefix bool
 			seen := map[string]int{}
 			cands := d.tailEntries(lat, g.Start)
 			for _, c := range cands {
-				if d.SeparateContinuation && len(c.e.Reading) <= g.End-g.Start {
+				if c.typed(g.Start, len(lat)) != g.Syllables() || !slices.Equal(deref(c.cuts), g.Ends()) {
+					continue // 按鍵圖：只看這一段的切法
+				}
+				if d.SeparateContinuation && len(c.e.Reading) <= g.Syllables() {
 					continue
 				}
-				if string([]rune(c.e.Surface)[:g.End-g.Start]) != g.Word {
+				if string([]rune(c.e.Surface)[:g.Syllables()]) != g.Word {
 					continue
 				}
 				cont := 1.0
-				if len(c.e.Reading) > g.End-g.Start && d.Continue > 0 {
+				if len(c.e.Reading) > g.Syllables() && d.Continue > 0 {
 					cont = d.Continue
 				}
 				v := d.contribution(g.Start, g.End, left, c.e, c.cost, cont)
@@ -108,8 +111,9 @@ func (d *Decoder) ExplainBest(lat input.Lattice, locks map[int]Lock, prefix bool
 			}
 		} else {
 			best := Contribution{}
-			d.spans(lat[:g.End], g.Start, func(reading []zhuyin.Syllable, cost float64) {
-				if len(reading) != g.End-g.Start {
+			d.spans(lat[:g.End], g.Start, func(sp span) {
+				reading, cost := sp.reading, sp.cost
+				if sp.end != g.End || len(reading) != g.Syllables() {
 					return
 				}
 				for _, e := range d.Lex.Exact(reading) {
@@ -125,8 +129,8 @@ func (d *Decoder) ExplainBest(lat input.Lattice, locks map[int]Lock, prefix bool
 		}
 		for i := range part.Contributions {
 			if c := &part.Contributions[i]; c.InputCost > 0 && g.End <= len(lat) {
-				for at := g.Start; at < g.End; at++ {
-					c.Typed = append(c.Typed, string(lat[at][0].Syl)) // 音節格第一個假設是使用者打的音
+				for k := range g.Syllables() {
+					c.Typed = append(c.Typed, string(lat[sylStart(g.Start, g.Ends(), k)][0].Syl)) // 音節格第一個假設是使用者打的音
 				}
 			}
 		}

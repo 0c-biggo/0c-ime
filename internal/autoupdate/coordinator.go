@@ -120,6 +120,12 @@ type ShellIdleGate interface {
 	ShellNeedsIdle() bool
 }
 
+// ShellArchiveIdleGate：要不要等閒置看這個套件能不能在背景直接裝好（Windows：TSF 註冊不變的外殼更新以一般權限
+// 在背景安裝，同核心更新一樣等使用者閒置；要改註冊的照舊馬上停在 needs_consent 通知使用者，#294）。archive 是已下載的套件。
+type ShellArchiveIdleGate interface {
+	ShellNeedsIdleFor(archive string) bool
+}
+
 type Coordinator struct {
 	Base     string
 	Platform Platform
@@ -136,6 +142,8 @@ type Coordinator struct {
 	Consent        bool          // 使用者親自確認安裝（finish）：詢問模式也套用
 	ConsentVersion string        // 通知／選單綁定的版本；空值為明確的 CLI finish
 	ConsentSHA256  string
+
+	dryRun bool // DryRun：只試算，不寫進度檔
 }
 
 func (c *Coordinator) defaults() {
@@ -235,6 +243,7 @@ func (c *Coordinator) Check(ctx context.Context) (*State, error) {
 	}
 	c.confirmPendingShell(ctx, s, c.Now())
 	c.discover(ctx, s, c.Now())
+	c.awaitDownload(s, c.Now()) // 手動更新：選單第一列馬上顯示「立即下載」，不等下一次排程
 	return s, c.save(s)
 }
 
@@ -276,6 +285,8 @@ func (c *Coordinator) save(s *State) error {
 			// scheduler, not by this coordinator's download snapshot.
 			s.ScheduleRemoved = latest.ScheduleRemoved
 			s.UpdaterRepairs, s.UpdaterBroken, s.UpdaterNotified = latest.UpdaterRepairs, latest.UpdaterBroken, latest.UpdaterNotified
+			// 只換更新器（#295）的結果由 auto 在協調器之後記錄。
+			s.UpdaterTried = latest.UpdaterTried
 			// 登入時補做輸入法設定由安裝器（可能就在這次 InstallShell 裡）記下、由排程清除，協調器不改它（#195）。
 			s.ProfileAtLogin = latest.ProfileAtLogin
 		}
@@ -299,7 +310,8 @@ func (c *Coordinator) step(ctx context.Context, s *State) error {
 	if !activatedShell {
 		c.handOverStaleEngine(ctx, s, now)
 	}
-	if !c.Consent && !c.Force && (s.Mode == ModeManual || now.Before(s.PausedUntil)) {
+	// 暫停中不查詢。手動更新照常查詢與通知，只是不自己下載（#340，見下面的 awaitDownload）。
+	if !c.Consent && !c.Force && now.Before(s.PausedUntil) {
 		return nil
 	}
 	// 時鐘往回跳（例如主機板時間被重設）時，下次查詢時間會落在比一個週期還遠的未來；立即查詢，不等時間追上。
@@ -325,7 +337,7 @@ func (c *Coordinator) step(ctx context.Context, s *State) error {
 		return nil
 	}
 	// 同一次喚起中能推進多步就推進（下載完直接準備、準備好直接套用）；任一步受阻即停在該階段。
-	if s.Stage == StageFound {
+	if s.Stage == StageFound && !c.awaitDownload(s, now) {
 		c.download(ctx, s, now)
 	}
 	if s.Stage == StageDownloaded {
@@ -344,6 +356,19 @@ func (c *Coordinator) step(ctx context.Context, s *State) error {
 	}
 	c.remind(s, now)
 	return nil
+}
+
+// NeedsDownloadDetail 是手動更新查到新版時的待辦說明（#340）：不自己下載，等使用者按「立即下載」，下載好後再按「立即安裝」。
+const NeedsDownloadDetail = "有新版本，按立即下載"
+
+// awaitDownload：手動更新（manual）查到新版時停在 found、記下 needs_download 待辦，提醒與通知同「下載後詢問」，
+// 但不下載。使用者親自要求安裝（finish）時照常下載並安裝；「立即下載」走 DownloadNow。回傳是否停在這裡。
+func (c *Coordinator) awaitDownload(s *State, now time.Time) bool {
+	if s.Mode != ModeManual || c.Consent || s.Target == nil || s.Stage != StageFound {
+		return false
+	}
+	s.block(now, "needs_download", NeedsDownloadDetail)
+	return true
 }
 
 func (c *Coordinator) discover(ctx context.Context, s *State, now time.Time) {
@@ -382,16 +407,22 @@ func (c *Coordinator) discover(ctx context.Context, s *State, now time.Time) {
 			return
 		}
 	}
-	asset, err := feed.Select(goos, arch)
-	isNewer, withdrawn, failedBefore := newer(feed.Version, installed), feed.IsWithdrawn(feed.Version), s.failed(feed.Version)
-	inBatch := inRollout(s.InstallID, feed.Version, feed.Rollout)
-	eligible := err == nil && !withdrawn && !failedBefore && isNewer && inBatch
-	s.Latest = &Latest{Version: feed.Version, Eligible: eligible}
+	// #295：依已安裝的外殼與更新器版本選資產（索引的規則）；沒有符合的規則時與舊版相同，以 assets 選。
+	offer := c.resolve(feed, goos, arch, installed)
+	s.UpdaterOffer = nil
+	if u := offer.Updater; u != nil && !feed.IsWithdrawn(u.Version) {
+		s.UpdaterOffer = &Target{Version: u.Version, Kind: u.Kind, URL: u.URL, SHA256: u.SHA256, Size: u.Size, FoundAt: now}
+	}
+	asset, version := offer.Asset, offer.Version
+	isNewer, withdrawn, failedBefore := newer(version, installed), feed.IsWithdrawn(version), s.failed(version)
+	inBatch := inRollout(s.InstallID, version, feed.Rollout)
+	eligible := asset != nil && !withdrawn && !failedBefore && isNewer && inBatch
+	s.Latest = &Latest{Version: version, Eligible: eligible}
 	switch {
 	case eligible || !isNewer:
 	case withdrawn:
 		s.Latest.Reason = ReasonWithdrawn
-	case err != nil:
+	case asset == nil:
 		s.Latest.Reason = ReasonNoAsset
 	case failedBefore:
 		s.Latest.Reason = ReasonFailed
@@ -409,7 +440,7 @@ func (c *Coordinator) discover(ctx context.Context, s *State, now time.Time) {
 		}
 		return
 	}
-	if s.Target != nil && s.Target.Version == feed.Version && s.Target.SHA256 == asset.SHA256 {
+	if s.Target != nil && s.Target.Version == version && s.Target.SHA256 == asset.SHA256 {
 		return
 	}
 	if s.Target != nil && s.Target.Kind == "shell" && s.Stage == StagePending && asset.Kind == "core" && !c.shellWithoutRelogin() {
@@ -423,7 +454,7 @@ func (c *Coordinator) discover(ctx context.Context, s *State, now time.Time) {
 	}
 	// 新版本（或同版本不同資產）取代舊目標；受阻起算時間保留。
 	if s.Target != nil {
-		s.record(now, "superseded", s.Target.Version, feed.Version)
+		s.record(now, "superseded", s.Target.Version, version)
 		if s.Stage == StagePending && s.Target.Kind == "shell" && c.shellWithoutRelogin() {
 			s.unblock() // 「已安裝，閒置時換成新版引擎」說的是被取代的那一版
 		}
@@ -436,10 +467,24 @@ func (c *Coordinator) discover(ctx context.Context, s *State, now time.Time) {
 			s.Switched, s.RestartPending = false, true
 		}
 	}
-	s.Target = &Target{Version: feed.Version, Kind: asset.Kind, URL: asset.URL, SHA256: asset.SHA256, Size: asset.Size, FoundAt: now}
+	s.Target = &Target{Version: version, Kind: asset.Kind, URL: asset.URL, SHA256: asset.SHA256, Size: asset.Size, FoundAt: now}
 	s.Stage, s.Download, s.Prepared = StageFound, "", ""
 	s.clear("needs_relogin")
-	s.record(now, "found", feed.Version, asset.Kind)
+	s.record(now, "found", version, asset.Kind)
+}
+
+// RuleInputs 是依版本規則選資產（#295）要的本機版本；平台沒有實作時，外殼版本視同 Installed、更新器版本未知。
+type RuleInputs interface {
+	ShellVersion() string   // 完整安裝（外殼）的版本；讀不到時為空字串
+	UpdaterVersion() string // 執行查詢的 0c-update 版本；開發建置為空字串
+}
+
+func (c *Coordinator) resolve(feed *update.SignedFeed, goos, arch, installed string) update.Offer {
+	shell, updater := installed, ""
+	if p, ok := c.Platform.(RuleInputs); ok {
+		shell, updater = p.ShellVersion(), p.UpdaterVersion()
+	}
+	return feed.Resolve(goos, arch, shell, updater)
 }
 
 func (c *Coordinator) drop(s *State) error {
@@ -474,7 +519,7 @@ func (c *Coordinator) download(ctx context.Context, s *State, now time.Time) {
 		s.block(now, resourceReason(err, "download_failed"), err.Error())
 		return
 	}
-	s.clear("metered_network", "low_battery", "download_failed", "disk_full")
+	s.clear("metered_network", "low_battery", "download_failed", "disk_full", "needs_download")
 	s.Download, s.Stage = path, StageDownloaded
 	s.record(now, "downloaded", s.Target.Version, "")
 }
@@ -538,6 +583,9 @@ func (c *Coordinator) apply(ctx context.Context, s *State, now time.Time) {
 		needsIdle := c.liveShell()
 		if gate, ok := c.Platform.(ShellIdleGate); ok {
 			needsIdle = needsIdle || gate.ShellNeedsIdle()
+		}
+		if gate, ok := c.Platform.(ShellArchiveIdleGate); ok {
+			needsIdle = needsIdle || gate.ShellNeedsIdleFor(s.Download)
 		}
 		if needsIdle && !c.safe(ctx, s, now) {
 			return
@@ -920,7 +968,7 @@ func (c *Coordinator) recover(ctx context.Context, s *State, now time.Time) {
 // remind：一般通知首次立即、24／72 小時補提醒，每版每天最多一次；
 // 使用者主動選擇的同資產一小時提醒另外允許到期補一次。
 func (c *Coordinator) remind(s *State, now time.Time) {
-	if s.Snooze != nil && (s.Target == nil || s.Stage != StagePrepared || s.Switched || s.failed(s.Snooze.Version) ||
+	if s.Snooze != nil && (s.Target == nil || !s.snoozable() || s.Switched || s.failed(s.Snooze.Version) ||
 		s.Target.Version != s.Snooze.Version || s.Target.SHA256 != s.Snooze.SHA256) {
 		s.Snooze = nil
 	}
@@ -936,7 +984,7 @@ func (c *Coordinator) remind(s *State, now time.Time) {
 	if !s.PreparedAt.IsZero() && (waitingSince.IsZero() || s.PreparedAt.Before(waitingSince)) {
 		waitingSince = s.PreparedAt
 	}
-	actionable := s.Blocked.Reason == "needs_consent" || s.Blocked.Reason == "needs_relogin" || s.Blocked.Reason == "health_failed" ||
+	actionable := s.Blocked.Reason == "needs_consent" || s.Blocked.Reason == "needs_download" || s.Blocked.Reason == "needs_relogin" || s.Blocked.Reason == "health_failed" ||
 		(s.Stage == StagePrepared && !waitingSince.IsZero() && now.Sub(waitingSince) >= c.RemindAfter)
 	if !actionable && !snoozedReminder {
 		return
@@ -969,11 +1017,12 @@ func (c *Coordinator) remind(s *State, now time.Time) {
 	s.record(now, "notified", s.Target.Version, s.Blocked.Reason)
 }
 
-// Notice 是一則通知；Action 非空時通知附「立即安裝」按鈕，按下即執行 0c-update finish。
+// Notice 是一則通知；Action 是 "finish" 時通知附「立即安裝」按鈕，按下即執行 0c-update finish；是 "download" 時附
+// 「立即下載」，按下執行 0c-update download-now（#340，手動更新）。兩種都綁定這一版的資產。
 type Notice struct {
 	Title         string `json:"title"`
 	Body          string `json:"body"`
-	Action        string `json:"action,omitempty"` // "finish" 或空字串
+	Action        string `json:"action,omitempty"` // "finish"、"download" 或空字串
 	TargetVersion string `json:"target_version,omitempty"`
 	TargetSHA256  string `json:"target_sha256,omitempty"`
 }
@@ -983,6 +1032,9 @@ func notice(s *State) Notice {
 	switch s.Blocked.Reason {
 	case "needs_consent":
 		return Notice{Title: "靈犀注音有新版本", Body: fmt.Sprintf("%s 已下載，需要你確認安裝。", v), Action: "finish", TargetVersion: v, TargetSHA256: s.Target.SHA256}
+	case "needs_download":
+		// 手動更新（#340）：按鈕是「立即下載」，下載好後另有「立即安裝」的通知。
+		return Notice{Title: "靈犀注音有新版本", Body: fmt.Sprintf("可以更新到 %s。按「立即下載」下載，下載好後再按「立即安裝」。", v), Action: "download", TargetVersion: v, TargetSHA256: s.Target.SHA256}
 	case "needs_relogin":
 		if s.Blocked.Detail == "登出再登入時自動完成安裝" {
 			return Notice{Title: "靈犀注音有新版本", Body: fmt.Sprintf("%s 已下載，登出再登入時自動完成安裝。", v)}

@@ -133,6 +133,9 @@ func statusLabel(s updateStatus) string {
 		switch {
 		case s.blocked == "needs_consent":
 			return "有新版本 " + s.target + " — 立即安裝"
+		case s.blocked == "needs_download" && s.action == "download":
+			// 手動更新查到新版（#340）：按下只下載，下載好後這一列變成「立即安裝」。
+			return "有新版本 " + s.target + " — 立即下載"
 		case s.blocked == "needs_relogin":
 			if s.detail == "" {
 				return s.target + "：登出再登入後生效"
@@ -175,6 +178,9 @@ func statusLabel(s updateStatus) string {
 func statusCommand(s updateStatus) []string {
 	if s.action == "finish" {
 		return []string{"finish", "-notify"}
+	}
+	if s.action == "download" {
+		return []string{"download-now", "-notify"}
 	}
 	return []string{"auto", "-now", "-notify"}
 }

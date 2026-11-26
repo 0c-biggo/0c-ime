@@ -17,7 +17,8 @@ import (
 	"github.com/0c-biggo/0c-ime/internal/filelock"
 )
 
-// 更新方式：自動（建議）、下載後詢問、手動檢查。值寫在 update/state.json，不跟著顯示名稱改。
+// 更新方式：自動更新（建議）、下載後詢問、手動更新。值寫在 update/state.json，不跟著顯示名稱改。
+// 手動更新（#340 起）照常在背景查詢與通知，只是不自己下載，等使用者按「立即下載」再按「立即安裝」。
 const (
 	ModeAuto   = "auto"
 	ModeAsk    = "ask"
@@ -106,6 +107,11 @@ type State struct {
 	CheckFailures int       `json:"check_failures,omitempty"`
 	LastError     string    `json:"last_error,omitempty"`
 	FeedSerial    uint64    `json:"feed_serial,omitempty"`
+	// UpdaterOffer（#295）：最近一次查詢時索引給這台電腦的「只換更新器」資產（kind updater）。由背景排程的 auto
+	// 在協調器之後處理（cmd/0c-update 的 applyUpdaterOffer），不影響 Target 與階段。
+	UpdaterOffer *Target `json:"updater_offer,omitempty"`
+	// UpdaterTried 是最近一次處理 UpdaterOffer 的結果：同一份資產失敗後不每 15 分鐘重新下載。
+	UpdaterTried *UpdaterAttempt `json:"updater_tried,omitempty"`
 	// Latest 是最近一次成功查詢時索引上的最新版本，以及它對這台電腦是否可更新。
 	// 介面靠它分辨「已是最新」與「有新版但還輪不到／沒有這個平台的安裝包」。
 	Latest *Latest `json:"latest,omitempty"`
@@ -130,6 +136,15 @@ type State struct {
 	// StaleEngine（不寫入狀態檔）：這次喚起時舊引擎還沒換成已安裝的版本，內容是給使用者看的原因。這時沒有待辦、Stage 是
 	// idle，只看狀態會說成已是最新（Windows，#253）。
 	StaleEngine string `json:"-"`
+}
+
+// UpdaterAttempt 是一次「只換更新器」的結果。
+type UpdaterAttempt struct {
+	Version string    `json:"version"`
+	SHA256  string    `json:"sha256"`
+	Result  string    `json:"result"` // installed、not_qualified、failed
+	Detail  string    `json:"detail,omitempty"`
+	At      time.Time `json:"at"`
 }
 
 type TestTiming struct {

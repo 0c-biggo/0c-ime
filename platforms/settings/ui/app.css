@@ -93,6 +93,8 @@ h2 { font-size: 16px; margin: 28px 0 10px; }
 .notice p { margin: 0 0 8px; }
 .notice p:last-child { margin: 0; }
 .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+.actions + .card { margin-top: 18px; } /* 更新頁按鈕下方的「更新方式」下拉選單（#340） */
+select.update-mode { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); min-width: 11em; }
 .download-progress { margin: 0 0 16px; }
 .download-progress progress { display: block; width: 100%; height: 16px; margin: 8px 0; accent-color: var(--accent); }
 button.primary, button.secondary {

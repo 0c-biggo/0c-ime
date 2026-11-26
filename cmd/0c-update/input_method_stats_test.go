@@ -34,6 +34,21 @@ func TestInputMethodStats(t *testing.T) {
 	if strings.Contains(string(b), "不該出現") || !strings.Contains(string(b), `"apps":{"com.google.Chrome":2}`) {
 		t.Fatalf("only known fields are copied: %s", b)
 	}
+	if _, ok := got["secure_input"]; ok {
+		t.Fatal("older shells have no secure_input")
+	}
+	write(`{"schema":1,"keys":1,"secure_input":{"stuck":2,"warnings":1,"last_stuck_at":"2026-11-24T09:00:00Z","app":"不該出現"}}`)
+	got = inputMethodStats(base)
+	secure, _ := got["secure_input"].(map[string]any)
+	if secure == nil || secure["stuck"] != 2 || secure["warnings"] != 1 || secure["last_stuck_at"] != "2026-11-24T09:00:00Z" {
+		t.Fatalf("secure input: %#v", got["secure_input"])
+	}
+	if _, ok := secure["last_released_at"]; ok {
+		t.Fatal("missing release time stays missing")
+	}
+	if b, _ := json.Marshal(got); strings.Contains(string(b), "不該出現") {
+		t.Fatalf("only known secure input fields are copied: %s", b)
+	}
 	write(`{"schema":2,"keys":1}`)
 	if inputMethodStats(base) != nil {
 		t.Fatal("unknown schema is not attached")

@@ -605,6 +605,11 @@ func TestParseStatusAndLabels(t *testing.T) {
 	if got := statusLabel(s); got != "b 已準備好 — 現在完成更新" || strings.Join(statusCommand(s), " ") != "finish -notify" {
 		t.Fatalf("label = %q／%v", got, statusCommand(s))
 	}
+	// #340 手動更新查到新版：第一列「立即下載」，只執行 download-now -notify。
+	s = parseStatus(`{"installed":"0.2.14","mode":"manual","stage":"found","target":{"version":"0.2.15"},"blocked":{"reason":"needs_download"},"action":"download"}`)
+	if got := statusLabel(s); got != "有新版本 0.2.15 — 立即下載" || strings.Join(statusCommand(s), " ") != "download-now -notify" {
+		t.Fatalf("label = %q／%v", got, statusCommand(s))
+	}
 	if statusLabel(parseStatus("not json")) != "靈犀注音：無法讀取更新狀態" {
 		t.Fatal("無法解析時應說明")
 	}
@@ -731,7 +736,7 @@ func TestVocabMenuFollowsFeatureFlag(t *testing.T) {
 func TestComponentDescribesEngine(t *testing.T) {
 	x := component("/home/u/.local/bin/0c-ibus", "/home/u")
 	for _, want := range []string{"<name>" + componentName + "</name>", "<exec>/home/u/.local/bin/0c-ibus --ibus</exec>",
-		"<name>0c</name>", "<language>zh_TW</language>", "<layout>us</layout>", "<symbol>注</symbol>",
+		"<name>0c</name>", "<language>zh_TW</language>", "<layout>us</layout>", "<symbol>中</symbol>",
 		"/home/u/.local/share/icons/hicolor/scalable/status/0c-zhuyin.svg"} {
 		if !strings.Contains(x, want) {
 			t.Errorf("元件描述缺 %s", want)

@@ -5,7 +5,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -48,15 +47,18 @@ func ensureSettingsEntry() {
 	if err != nil {
 		return
 	}
-	changed, err := syncMacSettingsEntry(filepath.Join(home, "Applications"), receiptPath(), paths().InputMethods, stableUpdater(basePath()))
-	if err == nil && changed {
+	base := basePath()
+	changed, err := syncMacSettingsEntry(filepath.Join(home, "Applications"), receiptPath(), paths().InputMethods, stableUpdater(base))
+	// 上次登記逾時或失敗（#353）：檔案已同步好、changed 為 false，靠記號補登記。
+	if err == nil && (changed || fileExists(settingsEntryPending(base))) {
 		// 執行收據核對過的內附程式登記副本；不靠 private lsregister 工具，也不開 Finder。
 		r, readErr := readMacSettingsReceipt(receiptPath())
 		if readErr != nil {
 			err = readErr
 		} else {
 			program := filepath.Join(paths().InputMethods, r.App, settingsLauncherPrefix, "Contents/MacOS", settingsapp.MacLauncherExecutable)
-			err = exec.Command(program, "--register-entry", filepath.Join(home, "Applications", settingsapp.MacLauncherName)).Run()
+			entry := filepath.Join(home, "Applications", settingsapp.MacLauncherName)
+			err = registerSettingsEntry(base, func() error { return runRegisterEntry(program, entry) })
 		}
 	}
 	if err != nil {

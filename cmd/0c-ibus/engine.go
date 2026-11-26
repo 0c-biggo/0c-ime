@@ -397,6 +397,7 @@ func (e *engine) processKey(keyval, keycode, state uint32) bool {
 		if snap := e.session.bypassEnglish(boundary); snap.ok {
 			e.render(snap)
 		}
+		e.session.forgetDigit() // Ctrl＋V 等快捷鍵之後游標前不一定還是數字（#337）
 		e.context.clear()
 		e.syncContext()
 		return false
@@ -476,6 +477,8 @@ func (e *engine) finish(reason string) {
 	e.syncContext()
 	if len(e.session.log) > 0 || e.session.recovered != nil || e.preedit != "" || len(e.table) > 0 {
 		e.session.handle(proto.Request{Type: proto.Commit})
+	} else {
+		e.session.forgetDigit() // 失焦、點到別處：游標不一定還在剛打的數字後面（#337）
 	}
 	e.preedit, e.preCursor, e.preSegs, e.preBell, e.ids = "", 0, nil, false, nil
 	e.clearPanel()
@@ -653,18 +656,23 @@ func candidateLabel(it proto.CandidateItem, i int, english bool) string {
 func (e *engine) modeProperty() property {
 	// 說明目前的中英切換鍵（toggle-key，#117）；設為不用時只寫模式，點這一項切換。
 	hint := map[string]string{"": "右 Shift", "right": "右 Shift", "both": "Shift", "left": "左 Shift"}[e.session.toggleKey()]
-	p := property{key: propInputMode, typ: propNormal, sensitive: true, symbol: "注", label: "注音"}
+	// 頂列的指示同 Windows 的輸入指示器：中文模式「中」、英文「英」（#357）。選單的文字照鍵盤排列寫「注音」或「拼音」（#324）。
+	name := "注音"
+	if e.session.pinyin() {
+		name = "拼音"
+	}
+	p := property{key: propInputMode, typ: propNormal, sensitive: true, symbol: "中", label: name}
 	if e.english {
 		p.symbol, p.label = "英", "英文"
 	} else if e.svc.simplified {
-		// #169：送出時轉成簡體，誤開時從頂列看得出來。GNOME Shell 的頂列只採用不到 3 個字的 symbol（keyboard.js
-		// 的 _propertyUpdated），「注·簡」會被丟掉、照舊顯示「注」，所以用兩個字。
-		p.symbol, p.label = "注簡", "注音・簡體輸出"
+		// #169：送出時轉成簡體，誤開時從頂列看得出來；同 Windows 用簡體字形的「简」。GNOME Shell 的頂列只採用不到 3 個字的
+		// symbol（keyboard.js 的 _propertyUpdated），太長會被丟掉、照舊顯示「中」。
+		p.symbol, p.label = "简", name+"・簡體輸出"
 	}
 	if hint != "" {
 		other := "英文"
 		if e.english {
-			other = "注音"
+			other = name
 		}
 		p.label += "（" + hint + " 切換" + other + "）"
 	}

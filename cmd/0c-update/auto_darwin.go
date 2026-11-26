@@ -51,7 +51,10 @@ var (
 func conditions() autoupdate.Conditions {
 	var c autoupdate.Conditions
 	c.Idle, c.IdleKnown = hidIdleTime()
-	if out, err := exec.Command("pmset", "-g", "batt").Output(); err == nil {
+	pmsetCtx, pmsetCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	out, err := exec.CommandContext(pmsetCtx, "/usr/bin/pmset", "-g", "batt").Output()
+	pmsetCancel()
+	if err == nil {
 		c.Charging = bytes.Contains(out, []byte("AC Power"))
 		if m := battPct.FindSubmatch(out); m != nil {
 			c.Battery, _ = strconv.Atoi(string(m[1]))
@@ -128,6 +131,18 @@ func xmlEscape(s string) string {
 	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(s)
 }
 
+// launchctlOutput 執行有時限的 launchctl（安裝、排程都會用到，#353）；combined 時連 stderr 一起回傳。
+func launchctlOutput(combined bool, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "launchctl", args...) // 以 PATH 找（agent_darwin_test.go 換成假的）
+	cmd.WaitDelay = 2 * time.Second
+	if combined {
+		return cmd.CombinedOutput()
+	}
+	return cmd.Output()
+}
+
 func removeLegacyAgent() {
 	path := agentPath()
 	if _, err := os.Lstat(path); err != nil {
@@ -137,10 +152,10 @@ func removeLegacyAgent() {
 	// mean the loaded service is legacy; bootout of an App service also kills
 	// the updater executing this function before it can save shell pending.
 	domain := fmt.Sprintf("gui/%d/%s", os.Getuid(), agentLabel)
-	if out, err := exec.Command("launchctl", "print", domain).Output(); err == nil {
+	if out, err := launchctlOutput(false, "print", domain); err == nil {
 		loadedPath := regexp.MustCompile(`(?m)^\s*path = (.+)$`).FindSubmatch(out)
 		if len(loadedPath) == 2 && string(loadedPath[1]) == path && !bytes.Contains(out, []byte("managed_by = com.apple.xpc.ServiceManagement")) {
-			exec.Command("launchctl", "bootout", domain).Run()
+			_, _ = launchctlOutput(false, "bootout", domain)
 		}
 	}
 	os.Remove(path)
@@ -198,8 +213,8 @@ func installLegacyAgent(stable, base string) error {
 		return err
 	}
 	domain := fmt.Sprintf("gui/%d", os.Getuid())
-	exec.Command("launchctl", "bootout", domain+"/"+agentLabel).Run()
-	if out, err := exec.Command("launchctl", "bootstrap", domain, path).CombinedOutput(); err != nil {
+	_, _ = launchctlOutput(false, "bootout", domain+"/"+agentLabel)
+	if out, err := launchctlOutput(true, "bootstrap", domain, path); err != nil {
 		// 沒有圖形登入（例如只有 SSH）時沒有 gui 網域；下次登入時 launchd 會自動載入。
 		fmt.Printf("排程已寫入，將在下次登入時載入（%s）\n", bytes.TrimSpace(out))
 		return nil
@@ -244,7 +259,7 @@ func scheduleStatus() string {
 	if _, err := os.Stat(agentPath()); err != nil {
 		return "排程：未建立"
 	}
-	if exec.Command("launchctl", "print", fmt.Sprintf("gui/%d/%s", os.Getuid(), agentLabel)).Run() == nil {
+	if _, err := launchctlOutput(false, "print", fmt.Sprintf("gui/%d/%s", os.Getuid(), agentLabel)); err == nil {
 		return "排程：已載入"
 	}
 	return "排程：已建立（下次登入載入）"
@@ -275,7 +290,8 @@ func setupInputMethod(string) error { return nil }
 // deferInputSource 記下要啟用的輸入來源：新裝的 App 要重新登入後系統才登記得到，由之後的排程喚起補做（addInputMethod）。
 // 只寫記號，不動狀態檔：安裝多半在協調器手上拿著狀態時進行，這裡存的欄位會被協調器存檔蓋掉（#195）。
 // 安裝、回復當下已在這個登入工作階段試過一次，記下來，排程跨過登入邊界才再試（見 inputSourceRetry）。
-func deferInputSource(tool, app string) error {
+// keepRelogin：簽章身分改變的安裝，之後補做啟用了也要重新登入才換新版（#348，見 inputSourceRetry.KeepRelogin）。
+func deferInputSource(tool, app string, keepRelogin bool) error {
 	base := basePath()
 	if err := os.MkdirAll(filepath.Dir(inputSourceMarker(base)), 0o700); err != nil {
 		return err
@@ -284,7 +300,7 @@ func deferInputSource(tool, app string) error {
 		return err
 	}
 	cur := macLoginStamp(time.Now())
-	saveInputSourceRetry(base, inputSourceRetry{ASID: cur.ASID, At: cur.At, Headless: cur.Headless})
+	saveInputSourceRetry(base, inputSourceRetry{ASID: cur.ASID, At: cur.At, Headless: cur.Headless, KeepRelogin: keepRelogin})
 	return nil
 }
 

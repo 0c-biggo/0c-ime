@@ -89,7 +89,7 @@ func (d *Decoder) topUntonedArcs(pooled map[int][]arc, limit int, costed bool) [
 		score := make([]float64, len(arcs))
 		idx := make([]int, len(arcs))
 		for k := range arcs {
-			score[k] = d.Score.Prob(lm.BOS, arcs[k].e.Surface) * arcs[k].e.PRW
+			score[k] = d.bosProb(arcs[k].e.Surface) * arcs[k].e.PRW
 			if costed {
 				score[k] *= math.Exp(-arcs[k].cost)
 			}
@@ -103,32 +103,59 @@ func (d *Decoder) topUntonedArcs(pooled map[int][]arc, limit int, costed bool) [
 	return out
 }
 
+// bosProb 是 Score.Prob(lm.BOS, w)；逐鍵解碼（BestSearch）時記下來，同一個 searchKey（評分源、版本都相同）之內
+// 每個詞只算一次。按鍵圖每一鍵要為上千個詞條排沒打聲調的名次，一半的時間在查這個機率。
+func (d *Decoder) bosProb(w string) float64 {
+	if d.bos == nil {
+		return d.Score.Prob(lm.BOS, w)
+	}
+	p, ok := d.bos[w]
+	if !ok {
+		p = d.Score.Prob(lm.BOS, w)
+		d.bos[w] = p
+	}
+	return p
+}
+
 // Reading 回傳詞 word 佔音節格 [start, end) 時在詞庫裡的讀音：只看使用者打的音（成本 0 的假設；
 // 沒打聲調的音節展開成的五個聲調、簡拼展開的音節也算），以詞庫前綴剪枝逐一組合，取讀音相容權重最高的詞條。
 // 找不到時回傳 false。給「聲調選填」（#150）在提交、加詞時把沒打聲調的音節換回詞庫讀音用：
 // 學習與自訂詞只收真的讀音，不收內部記號。
 func Reading(lex lexicon.Source, lat input.Lattice, start, end int, word string) ([]zhuyin.Syllable, bool) {
+	r, _, ok := reading(lex, lat, start, end, word, false)
+	return r, ok
+}
+
+// ReadingCuts 同 Reading，另回傳讀音每個音節結束的位置（見 Seg.Cuts；每個音節佔一個位置時是 nil）。按鍵圖上
+// 同一個詞可以有不同切法，取讀音相容權重最高的那一種；同分時取先列舉到的（短的音節在前）。
+func ReadingCuts(lex lexicon.Source, lat input.Lattice, start, end int, word string) ([]zhuyin.Syllable, []int, bool) {
 	return reading(lex, lat, start, end, word, false)
 }
 
 // CorrectionReading 同 Reading，但找的是自動修正詞條（Correction）的讀音：聲調選填時推翻自動修正，
 // 拒絕次數要記在那個修正詞條自己的讀音上（個人化視圖依它停用修正），不是最後路徑上換上去的詞的讀音（#150）。
 func CorrectionReading(lex lexicon.Source, lat input.Lattice, start, end int, word string) ([]zhuyin.Syllable, bool) {
-	return reading(lex, lat, start, end, word, true)
+	r, _, ok := reading(lex, lat, start, end, word, true)
+	return r, ok
 }
 
-func reading(lex lexicon.Source, lat input.Lattice, start, end int, word string, correction bool) ([]zhuyin.Syllable, bool) {
+func reading(lex lexicon.Source, lat input.Lattice, start, end int, word string, correction bool) ([]zhuyin.Syllable, []int, bool) {
 	if start < 0 || end > len(lat) || start >= end {
-		return nil, false
+		return nil, nil, false
 	}
 	var best []zhuyin.Syllable
+	var bestCuts []int
 	bestPRW := -1.0
-	var walk func(pos int, reading []zhuyin.Syllable)
-	walk = func(pos int, reading []zhuyin.Syllable) {
+	var walk func(pos int, reading []zhuyin.Syllable, cuts []int)
+	walk = func(pos int, reading []zhuyin.Syllable, cuts []int) {
 		if pos == end {
 			for _, e := range lex.Exact(reading) {
 				if e.Surface == word && e.Correction == correction && e.PRW > bestPRW {
 					best, bestPRW = append([]zhuyin.Syllable(nil), reading...), e.PRW
+					bestCuts = nil
+					if cuts != nil {
+						bestCuts = append([]int(nil), cuts...)
+					}
 				}
 			}
 			return
@@ -137,12 +164,26 @@ func reading(lex lexicon.Source, lat input.Lattice, start, end int, word string,
 			if h.Cost > 0 && !h.Untoned {
 				continue // 近音不是打的音；簡拼展開的成本照樣算打的音
 			}
+			next := pos + h.Width()
+			if next > end {
+				continue // 按鍵圖：假設走過了詞的終點
+			}
 			r := append(reading[:len(reading):len(reading)], h.Syl)
 			if lex.HasPrefix(r) {
-				walk(pos+1, r)
+				c := cuts
+				if h.Span > 1 || cuts != nil {
+					if cuts == nil {
+						c = make([]int, len(reading), len(reading)+1)
+						for k := range c {
+							c[k] = start + k + 1
+						}
+					}
+					c = append(c[:len(c):len(c)], next)
+				}
+				walk(next, r, c)
 			}
 		}
 	}
-	walk(start, nil)
-	return best, best != nil
+	walk(start, nil, nil)
+	return best, bestCuts, best != nil
 }

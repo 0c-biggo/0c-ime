@@ -143,12 +143,31 @@ func TestSupportsChecksScorerConditions(t *testing.T) {
 
 func TestWeightFor(t *testing.T) {
 	o := Options{Weight: 2}
-	if o.WeightFor("") != 2 || o.WeightFor("前文") != 2 {
+	if o.WeightFor("", 2) != 2 || o.WeightFor("前文", 2) != 2 {
 		t.Fatal("沒設 ContextlessWeight 一律用 Weight")
 	}
 	o = Options{Weight: MobileWeight, ContextlessWeight: MobileContextlessWeight}
-	if o.WeightFor("") != .5 || o.WeightFor("前文") != 1 {
-		t.Fatalf("手機：%v %v", o.WeightFor(""), o.WeightFor("前文"))
+	if o.WeightFor("", 2) != .5 || o.WeightFor("", 20) != .5 || o.WeightFor("前文", 2) != 1 {
+		t.Fatalf("手機：%v %v", o.WeightFor("", 2), o.WeightFor("前文", 2))
+	}
+	// 桌面（#337）：沒前文時短讀音用 ShortContextlessWeight，較長的用 ContextlessWeight；有前文照 Weight。
+	o = Options{Weight: 2, ContextlessWeight: DesktopContextlessWeight,
+		ShortContextlessWeight: DesktopShortContextlessWeight, ShortContextlessSyllables: DesktopShortContextlessSyllables}
+	for _, c := range []struct {
+		context string
+		n       int
+		want    float64
+	}{
+		{"", 2, .5}, {"", 3, .5}, {"", 4, 1}, {"", 12, 1}, {"前文", 2, 2}, {"前文", 12, 2},
+	} {
+		if got := o.WeightFor(c.context, c.n); got != c.want {
+			t.Fatalf("桌面 %q %d 音節：%v，要 %v", c.context, c.n, got, c.want)
+		}
+	}
+	// 只設短讀音：較長的沒前文照 Weight。
+	o = Options{Weight: 2, ShortContextlessWeight: .5, ShortContextlessSyllables: 3}
+	if o.WeightFor("", 3) != .5 || o.WeightFor("", 4) != 2 {
+		t.Fatalf("只設短讀音：%v %v", o.WeightFor("", 3), o.WeightFor("", 4))
 	}
 }
 
@@ -198,5 +217,34 @@ func TestKeepEncodable(t *testing.T) {
 		{Text: "臉𠄞", Segments: []decode.Seg{{Start: 0, End: 2, Word: "臉𠄞"}}}}}
 	if !(Options{}).Supports(r) || o.Supports(r) {
 		t.Fatal("Supports 應拒絕含表外字的候選")
+	}
+}
+
+// 「游標前一個字是阿拉伯數字」（#337）：只用在沒有前文的讀音評分；權重照有前文的 Weight。
+func TestDigitBefore(t *testing.T) {
+	r := maskedRequest()
+	r.DigitBefore = true
+	if !Supported(r) {
+		t.Fatal("沒有前文的讀音評分可以帶旗標")
+	}
+	withContext := r
+	withContext.Context = "前文"
+	text := r
+	text.Mode = ModeText
+	if Supported(withContext) || Supported(text) {
+		t.Fatal("有前文或文字評分不能帶旗標")
+	}
+	o := Options{Weight: 2, ContextlessWeight: DesktopContextlessWeight,
+		ShortContextlessWeight: DesktopShortContextlessWeight, ShortContextlessSyllables: DesktopShortContextlessSyllables}
+	if o.WeightOf(r) != 2 {
+		t.Fatalf("帶旗標照有前文：%v", o.WeightOf(r))
+	}
+	r.DigitBefore = false
+	if o.WeightOf(r) != DesktopShortContextlessWeight || o.WeightOf(withContext) != 2 {
+		t.Fatalf("沒帶旗標照 WeightFor：%v %v", o.WeightOf(r), o.WeightOf(withContext))
+	}
+	b, _ := json.Marshal(r)
+	if strings.Contains(string(b), "digit_before") {
+		t.Fatalf("沒帶旗標時請求與以前逐位元組相同：%s", b)
 	}
 }

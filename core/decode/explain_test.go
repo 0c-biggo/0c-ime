@@ -32,8 +32,8 @@ func TestPrefixMassDoesNotCountSameWordTwice(t *testing.T) {
 	d.SeparateContinuation = true
 	reading := zhuyin.ParseReading("ㄧㄣ ㄨㄟˋ")
 	e := lexicon.Entry{Surface: "因為", Reading: reading, PRW: 1}
-	a := d.group([]tailEntry{{e, 0}}, 1, "<s>", .5)
-	b := d.group([]tailEntry{{e, 0}, {e, 1}, {e, 0}}, 1, "<s>", .5)
+	a := d.group([]tailEntry{{e: e}}, 1, "<s>", .5)
+	b := d.group([]tailEntry{{e: e}, {e: e, cost: 1}, {e: e}}, 1, "<s>", .5)
 	if len(a) != 1 || len(b) != 1 || a[0].mass != b[0].mass {
 		t.Fatal(a, b)
 	}
@@ -44,7 +44,7 @@ func TestPrefixMassDoesNotCountSameWordTwice(t *testing.T) {
 		t.Fatal("需要可比較的補全")
 	}
 	d.Lex.(*lexicon.Mem).Add(e)
-	d.cache = nil
+	d.cache, d.cacheOld = nil, nil
 	after, ok := d.Complete(lat, path)
 	if !ok || before.Entry.Surface != after.Entry.Surface || math.Abs(before.Conf-after.Conf) > 1e-12 {
 		t.Fatal("重複讀音不能改變補全信心", before, after)

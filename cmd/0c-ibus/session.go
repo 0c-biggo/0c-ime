@@ -119,6 +119,12 @@ func (c *client) alive() bool {
 	return ok
 }
 
+// refresh 用在焦點事件：原本有連線、但另一端關了（設定套用時引擎重啟）就連上已在執行的引擎，不啟動 0c-server。
+// 原本就沒有連線時不連。回報之後是否有連線（#357）。
+func (c *client) refresh() bool {
+	return c.conn != nil && (c.alive() || c.connectOnce())
+}
+
 // call 送出一個 Envelope 並讀回 Reply；失敗時關閉連線，下一次呼叫重新連線。
 func (c *client) call(env ipc.Envelope) (ipc.Reply, bool) {
 	var reply ipc.Reply
@@ -178,6 +184,9 @@ type session struct {
 
 	private, english, englishPending bool
 	capsLock                         bool // 引擎記得的 Caps Lock 狀態（快照的 caps_lock，#173）
+	// digitPassed：上一個交還應用程式的按鍵是數字，核心記著「游標前一個字是阿拉伯數字」（#337）。
+	// 之後不經過核心的事（快捷鍵、失焦、點到別處的重設）可能讓游標離開數字，見 forgetDigit。
+	digitPassed bool
 }
 
 func newSession(c *client, documentContext bool) *session {
@@ -219,6 +228,10 @@ func (s *session) shiftKeys() shiftKeys {
 // toggleKey 是 open 回覆的 toggle_key（right、both、left、none），選單的注／英項目據此說明切換鍵；
 // 還沒連上或舊引擎沒有這一項時為空字串。
 func (s *session) toggleKey() string { return s.info["toggle_key"] }
+
+// pinyin 回報引擎目前的鍵盤排列是漢語拼音（open 回覆的 keyboard_layout，#324）：選單的模式文字寫「拼音」而不是「注音」（#357）。
+// 快取方式同 toggleKey；換排列（引擎重啟）後下一個請求或下一次聚焦重開 session 時更新。
+func (s *session) pinyin() bool { return s.info["keyboard_layout"] == "pinyin" }
 
 // vocabKeys 回報引擎是否認得 0.2.0 的加詞與反悔鍵名（open 回覆的 vocab_keys，#123）。值隨 session 快取，
 // 引擎重啟（例如套用設定）後重開 session 時更新，不必每個按鍵查 health。斷線要等下一個請求才發現，
@@ -423,7 +436,8 @@ func (s *session) commitForShortcut() snapshot {
 // 不必等第一個按鍵。焦點事件不為此啟動 0c-server：引擎不在而且目前是注音時不動，第一個按鍵開的 session 本來就從開始時的
 // 模式起；目前是英文時照舊連線（以前就會為了回到注音而連線）。
 func (s *session) activate() snapshot {
-	if !(s.client.conn != nil && s.ensureOpen()) && (!s.english || !s.client.connect() || !s.ensureOpen()) {
+	// 引擎因設定套用重啟過時連上新的引擎（不為此啟動），重開的 session 帶新設定（鍵盤排列，#357）。
+	if !(s.client.refresh() && s.ensureOpen()) && (!s.english || !s.client.connect() || !s.ensureOpen()) {
 		return snapshot{}
 	}
 	if s.info["mode_memory"] == "shared" {
@@ -434,6 +448,26 @@ func (s *session) activate() snapshot {
 		return snapshot{}
 	}
 	return s.handle(proto.Request{Type: proto.Mode, On: start})
+}
+
+// digitKey：交還應用程式時打出阿拉伯數字的按鍵（主鍵盤 0–9、數字鍵盤 KP0–KP9），同核心的 isDigitKey。
+func digitKey(k string) bool {
+	k = strings.TrimPrefix(k, proto.KeypadPrefix)
+	return len(k) == 1 && k[0] >= '0' && k[0] <= '9'
+}
+
+// forgetDigit：上一個交還應用程式的是數字，之後又有不經過核心的事（快捷鍵、失焦、點到別處的重設）時，
+// 游標可能已經不在數字後面：沒在組字時送 cancel 讓核心清掉這個位元（#337）。組字中由送出或放棄組字清掉。
+// 只在連線還在、session 是這一代連線開的時候送，不為此啟動 0c-server。
+func (s *session) forgetDigit() {
+	if !s.digitPassed {
+		return
+	}
+	s.digitPassed = false
+	if s.view != nil || s.englishPending || s.id == 0 || s.client.conn == nil || s.generation != s.client.generation {
+		return
+	}
+	s.handle(proto.Request{Type: proto.Cancel})
 }
 
 // documentContext 確認應用程式已插入剛提交的文字；連線改變即失效。
@@ -502,6 +536,11 @@ func (s *session) handle(req proto.Request) snapshot {
 		}
 		out := snapshot{Snapshot: *reply.Snapshot, ok: true, reconnected: before != s.client.generation}
 		s.english, s.englishPending, s.capsLock = out.english(), out.EnglishPending, out.CapsLock
+		if req.Type == proto.Key && !out.Handled {
+			s.digitPassed = digitKey(req.Key)
+		} else if out.Commit != "" || req.Type == proto.Cancel || req.Type == proto.Commit {
+			s.digitPassed = false // 核心送出或放棄組字時已經清掉
+		}
 		// 符號選單可以在空白組字區開啟，也必須重播才能保留選單與反白位置。
 		composing := len(out.Preedit) > 0 || len(out.candidates()) > 0
 		if out.Commit != "" || req.Type == proto.Cancel || !composing {

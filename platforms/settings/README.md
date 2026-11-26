@@ -9,8 +9,8 @@
 | `src/updater.rs` | 找出並啟動 `0c-update`、逾時、解析 JSON、匯出摘要；附單元測試 |
 | `src/main.rs` | 指令白名單、視窗、單一實例 |
 | `src/watch.rs` | 「我的詞彙」的即時同步：常駐 `0c-update vocab watch`、轉成 `vocab-changed` 事件、意外結束時重新連上 |
-| `ui/` | `index.html`、`app.css`、`app.js`；設定項目依契約動態產生。`vocab.js` 是「我的詞彙」頁，`models.js` 是「模型」頁，`personal-reset.js` 是「我的詞彙」頁「靈犀學到的」底下的「清除學習紀錄」，`input-styles.js` 是「輸入習慣」頁，`update-mode.js` 是更新方式的顯示名稱與說明 |
-| `test/` | `smoke.sh`（容器 Xvfb 冒煙測試）、`vocab.sh`（我的詞彙）、`models.sh`（模型）、`styles.sh`（輸入習慣）、`scroll.sh`（背景更新保留捲動位置，#268）、`personal.sh`（清除學習紀錄，#301）、`fake-update.py`（測試用的 0c-update 替身，只模擬 vocab、api 與 models）、`*_test.js`（`node --test`，不碰畫面的判斷）、`scroll_position_test.py`（Playwright 在 Chromium 與 WebKit 跑真的頁面，各缺一個就跳過） |
+| `ui/` | `index.html`、`app.css`、`app.js`；設定項目依契約動態產生。`vocab.js` 是「我的詞彙」頁，`models.js` 是「模型」頁，`personal-reset.js` 是「我的詞彙」頁「靈犀學到的」底下的「清除學習紀錄」，`input-styles.js` 是「輸入習慣」頁，`update-mode.js` 是更新方式的顯示名稱、下拉選單的選項與說明（#244、#340） |
+| `test/` | `smoke.sh`（容器 Xvfb 冒煙測試）、`vocab.sh`（我的詞彙）、`models.sh`（模型）、`styles.sh`（輸入習慣）、`scroll.sh`（背景更新保留捲動位置，#268）、`personal.sh`（清除學習紀錄，#301）、`update-mode.sh`（更新頁的更新方式下拉選單，#340）、`fake-update.py`（測試用的 0c-update 替身，只模擬 vocab、api 與 models）、`*_test.js`（`node --test`，不碰畫面的判斷）、`scroll_position_test.py`（Playwright 在 Chromium 與 WebKit 跑真的頁面，各缺一個就跳過） |
 | `build.rs`、`capabilities/main.json` | 只有 `build.rs` 列出的指令能被前端呼叫，capability 只授權這些指令與事件監聽 |
 | `tauri.linux.conf.json` | Linux 的 identifier 改為 `com.biggo.zc.settings`：外掛用它組 D-Bus 服務名，而服務名的每一段不能以數字開頭，`com.biggo.0c.settings` 會讓程式一啟動就 panic。macOS 與 Windows 維持 `com.biggo.0c.settings` |
 | `tauri.conf.json` | CSP：`default-src 'none'; script-src 'self'; style-src 'self'`；不載入任何遠端內容 |
@@ -35,9 +35,9 @@ Rust 的 `profile_command(action,id,name)` 只允許 `select`、`copy`、`rename
 
 側欄順序：總覽、中英切換、選字、鍵盤與符號、輸出設定、我的詞彙、模型、更新、問題排解、關於。「輸出設定」（`output`）照舊獨立。契約裡不在任何一頁的新項目（較新的 0c-update 才有）畫在「選字」最後，所以新增設定不必先改畫面；要放別頁再加進 `INPUT_PAGES`。舊的頁名 `input`（0.2.5 以前的 `0c-update open-settings input`、說明文件）照樣接受，畫面導到側欄第一頁「中英切換」（`PAGE_ALIAS`；Go 與 Rust 的白名單也保留它，舊版設定程式照舊開輸入設定）。三份頁名清單由 `internal/settingsapp` 的 `TestPageNamesMatchTheSettingsApp` 核對。總覽的「有設定已儲存、尚未套用」帶到第一個尚未套用的項目所在的那一頁。
 
-契約的項目帶 `disabled` 時（倚天 41 鍵時的中英混打、Emoji 選單與等號首項，許氏時的中英混打，#183；不用 Shift 時的開始模式，#184）開關反灰、畫成關閉，名稱旁顯示 `disabled_reason`，不在 Tab 順序裡；設定檔的值不動，切回標準排列照原值顯示（#83）。造成停用的那一項（`disabled_by`）在別頁時，說明下面多一個「到「鍵盤與符號」修改「鍵盤排列」」，按了切到那一頁並把焦點放在那一項（例如中英混打在「中英切換」、鍵盤排列在「鍵盤與符號」）；在同一頁（開始模式就在中英切換鍵下面）不另外放。
+契約的項目帶 `disabled` 時（倚天 41 鍵時的中英混打、Emoji 選單與等號首項，許氏時的中英混打，#183；漢語拼音時的中英混打，#324；不用 Shift 時的開始模式，#184）開關反灰、畫成關閉，名稱旁顯示 `disabled_reason`，不在 Tab 順序裡；設定檔的值不動，切回標準排列照原值顯示（#83）。造成停用的那一項（`disabled_by`）在別頁時，說明下面多一個「到「鍵盤與符號」修改「鍵盤排列」」，按了切到那一頁並把焦點放在那一項（例如中英混打在「中英切換」、鍵盤排列在「鍵盤與符號」）；在同一頁（開始模式就在中英切換鍵下面）不另外放。
 
-Emoji 選單以一個開關控制（`emoji-shortcut`：off／equals），預設開啟，保留使用者明確關閉的設定。另有 `emoji-equals-first` 開關（預設 on），可取消第一項的等號；設定說明提醒關閉後仍可按兩次 == 輸入一個 =。模糊音顯示一列總開關，預設開啟（四組 select），開啟時以同一次設定交易將四組近音都設為 select，關閉時全部設 off；沒有逐組控制或自動修正單選。舊設定只啟用部分配對或使用 auto 時，畫面視為開啟，載入不改寫；關閉再開啟才統一成四組 select。CLI 的逐組設定與原有檔案格式仍保留，未知欄位與唯讀保護沿用既有契約。
+Emoji 選單以一個開關控制（`emoji-shortcut`：off／equals），預設開啟，保留使用者明確關閉的設定。另有 `emoji-equals-first` 開關（預設 on），可取消第一項的等號；設定說明寫明開或關都可以連按兩下 = 輸入一個 =，想單按 = 打出等號要關閉 Emoji 選單（GitHub 0c-ime#89）。模糊音顯示一列總開關，預設開啟（四組 select），開啟時以同一次設定交易將四組近音都設為 select，關閉時全部設 off；沒有逐組控制或自動修正單選。舊設定只啟用部分配對或使用 auto 時，畫面視為開啟，載入不改寫；關閉再開啟才統一成四組 select。CLI 的逐組設定與原有檔案格式仍保留，未知欄位與唯讀保護沿用既有契約。
 
 ## 我的詞彙（0.2.0，#125）
 
@@ -124,7 +124,7 @@ python scripts\build_settings_windows.py --version <版本> --test
 - 偵測到 NVIDIA 私有驅動（`/proc/driver/nvidia`）時自動設 `WEBKIT_DISABLE_DMABUF_RENDERER=1`，避開 Wayland 下 WebKitGTK 白畫面與 Error 71（Tauri 文件列為已知問題，不無條件關閉）。
 - 單一實例：已開著就聚焦既有視窗並切到要求的頁面；Linux 沒有 D-Bus session 時這個機制不生效，兩個實例各自執行。在 Wayland 上合成器不准程式自己置頂（沒有 xdg-activation token，在 GNOME 50 實測 `set_focus` 不會把被蓋住的視窗拉到前面），所以第二次啟動改成開新視窗再關掉舊的，新視窗會正常出現在最前面。
 
-更新頁提供檢查更新、立即下載、背景下載加速及立即安裝。下載顯示實際百分比與已收到／總大小，每秒重讀執行狀態；核對和安裝顯示處理中的進度條。總覽與關於頁分開標示已安裝版本、目前執行的引擎及設定視窗版本，Windows 新外殼已安裝但尚未重新登入時明確提示。後端命令及進度格式見 [JSON 契約實作](../../cmd/0c-update/contract.go)。
+更新頁提供檢查更新、立即下載、背景下載加速及立即安裝，按鈕下方是「更新方式」下拉選單（#340）：自動更新（建議）＝`0c-update mode auto`、下載後詢問＝`ask`（在背景下載並通知新版本，按「立即安裝」才更新）、手動更新＝`manual`（照排程檢查並通知新版本，不自己下載；按「立即下載」再按「立即安裝」），選到的那項底下一句說明。Rust 指令 `set_update_mode` 只接受 auto／ask／manual，對應 `0c-update mode <值> -json`；`status -json` 的 `features.update_mode` 為真（0.2.15 起）才顯示選單，舊版 0c-update 照舊只列「更新方式」。更新頁每秒重畫，選單有焦點時先不重畫（離開時補畫），免得打開的選單被換掉。說明文字在 `ui/update-mode.js`（`test/update_mode_test.js`），UI 測試 `test/update-mode.sh`（`--only update`）在真的 WebView 用鍵盤在三個選項間切換、打開選單等 3 秒再選，並核對狀態檔。下載顯示實際百分比與已收到／總大小，每秒重讀執行狀態；核對和安裝顯示處理中的進度條。總覽與關於頁分開標示已安裝版本、目前執行的引擎及設定視窗版本，Windows 新外殼已安裝但尚未重新登入時明確提示。後端命令及進度格式見 [JSON 契約實作](../../cmd/0c-update/contract.go)。
 
 Windows 完整更新視窗驗收另有 `test/settings-update-test.ps1`：在沒有安裝的專用測試機，以隔離個人資料目錄、已簽章測試 HTTPS 索引和真套件驗證立即下載、共用並加速背景下載、手動安裝與重新登入前的版本提示。測試使用 e2etest 更新器；互動視窗以管理員執行，所以不包含原生 UAC 同意／取消對話框的真人驗證。
 
@@ -154,7 +154,7 @@ Windows 完整更新視窗驗收另有 `test/settings-update-test.ps1`：在沒�
 
 輸入設定的「Caps Lock 開著時直接打英文」（`caps-lock-english`，`settings.json` 的 `caps_lock_english`）預設關閉，放在「中英切換」頁最後（#207），只有 Windows、Linux 有：macOS 開 Caps Lock 一律切到英文大寫（#84），`0c-update settings` 不列這一項，設定程式就不顯示。開啟時 Caps Lock 是暫時的英文模式（字母大寫、數字與符號半形，正在打的字先送出，關掉回到注音；先用 Shift 切到英文時只改大小寫）；關閉時注音模式不理 Caps Lock（#173、#168）。引擎讀設定，套用（引擎重啟）後生效；外殼依 health／open 的 `caps_lock_english` 決定要不要回報 Caps Lock 狀態。
 
-輸入設定的「不打聲調也能選字」（`toneless`，`settings.json` 的 `toneless`）預設關閉，放在「選字」頁的選字項目最後、模糊音之前（#207 的頁面依 spec 排序，沒列在頁面清單裡的項目排在該頁最後）。開啟時聲調選填：ㄋㄧㄏㄠ 就是「你好」，有打聲調的字照聲調，組字中的 ' 用來切字；中英混打反灰並標「不打聲調時關閉」，已儲存的值不動。只在標準排列有效，倚天、許氏時這一項反灰（#150）。引擎讀設定，套用（引擎重啟）後生效，外殼不必改。
+輸入設定的「不打聲調也能選字」（`toneless`，`settings.json` 的 `toneless`）預設關閉，放在「選字」頁的選字項目最後、模糊音之前（#207 的頁面依 spec 排序，沒列在頁面清單裡的項目排在該頁最後）。開啟時聲調選填：ㄋㄧㄏㄠ 就是「你好」，有打聲調的字照聲調，組字中的 ' 用來切字；中英混打反灰並標「不打聲調時關閉」，已儲存的值不動。只在標準排列與漢語拼音有效，倚天、許氏時這一項反灰（#150）；漢語拼音時它決定拼音後面的空白是一聲還是不打聲調就完成（#324）。引擎讀設定，套用（引擎重啟）後生效，外殼不必改。
 
 輸入設定的「輸出簡體字」（`output-simplified`，`settings.json` 的 `output_simplified`）預設關閉，在設定程式左側獨立的「輸出設定」頁（`--page output`）。開啟後組字和候選仍顯示繁體，送出時才轉成簡體字（OpenCC ver.1.4.2 的 tw2s 字典，編在 `0c-server` 裡，見 `internal/simplified/opencc`）；我的詞彙與我的片語也一起轉，英文、數字、標點與 Emoji 不變，學習照常記繁體（#118）。這一項可以即時切換（#169）：開關照樣執行 `0c-update set output-simplified on|off -apply -json`，0c-update 寫好設定後，引擎回報 `output_simplified_live=true` 就請它即時切換（`apply.state` 是 `applied`），不重啟引擎，組字中也立即生效；舊引擎照舊交接重啟。四個外殼的輸入法選單也有可以打勾的「輸出簡體字」，從選單切換時由引擎寫 `settings.json`，設定程式的開關下一次讀取（切回視窗或重新整理）就跟著變。
 

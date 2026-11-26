@@ -19,7 +19,7 @@ func TestKeyboardLayoutDefaultsStandardAndPersists(t *testing.T) {
 	if s, err := Load(path); err != nil || s.KeyboardLayout != LayoutStandard {
 		t.Fatalf("舊設定檔：%+v %v", s, err)
 	}
-	for _, value := range []string{"eten", "standard", "hsu", "eten"} {
+	for _, value := range []string{"eten", "standard", "hsu", "pinyin", "eten"} {
 		s, err := Load(path)
 		if err != nil {
 			t.Fatal(err)
@@ -128,5 +128,34 @@ func TestHsuDisablesOnlyMixedInput(t *testing.T) {
 	// 不打聲調（#150）只在標準排列有效，許氏時也停用。
 	if strings.Join(disabled, "、") != "mixed-input：許氏排列時關閉、toneless：許氏排列時關閉" {
 		t.Fatalf("許氏只停用混打：%v", disabled)
+	}
+}
+
+// #324：漢語拼音只停用中英混打（字母都是拼音），原因指向鍵盤排列；不打聲調照常可設（拼音時它決定空白是一聲還是
+// 不打聲調就完成），打錯注音時提示也照常（拼音的聲調收不成音節時用它提示）。值保留，切回標準排列照舊。
+func TestPinyinDisablesOnlyMixedInput(t *testing.T) {
+	s := Default()
+	s.MixedInput, s.Toneless = true, true
+	s.Set("toggle-key", ToggleRight)
+	if err := s.Set("keyboard-layout", "pinyin"); err != nil {
+		t.Fatal(err)
+	}
+	var disabled []string
+	for _, it := range s.Items() {
+		if it.Disabled {
+			disabled = append(disabled, it.Key+"："+it.DisabledReason+"（"+it.DisabledBy+"）")
+		}
+		if it.Key == "keyboard-layout" && it.ValueLabels["pinyin"] != "漢語拼音" {
+			t.Fatalf("排列的顯示名稱：%+v", it.ValueLabels)
+		}
+	}
+	if strings.Join(disabled, "、") != "mixed-input：漢語拼音時關閉（keyboard-layout）" {
+		t.Fatalf("漢語拼音只停用混打：%v", disabled)
+	}
+	if err := s.Set("keyboard-layout", "standard"); err != nil {
+		t.Fatal(err)
+	}
+	if !s.MixedInput || !s.Toneless {
+		t.Fatalf("切回標準排列值照舊：%+v", s)
 	}
 }

@@ -102,7 +102,7 @@ func listSettings(w io.Writer, r settings.Report, path string) {
 		fmt.Fprintf(w, "caps-lock-english=%s（Caps Lock 開著時直接打英文：字母大寫、數字與符號半形，關掉回到注音；關閉時注音模式不理 Caps Lock）\n", onOff(s.CapsLockEnglish))
 	}
 	fmt.Fprintf(w, "toneless=%s（不打聲調也能選字：沒打聲調的字依前後文決定，有打的照聲調，組字中的 ' 切字；只在標準排列有效；開啟時中英混打停用）\n", onOff(s.Toneless))
-	fmt.Fprintf(w, "keyboard-layout=%s（鍵盤排列：standard 標準；eten 倚天 41 鍵，這時不提供 Emoji 選單與中英混打；hsu 許氏，這時不提供中英混打）\n", s.KeyboardLayout)
+	fmt.Fprintf(w, "keyboard-layout=%s（鍵盤排列：standard 標準；eten 倚天 41 鍵，這時不提供 Emoji 選單與中英混打；hsu 許氏，這時不提供中英混打；pinyin 漢語拼音，數字標調、這時不提供中英混打）\n", s.KeyboardLayout)
 	for _, it := range s.Items() {
 		if strings.HasPrefix(it.Key, "style-") {
 			fmt.Fprintf(w, "%s=%s（%s）\n", it.Key, it.Value, it.Label)
@@ -198,6 +198,14 @@ func run(args []string) error {
 		return fmt.Errorf("用法：0c-update status|settings|profile|set|models|vocab|api|personal|open-settings|engine|auto|finish|mode|pause|resume|snooze|schedule|verify|check|download|download-now|apply|install|rollback|uninstall [選項]")
 	}
 	action := args[0]
+	switch action {
+	case "selftest":
+		// #293：新版更新器換上穩定副本前的自我測試。只讀，不經過下面的帳號轉換與交給其他安裝的步驟。
+		return selftestCommand(args[1:])
+	case "install-staged":
+		// #292：舊的更新器核對完套件後交給新版安裝（固定契約見 handover.go）。不列在用法裡。
+		return installStagedCommand(args[1:])
+	}
 	// macOS 以 root 執行時（sudo installer、MDM）改以登入的使用者身分重新執行，成功時不會返回（#198）
 	if err := dropRoot(args); err != nil {
 		return err
@@ -258,6 +266,12 @@ func run(args []string) error {
 		}
 		directAfterInstall()
 		return nil
+	case "input-source-followup":
+		// 內部用：macOS 安裝後由背景排程啟動，使用者晚一點才按「允許」時接著啟用輸入模式（#348），不列在用法裡。
+		if len(args) != 1 {
+			return fmt.Errorf("input-source-followup 不接受參數")
+		}
+		return inputSourceFollowUpCommand()
 	case "prune":
 		// 內部用：安裝、回復、解除安裝成功後在背景清理舊版（#179，Windows），不列在用法裡。
 		if len(args) != 1 {
@@ -496,7 +510,11 @@ func main() {
 	}
 	launchPrune() // 安裝、回復、解除安裝成功過才有；其餘步驟都做完了，最後才啟動（#179）
 	flush()
-	if code := exitCodeFor(os.Args[1:], err); code != 0 {
+	code := exitCodeFor(os.Args[1:], err)
+	if len(os.Args) > 1 && os.Args[1] == "selftest" {
+		code = selftestExitCode(err) // 結束碼是固定契約（0／75／1）
+	}
+	if code != 0 {
 		os.Exit(code)
 	}
 }

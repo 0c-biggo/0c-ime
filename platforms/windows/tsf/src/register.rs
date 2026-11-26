@@ -1,4 +1,10 @@
-//! 註冊：HKCR\CLSID 的 InprocServer32、TSF 的語言 profile 與類別。regsvr32 需要管理員權限。
+//! 註冊：HKCR\CLSID 的 InprocServer32、TSF 的語言 profile 與類別。DllRegisterServer 需要管理員權限：0c-update 在行程內
+//! 載入 DLL 呼叫它（#294 起不再開 regsvr32.exe 子行程；舊版更新器與手動測試仍可用 regsvr32）。
+//!
+//! 註冊指紋（#294）：`registration_spec` 是這裡寫入登錄的全部內容（CLSID、固定路徑、profile、圖示、類別），打包時取它的
+//! SHA-256 放進 release.json 的 `tsf_registration`。新舊版本的指紋相同時，外殼更新只以一般權限換固定路徑的 DLL，不跳 UAC；
+//! 不同才以系統管理員重新註冊。**改了這裡寫入的任何內容（多一個值、換類別、改路徑或描述），`registration_spec` 都要跟著
+//! 反映**，否則已安裝的使用者更新後不會重新註冊。
 //!
 //! 32 位元應用程式（#112）讀 32 位元登錄視圖的 CLSID（HKCR\WOW6432Node\CLSID），載入 `x86\0c_tsf.dll`；
 //! TSF 的 profile 與類別在 HKLM\SOFTWARE\Microsoft\CTF\TIP，是兩個視圖共用的機碼，只有一份。
@@ -44,6 +50,24 @@ const CATEGORIES: [GUID; 6] = [
     GUID_TFCAT_TIPCAP_COMLESS,
     GUID_TFCAT_DISPLAYATTRIBUTEPROVIDER,
 ];
+
+/// 這個 DLL 註冊時寫入的內容（見檔頭的註冊指紋）。路徑寫相對安裝目錄的固定路徑：InprocServer32 永遠指向
+/// `<安裝目錄>\tsf\`（#121），安裝目錄因使用者而異，不放進指紋。32 位元那份是否存在由打包程式依套件內容補一行。
+/// 第一行的格式版本在註冊的寫法改變（不只是資料）時調高。
+pub fn registration_spec() -> String {
+    use crate::layout::{FIXED_DIR, X86_DIR};
+    let dll = "0c_tsf.dll";
+    let mut s = String::from("0c-tsf-registration 1\n");
+    s += &format!("clsid {{{:?}}} {}\n", CLSID_ZUIN, DESCRIPTION);
+    s += &format!("inproc64 {}\\{} Apartment\n", FIXED_DIR, dll);
+    s += &format!("inproc32-if-present {}\\{}\\{} Apartment\n", FIXED_DIR, X86_DIR, dll);
+    s += &format!("profile 0x{:04X} {{{:?}}} {}\n", LANGID, GUID_PROFILE, DESCRIPTION);
+    s += &format!("icon {}\\{} 0\n", FIXED_DIR, dll);
+    for cat in &CATEGORIES {
+        s += &format!("category {{{:?}}}\n", cat);
+    }
+    s
+}
 
 fn clsid_key() -> String {
     format!("CLSID\\{{{:?}}}", CLSID_ZUIN)
@@ -346,6 +370,23 @@ pub fn unregister() -> windows_core::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn registration_spec_lists_everything_registered() {
+        // #294：指紋由這份文字算出；內容要涵蓋 register_com 與 register_profiles 寫入的東西。
+        let spec = registration_spec();
+        assert!(spec.starts_with("0c-tsf-registration 1\n"), "{spec}");
+        assert!(spec.contains("clsid {138C35D0-7F08-4CEF-BA90-C34C16301528} 靈犀注音\n"), "{spec}");
+        assert!(spec.contains("inproc64 tsf\\0c_tsf.dll Apartment\n"), "{spec}");
+        assert!(spec.contains("inproc32-if-present tsf\\x86\\0c_tsf.dll Apartment\n"), "{spec}");
+        assert!(spec.contains("profile 0x0404 {EF62F743-9855-4C94-A658-1F0F98B7B840} 靈犀注音\n"), "{spec}");
+        assert!(spec.contains("icon tsf\\0c_tsf.dll 0\n"), "{spec}");
+        for cat in &CATEGORIES {
+            assert!(spec.contains(&format!("category {{{:?}}}\n", cat)), "{spec}");
+        }
+        assert_eq!(spec.lines().filter(|l| l.starts_with("category ")).count(), CATEGORIES.len());
+        assert_eq!(spec, registration_spec(), "每次產生的內容要相同");
+    }
 
     #[test]
     fn categories_include_comless() {

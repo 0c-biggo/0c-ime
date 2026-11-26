@@ -20,11 +20,22 @@ const (
 
 // 手機引擎的融合權重（平台設定，不寫進套件 manifest）。在手機詞庫 744c608c、tone0-only step2048、
 // 校準組 1,500 例上選定：沒前文時 0.5 不輸 1（部分聲調 +1.80pp，CI 不含 0），改錯也較少；
-// 有前文時 1 較好（全打聲調 +0.87pp，CI 不含 0）。
-// 桌面照套件 manifest 的 weight。
+// 有前文時 1 較好（全打聲調 +0.87pp，CI 不含 0）。桌面有前文時照套件 manifest 的 weight。
 const (
 	MobileWeight            = 1.0
 	MobileContextlessWeight = 0.5
+)
+
+// 桌面引擎沒有前文時的融合權重（平台設定，不寫進套件 manifest；有前文照 manifest 的 weight，出貨套件為 2）。
+// 沒有前文時模型只看讀音與候選，短讀音最不可靠（docs/46 的前文消融：同音短詞與統計引擎持平、錯改加倍），
+// 照 2 融合會把對的統計首選換掉（例：阿拉伯數字之後的量詞、「一次」打成 ㄧˊ ㄘˋ）。#337 在選字模型 4a80caf1、
+// 字典 0ab52e5f 上經 0c-server 逐鍵重播選定（沒前文 2 → 讀音 3 個音節以內 0.5、其餘 1）：cv 19,536 句 88.02% → 88.58%
+// （改對 217、改壞 108），field 43 → 49／54、target 不變，量詞片段的量詞字錯誤率 10.0% → 9.5%。
+// 換選字模型時要重量。internal/neural 設定時截到套件的 weight，不會比有前文更依賴模型。
+const (
+	DesktopContextlessWeight         = 1.0
+	DesktopShortContextlessWeight    = 0.5
+	DesktopShortContextlessSyllables = 3
 )
 
 // TonePolicy 是套件 manifest 的 tone_policy。UnknownToneID 用指標區分「沒寫」與 0。
@@ -152,9 +163,10 @@ func (o Options) Readable(syls []zhuyin.Syllable) bool {
 }
 
 // Supports 是 Supported 再加上這個評分器的條件：讀音可讀（Readable 的基底檢查），
-// ToneKnown 只送給 UnknownTones 的評分器。宿主送出請求前與評分器收到請求時都用它。
+// ToneKnown 只送給 UnknownTones 的評分器，多字的 ModeText 只送給 TextAnyLength 的評分器。
+// 宿主送出請求前與評分器收到請求時都用它。
 func (o Options) Supports(r Request) bool {
-	if !Supported(r) || r.ToneKnown != nil && !o.UnknownTones {
+	if !supported(r, o.TextAnyLength) || r.ToneKnown != nil && !o.UnknownTones {
 		return false
 	}
 	for _, c := range r.Candidates {
@@ -172,9 +184,24 @@ func (o Options) Supports(r Request) bool {
 	return true
 }
 
-// WeightFor 是前文為 context 的請求用的融合權重：前文是空的而且設了 ContextlessWeight 時用它，否則用 Weight。
-func (o Options) WeightFor(context string) float64 {
-	if context == "" && o.ContextlessWeight > 0 {
+// WeightOf 是請求 r 的融合權重：帶 DigitBefore 的請求（#337）照有前文用 Weight，其他照 WeightFor。
+func (o Options) WeightOf(r Request) float64 {
+	if r.DigitBefore {
+		return o.Weight
+	}
+	return o.WeightFor(r.Context, len(r.Reading))
+}
+
+// WeightFor 是前文為 context、讀音 syllables 個音節的請求用的融合權重：前文是空的時，讀音夠短而且設了
+// ShortContextlessWeight 用它，其次是設了的 ContextlessWeight；有前文或都沒設用 Weight。
+func (o Options) WeightFor(context string, syllables int) float64 {
+	if context != "" {
+		return o.Weight
+	}
+	if o.ShortContextlessWeight > 0 && syllables <= o.ShortContextlessSyllables {
+		return o.ShortContextlessWeight
+	}
+	if o.ContextlessWeight > 0 {
 		return o.ContextlessWeight
 	}
 	return o.Weight

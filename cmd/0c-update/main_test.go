@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,6 +15,9 @@ import (
 // 系統安裝的目錄也換到不存在的暫存位置：機器上裝了發行版套件（/usr/libexec/0c、/usr/share/0c）時，
 // 測試不會讀到它（#239）；要測系統安裝的測試自己再設一次。
 func TestMain(m *testing.M) {
+	if len(os.Args) > 1 && os.Args[1] == "install-staged" && os.Getenv(handoverChildEnv) != "" {
+		os.Exit(handoverChild(os.Args[2:])) // handover_test.go：測試執行檔扮演套件裡新版的 0c-update
+	}
 	cleanup := isolateResidentEngine()
 	system, err := os.MkdirTemp("", "0c-update-system-")
 	if err != nil {
@@ -22,6 +26,9 @@ func TestMain(m *testing.M) {
 	installs.LibexecDir, installs.DataDir, installs.BinDir =
 		filepath.Join(system, "libexec/0c"), filepath.Join(system, "share/0c"), filepath.Join(system, "bin")
 	startPrune = func(string) error { return nil } // 不在測試機上啟動真的背景清理（#179）
+	// 測試裡的更新器多半是文字檔：換穩定副本的自我測試（#293）預設算通過，自我測試本身由 qualify_test.go 驗。
+	runCandidateSelftest = func(string) (string, string) { return selftestPass, "" }
+	parentFeedCheck = func(string) error { return errors.New("測試不連網") }
 	code := m.Run()
 	cleanup()
 	os.RemoveAll(system)

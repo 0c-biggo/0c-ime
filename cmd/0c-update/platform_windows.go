@@ -16,6 +16,7 @@ import (
 
 	"github.com/0c-biggo/0c-ime/internal/autoupdate"
 	"github.com/0c-biggo/0c-ime/internal/update"
+	"github.com/0c-biggo/0c-ime/internal/winshell"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )
@@ -25,14 +26,35 @@ const clsid = `CLSID\{138C35D0-7F08-4CEF-BA90-C34C16301528}\InprocServer32`
 func basePath() string    { return filepath.Join(os.Getenv("LOCALAPPDATA"), "Zuin") }
 func receiptPath() string { return filepath.Join(basePath(), "install-receipt.json") }
 func preflight() error {
+	if err := preflightPlatform(); err != nil {
+		return err
+	}
+	if !windows.GetCurrentProcessToken().IsElevated() {
+		return errNeedsAdmin
+	}
+	return nil
+}
+
+// errNeedsAdmin：要改 TSF 註冊（HKLM）的動作以一般權限執行。
+var errNeedsAdmin = errors.New("TSF 註冊需要以同一位桌面使用者的系統管理員 PowerShell 執行；請先完成組字")
+
+// needsAdmin：一般權限的安裝遇到要改註冊的更新（#294）。協調器看到 autoupdate.ErrNeedsConsent 就停下來等使用者
+// 「立即安裝」（那時再要 UAC）；命令列照實說明原因。
+type needsAdmin struct{ reason error }
+
+func (e needsAdmin) Error() string {
+	return e.reason.Error() + "；請以同一位桌面使用者的系統管理員權限執行"
+}
+func (e needsAdmin) Unwrap() []error {
+	return []error{e.reason, autoupdate.ErrNeedsConsent, errNeedsAdmin}
+}
+
+func preflightPlatform() error {
 	if runtime.GOARCH != "amd64" || os.Getenv("PROCESSOR_ARCHITEW6432") == "ARM64" || os.Getenv("PROCESSOR_ARCHITECTURE") == "ARM64" {
 		return fmt.Errorf("目前 Windows 套件僅驗證 x64 架構；ARM64 尚不支援")
 	}
 	if os.Getenv("LOCALAPPDATA") == "" || !filepath.IsAbs(os.Getenv("LOCALAPPDATA")) {
 		return fmt.Errorf("缺少有效的 LOCALAPPDATA")
-	}
-	if !windows.GetCurrentProcessToken().IsElevated() {
-		return fmt.Errorf("TSF 註冊需要以同一位桌面使用者的系統管理員 PowerShell 執行；請先完成組字")
 	}
 	return nil
 }
@@ -62,21 +84,45 @@ func registeredIn(view uint32) (string, error) {
 }
 
 func (registrar) Current() (string, error) { return registeredIn(registry.WOW64_64KEY) }
+
+// invokeReg 在行程內呼叫 DLL 的 DllRegisterServer／DllUnregisterServer（#294 起不再開 regsvr32.exe 子行程）。
 func invokeReg(dll string, remove bool) error {
-	systemRoot := os.Getenv("SystemRoot")
-	if !filepath.IsAbs(systemRoot) {
-		return fmt.Errorf("無效的 SystemRoot")
-	}
-	args := []string{"/s"}
-	if remove {
-		args = append(args, "/u")
-	}
-	args = append(args, dll)
-	command := exec.Command(filepath.Join(systemRoot, "System32", "regsvr32.exe"), args...)
-	if err := command.Run(); err != nil {
-		return fmt.Errorf("TSF 註冊命令失敗（%s）：%w", filepath.Base(dll), err)
+	if err := winshell.RegisterServer(dll, remove); err != nil {
+		return fmt.Errorf("TSF 註冊失敗（%s）：%w", filepath.Base(dll), err)
 	}
 	return nil
+}
+
+// tipProfileKey 是語言 profile（zh-TW 底下的靈犀注音）在 HKLM 的機碼，由 DLL 註冊時寫入（register.rs 的 register_profiles）。
+const tipProfileKey = `SOFTWARE\Microsoft\CTF\TIP\{138C35D0-7F08-4CEF-BA90-C34C16301528}\LanguageProfile\0x00000404\{EF62F743-9855-4C94-A658-1F0F98B7B840}`
+
+// RegistrationIntact（update.RegistrationVerifier，#294）：註冊不變的更新以一般權限只換固定路徑的 DLL 之前，核對登錄裡
+// 確實是這份註冊：32 位元視圖指向固定路徑的 x86 DLL（這一版有的話；沒有就不該有），語言 profile 在。x64 視圖由
+// update.installed 與收據核對。讀不到或不一致時照舊請使用者確認系統管理員權限、整份重新註冊。
+func (registrar) RegistrationIntact(base string, x86 bool) error {
+	current, err := registeredIn(registry.WOW64_32KEY)
+	if err != nil {
+		return err
+	}
+	want := ""
+	if x86 {
+		want = update.WindowsDLL32Of(update.FixedDLL(base))
+	}
+	if current != want && !sameDLL(current, want) {
+		return fmt.Errorf("32 位元註冊是 %q", current)
+	}
+	key, err := registry.OpenKey(registry.LOCAL_MACHINE, tipProfileKey, registry.QUERY_VALUE|registry.WOW64_64KEY)
+	if err != nil {
+		return fmt.Errorf("語言 profile：%w", err)
+	}
+	key.Close()
+	return nil
+}
+
+// probeFixedDLL（update.DLLProbe）：註冊不變的更新換上固定路徑的 DLL 後，在行程內載入一次確認它能用；不行時由
+// update.InstallWindowsKeepingRegistration 換回原本的版本（#294）。
+func probeFixedDLL(x64, x86 string) error {
+	return winshell.ProbeInprocServer(x64, x86, strings.TrimPrefix(clsidRoot(), `CLSID\`))
 }
 
 // appContainerSIDs 是 ALL APPLICATION PACKAGES 與 ALL RESTRICTED APPLICATION PACKAGES。
@@ -140,7 +186,7 @@ func grantAppContainer(file string, inherit bool) error {
 
 // Register 每次註冊（安裝、更新、回復）都補上沙箱讀取權限，舊版目錄回復時也一樣；32 位元 DLL（x86\0c_tsf.dll，#112）
 // 同樣處理。補不上只影響沙箱應用程式，一般應用程式照常可用，所以只提示、不讓安裝失敗。
-// regsvr32 只對 x64 DLL 執行：DLL 註冊時同時寫入 32 位元視圖（有 x86 那份才寫），profile 與類別兩個視圖共用。
+// 只對 x64 DLL 呼叫 DllRegisterServer：DLL 註冊時同時寫入 32 位元視圖（有 x86 那份才寫），profile 與類別兩個視圖共用。
 func (registrar) Register(dll string) error {
 	files := []string{dll}
 	if _, err := os.Stat(update.WindowsDLL32Of(dll)); err == nil {
@@ -154,7 +200,7 @@ func (registrar) Register(dll string) error {
 	return invokeReg(dll, false)
 }
 
-// Unregister 以 regsvr32 /u 取消註冊；DLL 已不存在（例如被防毒軟體隔離）時 regsvr32 無法執行，
+// Unregister 以 DllUnregisterServer 取消註冊；DLL 已不存在（例如被防毒軟體隔離）時無法載入，
 // 直接刪除 DLL 註冊時寫入的 COM 與 TSF 機碼（platforms/windows/tsf/src/register.rs），解除安裝才不會卡住（#82）。
 // 新版 DLL 取消註冊時兩個視圖都刪；32 位元視圖仍指向這一版的 x86 DLL（例如 x64 DLL 是不認得它的舊版）時這裡補刪。
 func (registrar) Unregister(dll string) error {
@@ -252,7 +298,7 @@ func repairFixedDLL(base string) {
 }
 
 // deployTSF：版本目錄的 TSF DLL 被 regsvr32 時（舊版更新器只認得版本目錄，#121）由 DLL 以這個命令呼叫，
-// 把這個版本目錄部署到固定路徑並以 regsvr32 註冊固定路徑。呼叫的更新器正持有安裝鎖，所以這裡不再上鎖；
+// 把這個版本目錄部署到固定路徑並註冊固定路徑。呼叫的更新器正持有安裝鎖，所以這裡不再上鎖；
 // 收據由呼叫的更新器在註冊後寫入。
 func deployTSF() error {
 	exe, err := os.Executable()
@@ -290,9 +336,21 @@ func reportLeftovers(left []string) {
 // 沒有這個，installSchedule 只會把「自己」複製到自己身上，穩定副本就停在舊版（macOS 同樣用 bundleUpdater）。
 var bundleUpdater string
 
+// bundleVersion 是 bundleUpdater 的版本（換穩定副本前的自我測試用，#293）。
+var bundleVersion string
+
+// install 以系統管理員執行時照舊整份重新註冊（安裝精靈、UAC 後的「立即安裝」：重跑一定修得好）。一般權限（背景排程、
+// 不需要 UAC 的「立即安裝」）只在 TSF 註冊內容與已安裝的版本相同時安裝，只換固定路徑的 DLL（#294）；要改註冊時
+// 回傳包著 autoupdate.ErrNeedsConsent 的錯誤，什麼都不動。
 func install(bundle string, release *update.Release) error {
-	if err := preflight(); err != nil {
+	if err := preflightPlatform(); err != nil {
 		return err
+	}
+	elevated := windows.GetCurrentProcessToken().IsElevated()
+	if !elevated {
+		if err := update.WindowsKeepsRegistration(basePath(), registrar{}, release); err != nil {
+			return needsAdmin{err}
+		}
 	}
 	layout, err := update.WindowsLayoutOf(release.Files)
 	if err != nil {
@@ -303,12 +361,25 @@ func install(bundle string, release *update.Release) error {
 	if result, err := probe.CombinedOutput(); err != nil {
 		return fmt.Errorf("配對詞庫檢查失敗：%s (%w)", strings.TrimSpace(string(result)), err)
 	}
-	directory, left, err := update.InstallWindows(bundle, basePath(), runtime.GOARCH, registrar{})
-	if err != nil {
+	var directory string
+	var left []string
+	if elevated {
+		directory, left, err = update.InstallWindows(bundle, basePath(), runtime.GOARCH, registrar{})
+	} else {
+		directory, left, err = update.InstallWindowsKeepingRegistration(bundle, basePath(), runtime.GOARCH, registrar{}, probeFixedDLL)
+	}
+	switch {
+	case errors.Is(err, update.ErrDLLProbe):
+		// 新版的 DLL 在這台電腦載入不了：已換回原本的版本；當成這一版生效失敗，不再每次重試（協調器暫停這一版）。
+		return fmt.Errorf("%w：%w", autoupdate.ErrShellHealth, err)
+	case errors.Is(err, update.ErrRegistrationChanged):
+		return needsAdmin{err}
+	case err != nil:
 		return err
 	}
 	if _, ok := release.Files[updaterName()]; ok {
 		bundleUpdater = filepath.Join(directory, updaterName())
+		bundleVersion = release.Version
 		pruneFrom = bundleUpdater // 剛裝好的版本一定保留；不用安裝程式暫存目錄裡的那一份（#179）
 	}
 	refreshStableMCP(basePath())

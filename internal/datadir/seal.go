@@ -64,13 +64,16 @@ func unseal(b []byte) ([]byte, error) {
 // SealDir 就地混淆資料包目錄中的字典檔（打包時使用）；manifest.json 不動。
 func SealDir(dir string) error {
 	names := append([]string(nil), SealedFiles...)
-	if info, err := os.Lstat(filepath.Join(dir, "english", "words.bin")); err == nil {
-		if !info.Mode().IsRegular() {
-			return fmt.Errorf("英文資料包不是一般檔案")
+	// 英文資料包的 words.bin；詞頻包（格式 2，#358）的詞對 bigram.bin 一併混淆。
+	for _, name := range []string{"english/words.bin", "english/bigram.bin"} {
+		if info, err := os.Lstat(filepath.Join(dir, name)); err == nil {
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("英文資料包不是一般檔案")
+			}
+			names = append(names, name)
+		} else if !os.IsNotExist(err) {
+			return err
 		}
-		names = append(names, "english/words.bin")
-	} else if !os.IsNotExist(err) {
-		return err
 	}
 	for _, name := range names {
 		path := filepath.Join(dir, name)

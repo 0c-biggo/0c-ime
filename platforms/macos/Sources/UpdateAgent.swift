@@ -62,7 +62,7 @@ enum UpdateAgent {
 // 背景執行被關閉時的提醒（docs/automatic-updates.md「macOS：背景執行被關閉」）。排程被關掉後無法執行，
 // 只有輸入法 App（使用者打字時一定在執行、在圖形工作階段中）看得到，所以由它偵測並提醒：
 // 第一次發現時一則通知，仍關閉時 30 天後再一則，之後每 90 天最多一則；手動模式、暫停中或使用者以
-// 0c-update schedule remove 關閉排程時不發。輸入法選單另有固定入口。通知以暫時授權發送，不跳權限詢問。
+// 0c-update schedule remove 關閉排程時不發。輸入法選單另有固定入口。通知經 NotificationPermission.deliver 發送（#350）。
 
 final class UpdateAgentMonitor: NSObject, UNUserNotificationCenterDelegate {
     static let shared = UpdateAgentMonitor()
@@ -129,7 +129,8 @@ final class UpdateAgentMonitor: NSObject, UNUserNotificationCenterDelegate {
         case .enabled:
             Self.saveNotice(Notice())  // 重新打開後清除提醒紀錄，下次關閉時從第一則開始
         case .requiresApproval:
-            if prefs.mode == "manual" || prefs.schedule_removed == true || Self.paused(prefs, now: now) { return }
+            // 手動更新也靠排程檢查新版、通知你下載（#340），關掉背景執行一樣要提醒。
+            if prefs.schedule_removed == true || Self.paused(prefs, now: now) { return }
             var notice = Self.loadNotice()
             guard Self.due(notice, now: now) else { return }
             post()
@@ -180,15 +181,11 @@ final class UpdateAgentMonitor: NSObject, UNUserNotificationCenterDelegate {
     }
 
     private func post() {
-        let center = UNUserNotificationCenter.current()
-        center.requestAuthorization(options: [.alert, .provisional]) { granted, _ in
-            guard granted else { return }
-            let content = UNMutableNotificationContent()
-            content.title = "靈犀注音的自動更新已關閉"
-            content.body = "在系統設定關閉背景執行後，不會再收到更新與修正。點一下開啟「登入項目」，打開「靈犀注音」即可恢復。"
-            content.categoryIdentifier = Self.category
-            center.add(UNNotificationRequest(identifier: Self.category, content: content, trigger: nil))
-        }
+        let content = UNMutableNotificationContent()
+        content.title = "靈犀注音的自動更新已關閉"
+        content.body = "在系統設定關閉背景執行後，不會再收到更新與修正。點一下開啟「登入項目」，打開「靈犀注音」即可恢復。"
+        content.categoryIdentifier = Self.category
+        NotificationPermission.deliver(UNNotificationRequest(identifier: Self.category, content: content, trigger: nil))
     }
 
     static func openSettings() { SMAppService.openSystemSettingsLoginItems() }
@@ -205,7 +202,7 @@ final class UpdateAgentMonitor: NSObject, UNUserNotificationCenterDelegate {
         completionHandler()
     }
 
-    // 輸入法是背景 App，系統通常不在前景呈現；仍允許以橫幅顯示（暫時授權下系統會安靜送進通知中心）。
+    // 輸入法是背景 App，系統通常不在前景呈現；仍允許以橫幅顯示（還沒允許、只有暫時授權時系統會安靜送進通知中心）。
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
                                 withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         completionHandler([.banner, .list])

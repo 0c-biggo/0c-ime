@@ -66,6 +66,8 @@ std::string statusLabel(const UpdateStatus &s) {
     if (!s.ok) { return "靈犀注音：無法讀取更新狀態"; }
     if (!s.target.empty()) {
         if (s.blocked == "needs_consent") { return "有新版本 " + s.target + " — 立即安裝"; }
+        // 手動更新查到新版（#340）：按下只下載，下載好後這一列變成「立即安裝」。
+        if (s.blocked == "needs_download" && s.action == "download") { return "有新版本 " + s.target + " — 立即下載"; }
         if (s.blocked == "needs_relogin") { return s.target + "：" + (s.detail.empty() ? "登出再登入後生效" : s.detail); }
         if (s.blocked == "health_failed") { return s.target + " 更新未完成，已保留原版本"; }
         if (s.blocked == "waiting_idle") { return s.target + " 已準備好，閒置時自動更新；可立即完成"; }
@@ -83,6 +85,7 @@ std::string statusLabel(const UpdateStatus &s) {
 
 std::vector<std::string> statusCommand(const UpdateStatus &s) {
     if (s.action == "finish") { return {"finish", "-notify"}; }
+    if (s.action == "download") { return {"download-now", "-notify"}; }
     return {"auto", "-now", "-notify"};
 }
 
