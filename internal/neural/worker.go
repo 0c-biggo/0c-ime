@@ -160,7 +160,15 @@ type Manifest struct {
 // desktopUnknownTones：桌面還沒評估過未知聲調，v2 套件照常載入（打了聲調的段落照樣神經選字；tone0-only 與 PF512
 // 只差未知聲調那一列，打聲調的分數相同），但不開 rerank.Options.UnknownTones，沒打聲調的段落照統計引擎。
 // 手機外殼自己用 rerank.UnknownTonesDeclared 決定。桌面評估過要開時，改成 rerank.UnknownTonesDeclared(m.Schema, m.TonePolicy)。
-func (m Manifest) desktopUnknownTones() bool { return false }
+//
+// UnknownTones 由宿主在載入模型前設定（0c-server 的 -neural-unknown-tones，或雙拼＋不打聲調時自動開啟）：
+// 開啟時依套件宣告（rerank.UnknownTonesDeclared）把沒打聲調的段落也送給模型；預設關閉，行為同上游。
+func (m Manifest) desktopUnknownTones() bool {
+	return UnknownTones && rerank.UnknownTonesDeclared(m.Schema, m.TonePolicy)
+}
+
+// UnknownTones 見 desktopUnknownTones。
+var UnknownTones bool
 
 // options 是套件宣告的融合設定；Worker 與 Supervisor 共用。有前文的權重照 manifest（出貨套件為 2.0）；沒前文用桌面的
 // rerank.DesktopContextlessWeight（#337），截到 manifest 的 weight；Bases 讓字表外的讀音在本機就照統計引擎；Chars 讓含字表外字元的候選在本機拿掉。

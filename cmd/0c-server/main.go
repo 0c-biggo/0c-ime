@@ -68,6 +68,7 @@ func serve() string {
 	installWatchQuiet := flag.Duration("install-watch-idle", installWatchIdle, "最後一個按鍵之後這麼久才交接")
 	neuralWorker := flag.String("neural-worker", "", "worker 腳本路徑（encoder_runtime.py 或 sequence_runtime.py）")
 	neuralTimeout := flag.Duration("neural-timeout", 100*time.Millisecond, "模型決策期限，上限 100ms；逾時保留原排序")
+	neuralUnknownTones := flag.Bool("neural-unknown-tones", false, "沒打聲調的段落也送給神經選字（套件須宣告 tone-mask）；鍵盤排列是雙拼且開了不打聲調時自動開啟")
 	neuralThreads := flag.Int("neural-threads", neural.DefaultThreads(), "模型 CPU threads（1–8，預設為 CPU 邏輯核心數，最多 8）")
 	punctPackage := flag.String("punct-package", "", "提交時補標點 ONNX 包；未指定時依 settings.json 使用資料包旁內附的 neural/punct")
 	punctWorker := flag.String("punct-worker", "", "補標點 worker 腳本路徑（punct_runtime.py）；Python 同 -neural-python")
@@ -151,6 +152,8 @@ func serve() string {
 	eng.Fuzzy = config.FuzzyConfig()
 	eng.InputStyle = config.ProfileRules()
 	eng.MixedInput = config.MixedInput
+	// 雙拼幾乎都不打聲調：開了「不打聲調也能選字」時讓沒打聲調的段落也用神經選字（上游桌面版預設只用統計引擎）。
+	neural.UnknownTones = *neuralUnknownTones || config.KeyboardLayout == settings.LayoutXiaohe && config.EffectiveToneless()
 	eng.Toneless = config.EffectiveToneless() // #150：開啟時 session 停用混打的自動判斷；health 的 mixed_input 照設定檔回報。所有符號鍵打半形時暫停（#282）
 	eng.EnglishAutocomplete = config.EnglishAutocomplete
 	eng.CandidateBeforeCursor = config.CandidateCursor == "before"

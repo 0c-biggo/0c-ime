@@ -123,6 +123,28 @@ func TestDesktopV2PackageKeepsUnknownTonesOff(t *testing.T) {
 	}
 }
 
+// 宿主開了 UnknownTones（雙拼＋不打聲調，或 -neural-unknown-tones）時，宣告 tone-mask 的套件才送沒打聲調的段落；
+// v1 套件照舊不送。預設關閉時行為同 TestDesktopV2PackageKeepsUnknownTonesOff。
+func TestUnknownTonesSwitch(t *testing.T) {
+	vocab := `{"bases":["ㄐㄧㄚ","ㄧ"],"characters":["甲","乙","已"]}`
+	m, err := loadManifest(writePackage(t, func(map[string]any) {}, vocab))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v1, err := loadManifest(writePackage(t, func(m map[string]any) { m["schema"] = rerank.SequenceSchemaV1; delete(m, "tone_policy") }, vocab))
+	if err != nil {
+		t.Fatal(err)
+	}
+	UnknownTones = true
+	defer func() { UnknownTones = false }()
+	if !m.options(nil).UnknownTones || !m.supports(maskedRequest()) {
+		t.Fatal("開啟後 v2 套件應接受沒打聲調的段落")
+	}
+	if v1.options(nil).UnknownTones {
+		t.Fatal("v1 套件沒有宣告 tone-mask，不應開啟")
+	}
+}
+
 func TestDesktopWorkerNeverSendsToneKnown(t *testing.T) {
 	open := func(m Manifest) *Worker {
 		cmd := exec.Command(os.Args[0], "-test.run=^TestWorkerProcess$")
