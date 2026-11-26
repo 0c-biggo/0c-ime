@@ -208,6 +208,20 @@ do {
     let apps = floating["apps"] as! [String: Int]
     check(floating["rescues"] as? Int == ShellStats.maxApps + 6 && floating["fields"] as? Int == 1, "floating counts")
     check(apps.count == ShellStats.maxApps && apps["app.0"] == 2 && apps["unknown"] == nil, "at most \(ShellStats.maxApps) apps are kept")
+    let quiet = object["secure_input"] as! [String: Any]
+    check(quiet["stuck"] as? Int == 0 && quiet["warnings"] as? Int == 0 && quiet["last_stuck_at"] == nil, "no secure input incidents yet")
+    // 安全輸入卡住（#349）：立即寫入，只有次數與時間。
+    clock.addTimeInterval(60)
+    stats.noteSecureInputStuck(warned: true)
+    clock.addTimeInterval(120)
+    stats.noteSecureInputReleased()
+    clock.addTimeInterval(60)
+    stats.noteSecureInputStuck(warned: false)
+    let after = try JSONSerialization.jsonObject(with: Data(contentsOf: path)) as! [String: Any]
+    let secure = after["secure_input"] as! [String: Any]
+    check(secure["stuck"] as? Int == 2 && secure["warnings"] as? Int == 1, "secure input counts \(secure)")
+    check(secure["last_stuck_at"] as? String == "2027-01-15T09:04:30Z" && secure["last_released_at"] as? String == "2027-01-15T09:03:30Z",
+          "secure input times \(secure)")
 }
 
 print("floating checks passed: \(checks)")

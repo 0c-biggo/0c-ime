@@ -65,6 +65,11 @@ func TestWorkerProcess(t *testing.T) {
 		if mode == "context" { // 回報收到的前文字數，驗證宿主是否依契約送出
 			context, _ := r["context"].(string)
 			r["scores"] = []float64{float64(len([]rune(context))), 0}
+			if _, ok := r["digit_before"]; ok { // 模型的協定沒有這個欄位（#337）
+				r["scores"] = []float64{-1, -1}
+			} else if context == DigitContext {
+				r["scores"] = []float64{float64(len([]rune(context))), 1}
+			}
 		}
 		b, _ := json.Marshal(r)
 		fmt.Println(string(b))
@@ -121,6 +126,31 @@ func TestContractsAndContextPolicy(t *testing.T) {
 	opt := sequence.Options()
 	if scores, err := sequence.Score(r); err != nil || scores[0] != 6 || opt.ContextRunes != rerank.MaxContextRunes || opt.Weight != 1 || opt.Margin != 2 || opt.HintGap != 1.5 {
 		t.Fatalf("sequence context: %v %v %+v", scores, err, opt)
+	}
+}
+
+// 「游標前一個字是阿拉伯數字」（#337）：序列模型收到的是固定的前文 "1"，沒有 digit_before 欄位；
+// 不收前文的套件什麼都收不到，也不宣告 DigitContext。
+func TestDigitBeforeBecomesFixedContext(t *testing.T) {
+	r := request()
+	r.DigitBefore = true
+	sequence := contextChild(t, "zuin-sequence-runtime-v1", "confirmed_left_64")
+	if !sequence.Options().DigitContext {
+		t.Fatal("序列模型應宣告 DigitContext")
+	}
+	if scores, err := sequence.Score(r); err != nil || scores[0] != 1 || scores[1] != 1 {
+		t.Fatalf("sequence: %v %v", scores, err)
+	}
+	encoder := contextChild(t, "zuin-encoder-runtime-v1", "empty")
+	if encoder.Options().DigitContext {
+		t.Fatal("不收前文的套件不應宣告 DigitContext")
+	}
+	if scores, err := encoder.Score(r); err != nil || scores[0] != 0 || scores[1] != 0 {
+		t.Fatalf("encoder: %v %v", scores, err)
+	}
+	r.Context = "有前文"
+	if _, err := sequence.Score(r); err == nil {
+		t.Fatal("有前文又帶旗標的請求不合契約")
 	}
 }
 

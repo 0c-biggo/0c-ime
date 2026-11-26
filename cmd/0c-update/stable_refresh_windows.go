@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+
+	"github.com/0c-biggo/0c-ime/internal/update"
 )
 
 // noActiveInstall：這個帳號沒有啟用中的完整安裝。收據已停用（解除安裝之後，版本檔案與個人詞庫保留、可再回復），
@@ -48,16 +50,20 @@ func retireOrphanSchedule() bool {
 // 換上穩定副本並補上開始功能表的「靈犀注音設定」：舊副本建立的這些都是舊版內容。
 func refreshStableUpdater(base string) (bool, error) {
 	source, want := currentUpdater(base, receiptPath(), updaterName())
+	version, _ := (&system{base: base}).Installed()
+	if have, err := update.Hash(stableUpdater(base)); err == nil && stableIsNewerAsset(base, have, version) {
+		return false, nil // 只換更新器裝上的較新更新器（#295）：不換回目前版本附的舊版
+	}
 	return refreshStaleUpdater(source, want, stableUpdater(base), func(source string) error {
 		if elevatedOK() {
-			if err := installScheduleFrom(base, source); err != nil {
+			if err := installScheduleFrom(base, source, version); err != nil {
 				return err
 			}
 		} else {
 			// repair 由一般權限的 0c-ui 執行；0.2.11 以前提權建立的排程一般權限覆寫會被拒絕（Access is denied），
 			// 把已經換好的穩定副本也算成失敗。排程定義指向穩定副本的路徑，換檔後不必重建；定義有變時由 repair 的
 			// refreshTaskDefinitions 在本人改得了時換新（這一版起提權建立的排程開放給本人），否則等下一次完整安裝。
-			if err := replaceStableUpdater(source, base); err != nil {
+			if err := adoptStableUpdater(source, version, base); err != nil { // 先自我測試（#293）
 				return err
 			}
 		}

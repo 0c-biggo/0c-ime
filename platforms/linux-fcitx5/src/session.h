@@ -85,6 +85,16 @@ public:
     }
     // 沒有送給核心就交還應用程式的按鍵（快捷鍵、未映射鍵）同樣表示切換之後有操作。
     void bypassed() { toggled_ = false; }
+    // 上一個交還應用程式的按鍵是數字時，核心記著「游標前一個字是阿拉伯數字」（#337）。之後又有不經過核心的事
+    // （快捷鍵、未映射鍵）時游標可能已經離開數字：沒在組字時送 cancel 讓核心清掉；組字中由送出或放棄組字清掉。
+    // 只在已連線、session 已開時送，不為此啟動 0c-server。失焦與重設本來就送 commit／cancel。
+    void forgetDigit() {
+        if (!digitPassed_) { return; }
+        digitPassed_ = false;
+        if (composing_ || englishPending_ || id_ == 0 || !client_.connected() || gen_ != client_.generation()) { return; }
+        handle({{"type", "cancel"}});
+    }
+    bool digitPassed() const { return digitPassed_; }
     // 交還應用程式的 Ctrl＋Home／End、Ctrl＋Shift+Tab 在放行前同步英文 token 邊界；
     // 一般快捷鍵只交付 pending 英文。這個入口不得改動注音組字：有組字（英文模式保留的中文）時
     // 核心的 Home／End 會移動組字游標，所以只在沒有組字或組字就是 pending 英文時才送邊界鍵。
@@ -102,7 +112,9 @@ public:
     // 啟用（換到這個輸入框）時回到開始時的中英模式（mode_memory=native；start_mode，#160），注音組字保持原狀。
     // 不需恢復或恢復失敗時回傳 ok=false，外殼不重畫組字。
     // 「所有輸入框共用中英模式」（mode_memory=shared，#115）時一律送「設成中文」，核心改成回到共用的模式，
-    // 換到這個輸入框時注／英指示立刻是共用的模式，不必等第一個按鍵。
+    // 換到這個輸入框時中／英指示立刻是共用的模式，不必等第一個按鍵。
+    // 設定程式改了設定（例如鍵盤排列）時引擎會重啟、舊連線跟著斷：聚焦時先看連線還在不在，斷了就連上已在執行的
+    // 引擎重開 session（Client::refresh，不為此啟動 0c-server），open 回覆的設定才是新的（#357）。
     Snapshot activate();
     // 不把前文確認寫進重播；連線改變即失效。
     bool documentContext(uint64_t token) {
@@ -112,6 +124,9 @@ public:
     }
     bool contextAllowed() const { return documentContextEnabled_ && !private_ && !paused_ && !tainted_ && !english_; }
     bool english() const { return english_; }
+    // 引擎目前的鍵盤排列是漢語拼音（open 回覆的 keyboard_layout，#324）：切換提示與子模式文字寫「拼音」而不是「注音」（#357）。
+    // 隨 session 快取，換排列（引擎重啟）後下一個請求或下一次聚焦重開 session 時更新；舊引擎沒有這一項時為 false。
+    bool pinyin() const { return serverInfo_.value("keyboard_layout", "") == "pinyin"; }
     // 引擎目前載入的中英切換鍵設定（toggle-key，#117）。每次向引擎查詢，設定套用（引擎重啟）後立即生效。
     ShiftKeys shiftKeys();
     // 引擎是否認得 0.2.0 的加詞與反悔鍵名（open 回覆的 vocab_keys，#123）。值隨 session 快取，
@@ -170,6 +185,7 @@ private:
     bool toggled_ = false;            // 上一個操作是成功的切換；見 toggle()
     bool english_ = false;            // 最近快照的模式；有組字時連同模式重播
     bool capsLock_ = false;           // 最近快照的 caps_lock（#173）
+    bool digitPassed_ = false;        // 上一個交還應用程式的按鍵是數字（#337）；見 forgetDigit()
     std::vector<nlohmann::json> log_; // 這次組字以來的請求（提交或放棄後清空）
     std::vector<nlohmann::json> cleared_; // 切到英文清空組字前的日誌；只給緊接著的放回切換接續（#90）
 };

@@ -18,7 +18,7 @@ import (
 
 // expand 是組字的音節格：使用者打的音，加上排列的歧義讀音與九宮格的讀音。
 func (s *Session) expand(syls []zhuyin.Syllable) input.Lattice {
-	lat := s.widenSpatial(syls, s.front.Expand(syls))
+	lat := s.widenMerged(syls, s.widenSpatial(syls, s.front.Expand(syls)))
 	for i, y := range syls {
 		if s.literals[i] {
 			continue
@@ -62,6 +62,10 @@ func (s *Session) absorbReadings() bool {
 		}
 		onlyAlias := true
 		for at := g.Start; at < g.End; at++ {
+			if _, ok := s.mergedAt(at); ok {
+				onlyAlias = false // 合併弧合成的音節（merge.go）：讀音整個是修正，syls 放的就是它
+				continue
+			}
 			readings := s.layout.Readings(s.syls[at])
 			used := zhuyin.Syllable("")
 			if matched != nil {

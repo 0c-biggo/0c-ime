@@ -224,9 +224,14 @@ func (m *Model) ResetStore() {
 // Prob 回傳 P(w | left)：系統機率為先驗、個人計數為觀察的階層式貝氏調適。
 // 每一層都是機率的凸組合，恆 ≤ 1，不會互相墊高。
 func (m *Model) Prob(left, w string) float64 {
+	return m.probWith(left, w, m.LM.Bi(left, w), m.sysUni(w))
+}
+
+// probWith 是 Prob，bi、uni 是系統的 LM.Bi(left, w) 與 sysUni(w)（MassTerms 跟 PriorMass 共用同一次查詢）。
+func (m *Model) probWith(left, w string, bi, uni float64) float64 {
 	s := m.Store
-	pUni := (s.Uni[w] + m.P.KappaUni*m.sysUni(w)) / (s.Total + m.P.KappaUni)
-	pSys := m.P.Mu*m.LM.Bi(left, w) + (1-m.P.Mu)*pUni
+	pUni := (s.Uni[w] + m.P.KappaUni*uni) / (s.Total + m.P.KappaUni)
+	pSys := m.P.Mu*bi + (1-m.P.Mu)*pUni
 	ctx := s.Ctx[left]
 	if ctx == 0 { // 這個上下文沒有任何個人觀察：c(L,w) 必為 0，省下組鍵
 		return pSys
@@ -238,7 +243,11 @@ func (m *Model) Prob(left, w string) float64 {
 // SystemProb 是完全不含個人資料的系統機率（decode.Evidenced）。Prob 的先驗部分混有個人 unigram
 // 計數，用過兩次的詞就會超過「麻煩」這類常用詞的系統機率，不能拿來當補全信心的先驗。
 func (m *Model) SystemProb(left, w string) float64 {
-	return m.P.Mu*m.LM.Bi(left, w) + (1-m.P.Mu)*m.sysUni(w)
+	return m.systemWith(m.LM.Bi(left, w), m.sysUni(w))
+}
+
+func (m *Model) systemWith(bi, uni float64) float64 {
+	return m.P.Mu*bi + (1-m.P.Mu)*uni
 }
 
 // SystemBigram 是 SystemProb 中系統 bigram 實際觀察到的部分，不含退回單字頻率的內插（decode.SystemBigram）。
@@ -279,8 +288,22 @@ func (m *Model) PriorVersion() (any, uint64) {
 // PriorMass removes positive learned counts while preserving the same context
 // denominator as Prob. The decoder uses it only to cap proper word prefixes.
 func (m *Model) PriorMass(left, word string) float64 {
+	return m.priorMassWith(left, m.SystemProb(left, word))
+}
+
+func (m *Model) priorMassWith(left string, system float64) float64 {
 	kappa := m.kappa(left)
-	return m.SystemProb(left, word) * kappa / (m.Store.Ctx[left] + kappa)
+	return system * kappa / (m.Store.Ctx[left] + kappa)
+}
+
+// MassTerms 是 (PriorMass(left, w), Prob(left, w))，系統的 bigram 與 unigram 只查一次（decode.MassTerms）。self 不是 m
+// 本身時（包著 Model 的評分器沿用了這個方法，自己的 Prob、PriorMass 可能不同）回傳 false。
+func (m *Model) MassTerms(self any, left, w string) (prior, prob float64, ok bool) {
+	if self != any(m) {
+		return 0, 0, false
+	}
+	bi, uni := m.LM.Bi(left, w), m.sysUni(w)
+	return m.priorMassWith(left, m.systemWith(bi, uni)), m.probWith(left, w, bi, uni), true
 }
 
 // ChoseReading 回報使用者是否曾親手用讀音 syls 選過 w（個人讀音自適應的同一份紀錄）。

@@ -937,9 +937,24 @@ impl TextService_Impl {
             .confirm_context(id, confirmed);
     }
 
+    /// 沒在組字的注音模式按鍵可能開始新組字：讀游標前一個字是不是阿拉伯數字（#337）。英文模式打的數字不經過引擎，
+    /// 引擎只能靠這個知道「3 隻」前面有 3；其他情況（組字中、英文模式、私人欄位、關了前文確認）不讀。
+    fn digit_before(&self, ctx: Option<&ITfContext>) -> Option<bool> {
+        let (client, flags, wanted) = {
+            let st = self.state.borrow();
+            (st.client_id, st.activate_flags, !st.composing && !st.session.english() && st.session.wants_digit_before())
+        };
+        if !wanted {
+            return None;
+        }
+        // IMM32 程式裡是送訊息給焦點視窗（context.rs）：這裡已經放掉 state 的借用。
+        context::digit_before(ctx?, client, flags)
+    }
+
     /// `keep`：引擎沒處理這一鍵也吃下（照快照送出文字，不把按鍵交給程式）；引擎沒有回應時照舊交給程式。
     fn handle_key(&self, ctx: Option<&ITfContext>, key: &str, keep: bool) -> bool {
-        let mut snapshot = self.state.borrow_mut().session.key(key);
+        let digit = self.digit_before(ctx);
+        let mut snapshot = self.state.borrow_mut().session.key_after(key, digit);
         snapshot.handled |= keep && snapshot.ok;
         zdebug!(
             "snapshot ok={} handled={} composing={} commit_len={}",

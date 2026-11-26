@@ -30,6 +30,9 @@ enum SettingsLauncher {
         return nil
     }
 
+    // --register-entry 最久等多久（#353）；比 0c-update 的時限（registerEntryTimeout，20 秒）短，由啟動器自己先結束。
+    static let registerDeadline: TimeInterval = 15
+
     static func register(app: URL) -> OSStatus {
         LSRegisterURL(app as CFURL, true)
     }

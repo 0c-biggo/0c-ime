@@ -16,14 +16,14 @@ SWIFTC ?= xcrun swiftc
 # 目標架構：arm64 或 x86_64（Apple Silicon 交叉編譯 Intel 版）；0c-server 照 GOARCH 編，由 scripts/package_macos.py 一起設定。
 ARCH ?= $(shell uname -m)
 SWIFTFLAGS := -swift-version 5 -O -target $(ARCH)-apple-macosx13.0
-SHARED := Sources/Protocol.swift Sources/MarkedText.swift Sources/EngineClient.swift Sources/KeyMapping.swift Sources/ModelStatus.swift Sources/CaretGeometry.swift Sources/RequestQueue.swift Sources/SecureInputPolicy.swift Sources/RightShift.swift Sources/FloatingComposition.swift
+SHARED := Sources/Protocol.swift Sources/MarkedText.swift Sources/EngineClient.swift Sources/KeyMapping.swift Sources/ModelStatus.swift Sources/CaretGeometry.swift Sources/RequestQueue.swift Sources/SecureInputPolicy.swift Sources/RightShift.swift Sources/FloatingComposition.swift Sources/CaretText.swift
 
-.PHONY: all app server test test-controller-recovery test-floating test-request-queue test-input-source test-retire test-ui test-update-ui test-update-notification test-settings-launcher data-basic install clean icon
+.PHONY: all app server test test-controller-recovery test-floating test-request-queue test-input-source test-retire test-secure-input test-ui test-update-ui test-update-notification test-notification-permission test-settings-launcher data-basic install clean icon
 all: app
 
 $(BUILD)/0c: $(wildcard Sources/*.swift)
 	@mkdir -p $(BUILD)
-	$(SWIFTC) $(SWIFTFLAGS) -framework AppKit -framework InputMethodKit -framework Carbon -framework ServiceManagement -framework UserNotifications $^ -o $@
+	$(SWIFTC) $(SWIFTFLAGS) -framework AppKit -framework InputMethodKit -framework Carbon -framework IOKit -framework ServiceManagement -framework UserNotifications $^ -o $@
 
 $(BUILD)/0c-settings-launcher: SettingsLauncher/Launcher.swift SettingsLauncher/main.swift
 	@mkdir -p $(BUILD)
@@ -94,7 +94,7 @@ $(BUILD)/integration-test: $(SHARED) Tests/main.swift
 	@mkdir -p $(BUILD)
 	$(SWIFTC) $(SWIFTFLAGS) -framework AppKit -framework Carbon $^ -o $@
 
-test: $(BUILD)/integration-test server test-input-source test-request-queue test-retire test-controller-recovery test-floating
+test: $(BUILD)/integration-test server test-input-source test-request-queue test-retire test-secure-input test-controller-recovery test-floating test-notification-permission
 	$(BUILD)/integration-test "$(abspath $(BUILD)/0c-server)" "$(abspath $(ROOT)/testdata/toy)"
 
 # Same controller/IPC implementation with headless host adapters; no IMK
@@ -117,6 +117,14 @@ $(BUILD)/floating-test: Sources/FloatingComposition.swift Sources/ShellStats.swi
 
 test-floating: $(BUILD)/floating-test
 	$(BUILD)/floating-test
+
+# 安全輸入被背景程式卡住的判斷（#349）：純邏輯，不讀系統狀態、不跳視窗。
+$(BUILD)/secure-input-test: Sources/SecureInputPolicy.swift Sources/SecureInputWatch.swift Tests/SecureInput/main.swift
+	@mkdir -p $(BUILD)
+	$(SWIFTC) $(SWIFTFLAGS) $^ -o $@
+
+test-secure-input: $(BUILD)/secure-input-test
+	$(BUILD)/secure-input-test
 
 $(BUILD)/request-queue-test: Sources/Protocol.swift Sources/RequestQueue.swift Tests/RequestQueue/main.swift
 	@mkdir -p $(BUILD)
@@ -153,12 +161,20 @@ $(BUILD)/update-menu-test: Sources/UpdateMenu.swift Tests/UpdateMenu/main.swift
 test-update-ui: $(BUILD)/update-menu-test
 	$(BUILD)/update-menu-test
 
-$(BUILD)/update-notification-test: Sources/UpdateMenu.swift Sources/UpdateNotification.swift Tests/UpdateNotification/main.swift
+$(BUILD)/update-notification-test: Sources/UpdateMenu.swift Sources/NotificationPermission.swift Sources/UpdateNotification.swift Tests/UpdateNotification/main.swift
 	@mkdir -p $(BUILD)
 	$(SWIFTC) $(SWIFTFLAGS) -framework AppKit -framework UserNotifications $^ -o $@
 
 test-update-notification: $(BUILD)/update-notification-test
 	$(BUILD)/update-notification-test
+
+# 通知權限什麼時候正式詢問（#350）：純邏輯與暫存檔，不呼叫通知中心。
+$(BUILD)/notification-permission-test: Sources/NotificationPermission.swift Tests/NotificationPermission/main.swift
+	@mkdir -p $(BUILD)
+	$(SWIFTC) $(SWIFTFLAGS) -framework AppKit -framework UserNotifications $^ -o $@
+
+test-notification-permission: $(BUILD)/notification-permission-test
+	$(BUILD)/notification-permission-test
 
 $(BUILD)/settings-launcher-test: SettingsLauncher/Launcher.swift Tests/SettingsLauncher/main.swift
 	@mkdir -p $(BUILD)

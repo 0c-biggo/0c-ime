@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -107,6 +108,7 @@ func feed(args []string) error {
 	flags.Var(&kindFor, "kind-for", "個別平台改用的種類，格式 OS=core|shell（例如 linux=core；可重複）。"+
 		"舊更新器裝不上某平台的外殼時，該平台先發 core 換更新器（docs/releasing.md）")
 	out := flags.String("out", "", "輸出索引檔；簽章寫入同名 .sig")
+	rules := flags.String("rules", "", "依版本選資產的規則（JSON 檔，#295，格式見 docs/releasing.md）；0.2.15 起的更新器才看")
 	var assets assetFlags
 	flags.Var(&assets, "asset", "套件路徑=HTTPS 網址（可重複；每平台一個）")
 	if err := flags.Parse(args); err != nil {
@@ -168,6 +170,11 @@ func feed(args []string) error {
 			return fmt.Errorf("-kind-for %s 沒有對應的 -asset", os)
 		}
 	}
+	if *rules != "" {
+		if f.Rules, err = loadRules(*rules, f.Version); err != nil {
+			return fmt.Errorf("-rules：%w", err)
+		}
+	}
 	body, sig, err := update.SignFeed(f, priv)
 	if err != nil {
 		return err
@@ -176,6 +183,68 @@ func feed(args []string) error {
 		return err
 	}
 	return os.WriteFile(*out+".sig", sig, 0o644)
+}
+
+// ruleSpec 是 -rules 檔的一條規則：條件同 update.FeedRule，資產以本機套件路徑與網址指定，雜湊、大小與版本由套件算出。
+type ruleSpec struct {
+	OS             string `json:"os"`
+	Arch           string `json:"arch"`
+	InstalledMin   string `json:"installed_min"`
+	InstalledBelow string `json:"installed_below"`
+	UpdaterMin     string `json:"updater_min"`
+	UpdaterBelow   string `json:"updater_below"`
+	Version        string `json:"version"`
+	Assets         []struct {
+		Kind string `json:"kind"`
+		Path string `json:"path"`
+		URL  string `json:"url"`
+	} `json:"assets"`
+}
+
+// loadRules 讀 -rules 檔：每個資產的平台必須與規則相同；core／shell 的版本必須是規則（或索引）的版本，
+// updater 的版本就是套件的版本。其餘檢查由 SignFeed 的嚴格檢查負責。
+func loadRules(path, feedVersion string) ([]update.FeedRule, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var specs []ruleSpec
+	if err := json.Unmarshal(b, &specs); err != nil {
+		return nil, err
+	}
+	var out []update.FeedRule
+	for i, spec := range specs {
+		rule := update.FeedRule{OS: spec.OS, Arch: spec.Arch, InstalledMin: spec.InstalledMin, InstalledBelow: spec.InstalledBelow,
+			UpdaterMin: spec.UpdaterMin, UpdaterBelow: spec.UpdaterBelow, Version: spec.Version}
+		version := spec.Version
+		if version == "" {
+			version = feedVersion
+		}
+		for _, a := range spec.Assets {
+			r, err := releaseOf(a.Path)
+			if err != nil {
+				return nil, fmt.Errorf("規則 %d：%s：%w", i, a.Path, err)
+			}
+			if r.OS != spec.OS || r.Arch != spec.Arch {
+				return nil, fmt.Errorf("規則 %d 是 %s/%s，套件 %s 是 %s/%s", i, spec.OS, spec.Arch, a.Path, r.OS, r.Arch)
+			}
+			if a.Kind != update.KindUpdater && r.Version != version {
+				return nil, fmt.Errorf("規則 %d 提供 %s，套件 %s 是 %s", i, version, a.Path, r.Version)
+			}
+			sum, err := update.Hash(a.Path)
+			if err != nil {
+				return nil, err
+			}
+			st, err := os.Stat(a.Path)
+			if err != nil {
+				return nil, err
+			}
+			asset := update.SignedAsset{Asset: update.Asset{OS: r.OS, Arch: r.Arch, URL: a.URL, SHA256: sum, Size: st.Size()}, Kind: a.Kind, Version: r.Version}
+			rule.Assets = append(rule.Assets, asset)
+		}
+		out = append(out, rule)
+	}
+	return out, nil
 }
 
 // releaseOf 從壓縮包讀出 release.json 的版本、通道與平台（不解壓其他檔案）。
@@ -262,11 +331,28 @@ func verify(args []string) error {
 		return err
 	}
 	fmt.Printf("索引有效：%s %s serial=%d rollout=%d%% 到期 %s\n", f.Channel, f.Version, f.Serial, f.Rollout, f.Expires.Format(time.RFC3339))
+	type item struct {
+		label string
+		asset update.SignedAsset
+	}
+	var items []item
 	for _, a := range f.Assets {
-		fmt.Printf("  %s/%s %s %d bytes %s %s\n", a.OS, a.Arch, a.Kind, a.Size, a.SHA256, a.URL)
-		if !*assets {
+		items = append(items, item{fmt.Sprintf("%s/%s %s", a.OS, a.Arch, a.Kind), a})
+	}
+	for i, r := range f.Rules {
+		fmt.Printf("規則 %d：%s/%s installed [%s, %s) updater [%s, %s) version %s\n", i, r.OS, r.Arch, r.InstalledMin, r.InstalledBelow, r.UpdaterMin, r.UpdaterBelow, r.Version)
+		for _, a := range r.Assets {
+			items = append(items, item{fmt.Sprintf("  規則 %d %s/%s %s %s", i, r.OS, r.Arch, a.Kind, a.Version), a})
+		}
+	}
+	seen := map[string]bool{}
+	for _, it := range items {
+		a := it.asset
+		fmt.Printf("  %s %d bytes %s %s\n", it.label, a.Size, a.SHA256, a.URL)
+		if !*assets || seen[a.URL+a.SHA256] {
 			continue
 		}
+		seen[a.URL+a.SHA256] = true
 		dir, err := os.MkdirTemp("", "0c-release-verify-")
 		if err != nil {
 			return err
@@ -274,7 +360,7 @@ func verify(args []string) error {
 		_, err = update.Download(ctx, update.Client(), a.Asset, dir)
 		os.RemoveAll(dir)
 		if err != nil {
-			return fmt.Errorf("%s/%s：%w", a.OS, a.Arch, err)
+			return fmt.Errorf("%s：%w", it.label, err)
 		}
 		fmt.Println("    已下載並核對")
 	}
@@ -341,6 +427,10 @@ func renewFeed(body, sig []byte, keys []ed25519.PublicKey, now time.Time, minLef
 	if err != nil {
 		return nil, time.Time{}, err
 	}
+	// 續簽是重新序列化這份索引：有這一版不認得的欄位時會被悄悄丟掉（例如舊的續簽工具遇到 rules，#295），寧可失敗。
+	if err := lossless(body, f); err != nil {
+		return nil, time.Time{}, err
+	}
 	if f.Expires.Sub(now) >= minLeft {
 		return nil, f.Expires, nil
 	}
@@ -348,6 +438,25 @@ func renewFeed(body, sig []byte, keys []ed25519.PublicKey, now time.Time, minLef
 	f.Serial++
 	f.Issued = now
 	return f, previous, nil
+}
+
+// lossless：f 重新序列化後與原本的內容相同（忽略空白與欄位順序），也就是沒有這一版不認得的欄位。
+func lossless(body []byte, f *update.SignedFeed) error {
+	again, err := json.Marshal(f)
+	if err != nil {
+		return err
+	}
+	var a, b any
+	if err := json.Unmarshal(body, &a); err != nil {
+		return err
+	}
+	if err := json.Unmarshal(again, &b); err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(a, b) {
+		return fmt.Errorf("索引有這一版續簽工具不認得的欄位，續簽會丟掉它們；請先以 scripts/install_renew_timer.sh 換上新版的 0c-release")
+	}
+	return nil
 }
 
 func fetchFeed(ctx context.Context, address string) ([]byte, []byte, error) {

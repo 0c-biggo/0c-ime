@@ -106,7 +106,12 @@ func macUserAway() bool {
 // 不加 -j（隱藏啟動）：隱藏啟動的 App 整個是隱藏狀態，候選窗排好版也不會上螢幕，空白鍵、↓ 叫不出選字窗（#194）。
 // 0c.app 是背景程式、啟動時沒有視窗，不隱藏也不會顯示任何東西。
 func openMacShell(app string) {
-	if out, err := exec.Command("/usr/bin/open", "-g", app).CombinedOutput(); err != nil {
+	// 與 LSRegisterURL 一樣經過 LaunchServices，桌面有沒回答的系統詢問時可能一直等（#353）：加上時限。
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "/usr/bin/open", "-g", app)
+	cmd.WaitDelay = 2 * time.Second
+	if out, err := cmd.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "0c-update: 無法啟動新的輸入法程式（%s）：%v\n", strings.TrimSpace(string(out)), err)
 	}
 }
@@ -250,7 +255,7 @@ func waitShellExit(p uiProcess, wait time.Duration) bool {
 }
 
 func processExe(pid uint32) string {
-	out, err := exec.Command("/bin/ps", "-p", strconv.FormatUint(uint64(pid), 10), "-o", "comm=").Output()
+	out, err := macShellOutput("/bin/ps", "-p", strconv.FormatUint(uint64(pid), 10), "-o", "comm=")
 	if err != nil {
 		return ""
 	}

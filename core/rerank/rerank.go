@@ -15,18 +15,30 @@ const MaxContextRunes = 64
 // MaxCandidates 是一次評分的候選上限：打出讀音的 N-best 8 個，加上輕聲擴充最多 8 個。
 const MaxCandidates = 16
 
-// ModeText 是單音節文字評分：評分器只以前文續寫機率評候選，不看讀音，
-// 讓句尾助詞（嗎／吧／啦…）在打成一聲或輕聲時仍由語境決定。必須有前文。
+// ModeText 是文字評分：評分器只以前文續寫機率評候選（log P(候選文字 | 前文)），不看讀音。
+//
+//   - 單音節（所有評分器）：讓句尾助詞（嗎／吧／啦…）在打成一聲或輕聲時仍由語境決定。必須有前文。
+//   - 2–32 字（只送給宣告 Options.TextAnyLength 的評分器）：注音九宮格同一串鍵有多種拼法時，候選跨拼法，
+//     讀音評分的分數不能互相比，改用文字評分讓所有候選在同一個尺度上。前文可以是空的。
+//
+// 兩種情況的 Reading 都是統計首選的讀音（同讀音評分，沒打聲調的照 MaskTones），只用來表示字數：
+// 評分器不看它，每個候選的字數等於 len(Reading)。
 const ModeText = "text"
 
 // Request 只含已輸入的完整音節與既有候選，沒有參考答案或任意文件文字。
 // Context 是外殼確認已寫入文件的自身提交文字（最多 MaxContextRunes 字）；
 // 只有宣告需要前文的評分器才會收到，私人／暫停／英數狀態一律為空。
+//
+// 英數狀態唯一的例外是 DigitBefore（#337）：游標前一個字是阿拉伯數字（英數模式或數字鍵盤打的，核心看到按鍵交還
+// 應用程式；Windows 由外殼讀游標前一個字）。只是一個位元，不含數字本身；只在記憶體，不寫檔、不學習、不進 trace，
+// 私人欄位、暫停與前文設定關閉時不帶，游標移動、換焦點、Esc 清掉組字時清掉。只用在組字的第一段、Context 是空的
+// 讀音評分（Mode ""），只送給宣告 Options.DigitContext 的評分器；融合權重照有前文的 Weight（見 Options.WeightOf）。
 type Request struct {
 	AllowPartial bool                `json:"allow_partial,omitempty"`
 	Mode         string              `json:"mode,omitempty"` // "" 音字評分；ModeText 只看前文（單音節聲調容錯）
 	Revision     int                 `json:"revision"`
 	Context      string              `json:"context,omitempty"`
+	DigitBefore  bool                `json:"digit_before,omitempty"`
 	Reading      []zhuyin.Syllable   `json:"reading"`
 	Candidates   []decode.Hypothesis `json:"candidates"`
 
@@ -64,17 +76,38 @@ type Options struct {
 	// ContextlessWeight >0 時，前文是空的請求改用這個融合權重（平台設定，例：手機沒前文 0.5，見 MobileWeight）；
 	// 0 一律用 Weight。單音節文字評分一定有前文，用 TextWeight。
 	ContextlessWeight float64
+	// ShortContextlessWeight >0 時，前文是空的而且讀音不超過 ShortContextlessSyllables 個音節的請求改用這個權重，
+	// 優先於 ContextlessWeight（平台設定，例：桌面短讀音沒前文 0.5，見 DesktopContextlessWeight）。
+	ShortContextlessWeight    float64
+	ShortContextlessSyllables int
+	// TextAnyLength：評分器接受 2–32 字、前文可以是空的 ModeText（見 ModeText）。由外殼宣告：模型的文字評分本來就有
+	// （套件 text_weight > 0），多字只是外殼的 Prepare 要把候選樹接在沒有讀音的 OUT 後面，是外殼程式的能力，不是套件的。
+	// 開啟時，有九宮格位置可以換拼法的段落改送文字評分（session rerankSegmentBody）；其他請求不變。
+	// 關閉時（桌面、還沒實作的外殼）所有請求與決策都跟以前逐位元組相同。
+	TextAnyLength bool
+	// DigitContext：評分器認得 Request.DigitBefore（#337，internal/neural 把它換成模型的前文 "1"）。
+	// 關閉時（手機、沒有前文的套件）不送這個旗標，請求與決策跟以前相同。
+	DigitContext bool
 }
 
-// Supported 採整例回退，不以刪除 Partial/Correction 路徑製造虛假的召回改善。
-func Supported(r Request) bool {
+// Supported 採整例回退，不以刪除 Partial/Correction 路徑製造虛假的召回改善。這是所有評分器都接受的請求；
+// 多字的 ModeText 另看評分器的 Options.TextAnyLength（Options.Supports）。
+func Supported(r Request) bool { return supported(r, false) }
+
+// supported 是 Supported；anyText 時另外接受 2–32 字的 ModeText，前文可以是空的。
+func supported(r Request, anyText bool) bool {
 	switch r.Mode {
 	case "":
 		if len(r.Reading) < 2 || len(r.Reading) > 32 {
 			return false
 		}
 	case ModeText:
-		if len(r.Reading) != 1 || r.Context == "" {
+		switch n := len(r.Reading); {
+		case n == 1:
+			if r.Context == "" {
+				return false
+			}
+		case n < 1 || n > 32 || !anyText:
 			return false
 		}
 	default:
@@ -85,6 +118,9 @@ func Supported(r Request) bool {
 	}
 	if !utf8.ValidString(r.Context) || utf8.RuneCountInString(r.Context) > MaxContextRunes {
 		return false
+	}
+	if r.DigitBefore && (r.Context != "" || r.Mode != "") {
+		return false // 旗標只代表「沒有前文、前一個字是數字」，只用在讀音評分
 	}
 	if r.ToneKnown != nil && len(r.ToneKnown) != len(r.Reading) {
 		return false

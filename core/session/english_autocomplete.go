@@ -140,7 +140,9 @@ func (s *Session) refreshEnglishCandidates() {
 		if len(prefixes) == limit {
 			break
 		}
-		if folded := strings.ToLower(word.Text); len(word.Text) > len(s.mixed.raw) && !seen[folded] {
+		// 打完整個字時，常見寫法（iphone → iPhone，#358）也是建議；和打的完全相同才不是。
+		whole := word.Text != s.mixed.raw && strings.EqualFold(word.Text, s.mixed.raw)
+		if folded := strings.ToLower(word.Text); (len(word.Text) > len(s.mixed.raw) || whole) && !seen[folded] {
 			prefixes = append(prefixes, word)
 			seen[folded] = true
 		}

@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -255,10 +256,10 @@ func notify(n autoupdate.Notice) error {
 	return startNoticeHelper(cmd, 15*time.Second)
 }
 
-// notifyWithAction 顯示有「立即安裝／稍後」按鈕的通知，等到使用者按下（回傳動作名稱）、
+// notifyWithAction 顯示有「立即安裝（手動更新是立即下載）／稍後」按鈕的通知，等到使用者按下（回傳動作名稱）、
 // 關閉通知或逾時（回傳空字串）。
 func notifyWithAction(ctx context.Context, n autoupdate.Notice) (string, error) {
-	return noticeWithActions(ctx, n, []string{n.Action, "立即安裝", "later", "稍後 1 小時"})
+	return noticeWithActions(ctx, n, []string{n.Action, noticeButtonLabel(n.Action), "later", "稍後 1 小時"})
 }
 
 // noticeWithActions 顯示帶按鈕的通知（actions 是 D-Bus 的「動作代碼, 按鈕文字」成對清單），等使用者按下
@@ -335,7 +336,8 @@ func installSchedule(base string) error {
 		return err
 	}
 	stable := stableUpdater(base)
-	if err = replaceUpdater(self, stable); err != nil {
+	// 換穩定副本前先自我測試（#293）；沒通過時保留原本的，排程照樣指著它。
+	if err = adoptStableUpdater(self, buildVersion, base); err != nil && !errors.Is(err, errNotQualified) && !errors.Is(err, errStableNewer) {
 		return err
 	}
 	service := fmt.Sprintf(`[Unit]

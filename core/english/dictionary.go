@@ -31,6 +31,16 @@ type Dictionary struct {
 	words     []Word
 	nodes     []trieNode
 	noSuggest []bool
+	// 以下只有詞頻字典（NewRanked、資料包格式 2，ranked.go）才有；舊字典都是零值，行為不變。
+	ranked      bool
+	protected   []bool              // 台灣常用英文：照打、不自動修正
+	displayAt   []uint32            // 有常見寫法（iPhone、I'm、OK）的詞，遞增的 index
+	display     []string            // 與 displayAt 對齊的常見寫法
+	contraction map[string][]uint32 // 去掉撇號的拼法 → 縮寫（dont → don't）
+	corpusOnly  []bool              // 只來自語料統計、不在審查過的詞表（ESDB、technical.tsv）的詞
+	// hidden 不是 nil 的是混打用的同一份字典（Mixed，#358）：這些詞查不到、不列候選，其他資料共用。
+	hidden []bool
+	mixed  *Dictionary
 }
 
 type trieNode struct {
@@ -102,30 +112,43 @@ func asciiLetters(s string) bool {
 }
 
 func (d *Dictionary) Has(word string) bool {
-	if d == nil || len(word) > MaxWordBytes || !asciiLetters(word) {
-		return false
+	_, ok := d.lookup(word)
+	return ok
+}
+
+// lookup 找出詞的 index。詞頻字典的詞可以含撇號（don't）。
+func (d *Dictionary) lookup(word string) (int, bool) {
+	if d == nil || len(word) > MaxWordBytes || !d.typable(word) {
+		return 0, false
 	}
 	word = strings.ToLower(word)
 	i := sort.Search(len(d.words), func(i int) bool { return d.words[i].Text >= word })
-	return i < len(d.words) && d.words[i].Text == word
+	return i, i < len(d.words) && d.words[i].Text == word && !d.isHidden(i)
+}
+
+// isHidden：混打用的字典不認這個詞（Mixed）。
+func (d *Dictionary) isHidden(i int) bool { return d.hidden != nil && d.hidden[i] }
+
+// typable 是查詢能接受的輸入：ASCII 字母；詞頻字典另外接受字母之間的撇號。
+func (d *Dictionary) typable(s string) bool {
+	if d != nil && d.ranked {
+		return rankedTyped(s)
+	}
+	return asciiLetters(s)
 }
 
 // Suggestible distinguishes recognizable no-suggest words from candidates.
 func (d *Dictionary) Suggestible(word string) bool {
-	if !d.Has(word) {
-		return false
-	}
-	word = strings.ToLower(word)
-	i := sort.Search(len(d.words), func(i int) bool { return d.words[i].Text >= word })
-	return !d.noSuggest[i]
+	i, ok := d.lookup(word)
+	return ok && !d.noSuggest[i]
 }
 
 func (d *Dictionary) Prefix(prefix string, limit int) []Candidate {
-	if d == nil || limit <= 0 || len(prefix) > MaxWordBytes || !asciiLetters(prefix) {
+	if d == nil || limit <= 0 || len(prefix) > MaxWordBytes || !d.typable(prefix) {
 		return nil
 	}
 	p := strings.ToLower(prefix)
-	if !letters(p) || len(p) > MaxWordBytes {
+	if !d.ranked && !letters(p) || len(p) > MaxWordBytes {
 		return nil
 	}
 	n := uint32(1)
@@ -148,7 +171,8 @@ func (d *Dictionary) Prefix(prefix string, limit int) []Candidate {
 		item := q.pop()
 		if item.node != 0 {
 			node := d.nodes[item.node-1]
-			if node.word != 0 && !d.noSuggest[node.word-1] {
+			// 子樹的 best 可能是混打不認的詞；它仍是子樹權重的上限，跳過它不影響其他詞的順序。
+			if node.word != 0 && !d.noSuggest[node.word-1] && !d.isHidden(int(node.word-1)) {
 				q.push(prefixItem{best: node.word})
 			}
 			for c := node.child; c != 0; c = d.nodes[c-1].next {
@@ -159,6 +183,10 @@ func (d *Dictionary) Prefix(prefix string, limit int) []Candidate {
 			continue
 		}
 		w := d.words[item.best-1]
+		if d.ranked {
+			out = append(out, Candidate{Text: d.cased(prefix, int(item.best-1)), Weight: w.Weight})
+			continue
+		}
 		suffix := w.Text[len(p):]
 		if prefix == strings.ToUpper(prefix) {
 			suffix = strings.ToUpper(suffix)
@@ -183,21 +211,47 @@ func (d *Dictionary) NearCommon(typed string, minimumPrior float64) bool {
 }
 
 func (d *Dictionary) corrections(typed string, limit int, minimumPrior float64) []Candidate {
-	if d == nil || limit <= 0 || len(typed) > MaxWordBytes || !asciiLetters(typed) || d.Has(typed) {
+	if d == nil || limit <= 0 || len(typed) > MaxWordBytes || !d.typable(typed) || d.Has(typed) {
 		return nil
+	}
+	if d.ranked {
+		return d.rankedCorrections(typed, limit, minimumPrior)
 	}
 	p := strings.ToLower(typed)
 	if !letters(p) || len(p) < 3 || len(p) > MaxWordBytes {
 		return nil
 	}
-	maxEdits := 1
-	if len(p) >= 6 {
-		maxEdits = 2
-	}
 	limit = min(limit, MaxCandidates)
 	var out []Candidate
 	allCaps := typed == strings.ToUpper(typed)
 	title := typed[0] >= 'A' && typed[0] <= 'Z'
+	d.within(p, maxEdits(p), func(word uint32, edits int) {
+		w := d.words[word]
+		if w.Weight < minimumPrior {
+			return
+		}
+		text := w.Text
+		if allCaps {
+			text = strings.ToUpper(text)
+		} else if title {
+			text = strings.ToUpper(text[:1]) + text[1:]
+		}
+		out = append(out, Candidate{Text: text, Distance: edits, Weight: w.Weight})
+		rank(out)
+		out = out[:min(len(out), limit)]
+	})
+	return out
+}
+
+func maxEdits(p string) int {
+	if len(p) >= 6 {
+		return 2
+	}
+	return 1
+}
+
+// within 對每個與 p 的 OSA 編輯距離不超過 limit 的可建議詞呼叫 fn（詞的 index、距離）。
+func (d *Dictionary) within(p string, limit int, fn func(word uint32, edits int)) {
 	// One row per trie depth; siblings reuse the same scratch storage. Queries
 	// prune only impossible edit-distance branches, never by word position.
 	var rows [MaxWordBytes + 1][MaxWordBytes + 1]uint8
@@ -221,20 +275,11 @@ func (d *Dictionary) corrections(typed string, limit int, minimumPrior float64) 
 			}
 			minimum = min(minimum, row[j])
 		}
-		if int(minimum) > maxEdits {
+		if int(minimum) > limit {
 			return
 		}
-		if n.word != 0 && !d.noSuggest[n.word-1] && d.words[n.word-1].Weight >= minimumPrior && int(row[len(p)]) <= maxEdits {
-			w, edits := d.words[n.word-1], int(row[len(p)])
-			text := w.Text
-			if allCaps {
-				text = strings.ToUpper(text)
-			} else if title {
-				text = strings.ToUpper(text[:1]) + text[1:]
-			}
-			out = append(out, Candidate{Text: text, Distance: edits, Weight: w.Weight})
-			rank(out)
-			out = out[:min(len(out), limit)]
+		if n.word != 0 && !d.noSuggest[n.word-1] && !d.isHidden(int(n.word-1)) && int(row[len(p)]) <= limit {
+			fn(n.word-1, int(row[len(p)]))
 		}
 		for c := n.child; c != 0; c = d.nodes[c-1].next {
 			visit(c, depth+1, n.letter)
@@ -243,7 +288,6 @@ func (d *Dictionary) corrections(typed string, limit int, minimumPrior float64) 
 	for c := d.nodes[0].child; c != 0; c = d.nodes[c-1].next {
 		visit(c, 1, 0)
 	}
-	return out
 }
 
 func (d *Dictionary) Len() int {

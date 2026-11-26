@@ -1,6 +1,6 @@
 /* qsel_bench: time qsel on recorded inputs and check them against reference scores.
  *
- *   qsel_bench [-t threads] [-r rounds] [-d model.onnx.data] [-o scores.bin] model.qsel cases.bin
+ *   qsel_bench [-t threads] [-r rounds] [-d model.onnx.data] [-o scores.bin] [-p rows] model.qsel cases.bin
  *
  * cases.bin is a sequence of records: uint64 n, n bytes of packed inputs (APP
  * mobile/neural Pack), uint64 R, R float32 reference scores (NaN = none); all
@@ -11,6 +11,8 @@
  * and Android the process memory from /proc/self/smaps_rollup after open, after
  * the first round and at the end (VmHWM is the peak resident size). -o writes the
  * first round's scores (float32, case after case) for comparing builds or threads.
+ * -p 開前綴快取（qsel_set_prefix_cache，最多這麼多列）；案例照檔案順序（錄下的順序）跑，
+ * 並印出沿用的列數與快取最大的 bytes。
  */
 #define _GNU_SOURCE
 #include <math.h>
@@ -92,17 +94,18 @@ static int cmpd(const void *a, const void *b) {
 }
 
 int main(int argc, char **argv) {
-    int threads = 1, rounds = 3, opt;
+    int threads = 1, rounds = 3, prefix = 0, opt;
     const char *data = NULL, *dump = NULL;
-    while ((opt = getopt(argc, argv, "t:r:d:o:")) != -1) {
+    while ((opt = getopt(argc, argv, "t:r:d:o:p:")) != -1) {
         if (opt == 't') threads = atoi(optarg);
         else if (opt == 'r') rounds = atoi(optarg);
         else if (opt == 'd') data = optarg;
         else if (opt == 'o') dump = optarg;
+        else if (opt == 'p') prefix = atoi(optarg);
         else return 2;
     }
     if (argc - optind != 2) {
-        fprintf(stderr, "usage: qsel_bench [-t threads] [-r rounds] [-d data] model.qsel cases.bin\n");
+        fprintf(stderr, "usage: qsel_bench [-t threads] [-r rounds] [-d data] [-o scores] [-p rows] model.qsel cases.bin\n");
         return 2;
     }
     FILE *f = fopen(argv[optind + 1], "rb");
@@ -132,14 +135,20 @@ int main(int argc, char **argv) {
         fprintf(stderr, "qsel_open: %s\n", qsel_strerror(rc));
         return 1;
     }
-    printf("open %.2f ms, threads %d, cases %zu, rounds %d\n", now_ms() - t0, threads, n, rounds);
+    if (prefix && qsel_set_prefix_cache(m, prefix) != QSEL_OK) {
+        fprintf(stderr, "qsel_set_prefix_cache: bad row count\n");
+        return 2;
+    }
+    printf("open %.2f ms, threads %d, cases %zu, rounds %d, prefix cache %d rows\n", now_ms() - t0, threads, n, rounds,
+           prefix);
     memory("after-open");
     FILE *df = dump ? fopen(dump, "wb") : NULL;
     double *ms = malloc(sizeof(double) * n * (rounds > 0 ? rounds : 1));
     size_t k = 0;
     double worst = 0, worst_used = 0, total = 0;
     size_t worst_case = 0, fails = 0;
-    size_t maxws = 0;
+    size_t maxws = 0, maxcache = 0;
+    long long rows_all = 0, rows_reused = 0;
     pthread_t smp;
     sampling = 1;
     pthread_create(&smp, NULL, sampler, NULL);
@@ -163,6 +172,13 @@ int main(int argc, char **argv) {
                 return 1;
             }
             ms[k++] = b - a;
+            if (round == 0) {
+                int reused;
+                size_t bytes;
+                qsel_prefix_info(m, &reused, NULL, &bytes);
+                rows_all += hdr[0], rows_reused += reused;
+                if (bytes > maxcache) maxcache = bytes;
+            }
             total += b - a;
             if (round == 0 && df) fwrite(out, 4, r->R, df);
             if (round == 0)
@@ -189,6 +205,9 @@ int main(int argc, char **argv) {
                ms[(size_t)(k * 0.95)], ms[k - 1], total / k, k);
     printf("parity: max|d| %.3e (case %zu) tolerance used %.3f, %zu over tolerance\n", worst, worst_case, worst_used, fails);
     printf("workspace: largest call %.2f MB\n", maxws / 1048576.0);
+    if (prefix)
+        printf("prefix cache: rows reused %.1f%% (%lld of %lld), largest %.2f MB\n",
+               rows_all ? 100.0 * rows_reused / rows_all : 0.0, rows_reused, rows_all, maxcache / 1048576.0);
     qsel_close(m);
     for (size_t i = 0; i < n; i++) free(recs[i].in), free(recs[i].ref);
     free(recs);

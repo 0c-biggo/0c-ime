@@ -206,6 +206,16 @@ func (m *Model) EnglishKnownAs(text string) bool {
 }
 
 func englishRank(cs []english.Candidate, limit int) []english.Candidate {
+	return englishRankFor("", nil, cs, limit)
+}
+
+// englishRankFor：詞頻字典（APP#21）的修正候選照 english.SortRanked 排（打字成本扣掉權重），
+// 學到的詞權重 320 起，照樣排在同樣成本的字典詞前面；其餘照編輯距離、權重。
+func englishRankFor(typed string, base *english.Dictionary, cs []english.Candidate, limit int) []english.Candidate {
+	if base.Ranked() && typed != "" {
+		english.SortRanked(typed, cs)
+		return dedupeEnglish(cs, limit)
+	}
 	slices.SortFunc(cs, func(a, b english.Candidate) int {
 		if a.Distance < b.Distance {
 			return -1
@@ -221,6 +231,10 @@ func englishRank(cs []english.Candidate, limit int) []english.Candidate {
 		}
 		return strings.Compare(a.Text, b.Text)
 	})
+	return dedupeEnglish(cs, limit)
+}
+
+func dedupeEnglish(cs []english.Candidate, limit int) []english.Candidate {
 	out := cs[:0]
 	seen := map[string]bool{}
 	for _, c := range cs {
@@ -288,5 +302,5 @@ func (m *Model) EnglishCorrections(base *english.Dictionary, text string, limit 
 		c.Text = stored
 		out = append(out, c)
 	}
-	return englishRank(out, limit)
+	return englishRankFor(text, base, out, limit)
 }

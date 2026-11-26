@@ -110,7 +110,7 @@ def main():
                     run([a.go, "build", "-trimpath", "-o", work / tool, "./cmd/" + tool], log, cwd=src, env=env)
                 base = work / "base"
                 run([work / "0c-compile", "-data", src / "data", "-out", base, *compile_args], log, cwd=src)
-                run([work / "0c-english", "-source", src / "data/english", "-out", base / "english"], log, cwd=src)
+                run([work / "0c-english", "-frequency", "-source", src / "data/english", "-out", base / "english"], log, cwd=src)
                 mixed = work / "mix" / "data"
                 (work / "mix").mkdir()
                 shutil.copytree(base, mixed)

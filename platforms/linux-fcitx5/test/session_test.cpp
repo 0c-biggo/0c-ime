@@ -475,6 +475,28 @@ int main(int argc, char **argv) {
         CHECK(snap.ok && snap.commit.empty(), "重連後舊確認不能造成提交或卡住輸入");
     }
     {
+        // #337：英數模式交還應用程式的數字，外殼記著「核心記了游標前一個字是數字」；之後的快捷鍵（forgetDigit）、
+        // 其他交還的按鍵、送出或放棄組字都清掉。切換中英不清。
+        zuin::Session s(client, nullptr, true);
+        s.handle({{"type", "cancel"}});
+        CHECK(s.toggle().english, "切到英文");
+        auto snap = s.key("3");
+        CHECK(snap.ok && !snap.handled && s.digitPassed(), "英數模式的 3 應交還應用程式並記下");
+        CHECK(!s.toggle().english && s.digitPassed(), "切回注音不清");
+        s.forgetDigit();
+        CHECK(!s.digitPassed(), "快捷鍵之後清掉");
+        s.toggle();
+        s.key("3");
+        s.key("a");
+        CHECK(!s.digitPassed(), "之後交還字母就不是數字");
+        s.key("KP7");
+        CHECK(s.digitPassed(), "數字鍵盤也算");
+        s.toggle();
+        for (const char *k : {"z", "/", " "}) { s.key(k); }
+        CHECK(s.digitPassed(), "組字中照記（核心送出時清）");
+        CHECK(!s.key("Enter").commit.empty() && !s.digitPassed(), "送出組字後清掉");
+    }
+    {
         // 模糊音 auto：設定只在 server 啟動時讀取，改成 auto 後重啟（設定檔 → server → 快照 → 外殼整條路）。
         // ㄘ 沒有精確的字、近音 ㄔ 讀得出來，auto 直接顯示「吃」並以已修正樣式標示；提交的文字等於畫面上的字。
         (void)!system((std::string("pkill -f '0c-server -socket ") + argv[1] + "'").c_str());
@@ -787,6 +809,34 @@ int main(int argc, char **argv) {
         CHECK(g.toggle().ok && !g.english(), "shared：切到注音");
         snap = k.activate();
         CHECK(snap.ok && !snap.english && !k.english(), "shared：換輸入框維持共用的注音");
+    }
+    {
+        // #357：切換提示照鍵盤排列寫「注音」或「拼音」。設定程式換排列時引擎重啟（這裡由另一個用戶端啟動新引擎），
+        // 下一次聚焦就連上新引擎、重開 session 拿到新的排列；引擎沒在執行時聚焦不為此啟動。
+        (void)!system((std::string("pkill -f '0c-server -socket ") + argv[1] + "'").c_str());
+        usleep(300 * 1000);
+        std::ofstream(home + "/settings.json") << R"({})";
+        zuin::Session a(client, nullptr);
+        CHECK(a.key("j").ok && !a.pinyin(), "標準排列不是拼音");
+        a.handle({{"type", "cancel"}});
+        (void)!system((std::string("pkill -f '0c-server -socket ") + argv[1] + "'").c_str());
+        usleep(300 * 1000);
+        CHECK(!a.activate().ok && !client.connected(), "引擎沒在執行：聚焦不啟動引擎");
+        std::ofstream(home + "/settings.json") << R"({"keyboard_layout":"pinyin"})";
+        CHECK(a.key("j").ok && a.pinyin(), "按鍵重連後是拼音");
+        a.handle({{"type", "cancel"}});
+        (void)!system((std::string("pkill -f '0c-server -socket ") + argv[1] + "'").c_str());
+        usleep(300 * 1000);
+        std::ofstream(home + "/settings.json") << R"({})";
+        {
+            zuin::Client other(argv[1], wrapper);
+            nlohmann::json reply;
+            CHECK(other.call({{"op", "health"}}, reply), "另一個用戶端啟動新引擎");
+        }
+        CHECK(a.pinyin(), "還沒聚焦時沿用舊的排列");
+        a.activate();
+        CHECK(client.connected() && !a.pinyin(), "引擎換了排列：聚焦後是注音");
+        std::ofstream(home + "/settings.json") << R"({})";
     }
     std::filesystem::remove_all(traceDir);
     (void)!system((std::string("pkill -f '0c-server -socket ") + argv[1] + "'").c_str());

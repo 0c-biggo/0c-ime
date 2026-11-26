@@ -23,7 +23,7 @@ func maskedRequest() rerank.Request {
 }
 
 // 桌面出貨的選字模型（#281 起是 v2 套件，宣告了未知聲調）照樣不開未知聲調：沒打聲調的段落照舊走統計引擎，
-// 請求也不帶 tone_known；權重照 manifest，不設手機的 ContextlessWeight。
+// 請求也不帶 tone_known；有前文的權重照 manifest，沒前文用桌面的 DesktopContextlessWeight（#337）。
 func TestShippedManifestKeepsKnownTones(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("..", "..", "models", "upstream", "select", "manifest.json"))
 	if err != nil {
@@ -37,8 +37,25 @@ func TestShippedManifestKeepsKnownTones(t *testing.T) {
 		t.Fatalf("shipped manifest: %s valid=%v", m.Schema, validContract(m))
 	}
 	opt := m.options(nil)
-	if opt.UnknownTones || opt.ContextlessWeight != 0 || opt.Weight != 2 || m.supports(maskedRequest()) {
+	if opt.UnknownTones || !desktopContextless(opt) || opt.Weight != 2 || m.supports(maskedRequest()) {
 		t.Fatalf("桌面不開未知聲調、權重照 manifest：%+v", opt)
+	}
+}
+
+func desktopContextless(o rerank.Options) bool {
+	return o.ContextlessWeight == rerank.DesktopContextlessWeight && o.ShortContextlessWeight == rerank.DesktopShortContextlessWeight &&
+		o.ShortContextlessSyllables == rerank.DesktopShortContextlessSyllables
+}
+
+// 套件的 weight 比桌面沒前文的權重還低時，沒前文不會比有前文更依賴模型：兩個都截到套件的 weight。
+func TestDesktopContextlessWeightNeverExceedsPackageWeight(t *testing.T) {
+	opt := Manifest{Weight: .4}.options(nil)
+	if opt.Weight != .4 || opt.ContextlessWeight != .4 || opt.ShortContextlessWeight != .4 || opt.ShortContextlessSyllables != rerank.DesktopShortContextlessSyllables {
+		t.Fatalf("%+v", opt)
+	}
+	opt = Manifest{Weight: .8}.options(nil)
+	if opt.ContextlessWeight != .8 || opt.ShortContextlessWeight != rerank.DesktopShortContextlessWeight {
+		t.Fatalf("%+v", opt)
 	}
 }
 
@@ -72,7 +89,7 @@ func TestDesktopV2PackageKeepsUnknownTonesOff(t *testing.T) {
 		t.Fatal("測試套件應宣告未知聲調")
 	}
 	opt := m.options(nil)
-	if opt.UnknownTones || opt.ContextlessWeight != 0 || opt.Weight != 2 || len(opt.Bases) != 2 || m.supports(maskedRequest()) {
+	if opt.UnknownTones || !desktopContextless(opt) || opt.Weight != 2 || len(opt.Bases) != 2 || m.supports(maskedRequest()) {
 		t.Fatalf("桌面 v2：%+v", opt)
 	}
 	toned := maskedRequest()

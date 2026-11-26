@@ -207,6 +207,12 @@ async fn personal_command(action: String) -> Result<Value, String> {
     call(command, timeout).await
 }
 
+/// 更新頁的「更新方式」下拉選單（#340）：0c-update mode <auto|ask|manual> -json，只改狀態檔的 mode，不連網。
+#[tauri::command]
+async fn set_update_mode(mode: String) -> Result<Value, String> {
+    call(updater::update_mode_args(&mode)?, 20).await
+}
+
 /// 用系統瀏覽器開外部網址（「模型」頁的 Hugging Face 連結）。設定視窗本身不離開本機頁面，只放行 Hugging Face。
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
@@ -333,7 +339,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             app_info, get_status, get_settings, set_settings, check_update, download_update, install_update, export_summary,
             profile_command, vocab_request, export_vocab, api_command, vocab_watch, vocab_unwatch, models_command, open_url,
-            personal_command
+            personal_command, set_update_mode
         ])
         .setup(move |app| {
             open_window(app.handle(), page)?;

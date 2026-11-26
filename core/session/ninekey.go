@@ -237,6 +237,10 @@ func (s *Session) widenNine(syls []zhuyin.Syllable, lat input.Lattice) input.Lat
 		if at >= len(lat) || s.literals[at] {
 			continue
 		}
+		if _, seg := s.nineSeg[at]; seg {
+			lat[at] = s.nineSegRows(at).row(0) // 自動切字的九宮格音節：連同還沒打完的尾端展開（nine_segment.go）
+			continue
+		}
 		var row []input.Hyp
 		for _, y := range readings {
 			for _, v := range y.Tones() {
@@ -275,7 +279,7 @@ func (s *Session) absorbNine() bool {
 			if lat == nil {
 				lat = s.lattice()
 			}
-			reading, ok = decode.Reading(s.dec.Lex, lat, g.Start, g.End, g.Word)
+			reading, ok = s.nineSegReading(lat, g.Start, g.End, g.Word)
 		}
 		if !ok || len(reading) != g.End-g.Start {
 			continue
@@ -335,6 +339,9 @@ func (s *Session) ReadingAt(at int) string {
 // nineSnapshot 是快照的 nine_readings：有還沒完成的九宮格鍵時是它們可能的拼法（pending）；否則是游標前那個音節
 // （有多個讀音的九宮格音節才有）。
 func (s *Session) nineSnapshot() *proto.NineReadings {
+	if s.NineSegment && s.nineSeg != nil {
+		return s.nineSegSnapshot() // 自動切字（nine_segment.go）
+	}
 	if s.ninePending() {
 		spellings := s.pendingNineSpellings()
 		if len(spellings) == 0 {

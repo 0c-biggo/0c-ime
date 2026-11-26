@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -44,7 +45,9 @@ func engineAfterInstall(base string) {
 
 // kickstartAgent 測試替換用。agent 正在執行時 kickstart 不會再跑一次，但那時呼叫者就是 agent（上面已排除）。
 var kickstartAgent = func() error {
-	return exec.Command("/bin/launchctl", "kickstart", fmt.Sprintf("gui/%d/%s", os.Getuid(), agentLabel)).Run()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second) // 安裝流程裡的外部程式都有時限（#353）
+	defer cancel()
+	return exec.CommandContext(ctx, "/bin/launchctl", "kickstart", fmt.Sprintf("gui/%d/%s", os.Getuid(), agentLabel)).Run()
 }
 
 // spawnResident 測試替換用：go test 不啟動這台機器上安裝的引擎。

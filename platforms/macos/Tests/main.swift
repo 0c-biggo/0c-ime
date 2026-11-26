@@ -164,6 +164,59 @@ func run() throws {
     _ = try key("Escape")
     _ = try key("Escape")
 
+    // #337：英數模式交還 App 的數字，外殼記著「核心記了游標前一個字是數字」；切換中英不清，
+    // 之後交還別的鍵、送出組字或 forgetDigit（快捷鍵、App 結束組字）清掉。
+    _ = try session.handle(Request(type: "toggle"))
+    check(try !key("3").handled && session.digitPassed, "an English-mode digit passes to the app and is noted")
+    _ = try session.handle(Request(type: "toggle"))
+    check(session.digitPassed, "toggling back to zhuyin keeps the digit")
+    session.forgetDigit()
+    check(!session.digitPassed, "forgetDigit clears it")
+    check(try !key("KP7").handled && session.digitPassed, "a keypad digit also counts")
+    _ = try key("Left")
+    check(!session.digitPassed, "another passed key clears it")
+    _ = try key("KP7")
+    for k in ["a", "8", "6"] { _ = try key(k) } // ㄇㄚˊ
+    check(session.digitPassed, "the digit stays while composing")
+    check(try key("Enter").commit?.isEmpty == false && !session.digitPassed, "committing clears it")
+    check(EngineSession.digitKey("0") && EngineSession.digitKey("KP9") && !EngineSession.digitKey("KP+") && !EngineSession.digitKey("a"),
+          "digit keys")
+
+    // #337：在 ABC 打的數字不經過輸入法，外殼在開始組字的第一鍵讀游標前一個字（CaretText，同已確認前文的讀法），
+    // 只帶 digit_before 是／不是；讀不到時不帶。
+    let page = "第3" as NSString
+    var reads = 0
+    func read(_ range: NSRange) -> String? {
+        reads += 1
+        return NSMaxRange(range) <= page.length ? page.substring(with: range) : nil
+    }
+    check(CaretText.digitBefore(selection: NSRange(location: 2, length: 0), read: read) == true, "a digit before the caret")
+    check(CaretText.digitBefore(selection: NSRange(location: 1, length: 0), read: read) == false, "not a digit")
+    check(CaretText.digitBefore(selection: NSRange(location: 0, length: 0), read: read) == false, "document start is not a digit")
+    reads = 0
+    check(CaretText.digitBefore(selection: NSRange(location: 1, length: 1), read: read) == nil &&
+          CaretText.digitBefore(selection: NSRange(location: NSNotFound, length: 0), read: read) == nil && reads == 0,
+          "a selection or an unknown caret is not read")
+    check(CaretText.digitBefore(selection: NSRange(location: 3, length: 0), read: read) == nil, "unreadable text sends nothing")
+    check(CaretText.digitBefore(selection: NSRange(location: 1, length: 0), read: { _ in "第3" }) == nil,
+          "a reply of the wrong length sends nothing")
+    check(CaretText.isDigit(0x30) && CaretText.isDigit(0x39) && CaretText.isDigit(0xFF13) &&
+          !CaretText.isDigit(0x2F) && !CaretText.isDigit(0x3A) && !CaretText.isDigit(0x0663) && !CaretText.isDigit(0x4E00),
+          "half- and full-width Arabic digits only")
+    check(CaretText.before(selection: NSRange(location: 2, length: 0), length: 2, read: read) == "第3" &&
+          CaretText.before(selection: NSRange(location: 1, length: 0), length: 2, read: read) == nil, "document context reads")
+    func encoded(_ request: Request) throws -> [String: Any] {
+        try JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any] ?? [:]
+    }
+    check(try encoded(Request(type: "key", key: "5"))["digit_before"] == nil, "no bit when nothing was read")
+    check(try encoded(Request(type: "key", key: "5", digitBefore: false))["digit_before"] as? Bool == false, "false is sent")
+    for digit in [true, false] {
+        let first = try session.handle(Request(type: "key", key: "5", digitBefore: digit))
+        check(first.handled && first.composing && session.digitPassed == digit, "the engine takes digit_before \(digit)")
+        _ = try session.handle(Request(type: "cancel"))
+        check(!session.digitPassed, "cancelling clears it")
+    }
+
     // Distinct clients must not inherit another field's composition.
     _ = try key("a")
     let other = EngineSession(connection: EngineConnection(path: socketPath, start: start), inputAllowed: { true })

@@ -1,0 +1,31 @@
+{
+  "files": {
+    "english-bigram.tsv": {
+      "bytes": 884929,
+      "sha256": "5ac969daa8ed6a848afca8e60f8d738d85f27520ed3d2514e26eeaca256e96f3"
+    },
+    "english-unigram.tsv": {
+      "bytes": 695188,
+      "sha256": "4e43024108afe0f730cbdc366b0d04e1221a48409e15f9d3dc2a8ffc51610880"
+    },
+    "mixed-bigram.tsv": {
+      "bytes": 102910,
+      "sha256": "07850adf7e91c4bd9e0f029fb347b14387d047ef7552fe692cf3e2ef4f017640"
+    },
+    "taiwan-unigram.tsv": {
+      "bytes": 98259,
+      "sha256": "cde688400bc17cb360fe86b36c85963ef72678f3d2f56fd3f348a76e5c93c14a"
+    }
+  },
+  "schema": "0c-english-source-stats-v1",
+  "splits": {
+    "train": {
+      "news": {
+        "total_english_tokens": 6740265
+      },
+      "social": {
+        "total_english_tokens": 534539
+      }
+    }
+  }
+}

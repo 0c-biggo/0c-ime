@@ -50,6 +50,10 @@ type Release struct {
 	Arch    string            `json:"arch"`
 	Machine string            `json:"machine"`
 	Files   map[string]string `json:"files"`
+	// TSFRegistration（Windows）是 TSF 註冊內容的指紋（platforms/windows/tsf/src/register.rs 的 registration_spec 加上
+	// 有沒有 32 位元 DLL，取 SHA-256）。與已安裝版本相同時外殼更新不必重新註冊、不需要系統管理員（#294）。舊套件沒有這個欄位；
+	// 舊版更新器不認得它也照常讀（encoding/json 略過未知欄位）。
+	TSFRegistration string `json:"tsf_registration,omitempty"`
 }
 
 func Hash(file string) (string, error) {
@@ -169,6 +173,9 @@ func Verify(root, targetOS, targetArch string) (*Release, error) {
 			return nil, err
 		}
 		required = append(required, "0c-update.exe", layout.DLL, layout.Server, layout.UI)
+		if r.TSFRegistration != "" && !hashPattern.MatchString(r.TSFRegistration) {
+			return nil, fmt.Errorf("invalid tsf_registration")
+		}
 	default:
 		return nil, fmt.Errorf("unsupported platform: %s", targetOS)
 	}

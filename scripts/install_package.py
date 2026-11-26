@@ -182,7 +182,9 @@ OPTIONAL = {"bin/0c-settings": ".local/bin/0c-settings",
             **STATUS_ICONS,
             **LEGACY_STATUS_ICONS,
             **{f"data/english/{name}": f".local/share/zuin/data/english/{name}"
-               for name in ("words.bin", "manifest.json", "NOTICE.txt")}}
+               for name in ("words.bin", "bigram.bin", "manifest.json", "NOTICE.txt")}}
+# 英文資料包要嘛三個檔都在、要嘛都不在；詞頻包（格式 2，#358）另有 bigram.bin，只能跟著這三個檔一起出現。
+ENGLISH_REQUIRED = {f"data/english/{name}" for name in ("words.bin", "manifest.json", "NOTICE.txt")}
 # IBus 外殼的登錄（0c-ibus register 寫入）。不是套件檔案；外殼移除或回復到沒有它的版本時一併清掉，
 # 免得 IBus 列出一個啟動不了的輸入法。
 IBUS_COMPONENT = ".local/share/ibus/component/0c.xml"
@@ -319,7 +321,7 @@ def verify(bundle):
     if not (set(PAYLOAD) | {"install.py"}).issubset(files):
         raise ValueError("套件缺少必要檔案")
     english = {name for name in OPTIONAL if name.startswith("data/english/")}
-    if english.intersection(files) and not english.issubset(files):
+    if english.intersection(files) and not ENGLISH_REQUIRED.issubset(files):
         raise ValueError("英文資料包缺少必要檔案")
     if (STATUS_ICONS.keys() | LEGACY_STATUS_ICONS.keys()) & files.keys() and not STATUS_ICONS.keys() <= files.keys():
         raise ValueError("狀態圖示缺少注音或英文檔案")
@@ -1237,6 +1239,24 @@ def refresh_icon_theme(home, before):
     return True
 
 
+# 新版 0c-update 換上穩定副本前的自我測試（#293，契約見 docs/updating.md〈新更新器先自我測試〉）：結束碼 0 通過、
+# 75 是連不上索引等環境問題、其他是失敗。只有通過才換。
+SELFTEST_TEMPORARY = 75
+
+
+def updater_selftest(updater):
+    try:
+        run = subprocess.run([str(updater), "selftest", "-json"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, timeout=120)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return False, f"無法執行：{error}"
+    if run.returncode == 0:
+        return True, ""
+    if run.returncode == SELFTEST_TEMPORARY:
+        return False, "連不上更新索引等環境問題"
+    return False, f"結束碼 {run.returncode}"
+
+
 def refresh_stable_updater(bundle, home):
     """讓排程與選單用的 0c-update（穩定副本）跟上這次安裝的版本。
 
@@ -1250,6 +1270,11 @@ def refresh_stable_updater(bundle, home):
         stable = destination(home.resolve(), STABLE_UPDATER)
         new = bundle / "bin/0c-update"
         if not stable.is_file() or digest(stable) == digest(new):
+            return False
+        passed, detail = updater_selftest(new)
+        if not passed:
+            print(f"警告：新版 0c-update 沒有通過自我測試（{detail}），排程用的 0c-update 保留原本的；"
+                  "之後的背景更新會再試。", file=sys.stderr)
             return False
         atomic_copy(new, stable)
         stable.chmod(0o700)

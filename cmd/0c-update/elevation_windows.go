@@ -12,8 +12,33 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/0c-biggo/0c-ime/internal/autoupdate"
+	"github.com/0c-biggo/0c-ime/internal/update"
 	"golang.org/x/sys/windows"
 )
+
+// shellKeepsRegistration 回報 archive（已下載的外殼套件）是否不必改 TSF 註冊，一般權限就能安裝（#294）：讀壓縮檔裡的
+// release.json，與已安裝版本的註冊指紋、登錄核對。只用來決定要不要 UAC；安裝時在安裝鎖內再核對一次，套件也照常核對雜湊。
+func shellKeepsRegistration(base, archive string) bool {
+	if archive == "" {
+		return false
+	}
+	r, err := update.PeekRelease(archive)
+	if err != nil {
+		return false
+	}
+	return update.WindowsKeepsRegistration(base, registrar{}, r) == nil
+}
+
+// pendingShellKeepsRegistration：待完成的外殼更新已下載，而且不必改註冊（「立即安裝」不用 UAC）。還沒下載時不知道，
+// 照舊以 UAC 執行。
+func pendingShellKeepsRegistration(base string) bool {
+	s, err := autoupdate.Load(base)
+	if err != nil || s.Target == nil || s.Download == "" {
+		return false
+	}
+	return shellKeepsRegistration(base, s.Download)
+}
 
 func processUserSID() (string, error) {
 	u, err := windows.GetCurrentProcessToken().GetTokenUser()
@@ -109,7 +134,12 @@ func relaunchElevatedWith(args []string, launch func(string, []string) (windows.
 		return err
 	}
 	args = append(append([]string{}, args...), "-origin-user", sid, "-origin-base", basePath())
-	process, err := launch(self, args)
+	return runElevated(self, args, launch)
+}
+
+// runElevated 以 UAC 執行 file 並等它結束；結束碼不是 0 時回報錯誤。新版自己安裝（#292）提權的是暫存套件裡的新版。
+func runElevated(file string, args []string, launch func(string, []string) (windows.Handle, error)) error {
+	process, err := launch(file, args)
 	if errors.Is(err, windows.ERROR_CANCELLED) {
 		return fmt.Errorf("已取消系統管理員確認；原版與更新待辦保留：%w", err)
 	}
@@ -135,4 +165,13 @@ func relaunchElevatedWith(args []string, launch func(string, []string) (windows.
 		}
 	}
 	return fmt.Errorf("尚未取得 UAC 更新結果，請從選單檢查更新狀態")
+}
+
+// validateHandoverOrigin：提權交接的新版（install-staged）核對 UAC 前後是同一位使用者、同一個安裝目錄（同 finish）。
+// 沒有帶原使用者時（呼叫端本來就是系統管理員）不核對。
+func validateHandoverOrigin(sid, base string) error {
+	if sid == "" && base == "" {
+		return nil
+	}
+	return validateElevationOrigin("finish", sid, base)
 }

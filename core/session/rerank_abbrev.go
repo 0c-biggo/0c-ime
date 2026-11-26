@@ -15,6 +15,8 @@ import (
 // 詞庫讀音（基底）跟統計首選不同的不能贏：評分器只能在同一個讀法裡換字。量測與取捨見 commit 訊息。
 //
 // 注音九宮格（ninekey.go）的位置同理：送出的是統計首選走的那個讀音，評分器不准把它換成同一串鍵的另一個拼法。
+// 評分器宣告 TextAnyLength 時，有多種拼法的九宮格段落改送文字評分（不看讀音），所有拼法的候選在同一個尺度上，
+// 九宮格位置就不排除（nineSpellings）；簡拼位置照樣排除。
 
 // readingsAt 回傳候選 r（段落從 start 起）在 at（絕對位置）各音節的詞庫讀音；有一個解不出來 ok 就是 false。
 func (s *Session) readingsAt(lat input.Lattice, start int, r decode.Hypothesis, at []int) ([]zhuyin.Syllable, bool) {
@@ -46,11 +48,12 @@ func (s *Session) readingsAt(lat input.Lattice, start int, r decode.Hypothesis, 
 }
 
 // vetoAbbrevReadings 標出在簡拼位置（與九宮格位置）換了讀音的候選：詞庫讀音的基底跟統計首選 rows[0] 不同，或解不出來。
-// 段內沒有簡拼音節時回傳 nil、true；統計首選本身解不出讀音時 ok 為 false，整段照統計引擎。
-func (s *Session) vetoAbbrevReadings(lat input.Lattice, start, end int, rows []decode.Hypothesis) (vetoed []bool, ok bool) {
+// spellings（文字評分挑九宮格拼法）時不看九宮格位置。段內沒有要看的位置時回傳 nil、true；統計首選本身解不出讀音時
+// ok 為 false，整段照統計引擎。
+func (s *Session) vetoAbbrevReadings(lat input.Lattice, start, end int, rows []decode.Hypothesis, spellings bool) (vetoed []bool, ok bool) {
 	var at []int
 	for i := start; i < end; i++ {
-		if s.syls[i].Abbreviated() || len(s.nine[i]) > 0 {
+		if s.syls[i].Abbreviated() || len(s.nine[i]) > 0 && !spellings {
 			at = append(at, i)
 		}
 	}
@@ -79,6 +82,16 @@ func (s *Session) vetoAbbrevReadings(lat input.Lattice, start, end int, rows []d
 
 // vetoAbbrev 是 rerankSegment 呼叫的 vetoAbbrevReadings；測試換成計數的版本，確認快取命中時不再算。
 var vetoAbbrev = (*Session).vetoAbbrevReadings
+
+// nineSpellings 回報 [start, end) 有沒有可以換拼法的九宮格位置（不只一個讀音；固定的拼法只有一個）。
+func (s *Session) nineSpellings(start, end int) bool {
+	for i := start; i < end; i++ {
+		if len(s.nine[i]) > 1 {
+			return true
+		}
+	}
+	return false
+}
 
 // abbrevVetoKey 是 vetoAbbrevReadings 除了候選文字與分段以外依賴的輸入，併進重排快取的鍵：段內每個音節的完整寫法
 // （含簡拼與沒打聲調的標記；遮罩過的讀音分不出簡拼）、九宮格位置的讀音，以及候選各段記下的詞庫讀音（Matched）。

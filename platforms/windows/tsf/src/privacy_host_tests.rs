@@ -189,7 +189,8 @@ impl ITfInputScope_Impl for Scopes_Impl {
     }
 }
 
-/// 選取範圍：欄位政策只把它交給 GetValue。
+/// 選取範圍：欄位政策只把它交給 GetValue。文件是空的（系統相容層的暫時 context 沒在組字時就是這樣，#337）：
+/// 選取是一個游標，往前一個字也動不了。
 #[implement(ITfRange)]
 struct Range;
 impl ITfRange_Impl for Range_Impl {
@@ -208,8 +209,9 @@ impl ITfRange_Impl for Range_Impl {
     fn InsertEmbedded(&self, _: u32, _: u32, _: Ref<'_, IDataObject>) -> R<()> {
         no()
     }
-    fn ShiftStart(&self, _: u32, _: i32, _: *mut i32, _: *const TF_HALTCOND) -> R<()> {
-        no()
+    fn ShiftStart(&self, _: u32, _: i32, moved: *mut i32, _: *const TF_HALTCOND) -> R<()> {
+        unsafe { moved.write(0) };
+        Ok(())
     }
     fn ShiftEnd(&self, _: u32, _: i32, _: *mut i32, _: *const TF_HALTCOND) -> R<()> {
         no()
@@ -227,7 +229,7 @@ impl ITfRange_Impl for Range_Impl {
         no()
     }
     fn IsEmpty(&self, _: u32) -> R<BOOL> {
-        no()
+        Ok(true.into())
     }
     fn Collapse(&self, _: u32, _: TfAnchor) -> R<()> {
         no()
@@ -438,6 +440,13 @@ pub(crate) fn imm32_window_without_caret() -> (HWND, ITfContext) {
     assert_eq!(field(Some(&ctx), 1, false), Field::Open);
     assert!(english_passthrough(&ctx, 0));
     (view, ctx)
+}
+
+/// 給其他模組的宿主測試（#337）：以 `view`（呼叫端建立的視窗，例如真的 EDIT）為焦點的假 context，靜態旗標由呼叫端給
+/// （只有 TS_SS_TRANSITORY 是 IMM32 程式經系統相容層）。文件是空的，照 TSF 讀游標前一個字只會得到「文件開頭」。
+pub(crate) fn context_on(view: HWND, static_flags: u32) -> ITfContext {
+    init();
+    host(view, view, Scope::Scopes(vec![IS_DEFAULT]), static_flags, 0)
 }
 
 fn init() {

@@ -168,7 +168,7 @@ func TestTonelessFuzzyRowIsNotAbbreviated(t *testing.T) {
 	var all []arc
 	for _, h := range lat[0] {
 		for _, e := range lex.Exact([]zhuyin.Syllable{h.Syl}) {
-			all = append(all, arc{1, e, h.Cost})
+			all = append(all, arc{j: 1, e: e, cost: h.Cost})
 		}
 	}
 	sort.SliceStable(all, func(a, b int) bool {
@@ -212,8 +212,8 @@ func TestWideRowContinuationsMatchHasPrefix(t *testing.T) {
 		var out []string
 		d := &Decoder{Lex: src, Score: uni{}}
 		for at := range lat {
-			d.spans(lat, at, func(r []zhuyin.Syllable, cost float64) {
-				out = append(out, fmt.Sprintf("%d:%s/%g", at, zhuyin.Key(r), cost))
+			d.spans(lat, at, func(sp span) {
+				out = append(out, fmt.Sprintf("%d:%s/%g", at, zhuyin.Key(sp.reading), sp.cost))
 			})
 		}
 		return out

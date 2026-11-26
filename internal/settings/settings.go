@@ -35,6 +35,7 @@ const (
 	LayoutStandard = "standard" // 標準（大千）注音鍵盤排列
 	LayoutETen     = "eten"     // 倚天 41 鍵（#83）
 	LayoutHsu      = "hsu"      // 許氏（#183）
+	LayoutPinyin   = "pinyin"   // 漢語拼音（#324）
 )
 
 // 讀取結果的檔案狀態。
@@ -85,7 +86,7 @@ type Settings struct {
 	CandidateLayout    string `json:"candidate_layout"`
 	EmojiShortcut      string `json:"emoji_shortcut"`
 	EmojiEqualsFirst   bool   `json:"emoji_equals_first"`
-	KeyboardLayout     string `json:"keyboard_layout"` // standard（預設）、eten（倚天 41 鍵，#83）或 hsu（許氏，#183）
+	KeyboardLayout     string `json:"keyboard_layout"` // standard（預設）、eten（倚天 41 鍵，#83）、hsu（許氏，#183）或 pinyin（漢語拼音，#324）
 	// OutputSimplified：送出時把繁體轉成簡體（#118）；組字、候選與學習仍是繁體。預設 false。
 	OutputSimplified bool `json:"output_simplified"`
 	// SimplifiedHotkey：按 SimplifiedHotkeyLabel 的快捷鍵切換「輸出簡體字」（#192）。預設 false：外殼不攔這個鍵，
@@ -425,7 +426,7 @@ func (s *Settings) UnmarshalJSON(b []byte) error {
 		{"candidate_cursor", &s.CandidateCursor, []string{"before", "after"}},
 		{"candidate_layout", &s.CandidateLayout, []string{"vertical", "grid", "horizontal"}},
 		{"emoji_shortcut", &s.EmojiShortcut, []string{"off", "equals"}},
-		{"keyboard_layout", &s.KeyboardLayout, []string{LayoutStandard, LayoutETen, LayoutHsu}},
+		{"keyboard_layout", &s.KeyboardLayout, []string{LayoutStandard, LayoutETen, LayoutHsu, LayoutPinyin}},
 		{"selection_keys", &s.SelectionKeys, []string{SelectDigits, SelectQwer, SelectHome}},
 		{"toggle_key", &s.ToggleKey, []string{ToggleRight, ToggleBoth, ToggleLeft, ToggleNone}},
 		{"mode_memory", &s.ModeMemory, []string{ModeNative, ModeShared}},
@@ -775,7 +776,7 @@ func (s Settings) valueLabels(key string) map[string]string {
 	case "mode-memory":
 		return map[string]string{ModeNative: modeNativeLabel(runtime.GOOS, s.StartsEnglish()), ModeShared: "全部共用同一個模式"}
 	case "keyboard-layout":
-		return map[string]string{LayoutStandard: "標準", LayoutETen: "倚天 41 鍵", LayoutHsu: "許氏"}
+		return map[string]string{LayoutStandard: "標準", LayoutETen: "倚天 41 鍵", LayoutHsu: "許氏", LayoutPinyin: "漢語拼音"}
 	case "shift-tap-ms": // #319
 		out := map[string]string{}
 		for _, ms := range ShiftTapChoices {
@@ -833,6 +834,9 @@ func (s Settings) disabledReasonOn(goos, key string) string {
 		if s.KeyboardLayout == LayoutHsu && key == "mixed-input" {
 			return "許氏排列時關閉"
 		}
+		if s.KeyboardLayout == LayoutPinyin && key == "mixed-input" {
+			return pinyinMixedReason // 字母都是拼音（#324）
+		}
 		if key == "mixed-input" && s.EffectiveToneless() {
 			return "不打聲調時關閉" // 聲調選填與混打二選一（#150）
 		}
@@ -868,8 +872,8 @@ func (s Settings) disabledReasonOn(goos, key string) string {
 	case "zhuyin-error-hint":
 		// 聲調選填（#150）與中英混打（#78）有自己處理沒有字的注音的方式，這一項不作用（#300）。
 		// 兩者本身停用（倚天、許氏、所有符號鍵打半形、輸入習慣衝突）時照常；聲調選填開著時混打也停用，原因寫聲調選填。
-		if s.Toneless && s.disabledReasonOn(goos, "toneless") == "" {
-			return "不打聲調時關閉"
+		if s.Toneless && s.disabledReasonOn(goos, "toneless") == "" && s.KeyboardLayout != LayoutPinyin {
+			return "不打聲調時關閉" // 漢語拼音不打聲調時照樣用它提示收不成音節的聲調（#324）
 		}
 		if s.MixedInput && s.disabledReasonOn(goos, "mixed-input") == "" {
 			return zhuyinHintMixedReason
@@ -877,6 +881,9 @@ func (s Settings) disabledReasonOn(goos, key string) string {
 	}
 	return ""
 }
+
+// pinyinMixedReason：漢語拼音鍵盤（#324）的字母都是拼音，中英混打不作用；英文用 Shift 切換。
+const pinyinMixedReason = "漢語拼音時關閉"
 
 // zhuyinHintMixedReason：中英混打開著時「打錯注音時提示」不作用（#300）。
 const zhuyinHintMixedReason = "中英混打時關閉"
@@ -897,7 +904,7 @@ func disabledBy(reason string) string {
 		return rule // 輸入習慣的規則（#233）
 	}
 	switch reason {
-	case "倚天 41 鍵時關閉", "許氏排列時關閉":
+	case "倚天 41 鍵時關閉", "許氏排列時關閉", pinyinMixedReason:
 		return "keyboard-layout"
 	case startModeLockedReason, shiftTapUnusedReason:
 		return "toggle-key"
@@ -949,8 +956,10 @@ func specs() []spec {
 		{"simplified-hotkey", "用快捷鍵切換簡體字", simplifiedHotkeyDescription(runtime.GOOS), "off", []string{"on", "off"},
 			func(s Settings) string { return onOff(s.SimplifiedHotkey) }},
 		{"emoji-shortcut", "Emoji 選單", "在注音模式按 = 開啟選單；Tab 切換顏文字，選過的排前面", "equals", []string{"off", "equals"}, func(s Settings) string { return s.EmojiShortcut }},
-		{"emoji-equals-first", "將 = 放在第一項", "關閉後，按兩次 == 可輸入一個 =", "on", []string{"on", "off"}, func(s Settings) string { return onOff(s.EmojiEqualsFirst) }},
-		{"keyboard-layout", "鍵盤排列", "注音鍵盤排列。倚天 41 鍵的 = 是 ㄦ、' 是 ㄘ，頓號改按 \\，這時不提供 Emoji 選單與中英混打。許氏只用字母鍵：同一鍵依位置代表聲母或韻母，聲調是 d f j s、一聲按空白，, . ; 直接打「，。；」，這時不提供中英混打", LayoutStandard, []string{LayoutStandard, LayoutETen, LayoutHsu},
+		{"emoji-equals-first", "將 = 放在第一項", "開啟時選單第一項是 =；關閉時第一項直接是表情。開或關都可以連按兩下 = 輸入一個 =；想單按 = 就打出等號，請關閉 Emoji 選單", "on", []string{"on", "off"}, func(s Settings) string { return onOff(s.EmojiEqualsFirst) }},
+		{"keyboard-layout", "鍵盤排列", "注音鍵盤排列。倚天 41 鍵的 = 是 ㄦ、' 是 ㄘ，頓號改按 \\，這時不提供 Emoji 選單與中英混打。許氏只用字母鍵：同一鍵依位置代表聲母或韻母，聲調是 d f j s、一聲按空白，, . ; 直接打「，。；」，這時不提供中英混打。" +
+			"漢語拼音用拼音打繁體：ni3hao3 是「你好」，數字 1–4 是四聲、5 是輕聲、空白是一聲，ü 打 v，xi'an 的 ' 分開音節；沒打聲調的字依前後文決定，" +
+			", . ; 直接打「，。；」，這時不提供中英混打", LayoutStandard, []string{LayoutStandard, LayoutETen, LayoutHsu, LayoutPinyin},
 			func(s Settings) string { return s.KeyboardLayout }},
 		{"selection-keys", "選字鍵", "候選窗用哪一排鍵選第 1 到第 10 個字；換成字母鍵時，數字鍵仍可照位置選字", SelectDigits, []string{SelectDigits, SelectQwer, SelectHome},
 			func(s Settings) string { return s.SelectionKeys }},
@@ -1004,7 +1013,8 @@ const personalLearningDescription = "選過的字詞會排到前面，常用的�
 // tonelessDescription 是「不打聲調也能選字」（#150）的說明：怎麼切音節、空白還是一聲、混打停用。
 const tonelessDescription = "聲調可打可不打：ㄋㄧㄏㄠ 就是「你好」，沒打聲調的字依前後文決定，有打聲調的字照聲調；少打聲調時選字比較容易錯，拿不定的字可以補聲調。" +
 	"接不上前一個音節的注音會開始新的字；ㄒㄧㄢ 是一個字，要「西安」請打 ㄒㄧ'ㄢ（組字中的 ' 用來切字，頓號改按 \\）或在 ㄒㄧ 後面補聲調。" +
-	"沒打完的注音按空白仍是一聲，送出請按 Enter。開啟時中英混打停用，英文請用 Shift 切換，「我的詞彙」裡的英文詞照樣認得。只在標準排列有效"
+	"沒打完的注音按空白仍是一聲，送出請按 Enter。開啟時中英混打停用，英文請用 Shift 切換，「我的詞彙」裡的英文詞照樣認得。只在標準排列與漢語拼音有效；" +
+	"漢語拼音本來就可以不打聲調，開啟時空白把拼音換成字並送出（關閉時空白是一聲）；要先看字再送出，請按 ↓ 或方向鍵"
 
 // CapsLockEnglishSetting 回報這個平台有沒有「Caps Lock 開著時直接打英文」（#173）：Windows、Linux 有；
 // macOS 開 Caps Lock 一律切到英文大寫（#84、#67），沒有這一項，設定檔裡的值也不用。

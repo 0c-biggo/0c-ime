@@ -81,8 +81,13 @@ func activateInputSource(tool, app string, force ...bool) error {
 func install(bundle string, release *update.Release) error {
 	// The matched engine must load its dictionary before the installed app changes.
 	app := filepath.Join(bundle, update.MacApp)
-	probe := exec.Command(filepath.Join(app, "Contents/MacOS/0c-server"), "-check-data", "-data", filepath.Join(app, "Contents/Resources/data"))
-	if out, err := probe.CombinedOutput(); err != nil {
+	// 安裝流程裡呼叫的外部程式都有時限（#353）：卡住時安裝照樣結束、回報原因，不讓安裝程式或背景更新一直等。
+	probeCtx, probeCancel := context.WithTimeout(context.Background(), installToolTimeout)
+	probe := exec.CommandContext(probeCtx, filepath.Join(app, "Contents/MacOS/0c-server"), "-check-data", "-data", filepath.Join(app, "Contents/Resources/data"))
+	probe.WaitDelay = 5 * time.Second
+	out, err := probe.CombinedOutput()
+	probeCancel()
+	if err != nil {
 		return fmt.Errorf("配對詞庫檢查失敗：%s (%w)", out, err)
 	}
 	// 簽章身分（Team ID）改變時系統會撤銷原本的輸入法核准，要在安裝後主動觸發重新核准。
@@ -106,6 +111,8 @@ func install(bundle string, release *update.Release) error {
 	if err := prepareMacInstall(ctx, dialers); err != nil {
 		return err
 	}
+	// 舊 App 只有父項在啟用清單裡時，換掉它之前先以它補上模式（換上模式預設啟用的新 App 之後就補不進去了，#348）。
+	completeLegacyInputMode(app)
 	destination := paths()
 	// Headless manual installs remain supported, but an unknown boundary
 	// cannot later be reported as verified automatic shell activation.
@@ -121,8 +128,8 @@ func install(bundle string, release *update.Release) error {
 		fmt.Printf("原本安裝的 App 有檔案被改動或缺少（%v），已照常換成新版；原本的 App 保留在備份。\n", changed)
 	}
 	// 套件逐檔核對後移除下載隔離標記，並核對簽章完整。
-	_ = exec.Command("xattr", "-dr", "com.apple.quarantine", installed).Run()
-	if out, err := exec.Command("codesign", "--verify", "--deep", "--strict", installed).CombinedOutput(); err != nil {
+	_ = runInstallTool("/usr/bin/xattr", "-dr", "com.apple.quarantine", installed)
+	if out, err := installToolOutput("/usr/bin/codesign", "--verify", "--deep", "--strict", installed); err != nil {
 		return fmt.Errorf("已安裝的 App 簽章無效：%s (%w)", out, err)
 	}
 	if u := filepath.Join(bundle, updaterName()); release.Files[updaterName()] != "" {
@@ -144,11 +151,14 @@ func install(bundle string, release *update.Release) error {
 		fmt.Printf("輸入來源尚未完成啟用：%v\n", err)
 		// 保留實際失敗原因，再由登入時的排程補做啟用。舊的輸入法程式照常能打字，留到重新登入。
 		markRelogin(basePath())
-		if e := deferInputSource(tool, installed); e != nil {
+		if e := deferInputSource(tool, installed, signatureChanged); e != nil {
 			fmt.Printf("請登出再登入，並在「系統設定 → 鍵盤 → 文字輸入 → 編輯」加入「靈犀注音」（%v）。\n", e)
 			return nil
 		}
-		fmt.Println("請登出再登入；登入後會自動啟用「靈犀注音」輸入方式（系統詢問時請允許）。")
+		// 系統設定慢的時候「允許」會在這之後才出現；0.2.15 起模式預設啟用，按一次「允許」系統就把父項與模式一起加入，
+		// 背景排程確認後清掉記號，不必登出（#348）。
+		fmt.Println("如果系統稍後才詢問是否允許「靈犀注音」，按「允許」後就能使用，不必登出。")
+		fmt.Println("沒有出現詢問的話，請登出再登入；登入後會自動啟用「靈犀注音」輸入方式（系統詢問時請允許）。")
 		return nil
 	}
 	if signatureChanged {
@@ -176,9 +186,31 @@ func install(bundle string, release *update.Release) error {
 	return nil
 }
 
+// installToolTimeout：安裝時呼叫的本機工具（詞庫檢查、簽章核對、移除隔離標記）最久等多久。平常幾秒內完成；
+// 沒有 GPU 加速、很慢的 VM 上整個 App 的簽章核對也在一分鐘內，這裡留足空間，只擋住卡死的情況（#353）。
+var installToolTimeout = 5 * time.Minute
+
+// installToolOutput 執行本機工具並回傳合併的輸出，超過 installToolTimeout 就結束它、回報逾時。
+func installToolOutput(name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), installToolTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = 5 * time.Second
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return out, fmt.Errorf("%s 超過 %v 沒有結束", filepath.Base(name), installToolTimeout)
+	}
+	return out, err
+}
+
+func runInstallTool(name string, args ...string) error {
+	_, err := installToolOutput(name, args...)
+	return err
+}
+
 // teamID 回傳 App 的簽章 Team ID；ad-hoc 簽章為空字串。
 func teamID(app string) string {
-	out, _ := exec.Command("codesign", "-dv", app).CombinedOutput()
+	out, _ := installToolOutput("/usr/bin/codesign", "-dv", app)
 	for _, line := range strings.Split(string(out), "\n") {
 		if v, ok := strings.CutPrefix(line, "TeamIdentifier="); ok && v != "not set" {
 			return strings.TrimSpace(v)
@@ -278,7 +310,7 @@ func rollback(_ string, restoreUser bool) error {
 			} else {
 				relogin = true
 				markRelogin(basePath())
-				if e := deferInputSource(tool, r.App); e != nil {
+				if e := deferInputSource(tool, r.App, false); e != nil {
 					fmt.Printf("登出再登入後，請在系統設定中確認「靈犀注音」已加入（%v）。\n", e)
 				}
 			}

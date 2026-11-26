@@ -61,7 +61,7 @@ struct UpdateMenuStatus: Decodable {
     var pendingReason: String? {
         guard let reason = blocked?.reason else { return nil }
         switch reason {
-        case "needs_consent", "needs_relogin": return nil
+        case "needs_consent", "needs_relogin", "needs_download": return nil
         case "engine_busy": return "請先完成組字，再完成更新"
         case "waiting_idle": return "使用中，等待閒置"
         case "low_battery": return "電量不足，接上電源後再試"
@@ -152,11 +152,15 @@ final class UpdateMenuMonitor {
            let hash = status?.target?.sha256, let command = Self.finishCommand(version: version, sha256: hash) {
             add("立即安裝 \(version)", command)
         }
+        // 手動更新查到新版（#340）：先「立即下載」，下載好後 0c-update 送「立即安裝」的通知、這裡也換成立即安裝。
+        if status?.action == "download", let version = status?.target?.version {
+            add("立即下載 \(version)", Self.downloadCommand)
+        }
         add("檢查更新", ["auto", "-now", "-notify"])
         menu.addItem(.separator())
-        add("更新方式：自動（建議）", ["mode", "auto"], checked: status?.mode == "auto")
+        add("更新方式：自動更新（建議）", ["mode", "auto"], checked: status?.mode == "auto")
         add("更新方式：下載後詢問", ["mode", "ask"], checked: status?.mode == "ask")
-        add("更新方式：手動檢查", ["mode", "manual"], checked: status?.mode == "manual")
+        add("更新方式：手動更新", ["mode", "manual"], checked: status?.mode == "manual")
         if status?.paused_until != nil {
             add("恢復更新", ["resume"])
         } else {
@@ -207,7 +211,11 @@ final class UpdateMenuMonitor {
 
     static let settingsCommand = ["open-settings"]
     static let vocabCommand = ["open-settings", "vocab"]
-    static func opensSettings(_ args: [String]) -> Bool { args == settingsCommand || args == vocabCommand }
+    /// 手動更新查到新版時通知內文被點一下（#340）：開設定程式的「更新」頁，那裡有「立即下載」。
+    static let updatePageCommand = ["open-settings", "update"]
+    static func opensSettings(_ args: [String]) -> Bool { args == settingsCommand || args == vocabCommand || args == updatePageCommand }
+    /// 選單的「立即下載」（#340）：0c-update 下載狀態檔裡待辦的那一版，只下載與核對，不安裝。
+    static let downloadCommand = ["download-now", "-notify"]
 
     // IMKit 呼叫選單動作時，sender 是 infoDictionary（"IMKCommandMenuItem" 即 kIMKCommandMenuItemName，對應被選的
     // NSMenuItem），不是 NSMenuItem 本身；項目的 representedObject 會跟著回來（2026-10-06 於 macOS 26 實測）。
@@ -223,7 +231,10 @@ final class UpdateMenuMonitor {
         if args.count == 6, args[0] == "finish", args[1] == "-notify", args[2] == "-target", args[4] == "-target-sha256" {
             return finishCommand(version: args[3], sha256: args[5]) == args
         }
-        return [settingsCommand, vocabCommand, ["auto", "-now", "-notify"], ["mode", "auto"],
+        if args.count == 6, args[0] == "download-now", args[1] == "-notify", args[2] == "-target", args[4] == "-target-sha256" {
+            return downloadCommand(version: args[3], sha256: args[5]) == args
+        }
+        return [settingsCommand, vocabCommand, updatePageCommand, downloadCommand, ["auto", "-now", "-notify"], ["mode", "auto"],
                 ["mode", "ask"], ["mode", "manual"], ["pause", "7"], ["resume"],
                 simplifiedCommand(true), simplifiedCommand(false)].contains(args)
     }
@@ -232,6 +243,12 @@ final class UpdateMenuMonitor {
         guard version.utf8.count <= 128, version.range(of: #"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$"#, options: .regularExpression) != nil,
               sha256.range(of: #"^[0-9a-f]{64}$"#, options: .regularExpression) != nil else { return nil }
         return ["finish", "-notify", "-target", version, "-target-sha256", sha256]
+    }
+
+    /// 通知的「立即下載」（#340）：綁定通知裡的那一版，版本已變時 0c-update 拒絕。
+    static func downloadCommand(version: String, sha256: String) -> [String]? {
+        guard finishCommand(version: version, sha256: sha256) != nil else { return nil }
+        return ["download-now", "-notify", "-target", version, "-target-sha256", sha256]
     }
 
     static func snoozeCommand(version: String, sha256: String) -> [String]? {

@@ -205,10 +205,11 @@ func ReadUpdateView(base string) *UpdateView {
 }
 
 // probeDue：auto 的查詢失敗結果記在 state.json、結束碼仍是 0（網路斷線不是錯誤），所以「新版自己連不上、
-// 驗不過索引」從結束碼看不出來。查詢已經連續失敗超過 probeAfter（曾經成功過、這次輪到查詢、沒有暫停或手動模式），
-// 就每 probeEvery 以上一版執行一次：上一版查得到，表示問題在新版。
+// 驗不過索引」從結束碼看不出來。查詢已經連續失敗超過 probeAfter（曾經成功過、這次輪到查詢、沒有暫停），
+// 就每 probeEvery 以上一版執行一次：上一版查得到，表示問題在新版。手動更新（manual）從 #340 起也在背景查詢，
+// 一樣要測（上一版若是更早的版本，手動時不查詢，結果記成「沒有查詢」，不會誤判）。
 func (s *State) probeDue(verb string, v *UpdateView, now time.Time) bool {
-	return verb == "auto" && v != nil && v.Mode != "manual" && !now.Before(v.PausedUntil) &&
+	return verb == "auto" && v != nil && !now.Before(v.PausedUntil) &&
 		v.CheckFailures >= FailureLimit && !v.LastSuccess.IsZero() && v.LastCheck.Sub(v.LastSuccess) >= probeAfter &&
 		!now.Before(v.NextCheck) && (s.Probe.IsZero() || now.Sub(s.Probe) >= probeEvery)
 }

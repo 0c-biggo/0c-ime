@@ -118,6 +118,16 @@ struct qsel_model {
     int ntasks;
     atomic_int next;
     pthread_mutex_t call;
+
+    /* 前綴快取（qsel_set_prefix_cache），由 call 保護：上一次呼叫前 pc_rows 列每一層的
+     * key、value（轉過位置之後），以及算出它們的輸入。pc_kv 是 [pc_alloc][layers][2][D]
+     * （以列為主，長大時原有的列不動）；pc_tok [pc_rows][5]；pc_mask [pc_rows][pc_rows]；
+     * pc_reach [pc_rows] 是那次呼叫每一列看到的最後一欄（全部欄，不只 pc_rows 以內）。 */
+    int pc_max, pc_rows, pc_alloc, pc_reused;
+    float *pc_kv;
+    int64_t *pc_tok;
+    uint8_t *pc_mask;
+    int32_t *pc_reach;
 };
 
 const char *qsel_strerror(int code) {
@@ -382,8 +392,18 @@ int qsel_open(const char *path, const char *data_path, int threads, qsel_model *
     return QSEL_OK;
 }
 
+static void prefix_free(qsel_model *m) {
+    free(m->pc_kv);
+    free(m->pc_tok);
+    free(m->pc_mask);
+    free(m->pc_reach);
+    m->pc_kv = NULL, m->pc_tok = NULL, m->pc_mask = NULL, m->pc_reach = NULL;
+    m->pc_rows = m->pc_alloc = 0;
+}
+
 void qsel_close(qsel_model *m) {
     if (!m) return;
+    prefix_free(m);
     if (m->threads > 1) {
         pthread_mutex_lock(&m->mu);
         m->stop = 1;
@@ -403,6 +423,7 @@ void qsel_close(qsel_model *m) {
 
 void qsel_release_pages(qsel_model *m) {
     pthread_mutex_lock(&m->call);
+    prefix_free(m); /* 快取是一般的 dirty 記憶體，最先還 */
     madvise(m->map, m->map_len, MADV_DONTNEED);
     if (m->dmap) madvise(m->dmap, m->dmap_len, MADV_DONTNEED);
     pthread_mutex_unlock(&m->call);
@@ -784,7 +805,7 @@ typedef struct {
     qsel_model *m;
     const float *q, *k, *v;
     float *o;
-    int L;
+    int L, first; /* 算 first..L-1 列的 query；key、value 是全部 L 列 */
     const int32_t *rowptr, *cols;
     float *rowbuf; /* per thread L */
 } att_t;
@@ -793,8 +814,8 @@ static void att_task(void *ctx, int t, int thread) {
     att_t *a = ctx;
     qsel_model *m = a->m;
     int D = m->D, hd = m->hd, L = a->L;
-    int blocks = (L + ATT_ROWS - 1) / ATT_ROWS;
-    int h = t / blocks, i0 = (t % blocks) * ATT_ROWS;
+    int blocks = (L - a->first + ATT_ROWS - 1) / ATT_ROWS;
+    int h = t / blocks, i0 = a->first + (t % blocks) * ATT_ROWS;
     int i1 = i0 + ATT_ROWS < L ? i0 + ATT_ROWS : L;
     float *sc = a->rowbuf + (size_t)thread * L;
     for (int i = i0; i < i1; i++) {
@@ -953,6 +974,74 @@ size_t qsel_workspace_bytes(const qsel_model *m, int64_t L, int64_t P, int64_t R
     return w.total;
 }
 
+/* ---- prefix cache ---- */
+
+#define PC_TOK 5 /* id、base、tone、type、position */
+
+/* 快取現在佔的 bytes。 */
+static size_t prefix_bytes(const qsel_model *m) {
+    size_t r = (size_t)m->pc_rows;
+    return (size_t)m->pc_alloc * m->layers * 2 * m->D * 4 + r * (PC_TOK * 8 + 4) + r * r;
+}
+
+/* 這次呼叫前面幾列可以直接拿快取的 key、value。每一層只把一列跟遮罩允許的列混在一起，
+ * 所以 [0, c) 這幾列在兩次呼叫算出來一樣的條件是：每一列在兩邊的輸入相同、遮罩在
+ * [0, c) 內相同、兩次呼叫裡都不看 c 以後的列（前綴之後的列從沒影響過它們），而且至少
+ * 看一列（整列遮掉的列要平均全部 L 列）。APP 的輸入（BOS、前文、SEP、最後一個音節之前
+ * 的讀音，接著是候選樹，每個節點排在父節點後面）每一列只看自己和前面的列，所以這就是
+ * 兩次輸入的共同前綴。 */
+static int prefix_reuse(const qsel_model *m, const qsel_inputs *in, const int32_t *rowptr, const int32_t *cols) {
+    int C = m->pc_rows, L = (int)in->L, lim = C < L ? C : L;
+    int best = 0, reach = -1, diff = lim;
+    for (int i = 0; i < lim; i++) {
+        const int64_t *t = m->pc_tok + (size_t)i * PC_TOK;
+        if (t[0] != in->ids[i] || t[1] != in->bases[i] || t[2] != in->tones[i] || t[3] != in->types[i] ||
+            t[4] != in->positions[i] || rowptr[i] == rowptr[i + 1])
+            break;
+        int r = cols[rowptr[i + 1] - 1]; /* 欄照順序排：允許的最後一欄 */
+        if (r > reach) reach = r;
+        if (m->pc_reach[i] > reach) reach = m->pc_reach[i];
+        const uint8_t *a = in->mask + (size_t)i * L, *b = m->pc_mask + (size_t)i * C;
+        for (int j = 0; j < diff; j++)
+            if ((a[j] != 0) != b[j]) {
+                diff = j;
+                break;
+            }
+        if (diff <= i) break; /* 遮罩在 [0, i] 內就不同：更長的前綴都不會相符 */
+        if (reach <= i) best = i + 1;
+    }
+    return best;
+}
+
+/* 這次呼叫前面幾列（最多 max）留給下一次：每列至少看一列，且都不看最後一列之後。 */
+static int prefix_keep(int max, int L, const int32_t *rowptr, const int32_t *cols) {
+    int lim = max < L ? max : L, best = 0, reach = -1;
+    for (int i = 0; i < lim; i++) {
+        if (rowptr[i] == rowptr[i + 1]) break;
+        int r = cols[rowptr[i + 1] - 1];
+        if (r > reach) reach = r;
+        if (reach <= i) best = i + 1;
+    }
+    return best;
+}
+
+int qsel_set_prefix_cache(qsel_model *m, int max_rows) {
+    if (max_rows < 0 || max_rows > MAX_L) return QSEL_EINPUT;
+    pthread_mutex_lock(&m->call);
+    m->pc_max = max_rows;
+    if (m->pc_rows > max_rows || max_rows == 0) prefix_free(m);
+    pthread_mutex_unlock(&m->call);
+    return QSEL_OK;
+}
+
+void qsel_prefix_info(qsel_model *m, int *reused, int *kept, size_t *bytes) {
+    pthread_mutex_lock(&m->call);
+    if (reused) *reused = m->pc_reused;
+    if (kept) *kept = m->pc_rows;
+    if (bytes) *bytes = prefix_bytes(m);
+    pthread_mutex_unlock(&m->call);
+}
+
 /* ---- the forward pass ---- */
 
 static int check(const qsel_model *m, const qsel_inputs *in) {
@@ -1028,10 +1117,42 @@ int qsel_score(qsel_model *m, const qsel_inputs *in, float *scores) {
         }
         rowptr[L] = n;
     }
+    /* [0, c) 列用上一次呼叫留下的 key、value（qsel_set_prefix_cache）；[0, keep) 列留給下一次。 */
+    int c = 0, keep = 0;
+    int64_t *ntok = NULL;
+    uint8_t *nmask = NULL;
+    int32_t *nreach = NULL;
+    if (m->pc_max > 0) {
+        if (m->pc_rows > 0) {
+            c = prefix_reuse(m, in, rowptr, cols);
+            /* 只留 key、value，不留各列的輸出：要投影的列照算 */
+            for (int p = 0; p < P; p++)
+                if (in->proj_pos[p] < c) c = (int)in->proj_pos[p];
+        }
+        keep = prefix_keep(m->pc_max, L, rowptr, cols); /* >= c：c 以前的列都不看 c 以後 */
+        if (keep > m->pc_alloc) {
+            float *kv = realloc(m->pc_kv, (size_t)keep * m->layers * 2 * D * 4);
+            if (kv) m->pc_kv = kv, m->pc_alloc = keep;
+            else keep = prefix_keep(m->pc_alloc, L, rowptr, cols); /* 放得下的部分，仍 >= c */
+        }
+        if (keep > 0) {
+            ntok = malloc((size_t)keep * PC_TOK * 8);
+            nmask = malloc((size_t)keep * keep);
+            nreach = malloc((size_t)keep * 4);
+            if (!ntok || !nmask || !nreach) {
+                free(ntok), free(nmask), free(nreach);
+                ntok = NULL, nmask = NULL, nreach = NULL;
+                keep = 0;
+            }
+        }
+    }
+    const size_t kvrow = (size_t)m->layers * 2 * D;
+    int Lr = L - c; /* 要算的列數；>= 1，因為要投影的列一定算 */
+
     /* rotary tables */
     {
         int half = hd / 2;
-        for (int i = 0; i < L; i++) {
+        for (int i = c; i < L; i++) {
             float pos = (float)in->positions[i];
             for (int j = 0; j < half; j++) {
                 float f = m->inv_freq[j] * pos;
@@ -1041,7 +1162,7 @@ int qsel_score(qsel_model *m, const qsel_inputs *in, float *scores) {
         }
     }
     /* embeddings */
-    for (int i = 0; i < L; i++) {
+    for (int i = c; i < L; i++) {
         float *e = hb + (size_t)i * D;
         int64_t ty = in->types[i];
         if (ty == m->reading_type) {
@@ -1055,27 +1176,41 @@ int qsel_score(qsel_model *m, const qsel_inputs *in, float *scores) {
         layernorm(e, m->emb_norm, x + (size_t)i * D, D, m->eps);
     }
 
-    att_t at = {m, q, k, v, hb, L, rowptr, cols, (float *)(ws + w.rowbuf)};
-    int att_tasks = m->heads * ((L + ATT_ROWS - 1) / ATT_ROWS);
+    /* 每一列的運算不因同一塊、同一段裡有哪些列而變，所以只算 [c, L) 列跟算全部 L 列，
+     * 這些列得到的位元相同。 */
+    att_t at = {m, q, k, v, hb, L, c, rowptr, cols, (float *)(ws + w.rowbuf)};
+    int att_tasks = m->heads * ((Lr + ATT_ROWS - 1) / ATT_ROWS);
+    float *xc = x + (size_t)c * D, *hc = hb + (size_t)c * D;
+    int half = hd / 2;
     for (int l = 0; l < m->layers; l++) {
         const layer_t *ly = &m->layer[l];
-        const float *ain = x;
+        const float *ain = xc;
         if (ly->attn_norm) {
-            for (int i = 0; i < L; i++) layernorm(x + (size_t)i * D, ly->attn_norm, hb + (size_t)i * D, D, m->eps);
-            ain = hb;
+            for (int i = c; i < L; i++) layernorm(x + (size_t)i * D, ly->attn_norm, hb + (size_t)i * D, D, m->eps);
+            ain = hc;
         }
-        matmul(m, &s, REPACK, ain, D, L, &ly->wq, NULL, D, D, q, D, 0);
-        matmul(m, &s, SAME_X, ain, D, L, &ly->wk, NULL, D, D, k, D, 0);
-        matmul(m, &s, SAME_X, ain, D, L, &ly->wv, NULL, D, D, v, D, 0);
-        rope(q, L, D, hd, cs, sn);
-        rope(k, L, D, hd, cs, sn);
-        run(m, att_task, &at, att_tasks); /* writes hb */
-        matmul(m, &s, REPACK, hb, D, L, &ly->wo, NULL, D, D, x, D, 1);
-        for (int i = 0; i < L; i++) layernorm(x + (size_t)i * D, ly->mlp_norm, hb + (size_t)i * D, D, m->eps);
+        matmul(m, &s, REPACK, ain, D, Lr, &ly->wq, NULL, D, D, q + (size_t)c * D, D, 0);
+        matmul(m, &s, SAME_X, ain, D, Lr, &ly->wk, NULL, D, D, k + (size_t)c * D, D, 0);
+        matmul(m, &s, SAME_X, ain, D, Lr, &ly->wv, NULL, D, D, v + (size_t)c * D, D, 0);
+        rope(q + (size_t)c * D, Lr, D, hd, cs + (size_t)c * half, sn + (size_t)c * half);
+        rope(k + (size_t)c * D, Lr, D, hd, cs + (size_t)c * half, sn + (size_t)c * half);
+        for (int i = 0; i < c; i++) {
+            const float *r = m->pc_kv + i * kvrow + (size_t)2 * l * D;
+            memcpy(k + (size_t)i * D, r, (size_t)D * 4);
+            memcpy(v + (size_t)i * D, r + D, (size_t)D * 4);
+        }
+        for (int i = c; i < keep; i++) {
+            float *r = m->pc_kv + i * kvrow + (size_t)2 * l * D;
+            memcpy(r, k + (size_t)i * D, (size_t)D * 4);
+            memcpy(r + D, v + (size_t)i * D, (size_t)D * 4);
+        }
+        run(m, att_task, &at, att_tasks); /* 寫 hb 的 [c, L) 列 */
+        matmul(m, &s, REPACK, hc, D, Lr, &ly->wo, NULL, D, D, xc, D, 1);
+        for (int i = c; i < L; i++) layernorm(x + (size_t)i * D, ly->mlp_norm, hb + (size_t)i * D, D, m->eps);
         /* even chunks, so that no chunk of a few rows dequantizes the MLP once more */
-        int chunk = (L + (L + MLP_ROWS - 1) / MLP_ROWS - 1) / ((L + MLP_ROWS - 1) / MLP_ROWS);
+        int chunk = (Lr + (Lr + MLP_ROWS - 1) / MLP_ROWS - 1) / ((Lr + MLP_ROWS - 1) / MLP_ROWS);
         chunk = (chunk + 7) / 8 * 8 < MLP_ROWS ? (chunk + 7) / 8 * 8 : MLP_ROWS;
-        for (int r0 = 0; r0 < L; r0 += chunk) {
+        for (int r0 = c; r0 < L; r0 += chunk) {
             int nr = L - r0 < chunk ? L - r0 : chunk;
             matmul(m, &s, REPACK, hb + (size_t)r0 * D, D, nr, &ly->up, NULL, 2 * NI, D, up, 2 * NI, 0);
             for (int i = 0; i < nr; i++) {
@@ -1086,6 +1221,25 @@ int qsel_score(qsel_model *m, const qsel_inputs *in, float *scores) {
             matmul(m, &s, REPACK, gate, NI, nr, &ly->down, NULL, D, NI, x + (size_t)r0 * D, D, 1);
         }
     }
+    if (m->pc_max > 0) {
+        for (int i = 0; i < keep; i++) {
+            int64_t *t = ntok + (size_t)i * PC_TOK;
+            t[0] = in->ids[i], t[1] = in->bases[i], t[2] = in->tones[i], t[3] = in->types[i], t[4] = in->positions[i];
+            for (int j = 0; j < keep; j++) nmask[(size_t)i * keep + j] = in->mask[(size_t)i * L + j] != 0;
+            nreach[i] = cols[rowptr[i + 1] - 1];
+        }
+        free(m->pc_tok), free(m->pc_mask), free(m->pc_reach);
+        m->pc_tok = ntok, m->pc_mask = nmask, m->pc_reach = nreach;
+        m->pc_rows = keep;
+        if (keep == 0) {
+            free(m->pc_kv);
+            m->pc_kv = NULL, m->pc_alloc = 0;
+        } else if (keep < m->pc_alloc) { /* 這次沒留的部分還回去 */
+            float *kv = realloc(m->pc_kv, (size_t)keep * kvrow * 4);
+            if (kv) m->pc_kv = kv, m->pc_alloc = keep;
+        }
+    }
+    m->pc_reused = c;
 
     /* head on the projected rows: q = final norm, k = dense, v = gelu + norm */
     for (int p = 0; p < P; p++) layernorm(x + (size_t)in->proj_pos[p] * D, m->final_norm, q + (size_t)p * D, D, m->eps);

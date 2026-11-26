@@ -54,3 +54,12 @@ func TestToastXMLAddsProtocolButtons(t *testing.T) {
 		}
 	}
 }
+
+// 手動更新查到的新版（#340）：第一個按鈕是「立即下載」。
+func TestToastXMLActionLabel(t *testing.T) {
+	action := "zc-update:download?sha256=ab&version=0.2.15"
+	p := parse(t, ToastXML(Toast{Title: "t", Body: "b", Action: action, ActionLabel: "立即下載", Snooze: "zc-update:snooze?x"}))
+	if len(p.Actions) != 2 || p.Actions[0].Content != "立即下載" || p.Actions[0].Arguments != action || p.Actions[1].Content != "稍後 1 小時" {
+		t.Fatalf("%+v", p)
+	}
+}

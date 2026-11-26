@@ -5,6 +5,8 @@ Runs every accepted case of the models sequence-prepare-v2 fixtures plus random
 legal requests (built the way APP mobile/neural prepare.go builds them) through
 model.onnx under onnxruntime (the fixtures' session settings) and through libqsel,
 and checks |qsel - ort| <= max(1e-4, 1e-6 * |ort|) and the same candidate order.
+--prefix N 另外用開了前綴快取（qsel_set_prefix_cache）的第二個 handle 依序算每個案例，
+要求跟不開快取逐位元相同。
 
   python3 -I qsel_parity.py --lib libqsel.so --qsel model.qsel \
       --onnx model.onnx --prepare .../sequence-prepare-v2/fixtures.json --random 200
@@ -51,6 +53,22 @@ class Qsel:
             raise RuntimeError(f'qsel_score: {self.lib.qsel_strerror(rc).decode()}')
         return out
 
+    def prefix_cache(self, rows):
+        """qsel_set_prefix_cache，回傳錯誤碼。"""
+        self.lib.qsel_set_prefix_cache.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        return self.lib.qsel_set_prefix_cache(self.h, rows)
+
+    def prefix_info(self):
+        """（上一次沿用的列數, 快取留的列數, 佔的 bytes）"""
+        self.lib.qsel_prefix_info.argtypes = [ctypes.c_void_p] + [ctypes.c_void_p] * 3
+        r, k, b = ctypes.c_int(), ctypes.c_int(), ctypes.c_size_t()
+        self.lib.qsel_prefix_info(self.h, ctypes.byref(r), ctypes.byref(k), ctypes.byref(b))
+        return r.value, k.value, b.value
+
+    def release_pages(self):
+        self.lib.qsel_release_pages.argtypes = [ctypes.c_void_p]
+        self.lib.qsel_release_pages(self.h)
+
     def close(self):
         self.lib.qsel_close(self.h)
 
@@ -95,8 +113,6 @@ def random_inputs(rng, vocab=27865, n_bases=418, max_syllables=32):
         ctx_len = int(rng.choice([0, int(rng.integers(1, 65))]))
     ncand = int(rng.integers(2, 17))
     ctx = [4 if rng.random() < 0.02 else int(rng.integers(8, vocab)) for _ in range(ctx_len)]
-    ids = [1] + ctx + [2]
-    bases, tones, types = [0] * len(ids), [0] * len(ids), [0] * len(ids)
     unknown = rng.random() < 0.5
     sounds = [(int(rng.integers(2, n_bases)), 0 if unknown and rng.random() < 0.7 else int(rng.integers(1, 6)))
               for _ in range(n)]
@@ -111,13 +127,23 @@ def random_inputs(rng, vocab=27865, n_bases=418, max_syllables=32):
         if tuple(c) not in seen:
             seen.add(tuple(c))
             cands.append(c)
+    neutral = not text and sounds[-1][1] not in (0, 5) and rng.random() < 0.3
+    return build_inputs(ctx, sounds, cands, text, neutral), ncand
+
+
+def build_inputs(ctx, sounds, cands, text=False, neutral=False):
+    """照 prepare.go 的排法組九個輸入：BOS、前文、SEP、最後一個音節之前的讀音，
+    接著每個分支是最後一個音節、OUT 與候選樹。"""
+    n = len(cands[0])
+    ids = [1] + list(ctx) + [2]
+    bases, tones, types = [0] * len(ids), [0] * len(ids), [0] * len(ids)
     if text:
         branches = [[(0, 0)]]
         shared = []
     else:
         last = sounds[-1]
         branches = [[last, (0, 0)]]
-        if last[1] not in (0, 5) and rng.random() < 0.3:
+        if neutral:
             branches.append([(last[0], 5), (0, 0)])
         shared = sounds[:-1]
     for b, t in shared:
@@ -171,7 +197,7 @@ def random_inputs(rng, vocab=27865, n_bases=418, max_syllables=32):
     a = lambda v: np.array(v, np.int64).reshape(1, -1)
     return {'ids': a(ids), 'bases': a(bases), 'tones': a(tones), 'types': a(types), 'positions': a(positions),
             'mask': mask.reshape(1, 1, L, L), 'proj_pos': np.array(proj, np.int64),
-            'target_node': np.array(tn, np.int64), 'target_ids': np.array(ti, np.int64)}, ncand
+            'target_node': np.array(tn, np.int64), 'target_ids': np.array(ti, np.int64)}
 
 
 def unpack(buf):
@@ -226,9 +252,16 @@ def main():
     ap.add_argument('--dump', help='write every case with the onnxruntime scores as a qsel_bench cases file')
     ap.add_argument('--no-qsel', action='store_true', help='only run onnxruntime (with --dump)')
     ap.add_argument('--f64', action='store_true', help='also report each side against the float64 reference (qsel_reference.py)')
+    ap.add_argument('--prefix', type=int, default=0,
+                    help='另外在開了這麼多列前綴快取的 handle 上依序算每個案例，要求逐位元相同')
     args = ap.parse_args()
     sess = session(args.onnx)
     q = None if args.no_qsel else Qsel(args.lib, args.qsel, args.data, args.threads)
+    qc = None
+    if q and args.prefix:
+        qc = Qsel(args.lib, args.qsel, args.data, args.threads)
+        assert qc.prefix_cache(args.prefix) == 0
+    reused = total_rows = prefix_bad = 0
     cases = []
     if args.prepare:
         cases += [(f'fixture:{n}', x, k) for n, x, k in fixture_inputs(args.prepare)]
@@ -262,13 +295,19 @@ def main():
         if q is None:
             continue
         got = q.score(x)
+        same_bits = True
+        if qc:
+            same_bits = np.array_equal(qc.score(x).view(np.uint32), got.view(np.uint32))
+            reused += qc.prefix_info()[0]
+            total_rows += x['ids'].shape[-1]
+            prefix_bad += not same_bits
         diff = np.abs(got.astype(np.float64) - ref)
         tol = np.maximum(1e-4, 1e-6 * np.abs(ref.astype(np.float64)))
         (oref, bref), (ogot, _) = order(ref, k), order(got, k)
         # The fixtures keep candidates at least 0.11 apart; recorded requests can hold
         # near ties, which may swap within the tolerance without being an error.
         same_order = all(abs(bref[a] - bref[b]) <= 2 * tol.max() for a, b in zip(oref, ogot))
-        ok = bool((diff <= tol).all()) and same_order and np.isfinite(got).all()
+        ok = bool((diff <= tol).all()) and same_order and np.isfinite(got).all() and same_bits
         md = float(diff.max())
         ratio = float((diff / tol).max())
         if md > worst[0]:
@@ -283,10 +322,14 @@ def main():
             far['ort'], far['qsel'] = max(far['ort'], do), max(far['qsel'], dq)
             extra = f' |ort-f64|={do:.2e} |qsel-f64|={dq:.2e}'
         print(f'{name:45s} L={L:4d} P={x["proj_pos"].shape[0]:4d} R={ref.size:3d} max|d|={md:.3e} '
-              f'tol_used={ratio:.3f} range=[{ref.min():.3f},{ref.max():.3f}]{extra} {"ok" if ok else "FAIL"}')
+              f'tol_used={ratio:.3f} range=[{ref.min():.3f},{ref.max():.3f}]{extra}{"" if same_bits else " PREFIX-CACHE-DIFFERS"} '
+              f'{"ok" if ok else "FAIL"}')
         bad += not ok
     if q:
         q.close()
+    if qc:
+        qc.close()
+        print(f'prefix cache: {prefix_bad} cases differ from scoring without it, {reused} of {total_rows} rows reused')
     if dump:
         dump.close()
     print(f'cases={len(cases)} fail={bad} max|d|={worst[0]:.3e} ({worst[1]}) max tol_used={worst_ratio[0]:.3f} ({worst_ratio[1]})')

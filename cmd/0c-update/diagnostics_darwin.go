@@ -48,6 +48,17 @@ func shellDiagnostics() map[string]any {
 	if stats := inputMethodStats(basePath()); stats != nil {
 		out["input_method_stats"] = stats
 	}
+	// #351：最近一次安裝後的輸入來源自我檢查（查詢、重新登記、重啟 TextInputMenuAgent 各步的結果）。
+	if c := loadInputSourceCheck(basePath()); c != nil {
+		out["input_source_check"] = c
+	}
+	// #350：通知授權（輸入法程式記下的狀態、有沒有正式詢問過與回答）；被拒絕時更新只靠選單與設定程式提醒。
+	if b, err := os.ReadFile(filepath.Join(basePath(), "notification-permission.json")); err == nil {
+		var n map[string]any
+		if json.Unmarshal(b, &n) == nil {
+			out["notifications"] = n
+		}
+	}
 	installed := filepath.Join(installedApp(), "Contents/MacOS/0c")
 	var inode uint64
 	if info, err := os.Stat(installed); err == nil {

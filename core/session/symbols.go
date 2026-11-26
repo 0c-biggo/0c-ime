@@ -1,11 +1,13 @@
 package session
 
 import (
+	"maps"
 	"slices"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/0c-biggo/0c-ime/core/decode"
+	"github.com/0c-biggo/0c-ime/core/input"
 	"github.com/0c-biggo/0c-ime/core/lexicon"
 	"github.com/0c-biggo/0c-ime/core/suggest"
 	"github.com/0c-biggo/0c-ime/core/zhuyin"
@@ -288,13 +290,13 @@ func (s *Session) decodeWithLiterals() []decode.Seg {
 	if len(s.literals) == 0 {
 		s.dec.Evidence = nil
 		s.configureCorrections(0, len(s.syls), false)
-		s.basePath = s.dec.Decode(lat, s.locks, prefix)
+		s.basePath = s.decodeSegment(0, lat, s.locks, prefix)
 		s.dec.Evidence = s.localEvidence(0)
 		s.configureCorrections(0, len(s.syls), true)
 		if s.dec.Evidence == nil && len(s.locks) == 0 {
 			return s.basePath
 		}
-		return s.dec.Decode(lat, s.locks, prefix)
+		return s.decodeSegment(-1, lat, s.locks, prefix)
 	}
 	var path []decode.Seg
 	for start := 0; start < len(lat); {
@@ -312,7 +314,7 @@ func (s *Session) decodeWithLiterals() []decode.Seg {
 		s.configureDocumentContext(start)
 		s.dec.Evidence = nil
 		s.configureCorrections(start, end, false)
-		part := s.dec.Decode(lat[start:end], locks, prefix)
+		part := s.decodeSegment(2*start, lat[start:end], locks, prefix)
 		for _, g := range part {
 			g.Start += start
 			g.End += start
@@ -321,7 +323,7 @@ func (s *Session) decodeWithLiterals() []decode.Seg {
 		s.dec.Evidence = s.localEvidence(start)
 		s.configureCorrections(start, end, true)
 		if s.dec.Evidence != nil || len(s.locks) > 0 {
-			part = s.dec.Decode(lat[start:end], locks, prefix)
+			part = s.decodeSegment(2*start+1, lat[start:end], locks, prefix)
 		}
 		if len(part) == 0 {
 			return nil // 保留既有的原樣注音保底，任何文字都不消失
@@ -332,6 +334,28 @@ func (s *Session) decodeWithLiterals() []decode.Seg {
 		}
 		start = end
 	}
+	return path
+}
+
+// decodeSegment 是 decodeWithLiterals 的一次解碼。自動切字（nine_segment.go）有九宮格音節時，每按一顆鍵都要重解，
+// 改用依 key 保存的逐鍵增量解碼（decode.Search，結果同 Decode）；其他時候照舊 Decode。
+//
+// 自動切字時組字最後是還沒按聲調鍵的九宮格音節（還可能接上鍵）時不算尾端「更長的詞的前綴」：那個音節本身已經展開成
+// 以它的鍵開頭的音節，前綴再對每個起點彙總一次詞條，是每一鍵最貴的一步（手機上每鍵上百 ms）。
+func (s *Session) decodeSegment(key int, lat input.Lattice, locks map[int]decode.Lock, prefix bool) []decode.Seg {
+	if !s.NineSegment || len(s.nineSeg) == 0 {
+		return s.dec.Decode(lat, locks, prefix)
+	}
+	if last := max(key, 0)/2 + len(lat) - 1; prefix && last == len(s.syls)-1 && s.inRun(last) && s.nineSegTail(last) {
+		prefix = false
+	}
+	search := searchCopy(s.sylSearch[key])
+	s.sylSearch = maps.Clone(s.sylSearch) // 寫時複製，見 searchCopy
+	if s.sylSearch == nil {
+		s.sylSearch = map[int]*decode.Search{}
+	}
+	s.sylSearch[key] = search
+	path, _ := s.dec.BestSearch(search, lat, locks, prefix)
 	return path
 }
 
