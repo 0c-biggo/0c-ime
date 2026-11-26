@@ -48,6 +48,7 @@ func main() {
 	escClear := flag.Bool("esc-clear", true, "按 Esc 清除整段組字；關閉時只清未打完的注音")
 	capsLockEnglish := flag.Bool("caps-lock-english", false, "Caps Lock 開著時直接打英文（用 :caps on 送）；關閉時 caps_lock 不起作用。重播需使用相同開關")
 	ctrlPunct := flag.Bool("ctrl-punctuation", true, "注音模式的 Ctrl＋, . ' ; ? ! : ( ) 打全形標點（用 :k Ctrl+, 送）；關閉時交給應用程式")
+	cjkDigitSpace := flag.Bool("cjk-digit-space", false, "送出時在漢字與半形數字相連處補半形空格")
 	cjkLatinSpace := flag.Bool("cjk-latin-space", false, "送出時在漢字與英文字母相連處補半形空格（#273）")
 	personalLearning := flag.Bool("personal-learning", true, "記住我選的字詞（#297）；關閉時照常選字（含神經選字與已學到的），只是送出不寫進個人資料。重播需使用相同開關")
 	zhuyinErrorHint := flag.Bool("zhuyin-error-hint", true, "打錯注音時提示（#300）：按了聲調但讀音沒有字時不收聲調、畫面標示 [提示]，緊接著再按同一個聲調照舊原樣留下。重播需使用相同開關")
@@ -90,6 +91,7 @@ func main() {
 		eng.Toneless = false
 	}
 	eng.CJKLatinSpace = *cjkLatinSpace
+	eng.CJKDigitSpace = *cjkDigitSpace
 	eng.ZhuyinErrorHint = *zhuyinErrorHint
 	eng.NoLearning = !*personalLearning
 	eng.CapsLockEnglish = *capsLockEnglish
@@ -170,6 +172,9 @@ func main() {
 		}
 		if *cjkLatinSpace {
 			fmt.Fprintln(rec, "# 重播需要相同的中英文空格設定：0c-cli -cjk-latin-space")
+		}
+		if *cjkDigitSpace {
+			fmt.Fprintln(rec, "# 重播需要相同的中文數字空格設定：0c-cli -cjk-digit-space")
 		}
 		if !*zhuyinErrorHint {
 			fmt.Fprintln(rec, "# 重播需要相同的打錯注音提示設定：0c-cli -zhuyin-error-hint=false")

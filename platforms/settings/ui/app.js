@@ -522,8 +522,8 @@
       title: '鍵盤與符號', lead: '注音的鍵盤排列，以及標點符號和 Emoji 怎麼打。',
       // emoji-equals-first 是 Emoji 選單的子選項，畫在它下面。
       // shift-symbol-halfwidth（標點寬度，#258、#282 三選一）跟 Ctrl＋標點是一對（半形與全形），排在它下面；
-      // cjk-latin-space（#273，中英文之間自動加空格）也是半形排版，接在後面。
-      keys: ['keyboard-layout', 'ctrl-punctuation', 'shift-symbol-halfwidth', 'cjk-latin-space', 'punctuation', 'emoji-shortcut', 'emoji-equals-first', 'style-punctuation', 'style-shift-space', 'style-shift-delete'],
+      // cjk-latin-space（#273，中英文之間自動加空格）也是半形排版，接在後面；cjk-digit-space（中文與數字之間）再接著。
+      keys: ['keyboard-layout', 'ctrl-punctuation', 'shift-symbol-halfwidth', 'cjk-latin-space', 'cjk-digit-space', 'punctuation', 'emoji-shortcut', 'emoji-equals-first', 'style-punctuation', 'style-shift-space', 'style-shift-delete'],
     },
   };
   const OUTPUT_KEYS = ['output-simplified', 'simplified-hotkey'];

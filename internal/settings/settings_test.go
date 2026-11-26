@@ -410,7 +410,7 @@ func TestCorruptFileIsReportedAndCanBeQuarantined(t *testing.T) {
 func TestItemsListEveryKeyWithCurrentValue(t *testing.T) {
 	s := Default()
 	items := s.Items()
-	want := 26 + len(fuzzy.Pairs()) + len(ruleSpecs()) // 含 simplified-hotkey（#192）、toneless（#150）、shift-symbol-halfwidth（#258）、cjk-latin-space（#273）、zhuyin-error-hint（#300）、shift-tap-ms（#319）、personal-learning（#297）
+	want := 27 + len(fuzzy.Pairs()) + len(ruleSpecs()) // 含 simplified-hotkey（#192）、toneless（#150）、shift-symbol-halfwidth（#258）、cjk-latin-space（#273）、cjk-digit-space、zhuyin-error-hint（#300）、shift-tap-ms（#319）、personal-learning（#297）
 	if CapsLockEnglishSetting(runtime.GOOS) {
 		want++ // caps-lock-english（#173）只有 Windows、Linux
 	}

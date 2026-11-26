@@ -133,12 +133,12 @@ check "引擎已啟動" test -S "$XDG_RUNTIME_DIR/0c/0c.sock"
 check "更新器看得到執行中的引擎" bash -c "'$UPDATE_BIN' settings -json | python3 -c \"import json,sys; sys.exit(0 if json.load(sys.stdin)['engine']['state']=='running' else 1)\""
 check "補標點 Beta 預設關閉且引擎未啟用" bash -c "'$UPDATE_BIN' settings -json | python3 -c \"import json,sys; it=next(x for x in json.load(sys.stdin)['items'] if x['key']=='punctuation'); sys.exit(0 if it['value']=='off' and it['running']=='off' and it['default']=='off' and 'Beta' in it['label'] else 1)\""
 check "補標點狀態為依設定關閉" bash -c "'$UPDATE_BIN' status -json | python3 -c \"import json,sys; sys.exit(0 if json.load(sys.stdin)['runtime']['punctuation_state']=='disabled_by_setting' else 1)\""
-# 鍵盤路徑：「鍵盤與符號」的鍵盤排列（一組單選）、Ctrl＋標點、Shift＋符號打半形（#258）、中英文之間自動加空格（#273）→ 「提交時補標點（Beta）」開關，按空白鍵開啟。
+# 鍵盤路徑：「鍵盤與符號」的鍵盤排列（一組單選）、Ctrl＋標點、Shift＋符號打半形（#258）、中英文之間自動加空格（#273）、中文與數字之間自動加空格 → 「提交時補標點（Beta）」開關，按空白鍵開啟。
 launch live keyboard
 if window_up; then
   sleep 2.5
   import -window root "$OUT/live-keyboard-before.png"
-  tabs $((NAV + 5)); xdotool key space
+  tabs $((NAV + 6)); xdotool key space
   sleep 6
   import -window root "$OUT/live-keyboard-after.png"
   check "自行開啟後新路徑 settings.json 的 punctuation 為 true" grep -q '"punctuation": true' "$(settings_of live)"
@@ -380,12 +380,12 @@ for _ in range(80):
 sys.exit(1)
 PY
 }
-# Emoji 在「鍵盤與符號」：鍵盤排列（一組單選）、Ctrl＋標點、Shift＋符號打半形、中英文之間自動加空格、補標點 → Emoji（導覽後第 6 個）→ 等號首項（子選項）。
+# Emoji 在「鍵盤與符號」：鍵盤排列（一組單選）、Ctrl＋標點、Shift＋符號打半形、中英文之間自動加空格、中文與數字之間自動加空格、補標點 → Emoji（導覽後第 7 個）→ 等號首項（子選項）。
 launch toggles keyboard
 if window_up; then
   sleep 2.5
   import -window root "$OUT/toggles-before.png"
-  tabs $((NAV + 6)); xdotool key space
+  tabs $((NAV + 7)); xdotool key space
   check "預設啟用的 Emoji 開關可以關閉，保留未知設定" toggle_value emoji_off
   sleep 1
   xdotool key space
@@ -412,7 +412,7 @@ stop_app
 launch toggles keyboard
 if window_up; then
   sleep 2.5
-  tabs $((NAV + 6)); xdotool key space
+  tabs $((NAV + 7)); xdotool key space
   check "停用子選項後仍可重新啟用 Emoji" toggle_value emoji_on
   sleep 1
   xdotool key Tab space
@@ -560,6 +560,14 @@ if window_up; then
   xdotool key space
   sleep 3
   check "中英文之間自動加空格開關可關閉" grep -q '"cjk_latin_space": false' "$(settings_of eten)"
+  # 再下一項是「中文與數字之間自動加空格」，預設關閉；空白鍵開啟，再按一次關閉。
+  xdotool key Tab space
+  sleep 3
+  check "中文與數字之間自動加空格開關可開啟" grep -q '"cjk_digit_space": true' "$(settings_of eten)"
+  import -window root "$OUT/cjk-digit-space-on.png"
+  xdotool key space
+  sleep 3
+  check "中文與數字之間自動加空格開關可關閉" grep -q '"cjk_digit_space": false' "$(settings_of eten)"
 else bad "eten/mode 視窗沒有出現"; cat /tmp/app-eten-mode.log; fi
 stop_app
 # 選字鍵在「選字」（一組單選，預設 1234567890，#112）：選字方式、前文、空白選字、修改位置、選字後游標、排列之後第 7 個。
