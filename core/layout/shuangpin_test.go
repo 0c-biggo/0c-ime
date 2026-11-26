@@ -19,6 +19,7 @@ func TestXiaohePairs(t *testing.T) {
 		{"yu", "yu"}, {"yt", "yue"}, {"yr", "yuan"}, {"yy", "yun"}, {"wh", "wang"}, {"wg", "weng"}, {"ww", "wei"},
 		{"lo", "luo"}, // lo（咯）與 luo 同兩鍵，取常用的 luo
 		{"vi", "zhi"}, {"ii", "chi"}, {"ri", "ri"}, {"ci", "ci"}, {"si", "si"},
+		{"ju", "ju"}, {"jv", "ju"}, {"qv", "qu"}, {"xv", "xu"}, {"yv", "yu"}, // j q x y 後的 ü 也可以打 v
 	} {
 		got, ok := Xiaohe.Pair(c.pair)
 		if !ok || got[0] != c.want {
@@ -50,6 +51,9 @@ func TestXiaoheCoversInventory(t *testing.T) {
 		if back, _ := zhuyin.PinyinSyllable(got[0]); back != y && p != "lo" {
 			t.Errorf("%s 的兩鍵 %q 換回 %s", p, k, got[0])
 		}
+	}
+	if k := Xiaohe.Keys(zhuyin.Syllable("ㄐㄩˋ")); k != "ju4" {
+		t.Errorf("ㄐㄩˋ 的按鍵 %q，應為 ju4（v 是另一種打法）", k)
 	}
 	if k := Xiaohe.Keys(zhuyin.Syllable("ㄏㄠˇ")); k != "hc3" {
 		t.Errorf("ㄏㄠˇ 的按鍵 %q，應為 hc3", k)

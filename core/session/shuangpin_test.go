@@ -195,3 +195,18 @@ func TestXiaoheToneDigitEdges(t *testing.T) {
 		t.Errorf("打聲調 ni3hc 組字 %q", snap.Text())
 	}
 }
+
+// j q x y 後面的 ü 打 v 也可以（jv＝ju，同 Rime 小鶴雙拼），打聲調與不打聲調都一樣。
+func TestXiaoheJVIsJU(t *testing.T) {
+	want := map[string]zhuyin.Syllable{"jv": "ㄐㄩ", "qv": "ㄑㄩ", "xv": "ㄒㄩ", "yv": "ㄩ", "ju": "ㄐㄩ", "lv": "ㄌㄩ"}
+	for _, toneless := range []bool{false, true} {
+		for pair, base := range want {
+			s := xiaoheSession(t, toneless)
+			s.ZhuyinErrorHint = true
+			snap := typeKeys(s, pair+"4")
+			if snap.Bell || len(s.syls) != 1 || s.syls[0] != base.WithTone(4) {
+				t.Errorf("toneless=%v %s4：bell=%v 音節 %v", toneless, pair, snap.Bell, s.syls)
+			}
+		}
+	}
+}

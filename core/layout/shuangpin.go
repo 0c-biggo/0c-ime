@@ -33,6 +33,7 @@ type Syllables []string
 //	     eng＝g ang＝h an＝j ing/uai＝k iang/uang＝l ou＝z ia/ua＝x ao＝c ui/ü＝v in＝b iao＝n ian＝m
 //	零聲母：單韻母打兩次（aa＝a、oo＝o、ee＝e），雙字母韻母照打（ai an ao ei en er ou），
 //	     三字母韻母打首字母加韻母鍵（ah＝ang、eg＝eng）；韻母鍵的寫法也收（aj＝an、ac＝ao）。
+//	j q x y 後面的 ü 寫成 u（ju＝ㄐㄩ），也可以打 ü 的 v 鍵（jv＝ju，同 Rime 小鶴雙拼）。
 var Xiaohe = newShuangpin(NameXiaohe,
 	map[byte]string{'v': "zh", 'i': "ch", 'u': "sh"},
 	map[byte][]string{
@@ -92,6 +93,9 @@ func (sp *Shuangpin) spellings(a, b byte) []string {
 	}
 	for _, f := range sp.finals[b] {
 		out = append(out, ini+f)
+	}
+	if b == 'v' && strings.IndexByte("jqxy", a) >= 0 {
+		out = append(out, ini+"u") // jv＝ju：這幾個聲母後面的 u 就是 ü
 	}
 	return out
 }
