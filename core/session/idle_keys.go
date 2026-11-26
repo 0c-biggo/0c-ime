@@ -26,7 +26,7 @@ func IdleKeys(l layout.Layout, mixedInput bool, emojiShortcut string) string {
 		_, punct := l.Punct(r)
 		switch {
 		case r == '`', punct:
-		case l == layout.Pinyin && zhuyin.PinyinLetter(r): // 漢語拼音的字母（#324）；數字只在拼音後面是聲調
+		case layout.PinyinFamily(l) && zhuyin.PinyinLetter(r): // 漢語拼音的字母（#324）；數字只在拼音後面是聲調
 		case r == '=' && emojiShortcut == "equals" && !equalsPhonetic:
 		case mixed:
 		case phonetic && (zhuyin.ClassOf(sym) != zhuyin.Tone || sym != zhuyin.Tone1):

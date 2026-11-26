@@ -144,6 +144,7 @@ const (
 	NameETen     = "eten"
 	NameHsu      = "hsu"
 	NamePinyin   = "pinyin" // 漢語拼音（#324）
+	NameXiaohe   = "xiaohe" // 小鶴雙拼
 )
 
 // ByName 依名稱回傳排列；不認得的名稱回傳 false。
@@ -157,6 +158,8 @@ func ByName(name string) (Layout, bool) {
 		return Hsu, true
 	case NamePinyin:
 		return Pinyin, true
+	case NameXiaohe:
+		return Xiaohe, true
 	}
 	return nil, false
 }

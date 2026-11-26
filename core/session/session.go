@@ -250,7 +250,9 @@ type Session struct {
 	// 隨插入、刪除平移；nineStaged 交給下一次 insert。
 	nineKeys []string
 	// pyKeys 是漢語拼音鍵盤（pinyin.go，#324）還沒收成音節的拼音字母與隔音符號 '。
-	pyKeys     string
+	pyKeys string
+	// spTone 是雙拼逐字轉換剛收成的音節（pinyin.go）：緊接著的 1–5 替它標聲調，之後任何請求都清掉。
+	spTone     shuangpinTone
 	nine       map[int][]zhuyin.Syllable
 	nineStaged []zhuyin.Syllable
 	// NineSegment 由宿主設定（「自動切字」，手機，預設關）：九宮格的鍵連續按、不必按聲調鍵，由解碼在鍵上同時
@@ -386,6 +388,7 @@ func (s *Session) Handle(r proto.Request) proto.Snapshot {
 		s.toneKeyDone = ""
 		s.retypeLiteral = false
 		s.untonedRun = nil
+		s.spTone = shuangpinTone{}
 	}
 	_, keypad := proto.KeypadChar(r.Key)
 	s.allowRerank = r.Type == proto.Symbol || r.Type == proto.Backspace || r.Type == proto.Key && (len([]rune(r.Key)) == 1 || keypad || r.Key == proto.KeyBackspace)
@@ -2193,7 +2196,7 @@ func (s *Session) snapshot() proto.Snapshot {
 		pending = s.ninePendingText() // 九宮格：目前最可能的拼法
 	}
 	if s.pinyinPending() {
-		pending = s.pyKeys // 漢語拼音：照打的字母（#324）
+		pending = s.pinyinPreview() // 漢語拼音：照打的字母（#324）；雙拼換成拼音
 	}
 	split := pending != ""
 	// commitComposed 不照畫面送出的未打完注音（#322）：見 proto.Segment.Unfinished。

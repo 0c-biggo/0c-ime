@@ -231,7 +231,10 @@ func (s *session) toggleKey() string { return s.info["toggle_key"] }
 
 // pinyin 回報引擎目前的鍵盤排列是漢語拼音（open 回覆的 keyboard_layout，#324）：選單的模式文字寫「拼音」而不是「注音」（#357）。
 // 快取方式同 toggleKey；換排列（引擎重啟）後下一個請求或下一次聚焦重開 session 時更新。
-func (s *session) pinyin() bool { return s.info["keyboard_layout"] == "pinyin" }
+func (s *session) pinyin() bool {
+	l := s.info["keyboard_layout"]
+	return l == "pinyin" || l == "xiaohe" // 雙拼也是拼音
+}
 
 // vocabKeys 回報引擎是否認得 0.2.0 的加詞與反悔鍵名（open 回覆的 vocab_keys，#123）。值隨 session 快取，
 // 引擎重啟（例如套用設定）後重開 session 時更新，不必每個按鍵查 health。斷線要等下一個請求才發現，
