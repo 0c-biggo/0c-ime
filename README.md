@@ -32,7 +32,7 @@
   <img src=".github/assets/demo.svg" width="800" alt="打字示範：整句注音打下去不用選字，按 Tab 把話打完">
 </p>
 
-> **English** — 0C (靈犀注音) is a Zhuyin (Bopomofo) input method for Traditional Chinese. An on-device Transformer language model reads what you have just written and picks the right homophones, so you can type a whole sentence without stopping to choose characters. It runs entirely on your computer, and ships shells for Fcitx5, IBus, macOS InputMethodKit and Windows TSF.
+> **English** — 0C (靈犀注音) is a Zhuyin (Bopomofo) input method for Traditional Chinese. An on-device Transformer language model reads what you have just written and picks the right homophones, so you can type a whole sentence without stopping to choose characters. Besides the Zhuyin layouts it also takes Hanyu Pinyin and Xiaohe double pinyin keys. It runs entirely on your computer, and ships shells for Fcitx5, IBus, macOS InputMethodKit and Windows TSF.
 
 ## ✨ 特色
 
@@ -40,7 +40,8 @@
 - ⇥ **Tab 補全**：有把握才提示後續字詞，按 Tab 接受；補全只來自詞庫與個人片語，不生成新內容。
 - 🔒 **全在本機**：選字、補標點與個人學習都在你的電腦上以 CPU 執行，不連網、不上傳打字內容。
 - 📚 **我的詞彙**：人名、術語、英文指令加進來就排在前面，也看得到靈犀學到了什麼。
-- 🔤 **中英混打、自動加空格、模糊音、Emoji 與顏文字**：可選擇在中文字和英文字母相連處自動補半形空格（「用Python寫」送出「用 Python 寫」）；ㄗ／ㄓ、ㄘ／ㄔ、ㄙ／ㄕ、ㄣ／ㄥ 近音放在後面備選；按 = 開 Emoji 選單。
+- ⌨️ **注音、拼音、雙拼都能打**：鍵盤排列有標準（大千）、倚天 41 鍵與許氏，也可以用漢語拼音或小鶴雙拼打繁體（ni3hao3、nihc 都是「你好」）；標準排列、拼音與雙拼開「不打聲調也能選字」後，聲調可打可不打，沒打的字依前後文決定。
+- 🔤 **中英混打、自動加空格、模糊音、Emoji 與顏文字**：可選擇在中文字和英文字母相連處自動補半形空格（「用Python寫」送出「用 Python 寫」），也可以連數字旁一起補（「第2版」送出「第 2 版」）；ㄗ／ㄓ、ㄘ／ㄔ、ㄙ／ㄕ、ㄣ／ㄥ 近音放在後面備選；按 = 開 Emoji 選單。
 - 🔁 **輸出簡體字、自訂選字鍵**：看繁體打字、送出時才轉簡體，可從輸入法選單一鍵切換；選字鍵可用 1–0 或 asdfghjkl;。
 - ✍️ **送出時補標點**（Beta）：Enter 送出時在漢字之間補上 ，。？！、；，不改動你打的字。
 - 🛟 **自動退回**：模型無法啟動或回應太慢時改用統計引擎排序，打字不會卡住。
