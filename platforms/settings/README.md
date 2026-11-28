@@ -9,8 +9,8 @@
 | `src/updater.rs` | 找出並啟動 `0c-update`、逾時、解析 JSON、匯出摘要；附單元測試 |
 | `src/main.rs` | 指令白名單、視窗、單一實例 |
 | `src/watch.rs` | 「我的詞彙」的即時同步：常駐 `0c-update vocab watch`、轉成 `vocab-changed` 事件、意外結束時重新連上 |
-| `ui/` | `index.html`、`app.css`、`app.js`；設定項目依契約動態產生。`vocab.js` 是「我的詞彙」頁，`models.js` 是「模型」頁，`personal-reset.js` 是「我的詞彙」頁「靈犀學到的」底下的「清除學習紀錄」，`input-styles.js` 是「輸入習慣」頁，`update-mode.js` 是更新方式的顯示名稱、下拉選單的選項與說明（#244、#340） |
-| `test/` | `smoke.sh`（容器 Xvfb 冒煙測試）、`vocab.sh`（我的詞彙）、`models.sh`（模型）、`styles.sh`（輸入習慣）、`scroll.sh`（背景更新保留捲動位置，#268）、`personal.sh`（清除學習紀錄，#301）、`update-mode.sh`（更新頁的更新方式下拉選單，#340）、`fake-update.py`（測試用的 0c-update 替身，只模擬 vocab、api 與 models）、`*_test.js`（`node --test`，不碰畫面的判斷）、`scroll_position_test.py`（Playwright 在 Chromium 與 WebKit 跑真的頁面，各缺一個就跳過） |
+| `ui/` | `index.html`、`app.css`、`app.js`；設定項目依契約動態產生。`vocab.js` 是「我的詞彙」頁，`models.js` 是「模型」頁，`personal-reset.js` 是「我的詞彙」頁「靈犀學到的」底下的「清除學習紀錄」，`input-styles.js` 是「輸入習慣」頁，`update-mode.js` 是更新方式的顯示名稱、下拉選單的選項與說明（#244、#340），`item-help.js` 是設定項目的選項提示與「說明」連結的判斷（#362），`search.js` 是設定搜尋的比對、分組與標示（#363；畫面與鍵盤操作在 `app.js`） |
+| `test/` | `smoke.sh`（容器 Xvfb 冒煙測試）、`vocab.sh`（我的詞彙）、`models.sh`（模型）、`styles.sh`（輸入習慣）、`scroll.sh`（背景更新保留捲動位置，#268）、`personal.sh`（清除學習紀錄，#301）、`update-mode.sh`（更新頁的更新方式下拉選單，#340）、`help.sh`（選項提示與「說明」連結，#362）、`search.sh`（設定搜尋，#363）、`fake-update.py`（測試用的 0c-update 替身，只模擬 vocab、api 與 models）、`*_test.js`（`node --test`，不碰畫面的判斷）、`scroll_position_test.py`、`item_help_page_test.py`、`search_page_test.py`（Playwright 在 Chromium 與 WebKit 跑真的頁面，各缺一個就跳過） |
 | `build.rs`、`capabilities/main.json` | 只有 `build.rs` 列出的指令能被前端呼叫，capability 只授權這些指令與事件監聽 |
 | `tauri.linux.conf.json` | Linux 的 identifier 改為 `com.biggo.zc.settings`：外掛用它組 D-Bus 服務名，而服務名的每一段不能以數字開頭，`com.biggo.0c.settings` 會讓程式一啟動就 panic。macOS 與 Windows 維持 `com.biggo.0c.settings` |
 | `tauri.conf.json` | CSP：`default-src 'none'; script-src 'self'; style-src 'self'`；不載入任何遠端內容 |
@@ -35,9 +35,40 @@ Rust 的 `profile_command(action,id,name)` 只允許 `select`、`copy`、`rename
 
 側欄順序：總覽、中英切換、選字、鍵盤與符號、輸出設定、我的詞彙、模型、更新、問題排解、關於。「輸出設定」（`output`）照舊獨立。契約裡不在任何一頁的新項目（較新的 0c-update 才有）畫在「選字」最後，所以新增設定不必先改畫面；要放別頁再加進 `INPUT_PAGES`。舊的頁名 `input`（0.2.5 以前的 `0c-update open-settings input`、說明文件）照樣接受，畫面導到側欄第一頁「中英切換」（`PAGE_ALIAS`；Go 與 Rust 的白名單也保留它，舊版設定程式照舊開輸入設定）。三份頁名清單由 `internal/settingsapp` 的 `TestPageNamesMatchTheSettingsApp` 核對。總覽的「有設定已儲存、尚未套用」帶到第一個尚未套用的項目所在的那一頁。
 
-契約的項目帶 `disabled` 時（倚天 41 鍵時的中英混打、Emoji 選單與等號首項，許氏時的中英混打，#183；漢語拼音時的中英混打，#324；不用 Shift 時的開始模式，#184）開關反灰、畫成關閉，名稱旁顯示 `disabled_reason`，不在 Tab 順序裡；設定檔的值不動，切回標準排列照原值顯示（#83）。造成停用的那一項（`disabled_by`）在別頁時，說明下面多一個「到「鍵盤與符號」修改「鍵盤排列」」，按了切到那一頁並把焦點放在那一項（例如中英混打在「中英切換」、鍵盤排列在「鍵盤與符號」）；在同一頁（開始模式就在中英切換鍵下面）不另外放。
+契約的項目帶 `disabled` 時（倚天 41 鍵時的中英混打、Emoji 選單與等號首項，許氏時的中英混打，#183；漢語拼音時的中英混打，#324；小鶴雙拼時的中英混打，#370；不用 Shift 時的開始模式，#184）開關反灰、畫成關閉，名稱旁顯示 `disabled_reason`，不在 Tab 順序裡；設定檔的值不動，切回標準排列照原值顯示（#83）。造成停用的那一項（`disabled_by`）在別頁時，說明下面多一個「到「鍵盤與符號」修改「鍵盤排列」」，按了切到那一頁並把焦點放在那一項（例如中英混打在「中英切換」、鍵盤排列在「鍵盤與符號」）；在同一頁（開始模式就在中英切換鍵下面）不另外放。
 
-Emoji 選單以一個開關控制（`emoji-shortcut`：off／equals），預設開啟，保留使用者明確關閉的設定。另有 `emoji-equals-first` 開關（預設 on），可取消第一項的等號；設定說明寫明開或關都可以連按兩下 = 輸入一個 =，想單按 = 打出等號要關閉 Emoji 選單（GitHub 0c-ime#89）。模糊音顯示一列總開關，預設開啟（四組 select），開啟時以同一次設定交易將四組近音都設為 select，關閉時全部設 off；沒有逐組控制或自動修正單選。舊設定只啟用部分配對或使用 auto 時，畫面視為開啟，載入不改寫；關閉再開啟才統一成四組 select。CLI 的逐組設定與原有檔案格式仍保留，未知欄位與唯讀保護沿用既有契約。
+Emoji 選單以一個開關控制（`emoji-shortcut`：off／equals），預設開啟，保留使用者明確關閉的設定。另有 `emoji-equals-first` 開關（預設 on），可取消第一項的等號；設定說明寫明開或關都可以連按兩下 = 打出等號（想單按 = 打出等號要關閉 Emoji 選單，寫在設定說明頁）（GitHub 0c-ime#89）。模糊音顯示一列總開關，預設開啟（四組 select），開啟時以同一次設定交易將四組近音都設為 select，關閉時全部設 off；沒有逐組控制或自動修正單選。舊設定只啟用部分配對或使用 auto 時，畫面視為開啟，載入不改寫；關閉再開啟才統一成四組 select。CLI 的逐組設定與原有檔案格式仍保留，未知欄位與唯讀保護沿用既有契約。
+
+## 說明、選項提示與「說明」連結（#362）
+
+每一項的說明只有一句話（契約的 `description`，40 個全形字以內），畫面不再放一整段。細節分成兩處：
+
+- **選項提示**：契約的 `value_hints`（`{值: 提示}`）。多選一的項目在說明下面只顯示**目前選中那個選項**的提示，前面加選項名稱（「倚天 41 鍵：= 是 ㄦ…」），改選後跟著換；選中的選項沒有提示就不顯示（標點寬度的「全形標點」）。停用的項目照實際使用的值（`effective`）。單選群組以 `aria-describedby` 連到提示。
+- **「說明」連結**：契約的 `help_url`（`https://0c.biggo.com/guide/settings/#<鍵名>`），接在說明句子後面，按了用系統瀏覽器開官網的設定說明頁（Rust 的 `open_url`，放行範圍見「模型」一節的表）。模糊音四組合成一個開關，連結用第一組的網址。
+  連結**不在 Tab 順序裡**（`tabindex="-1"`）：每頁十幾項，逐項多一站會讓鍵盤操作慢一倍，各頁的 Tab 順序維持原樣；鍵盤使用者把焦點放在那一項的開關或選項上按 **F1** 開同一個網址，螢幕報讀軟體照樣讀得到連結（`aria-label` 寫明是哪一項、會開瀏覽器）。
+- **頁首的「說明」連結**：只有「輸入習慣」「更新」「我的詞彙」三頁有，接在頁首那一句後面，分別開設定說明頁的 `#input-styles`、`#update-mode`、`#vocab`（`ui/item-help.js` 的 `PAGE_ANCHORS`）。這三頁沒有逐項的連結，而各種風格參考了什麼、三種更新方式的差別、讀音與匯出匯入的規則這次都從頁面搬到說明頁。樣式與行為同逐項的連結：系統瀏覽器開、不在 Tab 順序裡、在那一頁按 **F1** 開（焦點在哪裡都可以）。網址由介面自己決定，不來自 0c-update：這三頁的文字本來就寫在介面裡，短的文字與連結一起出貨。模型、問題排解、總覽、關於本來就短，不放；四個設定頁只有逐項的連結，焦點不在任何一項上時 F1 不開東西。
+- 兩個欄位都是選填。新的設定程式配舊的 0c-update（沒有這兩個欄位、說明還是一長段）：不顯示提示與連結，其他照舊；舊的設定程式配新的 0c-update：忽略這兩個欄位，顯示新的短說明。
+- 各頁頁首的說明、輸入習慣頁、更新頁與問題排解頁的提示也照同一個標準縮短；拿掉的內容都在設定參考文件。
+
+判斷在 `ui/item-help.js`（`test/item_help_test.js`）；`test/item_help_page_test.py` 用真的 `0c-update settings -json` 在 Chromium 與 WebKit 以預設視窗大小（960×680）量每一句說明與每一個提示都不超過兩行、點連結與按 F1 開對網址、鍵盤排列四個選項的提示跟著換、舊版契約不顯示、三頁的頁首各有一個連結而其他頁沒有；`test/help.sh`（`--only help`）在真的 WebView 確認 Tab 順序沒變、F1 把網址交給 `xdg-open`（逐項兩次、三頁的頁首各一次），並截四種鍵盤排列與三頁頁首的圖。
+
+## 搜尋（#363）
+
+側邊欄最上面（品牌列下面、導覽上面）有一個搜尋框，每一頁都在。打字就列出符合的設定，選了跳到那一頁的那一項並標出來。搜尋是純前端：只用已經讀到的 `settings -json` 與 `status -json`，不為了搜尋多呼叫 `0c-update`。
+
+- **搜尋範圍**：設定名稱、一句說明（`description`）、選項名稱（`value_labels`，沒有時是畫面自己的對照表）、選項提示（`value_hints`）與關鍵字（契約的 `keywords`：使用者會打、但名稱和說明裡沒有的詞，例如「簡中」「熱鍵」「捲舌」，由 `internal/settings` 的 `keywords()` 提供）。開關的「開啟」「關閉」不算選項名稱。舊版 0c-update 沒有 `keywords` 時照樣能搜名稱、說明與選項。不搜尋「我的詞彙」裡使用者自己的詞（那一頁有自己的搜尋）。
+- **比對**：不分大小寫；全形英數與符號（Ｓｈｉｆｔ、＋）視為半形；前後空白忽略；用空白分開的多個詞要全部命中（各自可以在不同欄位）。
+- **結果頁**：有字就取代右邊的內容（蓋在目前的頁面上，`page` 不變）。標題「搜尋「…」」，下一行「找到 N 個設定。」（`aria-live="polite"`）。照頁面分組，頁面順序同側邊欄，組內順序同那一頁由上到下（`itemsOnPage`，跟設定頁共用），不依相關度重排。每列是名稱、一句說明（命中的字用 `<mark>`）、目前的值（小標籤，停用時是 `effective`）與 ›；選項名稱命中多一行「選項：…」（只列命中的選項），只有選項提示命中多一行「選項「…」：提示」，只有關鍵字命中多一行「也可以找：…」。反灰停用的項目照樣列出，名稱旁是停用原因（`disabled_reason`）。側邊欄各頁旁標出命中的筆數，搜尋中沒有「目前頁面」的高亮，沒命中的頁面變淡。底部是一行按鍵提示。
+- **輸入習慣的規則**（`style-*`）歸在它實際所在的頁面（`INPUT_PAGES`）。四組模糊音在「選字」頁合成一個開關，搜尋也只列一筆「模糊音」，四組的關鍵字合在一起。更新頁的「更新方式」不是 `settings` 的項目，照一般項目列出（選項是三種方式）。
+- **沒有設定項的頁面**（總覽、輸入習慣、我的詞彙、模型、更新、問題排解、關於）本身是一筆結果：頁面名稱、一句話與幾個關鍵字（`app.js` 的 `PAGE_ENTRIES`；這幾頁的文字本來就寫在畫面這一側）。輸入習慣另外把各個風格的名稱當成選項、目前選用的當成值。
+- **四個設定頁本身**（中英切換、選字、鍵盤與符號、輸出設定）也是一筆結果，排在那一頁分組的最前面，側邊欄的筆數照實算進去；前往就是切到那一頁，焦點在頁首標題上。**只比對頁名**：頁首那一句只顯示（entry 的 `note`）、不比對也不標，不然搜「標點」「候選」這類的字每次都多出一筆。
+- **鍵盤**：Ctrl＋F（macOS 是 ⌘F；Mac 的 Ctrl＋F 是文字框裡游標往前一格，不攔）聚焦搜尋框並全選，提示文字照平台顯示 `Ctrl F` 或 `⌘F`。搜尋框有焦點時 ↑↓ 移動選取（到頭就停）、Enter 前往、Esc 清除搜尋並回到搜尋前的那一頁（連捲到的位置）；搜尋框已經是空的時候，Esc 把焦點還給原本的位置。全域只攔 Ctrl＋F 這一個鍵，「我的詞彙」等輸入框的按鍵照舊。輸入法組字中（`isComposing`）不搜尋，↑↓、Enter、Esc 也留給輸入法；組字結束才搜。
+- **預設選取**：結果一出來，選取的是第一筆**沒有停用**的結果（打「半形」時是「標點寬度」，不是反灰的「Ctrl＋標點打全形」；`ZcSearch.firstEnabled`），直接按 Enter 就到一個能改的項目。排列順序不變，反灰的照樣在原位、↑↓ 也走得到；全部都是反灰項目時才選第一筆。回到結果頁而查詢沒變時，選取留在原本那一筆。
+- **前往**：按 Enter 或點結果，切到那一頁；那一項不在畫面裡才捲到中間，加外框與底色，約 2.5 秒後淡掉（背景重畫時會把標示加回新的節點）。`prefers-reduced-motion` 時不做漸變，時間到直接移除。焦點移到那一項的控制項（開關，或單選裡選中的那一個），鍵盤可以直接改；停用的項目有「到某頁修改」的連結就給它，否則把焦點放在那一列上。前往一整頁時焦點在頁首標題上。頁首上方出現「‹ 回到「…」的搜尋結果」，搜尋框保留查詢字串；點它或回到搜尋框就回到結果頁，換到別頁或清除搜尋時消失。
+- **找不到**：「沒有符合的設定。」，卡片裡是「換個說法試試」加七個可以點的關鍵字（候選、標點、Shift、聲調、簡體、英文、更新），以及「還是找不到？」加官網設定說明的連結（`https://0c.biggo.com/guide/settings/`，Rust 的 `open_url`）。
+- **無障礙**：搜尋框是 `type="search"`（WebKit 與 Chromium 自帶的外觀、放大鏡與清除鈕都關掉，只有自己的清除鈕），有看不到的 label「搜尋設定」；結果清單是 `role="listbox"`、每列 `role="option"`，搜尋框用 `aria-controls` 與 `aria-activedescendant` 指著選取的那一列，焦點一直留在搜尋框；值的小標籤前面有看不到的「目前：」，報讀時跟說明分得開。Tab 順序：搜尋框排在導覽之前（側邊欄的第一個 Tab 站），清除鈕 `tabindex="-1"` 不占 Tab 站，其餘不變；#362 的「說明」連結照舊不在 Tab 順序、F1 開說明（結果頁上 F1 不開東西）。
+
+比對、分組與標示在 `ui/search.js`（`test/search_test.js`）；`test/search_page_test.py` 用真的 `0c-update settings -json` 在 Chromium 與 WebKit 以預設視窗大小（960×680）測結果的分組與順序、結果列不溢出、↑↓／Enter／Esc、前往後的焦點與標示（含 reduced-motion、標示出現與淡掉時那一列不移動）、找不到的畫面、Ctrl＋F 與 ⌘F、輸入法組字、深淺主題的顏色、最小視窗（640×480）的排版，以及 `type=search` 沒有第二個清除鈕；`test/search.sh`（`--only search`）在真的 WebView 用鍵盤走一遍並截圖（`search-*.png`）。
 
 ## 我的詞彙（0.2.0，#125）
 
@@ -69,7 +100,7 @@ UI 測試：`python3 scripts/test_settings_ui.py --settings <輸出>/0c-settings
 | 指令 | 參數 | 說明 |
 |---|---|---|
 | `models_command` | `action`：`status`／`download`／`cancel`／`remove` | 對應 `0c-update models <action> -json`，結果原樣回傳；status 逾時 20 秒，其他 60 秒（download 在背景開始、立刻回傳） |
-| `open_url` | `url` | 交給系統瀏覽器（Linux `xdg-open`、macOS `open`、Windows `rundll32 url.dll,FileProtocolHandler`）；只放行 `https://huggingface.co/` 開頭、路徑只有英數與 `/._-` 的網址。設定視窗本身照舊不離開本機頁面 |
+| `open_url` | `url` | 交給系統瀏覽器（Linux `xdg-open`、macOS `open`、Windows `rundll32 url.dll,FileProtocolHandler`）；只放行兩種：`https://huggingface.co/` 開頭、路徑只有英數與 `/._-` 的網址，以及官網的說明文件 `https://0c.biggo.com/guide/…`（#362，設定項目的「說明」連結；路徑同樣只有英數與 `/._-`，可帶一個小寫英數與 `-` 的錨點，即設定的鍵名）。設定視窗本身照舊不離開本機頁面 |
 
 UI 測試：`python3 scripts/test_settings_ui.py --settings <輸出>/0c-settings [--only models]`，`fake-update.py --models` 依契約模擬內建、未安裝、下載中、已安裝、需要重新下載、缺推論元件、發行版關閉下載、字典不在配對清單上；外部網址交給 PATH 上假的 `xdg-open` 記下來。
 
@@ -138,15 +169,13 @@ Windows 完整更新視窗驗收另有 `test/settings-update-test.ps1`：在沒�
 
 輸入設定的「修改字詞的位置」（`candidate-cursor`）可選「游標前方」／「游標後方」。macOS 未指定時採前方，Linux／Windows 採後方；舊設定缺少欄位時同樣使用平台預設，明確保存的 before／after 會保留。後方模式的游標在組字尾端時後面沒有字，改選結束在游標的詞（同前方模式），說明文字也註明這個例外。設定儲存在 `settings.json` 的 `candidate_cursor`，透過既有組字保護套用；不變更個人詞庫格式。
 
-輸入設定的「Ctrl＋標點打全形」（`ctrl-punctuation`，`settings.json` 的 `ctrl_punctuation`）預設開啟，放在「鍵盤與符號」頁、鍵盤排列之後（#207）。開啟時注音模式按 Ctrl＋, . ' ; 與 Ctrl＋Shift＋/ 1 ; 9 0 打全形的 ，。、；？！：（）（#231）；說明寫出會占用 VS Code 的 Ctrl＋, 、Ctrl＋. 、Excel 的 Ctrl＋Shift＋; 9、Konsole 的 Ctrl＋Shift＋9 0 等快速鍵，要保留時可以關掉；Windows 另寫明系統預設把 Ctrl＋Shift＋0 留給切換輸入法、這一鍵打不出「）」。關閉後這些鍵同其他快捷鍵交給應用程式（#168）。引擎讀設定，套用（引擎重啟）後生效；外殼依 health 的 `ctrl_punctuation` 決定要不要送這些鍵。
+輸入設定的「Ctrl＋標點打全形」（`ctrl-punctuation`，`settings.json` 的 `ctrl_punctuation`）預設開啟，放在「鍵盤與符號」頁、鍵盤排列之後（#207）。開啟時注音模式按 Ctrl＋, . ' ; 與 Ctrl＋Shift＋/ 1 ; 9 0 打全形的 ，。、；？！：（）（#231）；設定說明頁列出會占用 VS Code 的 Ctrl＋, 、Ctrl＋. 、Excel 的 Ctrl＋Shift＋; 9、Konsole 的 Ctrl＋Shift＋9 0 等快速鍵，要保留時可以關掉，Windows 另寫明系統預設把 Ctrl＋Shift＋0 留給切換輸入法、這一鍵打不出「）」（畫面上的說明只有一句，#362）。關閉後這些鍵同其他快捷鍵交給應用程式（#168）。引擎讀設定，套用（引擎重啟）後生效；外殼依 health 的 `ctrl_punctuation` 決定要不要送這些鍵。
 
 「標點寬度」（`shift-symbol-halfwidth`，`settings.json` 的 `shift_symbol_halfwidth` 與 `all_symbols_halfwidth`，#258、#282）三選一，預設「全形標點」，排在 Ctrl＋標點打全形之後：半形用 Shift 或所有符號鍵、全形用 Ctrl。「Shift＋符號打半形」時注音模式按 Shift＋符號鍵打半形標點（Shift＋, 是半形逗號、Shift＋9 是 `(`；< > 在 ↓ 裡），未按 Shift 的 [ ] 照舊打「」；「所有符號鍵打半形」時每個符號鍵都打按鍵上的字（Shift＋- 是 `_`、[ 是 `[`），這時 Ctrl＋標點固定開啟、不打聲調也能選字暫停（兩項顯示停用並帶回這一項）。三個選項畫成單選。不屬於輸入習慣風格，選用內建風格時也能開關。引擎讀設定，套用後生效。
 
 「單按 Shift 的時限」（`shift-tap-ms`，`settings.json` 的 `shift_tap_ms`，#319）是一組單選：0.2／0.3／0.4／0.5／0.6 秒（選項名稱在 `value_labels`），預設 0.3 秒，排在「中英切換鍵」之後。中英切換鍵選「不用 Shift」時反灰，寫「不用 Shift 切換時不作用」。不屬於輸入習慣風格。引擎讀設定、在 health 的 `shift_tap_ms` 回報，套用（引擎重啟）後外殼下一次單按 Shift 就照新的時限。
 
-「中英文之間自動加空格」（`cjk-latin-space`，`settings.json` 的 `cjk_latin_space`，#273）預設關閉，排在「Shift＋符號打半形」之後。開啟時送出的文字裡，中文字和英文字母直接相連處補一個半形空格（「用Python寫」送出「用 Python 寫」）；組字區照打的顯示，已有空格、標點與數字旁不補，只看這一次送出的字。不屬於輸入習慣風格。引擎讀設定，套用後生效。
-
-「中文與數字之間自動加空格」（`cjk-digit-space`，`settings.json` 的 `cjk_digit_space`）預設關閉，排在「中英文之間自動加空格」之後，兩者各自開關。開啟時送出的文字裡，中文字和半形數字直接相連處補一個半形空格（「第2版」送出「第 2 版」）；組字區照打的顯示，已有空格、標點（含小數點、百分號）與全形數字旁不補，只看這一次送出的字。不屬於輸入習慣風格。引擎讀設定，套用後生效。
+「自動加空格」（`cjk-latin-space`，`settings.json` 的 `cjk_latin_space` 與 `cjk_digit_space`，#273、#365）三選一，預設「關閉」，排在「標點寬度」之後，畫成一組單選（Tab 一站、方向鍵換選項，同「標點寬度」）。「中英文之間」（`on`）：送出的文字裡，中文字和英文字母直接相連處補一個半形空格（「用Python寫」送出「用 Python 寫」），數字旁不補。「中英文與數字之間」（`all`）：中文字和半形數字相連處也補（「第2版」送出「第 2 版」）。組字區照打的顯示，已有空格與標點旁不補，只看這一次送出的字；數字要在組字裡打才補得到；「我的片語」的內容照原樣送出。說明只有一句，兩個選項各一句提示，細節在設定參考文件。不屬於輸入習慣風格。引擎讀設定，套用後生效。
 
 「打錯注音時提示」（`zhuyin-error-hint`，`settings.json` 的 `zhuyin_error_hint`，#300）預設開啟，排在「選字」頁的「不打聲調也能選字」之後。按了聲調但讀音沒有字時不收聲調、注音停住並提示（Windows、macOS 提示音，Linux 標示注音），緊接著再按一次同一個聲調照舊留下注音；只有一個注音符號（ㄟ、ㄅ＋空白）照舊直接留下。中英混打或不打聲調開著時反灰並附原因。不屬於輸入習慣風格。引擎讀設定，套用後生效。
 
@@ -154,10 +183,10 @@ Windows 完整更新視窗驗收另有 `test/settings-update-test.ps1`：在沒�
 
 輸入設定的「Caps Lock 開著時直接打英文」（`caps-lock-english`，`settings.json` 的 `caps_lock_english`）預設關閉，放在「中英切換」頁最後（#207），只有 Windows、Linux 有：macOS 開 Caps Lock 一律切到英文大寫（#84），`0c-update settings` 不列這一項，設定程式就不顯示。開啟時 Caps Lock 是暫時的英文模式（字母大寫、數字與符號半形，正在打的字先送出，關掉回到注音；先用 Shift 切到英文時只改大小寫）；關閉時注音模式不理 Caps Lock（#173、#168）。引擎讀設定，套用（引擎重啟）後生效；外殼依 health／open 的 `caps_lock_english` 決定要不要回報 Caps Lock 狀態。
 
-輸入設定的「不打聲調也能選字」（`toneless`，`settings.json` 的 `toneless`）預設關閉，放在「選字」頁的選字項目最後、模糊音之前（#207 的頁面依 spec 排序，沒列在頁面清單裡的項目排在該頁最後）。開啟時聲調選填：ㄋㄧㄏㄠ 就是「你好」，有打聲調的字照聲調，組字中的 ' 用來切字；中英混打反灰並標「不打聲調時關閉」，已儲存的值不動。只在標準排列與漢語拼音有效，倚天、許氏時這一項反灰（#150）；漢語拼音時它決定拼音後面的空白是一聲還是不打聲調就完成（#324）。引擎讀設定，套用（引擎重啟）後生效，外殼不必改。
+輸入設定的「不打聲調也能選字」（`toneless`，`settings.json` 的 `toneless`）預設關閉，放在「選字」頁的選字項目最後、模糊音之前（#207 的頁面依 spec 排序，沒列在頁面清單裡的項目排在該頁最後）。開啟時聲調選填：ㄋㄧㄏㄠ 就是「你好」，有打聲調的字照聲調，組字中的 ' 用來切字；中英混打反灰並標「不打聲調時關閉」，已儲存的值不動。只在標準排列、漢語拼音與小鶴雙拼有效，倚天、許氏時這一項反灰（#150）；漢語拼音時它決定拼音後面的空白是一聲還是不打聲調就完成（#324），小鶴雙拼時它決定要不要每兩鍵就換成字（#370）。引擎讀設定，套用（引擎重啟）後生效，外殼不必改。
 
 輸入設定的「輸出簡體字」（`output-simplified`，`settings.json` 的 `output_simplified`）預設關閉，在設定程式左側獨立的「輸出設定」頁（`--page output`）。開啟後組字和候選仍顯示繁體，送出時才轉成簡體字（OpenCC ver.1.4.2 的 tw2s 字典，編在 `0c-server` 裡，見 `internal/simplified/opencc`）；我的詞彙與我的片語也一起轉，英文、數字、標點與 Emoji 不變，學習照常記繁體（#118）。這一項可以即時切換（#169）：開關照樣執行 `0c-update set output-simplified on|off -apply -json`，0c-update 寫好設定後，引擎回報 `output_simplified_live=true` 就請它即時切換（`apply.state` 是 `applied`），不重啟引擎，組字中也立即生效；舊引擎照舊交接重啟。四個外殼的輸入法選單也有可以打勾的「輸出簡體字」，從選單切換時由引擎寫 `settings.json`，設定程式的開關下一次讀取（切回視窗或重新整理）就跟著變。
 
-輸出設定頁的「用快捷鍵切換簡體字」（`simplified-hotkey`，`settings.json` 的 `simplified_hotkey`，#192）預設關閉，排在「輸出簡體字」下面；說明由 `0c-update settings` 依平台寫出快捷鍵（Windows／Linux Ctrl＋Shift＋F11、macOS ⌃⇧F11，提醒 F 鍵是媒體鍵時加按 Fn／fn）。開啟後四個外殼攔這個鍵，跟輸入法選單一樣即時切換「輸出簡體字」；這個開關本身照一般設定交接重啟引擎套用。
+輸出設定頁的「用快捷鍵切換簡體字」（`simplified-hotkey`，`settings.json` 的 `simplified_hotkey`，#192）預設關閉，排在「輸出簡體字」下面；說明由 `0c-update settings` 依平台寫出快捷鍵（Windows／Linux Ctrl＋Shift＋F11、macOS ⌃⇧F11；F 鍵是媒體鍵時加按 Fn／fn 寫在設定說明頁）。開啟後四個外殼攔這個鍵，跟輸入法選單一樣即時切換「輸出簡體字」；這個開關本身照一般設定交接重啟引擎套用。
 
 輸入設定的「選字後游標移到下一個字」（`advance-after-select`，`settings.json` 的 `advance_after_select`）預設關閉，選字後游標留在原處。開啟後從候選窗選好字（數字鍵、Enter、滑鼠都算），游標移到所選詞的後面，可以接著按 ↓ 改下一個字；修改游標前方字詞時往後移一個字（同新酷音的 autoShiftCur），游標在句尾時不動（#133）。符號、Emoji 與原樣注音本來就插入在游標處、游標停在它們後面。引擎讀設定，套用（引擎重啟）後生效，外殼不必改。

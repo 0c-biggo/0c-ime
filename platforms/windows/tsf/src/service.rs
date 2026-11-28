@@ -1429,8 +1429,8 @@ impl TextService_Impl {
         if !st.session.available() {
             return false;
         }
-        // 組字中轉得成協定按鍵的鍵都問核心：Home／End／↑／PgUp／PgDn／Tab／Shift+Tab（BackTab）核心都回 handled，
-        // 只有英文模式的 ↓ 回未處理；轉不成的鍵（F 鍵、Insert…）已由 commit_before_host_key 先送出組字（#106）。
+        // 組字中轉得成協定按鍵的鍵都問核心：Home／End／↑／↓／PgUp／PgDn／Tab／Shift+Tab（BackTab）核心都回 handled，
+        // 英文模式保留的組字也一樣（#369）；轉不成的鍵（F 鍵、Insert…）已由 commit_before_host_key 先送出組字（#106）。
         // 這裡的答案與 OnKeyDown 的結果一致，WPF 不會掉鍵。Shift＋←→ Delete Backspace 的新鍵名（#123）
         // 核心在組字中同樣都回 handled（沒有對應功能時就是原本的鍵）。
         let english = st.session.english();
@@ -1438,9 +1438,8 @@ impl TextService_Impl {
         if style_key.as_deref() == Some("ShiftSpace") { return true; }
         if style_key.as_ref().is_some_and(|k| st.session.english_state.full_width_extra_key(k)) { return true; }
         if st.composing {
-            let english = st.session.english();
             let vocab = st.vocab_keys(vk);
-            return keys::composing_wants(english, st.styled_key(vk, lparam, vocab, english).as_deref());
+            return keys::composing_wants(st.styled_key(vk, lparam, vocab, english).as_deref());
         }
         if st.session.english() {
             return false;

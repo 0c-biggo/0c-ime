@@ -16,7 +16,7 @@ assert len([x for x in p['items'] if x['builtin']]) >= 5
 PY
 launch styles styles
 if window_up; then
-  sleep 2.5
+  ready
   import -window root "$OUT/styles-fresh.png"
   tabs $((NAV + 1))
   xdotool key Home Down
@@ -27,8 +27,7 @@ import json, sys
 assert json.load(open(sys.argv[1]))['profiles']['active'] == json.load(open(sys.argv[2]))['profiles']['active']
 PY
   import -window root "$OUT/styles-preview.png"
-  xdotool key Tab Tab space
-  sleep 3
+  press Tab Tab space
   run_update styles settings -json > "$OUT/styles-selected.json"
   check "按套用透過 Rust 橋接切換整份風格" python3 - "$OUT/styles-fresh.json" "$OUT/styles-selected.json" <<'PY'
 import json, sys
@@ -41,14 +40,13 @@ stop_app
 shoot styles mode
 launch styles styles
 if window_up; then
-  sleep 2.5
+  ready
   # 選擇框、鍵盤排列連結、複製；目前選用按鈕為 disabled，不占 Tab。
   tabs $((NAV + 3)); xdotool key space
   sleep 0.5
   xdotool key ctrl+a
   xdotool type --clearmodifiers 'My Microsoft style'
-  xdotool key Return
-  sleep 3
+  press Return
   run_update styles settings -json > "$OUT/styles-copy.json"
   check "命名複製會建立自訂並啟用，解除相關設定鎖定" python3 - "$OUT/styles-copy.json" <<'PY'
 import json, sys
@@ -75,9 +73,8 @@ stop_app
 # 複製後能修改新規則；微軟習慣的 Emoji 關閉，因此等號子選項不占 Tab。
 launch styles keyboard
 if window_up; then
-  sleep 2.5
-  tabs $((NAV + 9)); xdotool key Down  # 鍵盤排列、Ctrl＋標點、Shift＋符號打半形（#258）、中英文之間自動加空格（#273）、中文與數字之間自動加空格、補標點、Emoji、標點操作之後
-  sleep 3
+  ready
+  tabs $((NAV + 8)); press Down  # 鍵盤排列、Ctrl＋標點、標點寬度（#258）、自動加空格（#273、#365，單選只占一站）、補標點、Emoji、標點操作之後
   run_update styles settings -json > "$OUT/styles-rule.json"
   check "自訂習慣的 Shift＋空白可單獨修改並保留在同一份副本" python3 - "$OUT/styles-copy.json" "$OUT/styles-rule.json" <<'PY_RULE'
 import json, sys
@@ -111,10 +108,9 @@ rm "$(base_of styles-one)/settings.json"
 run_update styles-one settings -json > "$OUT/styles-one-before.json"
 launch styles-one mode
 if window_up; then
-  sleep 2.5
+  ready
   import -window root "$OUT/styles-one-locked.png"
-  tabs $((NAV + 2)); xdotool key Down
-  sleep 4
+  tabs $((NAV + 2)); press Down
   import -window root "$OUT/styles-one-changed.png"
   run_update styles-one settings -json > "$OUT/styles-one-after.json"
   check "按被鎖住的中英切換鍵直接複製成「…（自訂）」、套用並改好這一項，其他設定照舊" python3 - "$OUT/styles-one-before.json" "$OUT/styles-one-after.json" <<'PY_ONE'
@@ -137,9 +133,8 @@ stop_app
 run_update styles-one profile select "$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['profiles']['active'])" "$OUT/styles-one-before.json")" > /dev/null
 launch styles-one mode
 if window_up; then
-  sleep 2.5
-  tabs $((NAV + 2)); xdotool key Down
-  sleep 4
+  ready
+  tabs $((NAV + 2)); press Down
   import -window root "$OUT/styles-one-again.png"
   run_update styles-one settings -json > "$OUT/styles-one-again.json"
   check "已有同名自訂時另建編號副本，舊副本保留" python3 - "$OUT/styles-one-before.json" "$OUT/styles-one-again.json" <<'PY_AGAIN'

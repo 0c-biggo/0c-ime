@@ -10,6 +10,10 @@
 在隔離的 HOME 執行舊版的 `check -json`，核對它接受索引並選到舊格式 assets 的資產。另以目前的程式碼（同樣換公鑰）
 核對它依規則選資產，並以一份壞索引（同平台兩個資產）確認這個測試抓得到舊版拒絕索引的情況。
 
+另一組（#365）：新版在 settings.json 加欄位時，舊版要照舊讀得懂、存檔時不能把新欄位弄丟。「自動加空格」選
+「中英文與數字之間」存成 cjk_latin_space＋cjk_digit_space 兩個 true，舊版（0.2.10–0.2.15，只認得前者）要讀成開啟，
+改別的設定存檔後兩個欄位都還在；舊版把它關掉留下的 false＋true，目前的版本要讀成關閉。
+
 環境變數：ZC_OLD_UPDATERS=0.2.0,0.2.14 指定版本；ZC_OLD_UPDATER_CACHE 改快取位置；只能在 linux/amd64 執行。
 """
 
@@ -36,6 +40,8 @@ E2E = ROOT / "testdata" / "e2e"
 BUCKET = "https://s3.biggo.com/0c-releases/releases"
 # 0.2.0 是第一個不帶後綴的正式版；之前的 0.1.0-dev.* 已全部升上來（自動更新從 dev.18 起），不再測。
 DEFAULT_VERSIONS = [f"0.2.{n}" for n in range(0, 15)]
+# 有 cjk-latin-space（#273）、還沒有 cjk_digit_space（#365）的版本。
+SPACING_VERSIONS = [f"0.2.{n}" for n in range(10, 16)]
 PRODUCTION_KEY = b"p8+04oez+UEucOQTdHmA7sjI1Pixh5Q4VtepvVBqlb0="  # internal/update/trust_keys.go
 TEST_KEY = b"qnPEX/wcxogJ72KQcc2BT6UunnJyBKxtLDcOk9l1HAY="  # internal/update/trust_e2etest.go
 
@@ -207,6 +213,67 @@ class OldUpdatersAcceptNewFeeds(unittest.TestCase):
         # 規則不符（外殼比 0.2.15 舊）時照舊用 assets。
         view = self.check(self.current, "0.2.14", "rules").get("update", {})
         self.assertEqual(view["target"]["kind"], "shell", view)
+
+
+def number(version):
+    return [int(x) for x in version.split(".")]
+
+
+@unittest.skipUnless(sys.platform == "linux" and platform.machine() in ("x86_64", "AMD64"), "舊版 Linux 更新器只能在 linux/amd64 執行")
+class OldUpdatersKeepNewSettings(unittest.TestCase):
+    """#365：舊版讀到「自動加空格」選 all 的設定檔時照 on，並保留新欄位。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.temp = Path(tempfile.mkdtemp(prefix="0c-old-settings-"))
+        cls.current = cls.temp / "0c-update-current"
+        subprocess.run([os.environ.get("GO", "go"), "build", "-o", str(cls.current), "./cmd/0c-update"], cwd=ROOT, check=True)
+        chosen = [v for v in versions() if v in SPACING_VERSIONS] if os.environ.get("ZC_OLD_UPDATERS") else SPACING_VERSIONS
+        cls.old = {v: fetch_updater(v) for v in chosen}
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.temp, ignore_errors=True)
+
+    def home(self):
+        home = Path(tempfile.mkdtemp(prefix="home-", dir=self.temp))
+        (home / "run").mkdir()
+        env = {"HOME": str(home), "PATH": "/usr/bin:/bin", "XDG_RUNTIME_DIR": str(home / "run"), "XDG_CONFIG_HOME": str(home / ".config"),
+               "XDG_DATA_HOME": str(home / ".local/share"), "DBUS_SESSION_BUS_ADDRESS": "unix:path=" + str(home / "no-bus")}
+        return home / ".local/share/0c/settings.json", env
+
+    def run_updater(self, updater, env, *args):
+        run = subprocess.run([str(updater), *args], env=env, capture_output=True, text=True, timeout=120)
+        self.assertEqual(run.returncode, 0, f"{updater} {args}：{run.stdout}\n{run.stderr}")
+        return run.stdout
+
+    def spacing(self, updater, env):
+        doc = json.loads(self.run_updater(updater, env, "settings", "-json"))
+        return next(item["value"] for item in doc["items"] if item["key"] == "cjk-latin-space")
+
+    def test_old_updaters_read_all_as_on_and_keep_the_new_field(self):
+        self.assertTrue(self.old, "沒有可測的舊版")
+        for version, updater in sorted(self.old.items(), key=lambda kv: number(kv[0])):
+            with self.subTest(version=version):
+                path, env = self.home()
+                self.run_updater(self.current, env, "set", "cjk-latin-space", "all")
+                saved = json.loads(path.read_text())
+                self.assertEqual((saved["cjk_latin_space"], saved["cjk_digit_space"]), (True, True))
+                # 舊版：照 on，改別的設定存檔後新欄位還在。
+                self.assertEqual(self.spacing(updater, env), "on")
+                self.run_updater(updater, env, "set", "output-simplified", "on")
+                saved = json.loads(path.read_text())
+                self.assertEqual((saved["cjk_latin_space"], saved["cjk_digit_space"], saved["output_simplified"]), (True, True, True), saved)
+                self.assertEqual(self.spacing(self.current, env), "all")
+                # 舊版關掉中英文：留下 false＋true。目前的版本讀成關閉，再選 on 就是 on。
+                self.run_updater(updater, env, "set", "cjk-latin-space", "off")
+                saved = json.loads(path.read_text())
+                self.assertEqual((saved["cjk_latin_space"], saved["cjk_digit_space"]), (False, True), saved)
+                self.assertEqual(self.spacing(self.current, env), "off")
+                self.run_updater(self.current, env, "set", "cjk-latin-space", "on")
+                saved = json.loads(path.read_text())
+                self.assertEqual((saved["cjk_latin_space"], saved["cjk_digit_space"]), (True, False), saved)
+                self.assertEqual(self.spacing(updater, env), "on")
 
 
 if __name__ == "__main__":

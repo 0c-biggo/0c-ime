@@ -3,6 +3,7 @@ package session
 import (
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/0c-biggo/0c-ime/core/english"
 	"github.com/0c-biggo/0c-ime/core/proto"
@@ -22,11 +23,22 @@ func englishBoundary(k string) bool {
 		k == proto.KeyUp || k == proto.KeyDown || k == proto.KeyHome || k == proto.KeyEnd || k == proto.KeyPageUp || k == proto.KeyPageDown
 }
 
-// Only a word started in an empty English composition belongs to this feature.
-// Existing Chinese composition kept by a mode switch retains its old editing rules.
+// englishKey 處理英文模式自動補字的按鍵。沒有組字時打的字母開始一個單字，邊界鍵送出它再交給程式；
+// 單按 Shift 切英文、前面還留著中文組字時，字母也開始一個單字，接在游標處（englishCompositionKey，#372）。
 func (s *Session) englishKey(k string) (handled bool, commit string, active bool) {
 	if !s.englishWord {
 		if s.composing() {
+			if englishLetter(k) && s.englishCanStartInComposition() {
+				s.insertPendingLiteral()
+				s.englishWord = true
+				s.mixed = pendingKeys{raw: k}
+				return true, "", true
+			}
+			// 同沒有組字時：數字、底線、網址標點讓接著打的字母不補字，到下一個空白或導覽鍵為止。
+			// 候選開著時（#369 的 ↓）按鍵是選字，不算。
+			if s.cand == nil {
+				s.noteEnglishToken(k)
+			}
 			return false, "", false
 		}
 		if englishBoundary(k) {
@@ -41,6 +53,9 @@ func (s *Session) englishKey(k string) (handled bool, commit string, active bool
 			s.englishTokenBlocked = true
 		}
 		return false, "", true
+	}
+	if len(s.syls) > 0 {
+		return s.englishCompositionKey(k)
 	}
 	if !s.private && !s.paused {
 		switch k {
@@ -111,6 +126,94 @@ func (s *Session) englishKey(k string) (handled bool, commit string, active bool
 	s.englishSpaceCommit = false
 	s.englishTokenBlocked = !englishBoundary(k)
 	return false, commit, true
+}
+
+// englishCanStartInComposition：英文模式保留著中文組字時（單按 Shift 切英文，#90），這個字母開始一個補字的英文字（#372）。
+// 游標左右是英文字母或數字時是在改一個已經打好的詞（test 中間、3d 後面），照舊按原樣插入；候選開著、私密欄位、暫停時不補字。
+func (s *Session) englishCanStartInComposition() bool {
+	return s.EnglishAutocomplete && s.english && len(s.syls) > 0 && s.mixed.raw == "" && !s.keysPending() && !s.symbolPrefix &&
+		s.cand == nil && !s.englishTokenBlocked && !s.private && !s.paused && !s.latinAt(s.cursor-1) && !s.latinAt(s.cursor)
+}
+
+// latinAt：組字第 at 格是照字面的英文字母或數字（全形也算）。
+func (s *Session) latinAt(at int) bool {
+	if at < 0 || at >= len(s.syls) || !s.literals[at] {
+		return false
+	}
+	r, _ := utf8.DecodeRuneInString(string(s.syls[at]))
+	return unicode.IsDigit(r) || unicode.Is(unicode.Latin, r)
+}
+
+func (s *Session) noteEnglishToken(k string) {
+	if englishBoundary(k) {
+		s.englishTokenBlocked = false
+	} else if len([]rune(k)) == 1 {
+		s.englishTokenBlocked = true
+	}
+}
+
+// englishCompositionKey 處理接在中文組字裡的英文字（#372）。組字還有中文，所以沒有一個鍵交給程式（#106）：
+// 字母接著打、Tab 接受反白的建議、英文候選開著時 ↑↓ 在清單裡移動、Esc 先關候選、退格先撤銷建議再刪字母，
+// Enter 照畫面送出整段（#235）。其他鍵先把英文字照畫面變成組字裡的一般文字、收起英文候選，再照英文模式組字的規則處理：
+// 空白、標點與數字插在游標處，←→ Home End 移動，↓ 開中文候選（#369），第二次 Esc 照「Esc 清除整段組字」的設定。
+func (s *Session) englishCompositionKey(k string) (handled bool, commit string, active bool) {
+	open := !s.private && !s.paused
+	suggesting := open && s.cand != nil && s.cand.english
+	switch {
+	case k == proto.KeyTab:
+		if open {
+			s.acceptEnglish()
+		}
+		return true, "", true // 沒有建議時吃掉、英文字留著，同組字中的 Tab（#106）
+	case k == proto.KeyEscape && (suggesting || s.mixed.accepted != ""):
+		s.mixed.accepted = ""
+		s.cand = nil
+		s.englishDismissed = true
+		return true, "", true
+	case (k == proto.KeyUp || k == proto.KeyDown) && suggesting:
+		delta := 1
+		if k == proto.KeyUp {
+			delta = -1
+		}
+		s.moveHighlight(delta)
+		return true, "", true
+	case k == proto.KeyBackspace:
+		if s.mixed.accepted != "" {
+			s.mixed.accepted = ""
+		} else {
+			s.mixed.raw = s.mixed.raw[:len(s.mixed.raw)-1]
+			s.mixed.assistedPrefix = min(s.mixed.assistedPrefix, len(s.mixed.raw))
+		}
+		s.cand = nil
+		s.englishDismissed = false
+		if s.mixed.raw == "" {
+			s.clearMixed()
+		}
+		return true, "", true
+	case k == proto.KeyEnter:
+		return true, s.commit(), true
+	case open && englishLetter(k) && len(s.mixedText()) < english.MaxWordBytes:
+		raw := s.mixedText()
+		assistedPrefix := s.mixed.assistedPrefix
+		if s.mixed.accepted != "" {
+			assistedPrefix = len(raw)
+		}
+		s.mixed = pendingKeys{raw: raw + k, assistedPrefix: assistedPrefix}
+		s.cand = nil
+		s.englishDismissed = false
+		return true, "", true
+	}
+	s.endEnglishInComposition()
+	s.noteEnglishToken(k)
+	return false, "", false
+}
+
+// endEnglishInComposition 把接在組字裡的英文字照畫面變成一般文字（含已接受的建議與學習來源），收起英文候選。
+func (s *Session) endEnglishInComposition() {
+	s.flushMixed()
+	if s.cand != nil && s.cand.english {
+		s.cand = nil
+	}
 }
 
 func (s *Session) refreshEnglishCandidates() {

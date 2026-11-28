@@ -67,7 +67,8 @@ func TestTonelessDefaultsOffAndPersists(t *testing.T) {
 	}
 	for _, it := range Default().Items() {
 		if it.Key == "toneless" {
-			if it.Value != "off" || it.Default != "off" || !strings.Contains(it.Description, "Enter") || !strings.Contains(it.Description, "混打") {
+			if it.Value != "off" || it.Default != "off" || !strings.Contains(it.Description, "聲調可打可不打") ||
+				!strings.Contains(settingsReference(t), "送出請按 Enter") || !strings.Contains(settingsReference(t), "開啟時中英混打不能用") { // 細節在設定參考文件（#362）
 				t.Fatalf("設定程式的項目：%+v", it)
 			}
 			return

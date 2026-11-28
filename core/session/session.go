@@ -130,6 +130,7 @@ type Session struct {
 	EnglishAutocomplete   bool
 	MixedInput            bool
 	English               *english.Dictionary
+	EnglishContext        bool // 由宿主設定（APP#33，手機）：字面英文詞後面的中文不從句首算（english_context.go）；零值照舊
 	EmojiShortcut         string
 	EmojiEqualsFirst      bool
 	CandidateColumns      int
@@ -137,7 +138,9 @@ type Session struct {
 	displayColumns        int
 	paletteCommit         bool
 	paletteChanged        bool
+	verbatim              []string // 這次組字從「我的片語」選進來的片語（#365）：自動加空格不改它的內部（spaceCommit）；組字結束後由 Handle 清掉
 	paletteUndo           *literalSpan
+	tailUndo              []*tailLiteral
 	englishWord           bool // 只有本功能開始的英文單字才在邊界送出
 	englishDismissed      bool
 	englishTokenBlocked   bool // 網址／識別字：到下一個空白或導覽前不重新補字
@@ -183,8 +186,8 @@ type Session struct {
 	// 直接相連的地方補一個半形空格（cjk_latin_space.go）。組字區照打的顯示；學習、前文與簡體對照都用補空格前的文字，
 	// 送給外殼的 Commit 是補過的（外殼核對前文時比對的就是它）。私人欄位不補。零值時不補。
 	CJKLatinSpace bool
-	// CJKDigitSpace 由宿主依「中文與數字之間自動加空格」設定（預設關）：同 CJKLatinSpace，補的是漢字與半形數字之間。
-	// 兩者各自開關。零值時不補。
+	// CJKDigitSpace 由宿主在「自動加空格」選「中英文與數字之間」時設定（#365，預設關）：同 CJKLatinSpace，補的是漢字與
+	// 半形數字之間。這裡兩者各自獨立；設定只提供「關閉／中英文之間／中英文與數字之間」（internal/settings）。零值時不補。
 	CJKDigitSpace bool
 	// NoLearning 由宿主依「記住我選的字詞」設定（#297，預設開；關閉時為 true）：送出、手選、選表情與符號都不寫進個人資料
 	// （詞的學習、更正、英文單字、中英混打的注音文、最近用過的表情與符號、= 選單的分頁）。其他照常：神經選字、
@@ -495,6 +498,10 @@ func (s *Session) Handle(r proto.Request) proto.Snapshot {
 		if !s.fixWord(r.To, r.Length, r.Word) {
 			notices = append(notices, "沒有這個候選")
 		}
+	case proto.Literal:
+		if !s.literalTail(r.Length, r.Word) {
+			notices = append(notices, "沒有這個候選")
+		}
 	case proto.Close:
 		if s.englishWord {
 			s.englishDismissed = true
@@ -531,7 +538,9 @@ func (s *Session) Handle(r proto.Request) proto.Snapshot {
 		notices = append(notices, "已撤銷與「"+r.Word+"」有關的學習")
 	case proto.Pause:
 		s.paused = r.On
-		if r.On && s.englishWord {
+		if r.On && s.englishWord && len(s.syls) > 0 {
+			s.endEnglishInComposition() // 接在中文組字裡的英文字（#372）：變成一般文字，組字留著
+		} else if r.On && s.englishWord {
 			commit = s.commit()
 		}
 	case proto.Toggle, proto.Mode:
@@ -563,14 +572,20 @@ func (s *Session) Handle(r proto.Request) proto.Snapshot {
 	}
 	if commit != "" && (s.CJKLatinSpace || s.CJKDigitSpace) && !private {
 		// #273：整個送出的字串一起補，含 Shift＋字母送出組字再打的字母（commit()+k）與符號表直接送出的組字，
-		// 同輸出簡體字；commit() 已用原文學過、記好前文。
-		commit = spaceCJK(commit, s.CJKLatinSpace, s.CJKDigitSpace)
+		// 同輸出簡體字；commit() 已用原文學過、記好前文。#365：「我的片語」選進來的內容照原樣，內部不補。
+		commit = spaceCommit(commit, s.CJKLatinSpace, s.CJKDigitSpace, s.verbatimTexts())
+	}
+	if !s.composing() {
+		s.verbatim = nil // 送出或取消之後：下一段組字裡手打的同樣文字照一般規則補
 	}
 	s.resegment() // 自動切字：照這次請求之後的鍵重新決定切法（nine_segment.go）；關閉時不做事
 	s.refresh()
 	// 保護狀態／前文確認／撤銷可以在候選窗仍開啟時變更；不能留下過期的個人或關聯標示。
+	// 重算照開候選時（openAt）的順序：candidateLabels 之後再標鄰鍵修正與合併音節（corrected），
+	// 不然私密欄位與學習關閉（每個請求都帶 Private）的候選少了 corrected，手機的候選順序跟學習開著時不同（#361）。
 	if s.cand != nil && !s.cand.mixed && (r.Private || r.Type == proto.Pause || r.Type == proto.Context || r.Type == proto.Forget) {
 		s.cand.labels = s.candidateLabels(s.cand)
+		s.labelSpatial()
 	}
 	s.rev++
 	s.refreshEnglishCandidates()
@@ -720,8 +735,9 @@ func (s *Session) key(k string) (handled bool, commit string) {
 	if s.english && !s.composing() {
 		return false, ""
 	}
-	// 英文模式的空白、標點與數字都按原樣插入，不開候選或解讀成注音。
-	if s.english {
+	// 英文模式的空白、標點與數字都按原樣插入，不開候選或解讀成注音。候選開著時（組字中按 ↓ 開的，#369）
+	// 照候選的規則走：數字、空白、Enter 選字，Esc 關閉；選完再打的字照舊接在組字裡。
+	if s.english && s.cand == nil {
 		if runes := []rune(k); len(runes) == 1 && unicode.IsPrint(runes[0]) {
 			s.insertPendingLiteral()
 			s.insertLiteral(k)
@@ -940,9 +956,8 @@ func (s *Session) key(k string) (handled bool, commit string) {
 		}
 		return true, ""
 	case proto.KeyDown:
-		if s.english {
-			return false, ""
-		}
+		// 英文模式保留的組字一樣按 ↓ 回頭選字（#369，同新酷音）；以前交給應用程式，宿主游標離開組字區、選不了字。
+		// 沒有組字時英文模式在上面就交還應用程式了。
 		if !s.composing() {
 			return false, ""
 		}
@@ -1190,6 +1205,9 @@ func (s *Session) backspace() bool {
 			s.restorePendingLiteral()
 			return true
 		}
+	}
+	if s.undoLiteralTail() {
+		return true
 	}
 	if s.mixed.raw != "" {
 		if s.mixed.accepted != "" {
@@ -1764,7 +1782,7 @@ func (s *Session) openAt(pos, length int) bool {
 	}
 	s.cand = &candState{start: pos, length: length, items: items, raw: length == 1, matched: matched, keyLiterals: keyLiterals}
 	s.cand.labels = s.candidateLabels(s.cand)
-	s.labelSpatial(pos)
+	s.labelSpatial()
 	return true
 }
 
@@ -2140,10 +2158,24 @@ func (s *Session) punctuate(text string) string {
 	return out
 }
 
+// verbatimTexts 是送出文字裡要照原樣的片段（#365）：這次組字選進來的片語；開「輸出簡體字」時送出的是轉換後的字，
+// 所以也找片語單獨轉成簡體的寫法。
+func (s *Session) verbatimTexts() []string {
+	if s.Simplified == nil || len(s.verbatim) == 0 {
+		return s.verbatim
+	}
+	out := slices.Clone(s.verbatim)
+	for _, text := range s.verbatim {
+		out = append(out, s.Simplified.Convert(text))
+	}
+	return out
+}
+
 func (s *Session) reset() {
 	s.styleCycle = nil
 	s.englishWord, s.englishDismissed, s.englishTokenBlocked = false, false, false
 	s.paletteUndo = nil
+	s.tailUndo = nil
 	s.symbolPrefix = false
 	s.styleGrid = false
 	s.mark = nil
@@ -2184,7 +2216,7 @@ func (s *Session) reset() {
 }
 
 func (s *Session) snapshot() proto.Snapshot {
-	snap := proto.Snapshot{FullWidth: s.fullWidth, Revision: s.rev, EnglishAutocomplete: s.EnglishAutocomplete, EnglishPending: s.englishWord, EnglishCanStart: s.englishCanStart()}
+	snap := proto.Snapshot{FullWidth: s.fullWidth, Revision: s.rev, EnglishAutocomplete: s.EnglishAutocomplete, EnglishPending: s.englishWord && len(s.syls) == 0, EnglishCanStart: s.englishCanStart()}
 	pending := s.comp.String()
 	if s.symbolPrefix {
 		pending += "`"

@@ -9,8 +9,8 @@
 
 PLEARN='{"Format":7,"Bi":{"<s>\t我":0.25},"Ctx":{"<s>":0.25},"Uni":{"我":1,"親子丼":2},"Total":3,"Tombstones":{"秘密":true},"Phrases":{"親子丼":"ㄑㄧㄣ ㄗˇ ㄐㄧㄥˇ"},"PhraseOrder":["親子丼"],"PhraseSeen":{"親子丼":3}}'
 PVNAV=$((NAV + 2))   # 側欄之後是標題列的「匯出」「匯入」，再來是分頁列（同 vocab.sh 的 VNAV）
-pwin() { xdotool search --onlyvisible --name '靈犀注音設定' | head -1; }
-pshot() { import -window "$(pwin)" "$OUT/$1.png"; }
+pwin() { app_window; }
+pshot() { window_shot "$1"; }
 PWRAP=/tmp/plog-updater.sh
 cat > "$PWRAP" <<'SH'
 #!/bin/bash
@@ -26,7 +26,7 @@ SH
 chmod +x "$PWRAP"
 plaunch() { # 場景 頁面
   local name=$1 page=$2
-  HOME=$(home_of "$name") ZC_UPDATER=$PWRAP REAL_UPDATER=$UPDATE_BIN PLOG=$(home_of "$name")/plog "$SETTINGS_BIN" --page "$page" >"/tmp/app-$name-$page.log" 2>&1 &
+  env HOME="$(home_of "$name")" REAL_UPDATER="$UPDATE_BIN" PLOG="$(home_of "$name")/plog" $(calls_env "$PWRAP") "$SETTINGS_BIN" --page "$page" >"/tmp/app-$name-$page.log" 2>&1 &
   APP_PID=$!
 }
 plog() { cat "$(home_of "$1")/plog" 2>/dev/null; }
@@ -56,7 +56,7 @@ preloaded() { plog "$1" | awk '/^personal reset -json/{r=1; next} r && /^vocab r
 personal_home pcand
 plaunch pcand candidates
 if window_up; then
-  sleep 3; xdotool key shift+Tab; sleep 1          # 焦點移到頁面最後一個控制項，捲到頁尾
+  ready; xdotool key shift+Tab; sleep 1          # 焦點移到頁面最後一個控制項，捲到頁尾
   pshot personal-candidates; ok "「選字」頁視窗出現，頁尾截圖"
 else bad "pcand/candidates 視窗沒有出現"; cat /tmp/app-pcand-candidates.log; fi
 stop_app
@@ -65,7 +65,7 @@ stop_app
 personal_home poff
 plaunch poff vocab
 if window_up; then
-  sleep 3
+  ready
   tabs $((PVNAV + 1)); xdotool key Right; sleep 1.5   # 分頁列 → 靈犀學到的
   pshot personal-card
   xdotool key Tab space; sleep 1; pshot personal-confirm   # 引擎沒在跑：清單讀不到，下一個控制項就是「清除…」
@@ -97,7 +97,7 @@ check "引擎已啟動（讀進清除前的學習）" test -S "$XDG_RUNTIME_DIR/
 check "清除前引擎列出學到的詞（親子丼）與不再學的詞" bash -c "HOME='$(home_of plive)' '$UPDATE_BIN' vocab learned -json | grep -q '親子丼.*\"forgotten_count\":1'"
 plaunch plive vocab
 if window_up; then
-  sleep 3.5
+  ready
   tabs $((PVNAV + 1)); xdotool key Right; sleep 1.5
   pshot personal-live-before
   # 「不再學的詞（1）」→ 全選 → 親子丼的勾選、保留、移除、不再學 → 「清除…」

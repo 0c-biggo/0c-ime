@@ -240,6 +240,19 @@ func (m *Model) probWith(left, w string, bi, uni float64) float64 {
 	return (s.Bi[pair(left, w)] + kappa*pSys) / (ctx + kappa)
 }
 
+// UnigramProb 是 Prob，但系統語言模型當成沒有 left 的配對，只剩詞頻那一項（跟沒有任何配對的前詞算法相同）；
+// 個人在 left 後面的觀察照算。給「單獨一個不打聲調的音節」用（#360，session 的 loneScorer）：系統的句首配對
+// 其實是語料的片段開頭，接在阿拉伯數字後面的字（年、月、日、號、億）在那裡特別多，不能代表一個字單獨出現時常不常用。
+// 語言模型沒有 left 的配對時與 Prob 相同。
+func (m *Model) UnigramProb(left, w string) float64 { return m.probWith(left, w, 0, m.sysUni(w)) }
+
+// UnigramSystemProb、UnigramPriorMass 是 SystemProb、PriorMass 對應 UnigramProb 的版本。
+func (m *Model) UnigramSystemProb(w string) float64 { return m.systemWith(0, m.sysUni(w)) }
+
+func (m *Model) UnigramPriorMass(left, w string) float64 {
+	return m.priorMassWith(left, m.UnigramSystemProb(w))
+}
+
 // SystemProb 是完全不含個人資料的系統機率（decode.Evidenced）。Prob 的先驗部分混有個人 unigram
 // 計數，用過兩次的詞就會超過「麻煩」這類常用詞的系統機率，不能拿來當補全信心的先驗。
 func (m *Model) SystemProb(left, w string) float64 {

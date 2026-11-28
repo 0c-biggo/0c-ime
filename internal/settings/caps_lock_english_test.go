@@ -66,7 +66,7 @@ func TestCapsLockEnglishDefaultsOffAndPersists(t *testing.T) {
 	items := Default().Items()
 	for i, it := range items {
 		if it.Key == "caps-lock-english" {
-			if it.Value != "off" || it.Default != "off" || !strings.Contains(it.Description, "大寫") || items[i-1].Key != "ctrl-punctuation" {
+			if it.Value != "off" || it.Default != "off" || !strings.Contains(it.Description, "Caps Lock 開著時暫時打英文") || items[i-1].Key != "ctrl-punctuation" {
 				t.Fatalf("設定程式的項目：%+v", it)
 			}
 			return

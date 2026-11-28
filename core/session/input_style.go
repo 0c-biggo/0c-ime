@@ -214,7 +214,7 @@ func (s *Session) styleKey(k string) (handled bool, commit string, done bool) {
 			return true, "", true
 		}
 		if s.fullWidth {
-			if s.englishWord {
+			if s.englishWord && len(s.syls) == 0 {
 				return true, s.commit() + s.fullWidthText(k), true
 			}
 			// Microsoft keeps wide punctuation as marked text even in English
@@ -242,7 +242,7 @@ func (s *Session) styleKey(k string) (handled bool, commit string, done bool) {
 		return true, "", true
 	}
 	if s.fullWidth && s.english {
-		if s.englishWord {
+		if s.englishWord && len(s.syls) == 0 {
 			// Wide English has no completions: a word pending from half-width
 			// typing ends as typed instead of staying marked (#233).
 			return true, s.commit() + s.fullWidthText(k), true

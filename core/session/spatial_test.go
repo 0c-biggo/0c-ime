@@ -1,6 +1,7 @@
 package session
 
 import (
+	"maps"
 	"slices"
 	"testing"
 
@@ -330,5 +331,76 @@ func TestSpatialMissedReadingsOnlyNearTheEnd(t *testing.T) {
 	}
 	if n := count(len(s.syls) - 1); n == 0 {
 		t.Errorf("the last syllable has no missed-key readings")
+	}
+}
+
+// #361：私密欄位與學習關閉時（手機每個請求都帶 Private，也先送 Pause）候選照樣標 corrected。
+// Handle 結尾遇到 Private／Pause／Context／Forget 會重算標示，原本只重算 candidateLabels，鄰鍵修正與合併音節的
+// corrected 就不見了，手機把它們排到後面的順序跟學習開著時不同。
+func TestPrivateRequestsKeepCorrectedLabels(t *testing.T) {
+	neighbour := func() *Session { // 你好 打成 ㄋㄧˇㄒㄠˇ，ㄒ 旁邊是 ㄏ
+		s := spatialSession(false, 1)
+		touchKeys(s, "ㄋㄧˇ")
+		touch(s, "ㄒ", proto.NearKey{Symbol: "ㄏ", Cost: 1})
+		touchKeys(s, "ㄠˇ")
+		return s
+	}
+	cases := []struct {
+		name string
+		open func() *Session
+		ask  []proto.Request // 開候選（游標與詞長）；Private 由下面的情境決定
+		want string          // 要標 corrected 的候選
+	}{
+		{"neighbour key", neighbour, []proto.Request{{Type: proto.Cursor, To: 1}, {Type: proto.Candidates, Length: 1}}, "好"},
+		{"merged syllable", func() *Session { // 好 打成 ㄠㄏˇ（對調），合併成一個音節
+			s := mergeSession(true, mergeOn)
+			touchKeys(s, "ㄋㄧˇㄠㄏˇ")
+			return s
+		}, []proto.Request{{Type: proto.Cursor, To: 1}, {Type: proto.Candidates, Length: 1}}, "好"},
+		// 混合清單（#161）往游標前列：詞從 0 起、接在後面的單字是游標前那個字（位置 1），各自照自己的位置標。
+		{"words and singles before the cursor", func() *Session {
+			s := neighbour()
+			s.CandidateBeforeCursor = true
+			return s
+		}, []proto.Request{{Type: proto.Candidates, Length: 2}}, "好"},
+	}
+	labelsOf := func(snap proto.Snapshot) map[string]string {
+		labels := map[string]string{}
+		if snap.Candidates != nil {
+			for _, it := range snap.Candidates.Items {
+				labels[it.Text] = it.Label
+			}
+		}
+		return labels
+	}
+	run := func(s *Session, rs []proto.Request, private bool) proto.Snapshot {
+		var snap proto.Snapshot
+		for _, r := range rs {
+			r.Private = r.Private || private
+			snap = s.Handle(r)
+		}
+		return snap
+	}
+	for _, c := range cases {
+		want := labelsOf(run(c.open(), c.ask, false))
+		if want[c.want] != proto.CandidateCorrected {
+			t.Fatalf("%s: not labelled without Private: %v", c.name, want)
+		}
+		situations := map[string]func(*Session) proto.Snapshot{
+			"private": func(s *Session) proto.Snapshot { return run(s, c.ask, true) },
+			"pause": func(s *Session) proto.Snapshot {
+				s.Handle(proto.Request{Type: proto.Pause, On: true})
+				return run(s, c.ask, true)
+			},
+			"private while open": func(s *Session) proto.Snapshot { // 候選開著時才收到帶 Private 的請求
+				run(s, c.ask, false)
+				return s.Handle(proto.Request{Type: proto.Context, Private: true})
+			},
+		}
+		for name, do := range situations {
+			if got := labelsOf(do(c.open())); !maps.Equal(got, want) {
+				t.Errorf("%s, %s: labels %v, want %v", c.name, name, got, want)
+			}
+		}
 	}
 }

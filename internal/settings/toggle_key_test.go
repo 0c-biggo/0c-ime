@@ -83,13 +83,9 @@ func TestToggleKeyDefaultsByPlatform(t *testing.T) {
 	if defaultToggleKey("windows") != ToggleBoth || defaultToggleKey("darwin") != ToggleNone || defaultToggleKey("linux") != ToggleRight {
 		t.Fatal(defaultToggleKey("windows"), defaultToggleKey("darwin"), defaultToggleKey("linux"))
 	}
-	if !strings.Contains(toggleKeyDescription("windows"), "預設左右 Shift 都可以切換，不想讓左 Shift 切換可改成「右 Shift」") {
-		t.Fatal(toggleKeyDescription("windows"))
-	}
-	for _, goos := range []string{"linux", "darwin"} {
-		if strings.Contains(toggleKeyDescription(goos), "左右") {
-			t.Fatal(goos, toggleKeyDescription(goos))
-		}
+	// #362：各平台的預設寫在設定參考文件，設定程式的說明只有一句。
+	if ref := settingsReference(t); !strings.Contains(ref, "預設左右 Shift 都可以切換，不想讓左 Shift 切換可以改成「右 Shift」") {
+		t.Fatal("設定參考文件要寫出 Windows 的預設與怎麼改回右 Shift")
 	}
 }
 
@@ -102,14 +98,17 @@ func TestModeMemoryDefaultsByPlatform(t *testing.T) {
 	}
 }
 
-// #117：Ctrl＋空白鍵是 Windows 繁中輸入法的系統熱鍵，只在 Windows 的說明裡提。
-func TestToggleKeyDescriptionMentionsCtrlSpaceOnWindows(t *testing.T) {
-	if !strings.HasSuffix(toggleKeyDescription("windows"), "也可以按 Ctrl＋空白鍵") {
-		t.Fatal(toggleKeyDescription("windows"))
+// #117：Ctrl＋空白鍵是 Windows 繁中輸入法的系統熱鍵，只在 Windows 提：選「不用 Shift」時的提示（#362）。
+func TestToggleKeyHintMentionsCtrlSpaceOnWindows(t *testing.T) {
+	if hint := valueHints("windows", "toggle-key")[ToggleNone]; !strings.Contains(hint, "Ctrl＋空白鍵") {
+		t.Fatal(hint)
 	}
 	for _, goos := range []string{"linux", "darwin"} {
-		if strings.Contains(toggleKeyDescription(goos), "Ctrl") {
-			t.Fatal(goos, toggleKeyDescription(goos))
+		if hint := valueHints(goos, "toggle-key")[ToggleNone]; hint == "" || strings.Contains(hint, "Ctrl") {
+			t.Fatal(goos, hint)
 		}
+	}
+	if strings.Contains(toggleKeyDescription, "Ctrl") {
+		t.Fatal(toggleKeyDescription)
 	}
 }

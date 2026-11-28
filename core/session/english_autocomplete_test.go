@@ -151,7 +151,8 @@ func TestEnglishAutocompleteProtectionAndLegacyComposition(t *testing.T) {
 	s.EnglishAutocomplete = true
 	mixedType(s, "ji3")
 	s.Handle(proto.Request{Type: proto.Mode, On: true})
-	if snap := mixedType(s, "hel"); snap.Text() != "我hel" || snap.Candidates != nil || snap.EnglishPending {
+	// 保留的中文組字後面接著打的英文也補字（#372，見 english_in_composition_test.go）；快照的 english_pending 仍是 false。
+	if snap := mixedType(s, "hel"); snap.Text() != "我hel" || snap.Candidates == nil || snap.EnglishPending || snap.EnglishCanStart {
 		t.Fatal(snap)
 	}
 	s = newSession()

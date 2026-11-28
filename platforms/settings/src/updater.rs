@@ -238,16 +238,27 @@ pub fn update_mode_args(mode: &str) -> Result<Vec<String>, String> {
     }
 }
 
-/// 設定視窗本身不離開本機頁面（local_origin），外部網址交給系統瀏覽器；只放行 Hugging Face 的模型頁
-/// （0c-update models status 的 url），字元限制在網址路徑用得到的範圍，不會被當成參數或指令。
+/// 設定視窗本身不離開本機頁面（local_origin），外部網址交給系統瀏覽器；只放行兩種：Hugging Face 的模型頁
+/// （0c-update models status 的 url），以及官網的說明文件（#362，0c-update settings 每一項的 help_url，
+/// `https://0c.biggo.com/guide/settings/#<設定鍵名>`）。字元限制在網址路徑用得到的範圍，不會被當成參數或指令；
+/// 說明文件可以帶一個錨點，只能是小寫英數與 `-`（設定的鍵名）。
 pub fn browser_url(url: &str) -> Result<&str, String> {
-    const PREFIX: &str = "https://huggingface.co/";
-    let rest = url.strip_prefix(PREFIX).ok_or("只能開啟 Hugging Face 的網址")?;
-    let ok = !rest.is_empty()
-        && url.len() <= 300
-        && !rest.contains("..")
-        && !rest.starts_with('/')
-        && rest.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '-'));
+    const HUGGING_FACE: &str = "https://huggingface.co/";
+    const GUIDE: &str = "https://0c.biggo.com/guide/";
+    let path_ok = |path: &str| {
+        !path.contains("..") && !path.starts_with('/') && !path.contains("//") && path.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '-'))
+    };
+    let ok = url.len() <= 300
+        && if let Some(rest) = url.strip_prefix(HUGGING_FACE) {
+            !rest.is_empty() && !rest.contains("..") && !rest.starts_with('/') && rest.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '-'))
+        } else if let Some(rest) = url.strip_prefix(GUIDE) {
+            match rest.split_once('#') {
+                Some((path, anchor)) => path_ok(path) && !anchor.is_empty() && anchor.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
+                None => path_ok(rest),
+            }
+        } else {
+            return Err("只能開啟 Hugging Face 或靈犀注音說明文件的網址".to_string());
+        };
     if ok {
         Ok(url)
     } else {
@@ -859,6 +870,40 @@ mod tests {
             "https://huggingface.co/Funmula/x y",
             "file:///etc/passwd",
             "javascript:alert(1)",
+        ] {
+            assert!(browser_url(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    // #362：設定項目的「說明」連結開官網的設定說明頁，錨點是設定的鍵名；其他網域、其他路徑、奇怪的錨點都不開。
+    #[test]
+    fn browser_url_allows_the_settings_guide_with_a_key_anchor() {
+        for ok in [
+            "https://0c.biggo.com/guide/settings/#keyboard-layout",
+            "https://0c.biggo.com/guide/settings/#shift-tap-ms",
+            "https://0c.biggo.com/guide/settings/#fuzzy-z-zh",
+            "https://0c.biggo.com/guide/settings/",
+            // 頁首的連結：輸入習慣、更新、我的詞彙（ui/item-help.js 的 PAGE_ANCHORS）。
+            "https://0c.biggo.com/guide/settings/#input-styles",
+            "https://0c.biggo.com/guide/settings/#update-mode",
+            "https://0c.biggo.com/guide/settings/#vocab",
+        ] {
+            assert_eq!(browser_url(ok), Ok(ok));
+        }
+        for bad in [
+            "http://0c.biggo.com/guide/settings/#keyboard-layout",
+            "https://0c.biggo.com.evil.example/guide/settings/#keyboard-layout",
+            "https://0c.biggo.com/download/x.exe",
+            "https://0c.biggo.com/guide/../download/x.exe",
+            "https://0c.biggo.com/guide//evil.example",
+            "https://0c.biggo.com/guide/settings/?next=https://evil.example",
+            "https://0c.biggo.com/guide/settings/#",
+            "https://0c.biggo.com/guide/settings/#a#b",
+            "https://0c.biggo.com/guide/settings/#Keyboard",
+            "https://0c.biggo.com/guide/settings/#a b",
+            "https://0c.biggo.com/guide/settings/#a\"&calc",
+            "https://0c.biggo.com/guide/settings/#a%0d",
+            "https://evil.example/#keyboard-layout",
         ] {
             assert!(browser_url(bad).is_err(), "{bad:?}");
         }

@@ -129,12 +129,12 @@ func TestComposingNavigationKeysStayInComposition(t *testing.T) {
 			t.Fatalf("未打完的注音 %s：%+v", k, snap)
 		}
 	}
-	// 英文模式保留組字時 ↓ 交給應用程式的既有行為不變。
+	// 英文模式保留的組字按 ↓ 同樣開候選，不交給應用程式（#369；以前交給應用程式，宿主游標離開組字區）。
 	s = newSession()
 	typeSyl(s, "ㄨㄛˇ")
 	s.Handle(proto.Request{Type: proto.Toggle})
-	if snap := key(s, proto.KeyDown); snap.Handled {
-		t.Fatalf("英文模式 ↓ 照舊交給應用程式：%+v", snap)
+	if snap := key(s, proto.KeyDown); !snap.Handled || snap.Candidates == nil || snap.Mode != proto.ModeEnglish {
+		t.Fatalf("英文模式 ↓ 開候選：%+v", snap)
 	}
 }
 

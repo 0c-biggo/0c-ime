@@ -66,8 +66,12 @@ func TestMixedInputDescriptionKeepsShiftToggle(t *testing.T) {
 		items[it.Key] = it
 	}
 	mixed := items["mixed-input"].Description
-	if strings.Contains(mixed, "關閉後使用手動中英切換") || !strings.Contains(mixed, "Shift") {
-		t.Fatalf("中英混打的說明要寫明開啟時仍可用 Shift 切換：%q", mixed)
+	if strings.Contains(mixed, "關閉後使用手動中英切換") || !strings.Contains(mixed, "↓") {
+		t.Fatalf("中英混打的說明不能讓人以為開啟後不能手動切換，並寫明選字改按 ↓：%q", mixed)
+	}
+	// #362：開或關都能用 Shift 切換寫在設定參考文件。
+	if ref := settingsReference(t); !strings.Contains(ref, "混打開或關都能單按 Shift 切到英文") {
+		t.Fatal("設定參考文件要寫明混打開啟時仍可用 Shift 切換")
 	}
 	if auto := items["english-autocomplete"].Description; strings.Contains(auto, "右 Shift") {
 		t.Fatalf("切換鍵不一定是右 Shift：%q", auto)

@@ -1,5 +1,5 @@
 // Package engine 是核心的頂層：共用的唯讀資料、個人化模型與 session 工廠。
-// Handle 的形狀（位元組進、位元組出）與 C ABI、行程間協定相同（docs/19）。
+// Handle 的形狀（位元組進、位元組出）與 C ABI、行程間協定相同。
 package engine
 
 import (
@@ -42,7 +42,7 @@ type Engine struct {
 	ShiftSymbolHalfwidth  bool              // 「Shift＋符號打半形」開著時由宿主設定（#258）；零值時 Shift＋符號照舊打全形標點。
 	AllSymbolsHalfwidth   bool              // 「所有符號鍵打半形」時由宿主設定（#282）；零值時照舊。
 	CJKLatinSpace         bool              // 「中英文之間自動加空格」開著時由宿主設定（#273）；零值時送出的文字不補空格。
-	CJKDigitSpace         bool              // 「中文與數字之間自動加空格」開著時由宿主設定；零值時送出的文字不補空格。
+	CJKDigitSpace         bool              // 「自動加空格」選「中英文與數字之間」時由宿主設定（#365）；零值時數字旁不補。
 	NoLearning            bool              // 「記住我選的字詞」關閉時由宿主設定（#297）；選字、神經選字照常，只是不寫進個人資料。
 	CapsLockEnglish       bool              // 「Caps Lock 開著時直接打英文」開著時由宿主設定（#173）；零值時 caps_lock 請求不起作用。
 	Fuzzy                 fuzzy.Config      // 使用者逐對啟用的模糊音；零值全部關閉。
@@ -50,6 +50,7 @@ type Engine struct {
 	ZhuyinErrorHint       bool              // 「打錯注音時提示」開著時由宿主設定（#300，預設開）；零值時沒有字的音節照舊原樣留下。
 	Abbreviation          bool              // 聲調選填時只打聲母或介音也能選字；只在 Toneless 時作用。
 	MixedWithToneless     bool              // 聲調選填與混打共存（手機）：注音鍵走聲調選填，實體按鍵走混打。
+	EnglishContext        bool              // 字面英文詞後面的中文以那個英文詞為前詞（APP#33，手機）；零值照舊從句首算。
 	NineSegment           bool              // 注音九宮格「自動切字」（手機，預設關）：九宮格的鍵不必按聲調鍵，由核心切音節。
 	EnglishAutocomplete   bool
 	MixedInput            bool                // opt-in bilingual keys; disabled preserves legacy behavior.
@@ -171,6 +172,7 @@ func (e *Engine) OpenSession() uint64 {
 	e.sessions[e.next].ZhuyinErrorHint = e.ZhuyinErrorHint
 	e.sessions[e.next].Abbreviation = e.Abbreviation
 	e.sessions[e.next].MixedWithToneless = e.MixedWithToneless
+	e.sessions[e.next].EnglishContext = e.EnglishContext
 	e.sessions[e.next].NineSegment = e.NineSegment
 	e.sessions[e.next].EnglishAutocomplete = e.EnglishAutocomplete
 	e.sessions[e.next].MixedInput = e.MixedInput

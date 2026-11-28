@@ -305,7 +305,8 @@ func (s *Session) decodePinyinCuts(letters string, stops map[int]bool, tone int)
 	s.dec.PrefixCacheKeys = s.Opt.PrefixCacheKeys
 	evidence, penalty := s.dec.Evidence, s.dec.CorrectionPenalty
 	defer func() { s.dec.Evidence, s.dec.CorrectionPenalty = evidence, penalty }()
-	s.configureDocumentContext(begin)
+	// 解的是已經組好的音節加上還沒收的字母，不是單獨一個音節（#360）
+	s.configureContext(begin, false)
 	s.dec.Evidence, s.dec.CorrectionPenalty = nil, nil // 依位置的證據以音節為單位；切法只看詞庫與語言模型
 	path, _ := s.dec.Best(g, s.locksIn(begin, s.cursor), false)
 	if len(path) == 0 {

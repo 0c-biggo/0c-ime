@@ -410,6 +410,38 @@ func TestSettingsDocJSONShape(t *testing.T) {
 	if first["running"] != nil {
 		t.Errorf("running 未知時應是 null：%v", first["running"])
 	}
+	// #362：每一項帶 help_url（官網設定說明頁＋#鍵名）；多選一的項目另帶 value_hints（{值: 提示}），沒有提示的項目不帶。
+	for _, raw := range doc["items"].([]any) {
+		item := raw.(map[string]any)
+		key := item["key"].(string)
+		if item["help_url"] != "https://0c.biggo.com/guide/settings/#"+key {
+			t.Errorf("%s 的 help_url：%v", key, item["help_url"])
+		}
+		hints, has := item["value_hints"].(map[string]any)
+		switch key {
+		case "keyboard-layout":
+			if len(hints) != 5 || !strings.Contains(hints["eten"].(string), "頓號改按") || !strings.Contains(hints["xiaohe"].(string), "nihc") {
+				t.Errorf("鍵盤排列五個選項各有提示：%v", item["value_hints"])
+			}
+		case "esc-clear":
+			if has {
+				t.Errorf("沒有提示的項目不帶 value_hints：%v", item)
+			}
+		}
+		// #363：搜尋用的關鍵字是字串陣列；輸出簡體字找得到「簡中」。
+		words, _ := item["keywords"].([]any)
+		found := false
+		for _, word := range words {
+			s, ok := word.(string)
+			if !ok || s == "" {
+				t.Errorf("%s 的 keywords 要是非空字串的陣列：%v", key, item["keywords"])
+			}
+			found = found || s == "簡中"
+		}
+		if key == "output-simplified" && !found {
+			t.Errorf("輸出簡體字的 keywords 要有「簡中」：%v", item["keywords"])
+		}
+	}
 }
 
 func TestClassifyMapsErrorsToStableCodes(t *testing.T) {

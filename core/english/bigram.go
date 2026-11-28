@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/0c-biggo/0c-ime/core/binfmt"
 )
 
 // Bigrams 是英文詞對與跨中英詞對的語料次數（APP#21），建好後唯讀，可在 session 之間共用。
@@ -18,19 +20,67 @@ type Bigrams struct {
 }
 
 // bigramTable 是排好序的前詞，每個前詞的後詞在 next[start[i]:start[i+1]]，次數多的在前。
-// 攤平存放，不用 map，常駐記憶體少一半以上。
+// 攤平存放，不用 map，常駐記憶體少一半以上。col 不是 nil 的是格式 2（MapBigrams）：同樣的排列
+// 直接讀資料包的位元組，上面三個 slice 是空的。
 type bigramTable struct {
 	lefts []string
 	start []uint32
 	next  []Next
+	col   *bigramColumns
 }
 
-func (t *bigramTable) after(left string) []Next {
-	i, ok := slices.BinarySearch(t.lefts, left)
-	if !ok {
-		return nil
+func (t *bigramTable) leftCount() int {
+	if t.col != nil {
+		return t.col.lefts
 	}
-	return t.next[t.start[i]:t.start[i+1]]
+	return len(t.lefts)
+}
+
+func (t *bigramTable) left(i int) string {
+	if t.col != nil {
+		return t.col.leftText[u32At(t.col.leftOff, i):u32At(t.col.leftOff, i+1)]
+	}
+	return t.lefts[i]
+}
+
+func (t *bigramTable) startAt(i int) int {
+	if t.col != nil {
+		return int(u32At(t.col.start, i))
+	}
+	return int(t.start[i])
+}
+
+func (t *bigramTable) at(j int) Next {
+	if t.col != nil {
+		c := t.col
+		return Next{c.rightText[u32At(c.rightOff, j):u32At(c.rightOff, j+1)], u32At(c.count, j)}
+	}
+	return t.next[j]
+}
+
+func (t *bigramTable) pairCount() int {
+	if t.col != nil {
+		return t.col.pairs
+	}
+	return len(t.next)
+}
+
+// span 是 left 的後詞在 [lo, hi)；沒有這個前詞時 ok 是 false。
+func (t *bigramTable) span(left string) (lo, hi int, ok bool) {
+	n := t.leftCount()
+	a, b := 0, n
+	for a < b {
+		mid := int(uint(a+b) >> 1)
+		if t.left(mid) < left {
+			a = mid + 1
+		} else {
+			b = mid
+		}
+	}
+	if a == n || t.left(a) != left {
+		return 0, 0, false
+	}
+	return t.startAt(a), t.startAt(a + 1), true
 }
 
 // Next 是接在某個詞後面的詞與次數。
@@ -140,8 +190,16 @@ func (b *Bigrams) After(kind BigramKind, left string, limit int) []Next {
 	if kind < 0 || kind >= bigramKinds {
 		return nil
 	}
-	next := b.tables[kind].after(left)
-	return slices.Clone(next[:min(limit, len(next))])
+	t := &b.tables[kind]
+	lo, hi, ok := t.span(left)
+	if !ok {
+		return nil
+	}
+	out := make([]Next, 0, min(limit, hi-lo))
+	for j := lo; j < hi && len(out) < limit; j++ {
+		out = append(out, t.at(j))
+	}
+	return out
 }
 
 // Count 是 left 接 right 的次數；沒有這一對是 0。
@@ -155,8 +213,10 @@ func (b *Bigrams) Count(kind BigramKind, left, right string) uint32 {
 	if kind != EnglishChinese {
 		right = strings.ToLower(right)
 	}
-	for _, n := range b.tables[kind].after(left) {
-		if n.Text == right {
+	t := &b.tables[kind]
+	lo, hi, _ := t.span(left)
+	for j := lo; j < hi; j++ {
+		if n := t.at(j); n.Text == right {
 			return n.Count
 		}
 	}
@@ -180,13 +240,14 @@ func (b *Bigrams) Encode() []byte {
 	out.Write(magicBigrams)
 	for kind := range bigramKinds {
 		t := &b.tables[kind]
-		binary.Write(&out, binary.LittleEndian, uint32(len(t.lefts)))
-		for i, left := range t.lefts {
-			next := t.next[t.start[i]:t.start[i+1]]
+		binary.Write(&out, binary.LittleEndian, uint32(t.leftCount()))
+		for i := range t.leftCount() {
+			left, lo, hi := t.left(i), t.startAt(i), t.startAt(i+1)
 			out.WriteByte(byte(len(left)))
 			out.WriteString(left)
-			binary.Write(&out, binary.LittleEndian, uint16(len(next)))
-			for _, n := range next {
+			binary.Write(&out, binary.LittleEndian, uint16(hi-lo))
+			for j := lo; j < hi; j++ {
+				n := t.at(j)
 				out.WriteByte(byte(len(n.Text)))
 				out.WriteString(n.Text)
 				binary.Write(&out, binary.LittleEndian, n.Count)
@@ -265,4 +326,119 @@ func DecodeBigrams(data []byte) (*Bigrams, error) {
 		return nil, fmt.Errorf("英文詞對資料有多餘內容")
 	}
 	return b, nil
+}
+
+// 詞對的格式 2（APP 中英混打的記憶體，同字典的格式 3）：同一份詞對排成固定寬度的欄，Map 進來直接
+// 二分搜尋，不解成 Go 的字串與 slice。內容與格式 1 一一對應（EncodeMapped、Encode 互轉逐位元組相同）。
+// 資料包的 bigram.bin 仍是格式 1。三種詞對依序各一組欄（小端序，binfmt）：
+//
+//	leftText   前詞串接，依字典序
+//	leftOff    uint32 × (前詞數+1)
+//	start      uint32 × (前詞數+1)，前詞 i 的後詞是 [start[i], start[i+1])
+//	rightText  後詞串接，每個前詞的後詞次數多的在前
+//	rightOff   uint32 × (詞對數+1)
+//	count      uint32 × 詞對數
+var magicBigramsMapped = []byte("0cEB\x00\x02")
+
+type bigramColumns struct {
+	leftText, rightText             string
+	leftOff, start, rightOff, count []byte
+	lefts, pairs                    int
+}
+
+// EncodeMapped 把詞對寫成格式 2（見上）。
+func (b *Bigrams) EncodeMapped() []byte {
+	w := binfmt.NewWriter(string(magicBigramsMapped), mappedVersion)
+	for kind := range bigramKinds {
+		t := &b.tables[kind]
+		var lefts, rights strings.Builder
+		var leftOff, start, rightOff, count []byte
+		for i := range t.leftCount() {
+			leftOff = binary.LittleEndian.AppendUint32(leftOff, uint32(lefts.Len()))
+			lefts.WriteString(t.left(i))
+			start = binary.LittleEndian.AppendUint32(start, uint32(t.startAt(i)))
+		}
+		leftOff = binary.LittleEndian.AppendUint32(leftOff, uint32(lefts.Len()))
+		start = binary.LittleEndian.AppendUint32(start, uint32(t.pairCount()))
+		for j := range t.pairCount() {
+			n := t.at(j)
+			rightOff = binary.LittleEndian.AppendUint32(rightOff, uint32(rights.Len()))
+			rights.WriteString(n.Text)
+			count = binary.LittleEndian.AppendUint32(count, n.Count)
+		}
+		rightOff = binary.LittleEndian.AppendUint32(rightOff, uint32(rights.Len()))
+		w.String(lefts.String())
+		w.Raw(len(leftOff)/4, leftOff)
+		w.Raw(len(start)/4, start)
+		w.String(rights.String())
+		w.Raw(len(rightOff)/4, rightOff)
+		w.Raw(len(count)/4, count)
+	}
+	return w.Finish()
+}
+
+// MapBigrams 讀詞對的格式 2，不複製、不解碼；str 同 Map。b 在詞對表的整個生命期內不能改，也不能
+// munmap。逐筆檢查詞形與順序，跟 DecodeBigrams 收的內容相同。
+func MapBigrams(b []byte, str func([]byte) string) (*Bigrams, error) {
+	if len(b) > MaxPackBytes {
+		return nil, fmt.Errorf("英文詞對資料標頭或大小不合法")
+	}
+	if str == nil {
+		str = func(b []byte) string { return string(b) }
+	}
+	r := binfmt.NewReader(b, string(magicBigramsMapped), mappedVersion)
+	type raw struct{ leftText, leftOff, start, rightText, rightOff, count []byte }
+	var cols [bigramKinds]raw
+	for kind := range bigramKinds {
+		c := &cols[kind]
+		c.leftText, c.leftOff, c.start = r.View(1), r.View(4), r.View(4)
+		c.rightText, c.rightOff, c.count = r.View(1), r.View(4), r.View(4)
+	}
+	if err := r.Done(); err != nil {
+		return nil, err
+	}
+	fail := fmt.Errorf("英文詞對資料截斷或不合法")
+	out := &Bigrams{}
+	for kind := range bigramKinds {
+		c := cols[kind]
+		lefts, pairs := len(c.leftOff)/4-1, len(c.count)/4
+		if lefts < 0 || len(c.start) != len(c.leftOff) || len(c.rightOff) != 4*(pairs+1) || out.pairs+pairs > MaxBigramPairs {
+			return nil, fail
+		}
+		t := &bigramColumns{leftText: str(c.leftText), rightText: str(c.rightText), leftOff: c.leftOff, start: c.start,
+			rightOff: c.rightOff, count: c.count, lefts: lefts, pairs: pairs}
+		if !offsets(t.leftOff, lefts, len(t.leftText)) || !offsets(t.rightOff, pairs, len(t.rightText)) ||
+			u32At(t.start, 0) != 0 || int(u32At(t.start, lefts)) != pairs {
+			return nil, fail
+		}
+		table := bigramTable{col: t}
+		for i := range lefts {
+			left, lo, hi := table.left(i), table.startAt(i), table.startAt(i+1)
+			if len(left) > 255 || i > 0 && left <= table.left(i-1) || hi <= lo || hi > pairs || hi-lo > 0xffff {
+				return nil, fail
+			}
+			for j := lo; j < hi; j++ {
+				n := table.at(j)
+				if len(n.Text) > 255 || !validPair(BigramKind(kind), left, n.Text) || n.Count == 0 || j > lo && compareNext(table.at(j-1), n) >= 0 {
+					return nil, fail
+				}
+			}
+		}
+		out.tables[kind] = table
+		out.pairs += pairs
+	}
+	return out, nil
+}
+
+// offsets：n+1 個遞增的位移，從 0 到 size，每段至少一個位元組。
+func offsets(off []byte, n, size int) bool {
+	if len(off) != 4*(n+1) || u32At(off, 0) != 0 || int(u32At(off, n)) != size {
+		return false
+	}
+	for i := range n {
+		if u32At(off, i+1) <= u32At(off, i) {
+			return false
+		}
+	}
+	return true
 }

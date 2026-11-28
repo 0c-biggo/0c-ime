@@ -62,7 +62,8 @@ func TestPersonalLearningDefaultsOnAndPersists(t *testing.T) {
 	for _, it := range Default().Items() {
 		if it.Key == "personal-learning" {
 			if it.Value != "on" || it.Default != "on" || it.Label != "記住我選的字詞" || it.Locked || it.Disabled ||
-				!strings.Contains(it.Description, "神經選字") || !strings.Contains(it.Description, "清除學習紀錄") {
+				!strings.Contains(it.Description, "只存在這台電腦") ||
+				!strings.Contains(settingsReference(t), "神經選字、依前文選字照舊") || !strings.Contains(settingsReference(t), "按「清除學習紀錄」") { // 細節在設定參考文件（#362）
 				t.Fatalf("設定程式的項目：%+v", it)
 			}
 			return

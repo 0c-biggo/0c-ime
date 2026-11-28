@@ -41,6 +41,11 @@ type Dictionary struct {
 	// hidden 不是 nil 的是混打用的同一份字典（Mixed，#358）：這些詞查不到、不列候選，其他資料共用。
 	hidden []bool
 	mixed  *Dictionary
+	// col 不是 nil 的是格式 3 的字典（Map，mapped.go）：詞、旗標與 trie 直接讀資料包的位元組，上面的
+	// slice 與 map 都是空的；查詢經過 text、weight、node 這些存取函式，兩種字典走同一套演算法。
+	col *columns
+	// hideShort：格式 3 的混打字典（Mixed）。要藏的詞照旗標當場算（shortCorpusWord），不另存一份。
+	hideShort bool
 }
 
 type trieNode struct {
@@ -122,12 +127,18 @@ func (d *Dictionary) lookup(word string) (int, bool) {
 		return 0, false
 	}
 	word = strings.ToLower(word)
-	i := sort.Search(len(d.words), func(i int) bool { return d.words[i].Text >= word })
-	return i, i < len(d.words) && d.words[i].Text == word && !d.isHidden(i)
+	n := d.Len()
+	i := sort.Search(n, func(i int) bool { return d.text(i) >= word })
+	return i, i < n && d.text(i) == word && !d.isHidden(i)
 }
 
 // isHidden：混打用的字典不認這個詞（Mixed）。
-func (d *Dictionary) isHidden(i int) bool { return d.hidden != nil && d.hidden[i] }
+func (d *Dictionary) isHidden(i int) bool {
+	if d.col != nil {
+		return d.hideShort && d.col.short(i)
+	}
+	return d.hidden != nil && d.hidden[i]
+}
 
 // typable 是查詢能接受的輸入：ASCII 字母；詞頻字典另外接受字母之間的撇號。
 func (d *Dictionary) typable(s string) bool {
@@ -140,7 +151,7 @@ func (d *Dictionary) typable(s string) bool {
 // Suggestible distinguishes recognizable no-suggest words from candidates.
 func (d *Dictionary) Suggestible(word string) bool {
 	i, ok := d.lookup(word)
-	return ok && !d.noSuggest[i]
+	return ok && !d.unsuggested(i)
 }
 
 func (d *Dictionary) Prefix(prefix string, limit int) []Candidate {
@@ -161,8 +172,8 @@ func (d *Dictionary) Prefix(prefix string, limit int) []Candidate {
 	limit = min(limit, MaxCandidates)
 	var storage [128]prefixItem
 	q := prefixHeap{d: d, items: storage[:0]}
-	if d.nodes[n-1].best != 0 {
-		q.push(prefixItem{node: n, best: d.nodes[n-1].best})
+	if best := d.node(n).best; best != 0 {
+		q.push(prefixItem{node: n, best: best})
 	} else {
 		return nil
 	}
@@ -170,19 +181,21 @@ func (d *Dictionary) Prefix(prefix string, limit int) []Candidate {
 	for q.Len() > 0 && len(out) < limit {
 		item := q.pop()
 		if item.node != 0 {
-			node := d.nodes[item.node-1]
+			node := d.node(item.node)
 			// 子樹的 best 可能是混打不認的詞；它仍是子樹權重的上限，跳過它不影響其他詞的順序。
-			if node.word != 0 && !d.noSuggest[node.word-1] && !d.isHidden(int(node.word-1)) {
+			if node.word != 0 && !d.unsuggested(int(node.word-1)) && !d.isHidden(int(node.word-1)) {
 				q.push(prefixItem{best: node.word})
 			}
-			for c := node.child; c != 0; c = d.nodes[c-1].next {
-				if best := d.nodes[c-1].best; best != 0 {
-					q.push(prefixItem{node: c, best: best})
+			for c := node.child; c != 0; {
+				child := d.node(c)
+				if child.best != 0 {
+					q.push(prefixItem{node: c, best: child.best})
 				}
+				c = child.next
 			}
 			continue
 		}
-		w := d.words[item.best-1]
+		w := d.word(int(item.best - 1))
 		if d.ranked {
 			out = append(out, Candidate{Text: d.cased(prefix, int(item.best-1)), Weight: w.Weight})
 			continue
@@ -226,7 +239,7 @@ func (d *Dictionary) corrections(typed string, limit int, minimumPrior float64) 
 	allCaps := typed == strings.ToUpper(typed)
 	title := typed[0] >= 'A' && typed[0] <= 'Z'
 	d.within(p, maxEdits(p), func(word uint32, edits int) {
-		w := d.words[word]
+		w := d.word(int(word))
 		if w.Weight < minimumPrior {
 			return
 		}
@@ -258,9 +271,8 @@ func (d *Dictionary) within(p string, limit int, fn func(word uint32, edits int)
 	for j := 0; j <= len(p); j++ {
 		rows[0][j] = uint8(j)
 	}
-	var visit func(uint32, int, byte)
-	visit = func(id uint32, depth int, previous byte) {
-		n := d.nodes[id-1]
+	var visit func(trieNode, int, byte)
+	visit = func(n trieNode, depth int, previous byte) {
 		row, prev := &rows[depth], &rows[depth-1]
 		row[0] = uint8(depth)
 		minimum := row[0]
@@ -278,21 +290,28 @@ func (d *Dictionary) within(p string, limit int, fn func(word uint32, edits int)
 		if int(minimum) > limit {
 			return
 		}
-		if n.word != 0 && !d.noSuggest[n.word-1] && !d.isHidden(int(n.word-1)) && int(row[len(p)]) <= limit {
+		if n.word != 0 && !d.unsuggested(int(n.word-1)) && !d.isHidden(int(n.word-1)) && int(row[len(p)]) <= limit {
 			fn(n.word-1, int(row[len(p)]))
 		}
-		for c := n.child; c != 0; c = d.nodes[c-1].next {
-			visit(c, depth+1, n.letter)
+		for c := n.child; c != 0; {
+			child := d.node(c)
+			visit(child, depth+1, n.letter)
+			c = child.next
 		}
 	}
-	for c := d.nodes[0].child; c != 0; c = d.nodes[c-1].next {
-		visit(c, 1, 0)
+	for c := d.node(1).child; c != 0; {
+		child := d.node(c)
+		visit(child, 1, 0)
+		c = child.next
 	}
 }
 
 func (d *Dictionary) Len() int {
 	if d == nil {
 		return 0
+	}
+	if d.col != nil {
+		return d.col.n
 	}
 	return len(d.words)
 }
@@ -304,11 +323,18 @@ func (d *Dictionary) better(a, b uint32) bool {
 	if b == 0 {
 		return true
 	}
-	x, y := d.words[a-1], d.words[b-1]
-	return x.Weight > y.Weight || x.Weight == y.Weight && x.Text < y.Text
+	if d.col == nil { // 堆積比較時最常呼叫，記憶體裡的字典直接讀
+		x, y := &d.words[a-1], &d.words[b-1]
+		return x.Weight > y.Weight || x.Weight == y.Weight && x.Text < y.Text
+	}
+	x, y := d.col.weight(int(a-1)), d.col.weight(int(b-1))
+	return x > y || x == y && d.col.text(int(a-1)) < d.col.text(int(b-1))
 }
 
 func (d *Dictionary) child(id uint32, letter byte) uint32 {
+	if d.col != nil {
+		return d.col.child(id, letter)
+	}
 	for c := d.nodes[id-1].child; c != 0; c = d.nodes[c-1].next {
 		if d.nodes[c-1].letter == letter {
 			return c

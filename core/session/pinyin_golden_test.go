@@ -122,7 +122,7 @@ func pinyinSessionGolden() []string {
 		for range 60 {
 			var log []any
 			do := func(r proto.Request) {
-				log = append(log, r, s.Handle(r))
+				log = append(log, r, withoutReadingLabel(s.Handle(r))) // 基準早於 #361 的標示，見 plain_golden_test
 			}
 			keys := func(text string) {
 				for _, r := range text {

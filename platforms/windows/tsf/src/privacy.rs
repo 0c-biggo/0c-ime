@@ -322,8 +322,29 @@ fn window_class(hwnd: HWND) -> Option<String> {
     (len > 0).then(|| String::from_utf16_lossy(&name[..len as usize]))
 }
 
-/// MSAA 標示為保護（密碼）、唯讀或停用。取不到 MSAA（多數自訂視窗）時不算。
+/// Qt 5／6 的視窗類別：`Qt` 加版本數字（Debug 版再加 `d`、自訂 namespace 的再加 namespace），接著 `QWindow…`，
+/// 例如 Qt6113QWindowIcon、Qt5152QWindowOwnDCIcon、Qt5QWindowIcon（qtbase 的 QWindowsWindowClassRegistry::classNamePrefix）。
+fn qt_window(class: &str) -> bool {
+    class
+        .strip_prefix("Qt")
+        .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()) && rest.contains("QWindow"))
+}
+
+/// 能不能對這個焦點視窗查 MSAA。AccessibleObjectFromWindow 會送 WM_GETOBJECT 給宿主，Qt 收到任何一個
+/// WM_GETOBJECT 就開啟整套無障礙功能（qwindowsuiaaccessibility.cpp 的 handleWmGetObject 呼叫 setActive(true)），
+/// 一直開到程式結束：替每個元件建無障礙物件、資料每次變動都送 UI Automation 事件（#367）。
+/// Qt 的元件不是各自的視窗，焦點視窗是整個頂層視窗，MSAA 查到的是視窗本身的狀態，本來就看不出焦點欄位是不是密碼框；
+/// Qt 的密碼框（Qt::ImhHiddenText）由 Qt 自己以 ImmAssociateContext(NULL) 停用輸入法（QTBUG-40691），TSF 的焦點文件
+/// 變成 NULL，按鍵根本不經過輸入法。所以 Qt 視窗不查 MSAA，判斷結果不變（照舊以 Private 組字）。
+fn accessible_queryable(hwnd: HWND) -> bool {
+    !window_class(hwnd).is_some_and(|class| qt_window(&class))
+}
+
+/// MSAA 標示為保護（密碼）、唯讀或停用。取不到 MSAA（多數自訂視窗）或不能查（Qt）時不算。
 fn accessible_secret(hwnd: HWND) -> bool {
+    if !accessible_queryable(hwnd) {
+        return false;
+    }
     unsafe {
         let mut raw = std::ptr::null_mut();
         if AccessibleObjectFromWindow(hwnd, OBJID_CLIENT.0 as u32, &IAccessible::IID, &mut raw).is_err() || raw.is_null() {
@@ -351,6 +372,9 @@ fn editable_accessible(role: u32, state: u32, word_document: bool) -> bool {
 }
 
 fn accessible_edit_allows(hwnd: HWND) -> bool {
+    if !accessible_queryable(hwnd) {
+        return false;
+    }
     unsafe {
         let mut raw = std::ptr::null_mut();
         if AccessibleObjectFromWindow(hwnd, OBJID_CLIENT.0 as u32, &IAccessible::IID, &mut raw)
@@ -620,6 +644,38 @@ mod tests {
         assert!(!imm32_flags(0xc, 0));
         assert!(!imm32_flags(TS_SS_TRANSITORY, 0x4000_0040));
         assert!(!imm32_flags(TS_SS_NOHIDDENTEXT, 0));
+    }
+
+    #[test]
+    fn qt_windows_are_recognized_by_class() {
+        // #367：Qt 6.11.3（qBittorrent 5.3）、Qt 5.15.2、早期 Qt 5、Debug 版、自訂 namespace、多份 Qt 時加的 UUID。
+        for class in [
+            "Qt6113QWindowIcon",
+            "Qt6113QWindowToolSaveBits",
+            "Qt6113QWindowPopupDropShadowSaveBits",
+            "Qt5152QWindowOwnDCIcon",
+            "Qt5QWindowIcon",
+            "Qt6113dQWindowIcon",
+            "Qt682MyNsQWindowIcon",
+            "Qt6113QWindowIcon{8c9b0f6e-2a7d-4c11-9a0e-3f1d2b4c5e6f}",
+        ] {
+            assert!(qt_window(class), "{class}");
+        }
+        for class in [
+            "QWindowIcon",
+            "QtQWindowIcon",
+            "Qt6113",
+            "qt6113qwindowicon",
+            "Qt5TrayIconMessageWindowClass",
+            "_WwG",
+            "OneNote::DocumentCanvas",
+            "UnrealWindow",
+            "FLUTTERVIEW",
+            "Chrome_RenderWidgetHostHWND",
+            "",
+        ] {
+            assert!(!qt_window(class), "{class}");
+        }
     }
 
     #[test]

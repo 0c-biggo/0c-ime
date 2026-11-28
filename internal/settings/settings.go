@@ -111,8 +111,10 @@ type Settings struct {
 	// CJKLatinSpace：送出時在同一次送出的文字裡，漢字與英文字母直接相連的地方補一個半形空格（#273，「用Python寫」送出
 	// 「用 Python 寫」）。預設 false（缺欄位時也是）。不屬於輸入習慣風格，任何風格都能單獨開關。
 	CJKLatinSpace bool `json:"cjk_latin_space"`
-	// CJKDigitSpace：送出時在同一次送出的文字裡，漢字與半形數字直接相連的地方補一個半形空格（「第2版」送出「第 2 版」）。
-	// 跟 CJKLatinSpace 各自開關。預設 false（缺欄位時也是）。不屬於輸入習慣風格，任何風格都能單獨開關。
+	// CJKDigitSpace：「自動加空格」選「中英文與數字之間」（#365）：漢字與半形數字直接相連的地方也補（「第2版」送出
+	// 「第 2 版」）。只在 CJKLatinSpace 也是 true 時成立，同 AllSymbolsHalfwidth：舊版只認得那一個欄位，讀到的是最接近的
+	// 「中英文之間」；舊版把它關掉時，這一欄的殘值不會讓新版變成兩種都補（讀取時兩者取 AND）。沒有「只補數字」這個選項。
+	// 預設 false（缺欄位時也是）。
 	CJKDigitSpace bool `json:"cjk_digit_space"`
 	// ZhuyinErrorHint：打錯注音時提示（#300）。按了聲調但讀音沒有字（模糊音的近音也沒有）時不收這個聲調，注音停住等修改，
 	// Windows、macOS 發出提示音，Linux 在組字區標示；緊接著再按一次同一個聲調照舊原樣留下。只有一個注音符號時不擋。預設 true（缺欄位時也是）。
@@ -414,6 +416,7 @@ func (s *Settings) UnmarshalJSON(b []byte) error {
 		}
 	}
 	s.AllSymbolsHalfwidth = s.AllSymbolsHalfwidth && s.ShiftSymbolHalfwidth // #282：見欄位說明
+	s.CJKDigitSpace = s.CJKDigitSpace && s.CJKLatinSpace                    // #365：見欄位說明
 	for _, key := range retiredKeys {
 		take(key) // 已拿掉的鍵：不論值為何都不保留，下次存檔就從檔案消失
 	}
@@ -789,8 +792,21 @@ func (s Settings) valueLabels(key string) map[string]string {
 		return out
 	case "shift-symbol-halfwidth":
 		return map[string]string{"off": "全形標點", "on": "Shift＋符號打半形", "all": "所有符號鍵打半形"}
+	case "cjk-latin-space": // #365
+		return map[string]string{"off": "關閉", "on": "中英文之間", "all": "中英文與數字之間"}
 	}
 	return nil
+}
+
+// cjkSpace 是「自動加空格」（cjk-latin-space）的值：off、on（中英文之間，#273）或 all（中英文與數字之間，#365）。
+func (s Settings) cjkSpace() string {
+	switch {
+	case s.CJKLatinSpace && s.CJKDigitSpace:
+		return "all"
+	case s.CJKLatinSpace:
+		return "on"
+	}
+	return "off"
 }
 
 // symbolWidth 是「標點寬度」（shift-symbol-halfwidth）的值：off、on（Shift＋符號打半形，#258）或 all（所有符號鍵打半形，#282）。
@@ -892,8 +908,8 @@ func (s Settings) disabledReasonOn(goos, key string) string {
 // pinyinMixedReason：漢語拼音鍵盤（#324）的字母都是拼音，中英混打不作用；英文用 Shift 切換。
 const pinyinMixedReason = "漢語拼音時關閉"
 
-// shuangpinMixedReason：雙拼的字母都是拼音鍵，中英混打不作用；英文用 Shift 切換。
-const shuangpinMixedReason = "雙拼時關閉"
+// shuangpinMixedReason：小鶴雙拼（#370）的字母都是拼音鍵，中英混打不作用；英文用 Shift 切換。
+const shuangpinMixedReason = "小鶴雙拼時關閉"
 
 // zhuyinHintMixedReason：中英混打開著時「打錯注音時提示」不作用（#300）。
 const zhuyinHintMixedReason = "中英混打時關閉"
@@ -937,42 +953,39 @@ func onOff(v bool) string {
 
 func specs() []spec {
 	out := []spec{
-		{"selection", "選字方式", "神經選字會依前文重新排序候選，需要載入模型；只用統計引擎則完全依詞頻與個人詞庫，不載入模型", Neural, []string{Neural, Statistical},
+		{"selection", "選字方式", "決定候選字順序的方法。", Neural, []string{Neural, Statistical},
 			func(s Settings) string { return s.Selection }},
-		{"punctuation", "提交時補標點（Beta）", "提交時依句意補上標點，可能漏補或錯插；預設關閉，可自行開啟試用", "off", []string{"on", "off"},
+		{"punctuation", "提交時補標點（Beta）", "送出時依句意自動補標點，可能漏補或補錯。", "off", []string{"on", "off"},
 			func(s Settings) string { return onOff(s.Punctuation) }},
-		{"document-context", "依前文選字", "依自己剛提交的文字選字", "on", []string{"on", "off"},
+		{"document-context", "依前文選字", "參考你剛送出的文字來選字。", "on", []string{"on", "off"},
 			func(s Settings) string { return onOff(s.DocumentContext) }},
-		{"mixed-input", "中英混打（試用）", "直接在注音中打英文；提供英文補全與拼字修正，由你確認接受。開啟時空白鍵輸入空白，按 ↓ 選字；數字拼得成注音時，按 Enter 留數字。若已啟用 Shift 中英切換，混打開或關都能單按 Shift 切到英文", "off", []string{"on", "off"},
+		{"mixed-input", "中英混打（試用）", "不用切換，直接在注音中打英文；這時空白鍵輸入空白，選字改按 ↓。", "off", []string{"on", "off"},
 			func(s Settings) string { return onOff(s.MixedInput) }},
-		{"english-autocomplete", "英文模式自動補字", "單按 Shift 切換到英文模式後，輸入至少兩個字母時顯示補全候選，三個字母起也提供拼字修正；按 Tab 補全或修正拼字、Esc 關閉。「我的詞彙」的英文詞排在最前面；自己打過幾次的英文單字會記在本機，之後也會建議（私人欄位與關閉「記住我選的字詞」時不記）。與中英混打分開設定。空白送出單字並輸入空格；Enter 只送出單字，再按一次才換行或執行", "off", []string{"on", "off"},
+		{"english-autocomplete", "英文模式自動補字", "英文模式打字時建議單字，按 Tab 補上；Enter 先送出單字，再按一次才換行。", "off", []string{"on", "off"},
 			func(s Settings) string { return onOff(s.EnglishAutocomplete) }},
-		{"toggle-key", "中英切換鍵", toggleKeyDescription(runtime.GOOS), Default().ToggleKey, []string{ToggleRight, ToggleBoth, ToggleLeft, ToggleNone},
+		{"toggle-key", "中英切換鍵", toggleKeyDescription, Default().ToggleKey, []string{ToggleRight, ToggleBoth, ToggleLeft, ToggleNone},
 			func(s Settings) string { return s.ToggleKey }},
-		{"start-mode", "開始時的中英模式", startModeDescription(runtime.GOOS), StartZhuyin, []string{StartZhuyin, StartEnglish},
+		{"start-mode", "開始時的中英模式", startModeDescription, StartZhuyin, []string{StartZhuyin, StartEnglish},
 			func(s Settings) string { return s.StartMode }},
-		{"mode-memory", "切換視窗後的中英模式", "換到別的程式或輸入框時，中英模式要不要跟著", Default().ModeMemory, []string{ModeNative, ModeShared},
+		{"mode-memory", "切換視窗後的中英模式", "換到別的程式或輸入框時，中英模式要不要跟著。", Default().ModeMemory, []string{ModeNative, ModeShared},
 			func(s Settings) string { return s.ModeMemory }},
-		{"esc-clear", "按 Esc 清除整段組字", "關閉時 Esc 只清除還沒打完的注音，已組好的字保留", "on", []string{"on", "off"},
+		{"esc-clear", "按 Esc 清除整段組字", "關閉時 Esc 只清除還沒打完的注音，已組好的字保留。", "on", []string{"on", "off"},
 			func(s Settings) string { return onOff(s.EscClear) }},
-		{"space-selects", "空白鍵選字", "關閉後，注音打完按空白會輸入空格，改用 ↓ 選字", "on", []string{"on", "off"},
+		{"space-selects", "空白鍵選字", "關閉後，注音打完按空白會輸入空格，選字改按 ↓。", "on", []string{"on", "off"},
 			func(s Settings) string { return onOff(s.SpaceSelects) }},
-		{"candidate-cursor", "修改字詞的位置", "按 ↓（開啟空白鍵選字、沒開中英混打時也可按空白鍵）開候選時，修改游標前方或後方的字詞；橫排時前方是左側，後方是右側。游標在句尾時後方沒有字，一律修改前方的詞", Default().CandidateCursor, []string{"before", "after"}, func(s Settings) string { return s.CandidateCursor }},
-		{"advance-after-select", "選字後游標移到下一個字", "從候選窗選好字後，游標跳到所選的詞後面，可以接著按 ↓ 改下一個字；修改游標前方字詞時往後移一個字。游標在句尾時不動", "off", []string{"on", "off"},
+		{"candidate-cursor", "修改字詞的位置", "開候選窗時，修改游標前方還是後方的字詞。", Default().CandidateCursor, []string{"before", "after"}, func(s Settings) string { return s.CandidateCursor }},
+		{"advance-after-select", "選字後游標移到下一個字", "選好字後游標跳到那個詞後面，可以接著改下一個字。", "off", []string{"on", "off"},
 			func(s Settings) string { return onOff(s.AdvanceAfterSelect) }},
-		{"candidate-layout", "選字排列", "直排，或每排五個的多排選字（選字鍵 1234qweras 時每排四個）；Linux 原生候選窗依桌面介面呈現", "vertical", []string{"vertical", "grid", "horizontal"}, func(s Settings) string { return s.CandidateLayout }},
-		{"output-simplified", "輸出簡體字", "組字和候選仍顯示繁體，送出時才轉成簡體字；我的詞彙與我的片語也一起轉，英文、數字與標點不變", "off", []string{"on", "off"},
+		{"candidate-layout", "選字排列", "候選字的排列方式。", "vertical", []string{"vertical", "grid", "horizontal"}, func(s Settings) string { return s.CandidateLayout }},
+		{"output-simplified", "輸出簡體字", "送出時轉成簡體字；組字和候選仍顯示繁體。", "off", []string{"on", "off"},
 			func(s Settings) string { return onOff(s.OutputSimplified) }},
 		{"simplified-hotkey", "用快捷鍵切換簡體字", simplifiedHotkeyDescription(runtime.GOOS), "off", []string{"on", "off"},
 			func(s Settings) string { return onOff(s.SimplifiedHotkey) }},
-		{"emoji-shortcut", "Emoji 選單", "在注音模式按 = 開啟選單；Tab 切換顏文字，選過的排前面", "equals", []string{"off", "equals"}, func(s Settings) string { return s.EmojiShortcut }},
-		{"emoji-equals-first", "將 = 放在第一項", "開啟時選單第一項是 =；關閉時第一項直接是表情。開或關都可以連按兩下 = 輸入一個 =；想單按 = 就打出等號，請關閉 Emoji 選單", "on", []string{"on", "off"}, func(s Settings) string { return onOff(s.EmojiEqualsFirst) }},
-		{"keyboard-layout", "鍵盤排列", "注音鍵盤排列。倚天 41 鍵的 = 是 ㄦ、' 是 ㄘ，頓號改按 \\，這時不提供 Emoji 選單與中英混打。許氏只用字母鍵：同一鍵依位置代表聲母或韻母，聲調是 d f j s、一聲按空白，, . ; 直接打「，。；」，這時不提供中英混打。" +
-			"漢語拼音用拼音打繁體：ni3hao3 是「你好」，數字 1–4 是四聲、5 是輕聲、空白是一聲，ü 打 v，xi'an 的 ' 分開音節；沒打聲調的字依前後文決定，" +
-			", . ; 直接打「，。；」，這時不提供中英混打。" +
-			"小鶴雙拼每兩鍵一個音節（ni hc 是「你好」，zh＝v、ch＝i、sh＝u），聲調與標點同漢語拼音；建議同時開「不打聲調也能選字」", LayoutStandard, []string{LayoutStandard, LayoutETen, LayoutHsu, LayoutPinyin, LayoutXiaohe},
+		{"emoji-shortcut", "Emoji 選單", "注音模式按 = 開 Emoji 選單，按 Tab 切換顏文字。", "equals", []string{"off", "equals"}, func(s Settings) string { return s.EmojiShortcut }},
+		{"emoji-equals-first", "將 = 放在第一項", "關閉時第一項直接是表情；開或關都能連按兩下 = 打出等號。", "on", []string{"on", "off"}, func(s Settings) string { return onOff(s.EmojiEqualsFirst) }},
+		{"keyboard-layout", "鍵盤排列", "注音鍵盤的排列方式。", LayoutStandard, []string{LayoutStandard, LayoutETen, LayoutHsu, LayoutPinyin, LayoutXiaohe},
 			func(s Settings) string { return s.KeyboardLayout }},
-		{"selection-keys", "選字鍵", "候選窗用哪一排鍵選第 1 到第 10 個字；換成字母鍵時，數字鍵仍可照位置選字", SelectDigits, []string{SelectDigits, SelectQwer, SelectHome},
+		{"selection-keys", "選字鍵", "候選窗用哪一排鍵選第 1 到第 10 個字。", SelectDigits, []string{SelectDigits, SelectQwer, SelectHome},
 			func(s Settings) string { return s.SelectionKeys }},
 		{"ctrl-punctuation", "Ctrl＋標點打全形", ctrlPunctuationDescription(runtime.GOOS), "on", []string{"on", "off"},
 			func(s Settings) string { return onOff(s.CtrlPunctuation) }},
@@ -980,21 +993,19 @@ func specs() []spec {
 	// Caps Lock 開著時直接打英文（#173）：只有 Windows、Linux。macOS 開 Caps Lock 一律切到英文大寫（#84），沒有這一項。
 	if CapsLockEnglishSetting(runtime.GOOS) {
 		out = append(out, spec{"caps-lock-english", "Caps Lock 開著時直接打英文",
-			"開著 Caps Lock 時暫時切到英文：字母大寫、數字和符號半形，正在打的字先送出；關掉 Caps Lock 回到注音。關閉時注音模式不理 Caps Lock，照打注音",
+			"Caps Lock 開著時暫時打英文，關掉回到注音。",
 			"off", []string{"on", "off"}, func(s Settings) string { return onOff(s.CapsLockEnglish) }})
 	}
 	out = append(out, spec{"toneless", "不打聲調也能選字", tonelessDescription, "off", []string{"on", "off"},
 		func(s Settings) string { return onOff(s.Toneless) }})
 	// #258：放在已有項目之後，0c-update 列出的順序與舊版相同；設定程式另照頁面排在 Ctrl＋標點下面。
 	// #282：擴成三選一，鍵名與 on／off 的意思不變，舊的命令與設定檔照舊。
-	out = append(out, spec{"shift-symbol-halfwidth", "標點寬度", shiftSymbolHalfwidthDescription(runtime.GOOS), "off", []string{"off", "on", "all"},
+	out = append(out, spec{"shift-symbol-halfwidth", "標點寬度", shiftSymbolHalfwidthDescription, "off", []string{"off", "on", "all"},
 		func(s Settings) string { return s.symbolWidth() }})
-	// #273：同上放在最後；設定程式排在「Shift＋符號打半形」下面。
-	out = append(out, spec{"cjk-latin-space", "中英文之間自動加空格", cjkLatinSpaceDescription, "off", []string{"on", "off"},
-		func(s Settings) string { return onOff(s.CJKLatinSpace) }})
-	// 中文與數字之間自動加空格：同上放在最後；設定程式排在「中英文之間自動加空格」下面。
-	out = append(out, spec{"cjk-digit-space", "中文與數字之間自動加空格", cjkDigitSpaceDescription, "off", []string{"on", "off"},
-		func(s Settings) string { return onOff(s.CJKDigitSpace) }})
+	// #273：同上放在最後；設定程式排在「標點寬度」下面。
+	// #365：擴成三選一（數字旁也補），鍵名與 on／off 的意思不變，舊的命令與設定檔照舊。
+	out = append(out, spec{"cjk-latin-space", cjkSpaceLabel, cjkSpaceDescription, "off", []string{"off", "on", "all"},
+		func(s Settings) string { return s.cjkSpace() }})
 	// #300：同上放在最後；設定程式排在「不打聲調也能選字」上面。
 	out = append(out, spec{"zhuyin-error-hint", "打錯注音時提示", zhuyinErrorHintDescription(runtime.GOOS), "on", []string{"on", "off"},
 		func(s Settings) string { return onOff(s.ZhuyinErrorHint) }})
@@ -1009,7 +1020,7 @@ func specs() []spec {
 	out = append(out, spec{"personal-learning", "記住我選的字詞", personalLearningDescription, "on", []string{"on", "off"},
 		func(s Settings) string { return onOff(s.PersonalLearning) }})
 	for _, p := range fuzzy.Pairs() {
-		out = append(out, spec{"fuzzy-" + p.ID(), "模糊音 " + p.Symbols(), "把近音的字也列進候選，原音仍排在前面；「自動修正」（實驗）會在上下文明顯支持近音時另外自動改字", DefaultFuzzy, []string{"off", "select", "auto"},
+		out = append(out, spec{"fuzzy-" + p.ID(), "模糊音 " + p.Symbols(), "把近音的字也列進候選，原音排在前面。", DefaultFuzzy, []string{"off", "select", "auto"},
 			func(s Settings) string { return s.FuzzyConfig().Mode(p).String() }})
 	}
 	for _, r := range ruleSpecs() {
@@ -1019,17 +1030,15 @@ func specs() []spec {
 	return out
 }
 
-// personalLearningDescription 是「記住我選的字詞」（#297）的說明：關閉時什麼照常、什麼不記、已學的怎麼清。
-const personalLearningDescription = "選過的字詞會排到前面，常用的英文單字也會記住；學習資料只存在這台電腦。" +
-	"關閉後照常選字（神經選字、依前文選字照舊，已經學到的也照常使用），只是不再記下新的選擇、英文單字和最近用過的符號；" +
-	"「我的詞彙」照常可以加詞。要清掉已經學到的，到「我的詞彙」的「靈犀學到的」按「清除學習紀錄」"
+// 各項的說明都只有一句（#362）：這個設定做什麼，加上開或關之前一定要知道的那一件事。例子、例外、跟其他設定的
+// 關係與各平台差異寫在設定參考文件（官網 /guide/settings/，Item.HelpURL 連過去）；
+// 多選一各選項的差別放 valueHints，設定程式只顯示選中那一個的。長度由 TestDescriptionsStayShort 把關。
 
-// tonelessDescription 是「不打聲調也能選字」（#150）的說明：怎麼切音節、空白還是一聲、混打停用。
-const tonelessDescription = "聲調可打可不打：ㄋㄧㄏㄠ 就是「你好」，沒打聲調的字依前後文決定，有打聲調的字照聲調；少打聲調時選字比較容易錯，拿不定的字可以補聲調。" +
-	"接不上前一個音節的注音會開始新的字；ㄒㄧㄢ 是一個字，要「西安」請打 ㄒㄧ'ㄢ（組字中的 ' 用來切字，頓號改按 \\）或在 ㄒㄧ 後面補聲調。" +
-	"沒打完的注音按空白仍是一聲，送出請按 Enter。開啟時中英混打停用，英文請用 Shift 切換，「我的詞彙」裡的英文詞照樣認得。只在標準排列、漢語拼音與小鶴雙拼有效；" +
-	"漢語拼音本來就可以不打聲調，開啟時空白把拼音換成字並送出（關閉時空白是一聲）；要先看字再送出，請按 ↓ 或方向鍵。" +
-	"小鶴雙拼開啟時每兩鍵就換成字，空白送出；音節後緊接著打 1–5 可以補聲調"
+// personalLearningDescription 是「記住我選的字詞」（#297）的說明。
+const personalLearningDescription = "選過的字詞之後會排到前面；學習資料只存在這台電腦。"
+
+// tonelessDescription 是「不打聲調也能選字」（#150）的說明：代價是選字比較容易錯。
+const tonelessDescription = "聲調可打可不打，沒打的字依前後文決定；選字會比較容易錯。"
 
 // CapsLockEnglishSetting 回報這個平台有沒有「Caps Lock 開著時直接打英文」（#173）：Windows、Linux 有；
 // macOS 開 Caps Lock 一律切到英文大寫（#84、#67），沒有這一項，設定檔裡的值也不用。
@@ -1046,101 +1055,135 @@ func SimplifiedHotkeyLabel(goos string) string {
 	return "Ctrl＋Shift＋F11"
 }
 
-// simplifiedHotkeyDescription：說明快捷鍵、會占用哪個鍵、組字中按的效果（#192）。
+// simplifiedHotkeyDescription：快捷鍵是哪一個、開啟後這個鍵不再交給應用程式（#192）。
 func simplifiedHotkeyDescription(goos string) string {
-	d := "開啟後按 " + SimplifiedHotkeyLabel(goos) + " 切換輸出簡體字／繁體字，正在組字的字送出時也照新的設定"
+	app := "應用程式"
 	if goos == "darwin" {
-		return d + "。F11 是音量鍵的鍵盤要加按 fn；開啟時這個鍵不再交給 App"
+		app = " App"
 	}
-	return d + "。筆電的 F11 是媒體鍵時要加按 Fn；開啟時這個鍵不再交給應用程式"
+	return "按 " + SimplifiedHotkeyLabel(goos) + " 切換簡體／繁體；開啟後這個鍵不再交給" + app + "。"
 }
 
-// toggleKeyDescription：Windows 另外提醒 Ctrl＋空白鍵。那是繁中輸入法的系統熱鍵，外殼接到就切換（#117），不受這一項影響。
-func toggleKeyDescription(goos string) string {
-	// 時限可調（#319），這裡不寫秒數，指向那一項，免得說明跟設定不一致。
-	d := "單按哪個 Shift 切換注音／英文；按住 Shift 超過「" + shiftTapLabel + "」、或 Shift 加字母（打大寫）不算切換。沒用來切換的 Shift 照系統原本的用途"
-	if goos == "windows" {
-		d += "。預設左右 Shift 都可以切換，不想讓左 Shift 切換可改成「右 Shift」；按著 Shift 點滑鼠選取也不算切換。也可以按 Ctrl＋空白鍵"
-	} else if goos == "darwin" {
-		d += "。Mac 預設不用 Shift，使用系統的輸入來源切換；想用 Shift 可在這裡開啟"
-	}
-	return d
-}
+// 「中英切換鍵」（#117）。各平台不用 Shift 時怎麼切換寫在 valueHints；時限可調（#319），這裡不寫秒數。
+const toggleKeyDescription = "單按哪個 Shift 切換注音和英文。"
 
 // 「單按 Shift 的時限」（#319）的名稱與說明。
 const (
 	shiftTapLabel       = "單按 Shift 的時限"
-	shiftTapDescription = "按下 Shift 到放開在這個時間內才算單按，切換注音／英文。按得比較慢、常切換不成功時調長；打字時常不小心切到英文時調短"
+	shiftTapDescription = "多快放開 Shift 才算單按；常切不過去就調長，常誤切就調短。"
 )
 
-// cjkLatinSpaceDescription 是「中英文之間自動加空格」（#273）的說明：什麼時候補、哪裡不補、只看這次送出的字。
-const cjkLatinSpaceDescription = "送出時在中文字和英文字母相連的地方補一個半形空格，例如「用Python寫」送出「用 Python 寫」；組字時照打的顯示。" +
-	"已有空格、標點和數字旁不補；只看這次送出的字，跟前面已經送出的字之間不補"
+// 「自動加空格」（#273、#365）；兩個選項各補哪裡在 valueHints，細節與限制在設定參考文件。
+const (
+	cjkSpaceLabel       = "自動加空格"
+	cjkSpaceDescription = "送出時在中文與英文、數字之間補半形空格，只看同一次送出的字。"
+)
 
-// cjkDigitSpaceDescription 是「中文與數字之間自動加空格」的說明。
-const cjkDigitSpaceDescription = "送出時在中文字和半形數字相連的地方補一個半形空格，例如「第2版」送出「第 2 版」；組字時照打的顯示。" +
-	"已有空格、標點和全形數字旁不補；只看這次送出的字，跟前面已經送出的字之間不補"
-
-// zhuyinErrorHintDescription 是「打錯注音時提示」（#300）的說明：什麼時候擋、怎麼提示（Windows、macOS 提示音，
-// Linux 的 Fcitx5、IBus 沒有統一的提示音，標示注音）、故意打注音文的退路、哪些情況不作用。
+// zhuyinErrorHintDescription 是「打錯注音時提示」（#300）的說明：Windows、macOS 發提示音，Linux 的 Fcitx5、IBus
+// 沒有統一的提示音，改在組字區標示注音。
 func zhuyinErrorHintDescription(goos string) string {
 	hint := "發出提示音"
 	if goos == "linux" {
-		hint = "把停住的注音標示出來"
+		hint = "把注音標示出來"
 	}
-	return "按了聲調，這個注音卻沒有字（例如 ㄅㄩˊ）時，不收這個聲調、注音留著讓你改，並" + hint + "；開了模糊音時近音有字就照常打出。" +
-		"只有一個注音符號（例如 ㄟ、ㄅ＋空白）時照舊直接留下。要故意打 ㄏㄟˊ 這類注音，在同一個地方馬上再按一次同一個聲調就會留下。中英混打和不打聲調時不作用"
+	return "注音拼不出字時不收聲調，留著讓你改，並" + hint + "。"
 }
 
-// shiftSymbolHalfwidthDescription：「標點寬度」（#258、#282）的說明。「Shift＋符號打半形」打什麼（Shift＋, 是半形逗號，
-// 不是 <）、[ ] 不變、微軟參考本來就半形的鍵照風格（#272）；「所有符號鍵打半形」打按鍵上的字、Ctrl＋標點固定開、
-// 聲調選填暫停；兩者全形都改按 Ctrl＋符號或 ↓。Mac 的 Ctrl 寫 ⌃。
-func shiftSymbolHalfwidthDescription(goos string) string {
-	ctrl := "Ctrl＋"
+// 「標點寬度」（#258、#282）；三個選項各打什麼在 valueHints。
+const shiftSymbolHalfwidthDescription = "注音模式的符號鍵打全形標點還是半形符號。"
+
+// ctrlKeyLabel：說明裡的 Ctrl 鍵。Mac 是 Control 鍵，寫 ⌃。
+func ctrlKeyLabel(goos string) string {
 	if goos == "darwin" {
-		ctrl = "⌃"
+		return "⌃"
 	}
-	return "注音模式的符號鍵打全形標點或半形符號。「Shift＋符號打半形」：Shift＋, 打半形逗號、Shift＋. 打半形句號、Shift＋9 打 (、Shift＋; 打 :，[ ] 照舊打「」；標點操作選微軟參考時，< > ? \" 照舊打按鍵上的字。" +
-		"「所有符號鍵打半形」：每個符號鍵都打按鍵上的字，例如 Shift＋- 打 _、Shift＋, 打 <、[ 打 [，這時 " + ctrl + "標點固定開啟，「不打聲調也能選字」暫停。" +
-		"半形時全形標點改按 " + ctrl + "符號（例如 " + ctrl + ", 打「，」），或在符號上按 ↓ 換；< > 也在 ↓ 裡"
+	return "Ctrl＋"
 }
 
-// ctrlPunctuationDescription：說明會占用哪些程式快速鍵、可以關掉（#168）。Mac 是 Control 鍵（⌃），程式快速鍵多用 ⌘，
-// 撞到的少，不舉 VS Code 的例子。#231 加了 Ctrl＋Shift＋; 9 0：Windows 舉 Excel（插入時間、取消隱藏列），
-// Linux 舉 Konsole（分割畫面）。
+// ctrlPunctuationDescription：舉兩個鍵，並說明會占用程式的快速鍵（#168）。Mac 的程式快速鍵多用 ⌘，寫不再交給 App。
 func ctrlPunctuationDescription(goos string) string {
+	ctrl := ctrlKeyLabel(goos)
+	d := "注音模式按 " + ctrl + ", 打「，」、" + ctrl + ". 打「。」；"
 	if goos == "darwin" {
-		return "注音模式按 ⌃, 打「，」、⌃. 打「。」、⌃' 打「、」、⌃; 打「；」、⌃⇧/ 打「？」、⌃⇧1 打「！」、⌃⇧; 打「：」、⌃⇧9 打「（」、⌃⇧0 打「）」，沒在打字時也可以。" +
-			"注音模式時這幾個鍵不再交給 App，要保留時可以關掉；英文模式不受影響"
+		return d + "這幾個鍵不再交給 App。"
 	}
-	d := "注音模式按 Ctrl＋, 打「，」、Ctrl＋. 打「。」、Ctrl＋' 打「、」、Ctrl＋; 打「；」、Ctrl＋Shift＋/ 打「？」、Ctrl＋Shift＋1 打「！」、" +
-		"Ctrl＋Shift＋; 打「：」、Ctrl＋Shift＋9 打「（」、Ctrl＋Shift＋0 打「）」，沒在打字時也可以。會占用程式的這幾個快速鍵（例如 VS Code 的 Ctrl＋, 開設定、Ctrl＋. 快速修正"
-	switch goos {
-	case "windows":
-		d += "，Excel 的 Ctrl＋Shift＋; 插入時間、Ctrl＋Shift＋9 取消隱藏列"
-	case "linux":
-		d += "，Konsole 的 Ctrl＋Shift＋9／0 分割畫面"
-	}
-	d += "），要保留時可以關掉；英文模式不受影響"
-	if goos == "windows" {
-		// 輸入法直接切換熱鍵 0x104（Ctrl＋Shift＋0 → 日文輸入法）是繁體中文 Windows 的預設值，日文沒裝也作用，
-		// 在 TSF 之前就被系統拿走。負責人決定保留這個鍵、不改系統熱鍵。
-		d += "。Windows 預設把 Ctrl＋Shift＋0 留給切換輸入法，這一鍵打不出「）」"
-	}
-	if goos == "linux" {
-		d += "。Fcitx5 的剪貼簿開著時，Ctrl＋; 照舊叫出剪貼簿"
-	}
-	return d
+	return d + "會占用程式的這幾個快速鍵。"
 }
 
-// startModeDescription：沒有記住的模式時從哪一個開始（#160）。Windows 的 native 是每個程式各自記住，所以是新開的程式；
-// macOS／Linux 的 native 是每次回到它。全部共用時只有登入後（引擎啟動時）的第一個模式。
-func startModeDescription(goos string) string {
-	d := "換到輸入框時回到這個模式"
-	if goos == "windows" {
-		d = "新開的程式從這個模式開始"
+// startModeDescription：沒有記住的模式時從哪一個開始（#160）。什麼時候算「還沒切換過」依平台與
+// 「切換視窗後的中英模式」而不同，寫在設定參考文件。
+const startModeDescription = "還沒切換過中英時，從注音還是英文開始。"
+
+// HelpBase 是官網的設定說明頁（#362）；每一項的錨點就是設定的鍵名（0c/website#27），定了不能改。
+const HelpBase = "https://0c.biggo.com/guide/settings/"
+
+// HelpURL 是某一項在設定說明頁的網址。
+func HelpURL(key string) string { return HelpBase + "#" + key }
+
+// valueHints 是多選一各選項的一句提示（Item.ValueHints，#362）：設定程式在說明下面只顯示目前選中那個選項的，
+// 沒有提示的選項不顯示。只寫選項名稱看不出來的事。
+func valueHints(goos, key string) map[string]string {
+	ctrl := ctrlKeyLabel(goos)
+	switch key {
+	case "keyboard-layout":
+		return map[string]string{
+			LayoutStandard: "大千式，最常見的注音鍵盤。",
+			LayoutETen:     "= 是 ㄦ、' 是 ㄘ，頓號改按 \\；這時沒有 Emoji 選單與中英混打。",
+			LayoutHsu:      "只用字母鍵，聲調是 d f j s，一聲按空白；這時沒有中英混打。",
+			LayoutPinyin:   "ni3hao3 是「你好」，1–4 是四聲、5 是輕聲，ü 打 v；這時沒有中英混打。",
+			LayoutXiaohe:   "每兩鍵一個音節，nihc 是「你好」；這時沒有中英混打。",
+		}
+	case "shift-symbol-halfwidth":
+		return map[string]string{
+			"on":  "Shift＋, 打半形逗號、Shift＋9 打 (；要全形改按 " + ctrl + "符號，或在符號上按 ↓。",
+			"all": "符號鍵都打鍵盤上印的字；這時 " + ctrl + "標點固定開啟，不能不打聲調選字。",
+		}
+	case "cjk-latin-space": // #365
+		return map[string]string{
+			"on":  "「用Python寫」送出「用 Python 寫」，數字旁不補。",
+			"all": "「第2版」送出「第 2 版」；沒在組字時打的數字不補。",
+		}
+	case "selection":
+		return map[string]string{Neural: "依前文重新排序候選，需要載入模型。", Statistical: "只看詞頻和你的個人詞庫，不載入模型。"}
+	case "toggle-key":
+		none := "改用系統切換輸入法的快捷鍵打英文。"
+		switch goos {
+		case "windows":
+			none = "改按 Ctrl＋空白鍵，或點工作列的「中／英」切換。"
+		case "darwin":
+			none = "用系統的輸入來源切換中英，這是 Mac 的預設。"
+		}
+		return map[string]string{ToggleNone: none}
+	case "candidate-cursor":
+		return map[string]string{"before": "橫排文字時是游標左邊的字詞。", "after": "橫排文字時是游標右邊的字詞；游標在句尾時改前方的詞。"}
+	case "candidate-layout":
+		return map[string]string{"grid": "每排五個；選字鍵是 1 2 3 4 q w e r a s 時每排四個。"}
+	case "selection-keys":
+		letters := "數字鍵仍然可以照位置選字。"
+		return map[string]string{SelectQwer: letters, SelectHome: letters}
+	case "style-shift-space":
+		return map[string]string{"fullwidth": "英文、數字和空白也一起切成全形。", "space": "打出半形空白，不選字。", "single": "開候選窗，只列單一個字。"}
+	case "style-tab":
+		return map[string]string{"0c": "補上提示的字詞。", "cycle": "直接換成下一個候選字詞，Shift＋Tab 換回上一個。", "segment": "換一種斷詞方式。"}
+	case "style-up":
+		return map[string]string{"cycle": "不開候選窗，直接換成下一個候選字詞。"}
+	case "style-punctuation":
+		return map[string]string{
+			"microsoft": "先按 ` 再按符號鍵打全形標點；只參考常用規則，不是完整重現。",
+			"standard":  "參考小麥注音的標點規則，不是完整重現。",
+			"chewing":   "參考新酷音的標點規則，不是完整重現。",
+		}
+	case "style-shift-letter":
+		return map[string]string{"inline": "打出大寫字母，留在組字裡。", "commit": "先送出正在打的字，再打大寫字母。", "lower": "打出小寫字母；要大寫請切到英文模式。"}
+	case "style-shift-delete":
+		return map[string]string{"tone": "只刪掉聲調，注音留著重打。"}
+	case "style-candidate-navigation":
+		return map[string]string{"horizontal": "左右選字、上下翻頁，不管候選窗是直排還是橫排。"}
 	}
-	return d + "；切換視窗後「全部共用同一個模式」時，是登入後一開始的模式"
+	if strings.HasPrefix(key, "fuzzy-") {
+		return map[string]string{"select": "只在候選裡多列近音字，不會自動改字。", "auto": "實驗功能：前後文明顯是近音時，直接幫你改字。"}
+	}
+	return nil
 }
 
 // modeNativeLabel：native 照平台原本的做法，意思依平台而不同；macOS／Linux 回到開始時的模式（#160）。
@@ -1215,6 +1258,15 @@ type Item struct {
 	Effective string `json:"effective,omitempty"`
 	// ValueLabels 是選項的顯示名稱（例如 native 在 Windows 是「每個程式各自記住」）；舊版介面忽略，照自己的對照表。
 	ValueLabels map[string]string `json:"value_labels,omitempty"`
+	// ValueHints 是各選項的一句提示（#362，{值: 提示}）：介面在說明下面只顯示目前選中那個值的，沒有提示的值不顯示。
+	// 沒有任何提示的項目不帶這個欄位；舊版介面忽略。
+	ValueHints map[string]string `json:"value_hints,omitempty"`
+	// HelpURL 是這一項在官網設定說明頁的網址（#362，HelpBase 加 # 與鍵名）；介面在說明後面放「說明」連結，
+	// 用系統瀏覽器開。舊版介面忽略。
+	HelpURL string `json:"help_url,omitempty"`
+	// Keywords 是搜尋用的關鍵字（#363）：使用者會打、但名稱、說明與選項裡沒有的詞（「簡中」「熱鍵」「捲舌」）。
+	// 設定程式的搜尋連同名稱、說明、選項名稱與提示一起比對；不顯示在設定頁上。沒有的項目不帶這個欄位；舊版介面忽略。
+	Keywords []string `json:"keywords,omitempty"`
 }
 
 // Items 依固定順序列出所有可修改的設定。
@@ -1236,7 +1288,8 @@ func (s Settings) Items() []Item {
 			effective = "off"
 		}
 		out = append(out, Item{Key: sp.key, Type: "choice", Values: sp.values, Default: sp.def, Value: value, Label: sp.label, Description: sp.description,
-			Disabled: reason != "", DisabledReason: reason, DisabledBy: disabledBy(reason), Effective: effective, ValueLabels: s.valueLabels(sp.key)})
+			Disabled: reason != "", DisabledReason: reason, DisabledBy: disabledBy(reason), Effective: effective, ValueLabels: s.valueLabels(sp.key),
+			ValueHints: valueHints(runtime.GOOS, sp.key), HelpURL: HelpURL(sp.key), Keywords: keywords(sp.key)})
 	}
 	for i := range out {
 		if sp, ok := lookupRule(out[i].Key); ok {
@@ -1370,10 +1423,10 @@ func (s *Settings) set(key, value string) error {
 		s.forget("shift_symbol_halfwidth")
 		s.forget("all_symbols_halfwidth")
 	case "cjk-latin-space":
-		s.CJKLatinSpace = value == "on"
+		// off：不補；on：中英文之間（#273）；all：中英文與數字之間（#365）。
+		s.CJKLatinSpace = value != "off"
+		s.CJKDigitSpace = value == "all"
 		s.forget("cjk_latin_space")
-	case "cjk-digit-space":
-		s.CJKDigitSpace = value == "on"
 		s.forget("cjk_digit_space")
 	case "zhuyin-error-hint":
 		s.ZhuyinErrorHint = value == "on"

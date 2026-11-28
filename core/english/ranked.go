@@ -83,11 +83,16 @@ func (d *Dictionary) finishRanked() (*Dictionary, error) {
 // （iphone、tesla）與縮寫（don't）照認。
 const mixedShortWord = 3
 
+// shortCorpusWord 是混打不認的詞：只來自語料、三個字母以內、不是縮寫。
+func shortCorpusWord(text string, corpusOnly bool) bool {
+	return corpusOnly && len(text) <= mixedShortWord && !strings.Contains(text, "'")
+}
+
 // buildMixed 建立混打用的同一份字典：共用詞、索引與寫法，只多一份標記。沒有要藏的詞就不建。
 func (d *Dictionary) buildMixed() {
 	var hidden []bool
 	for i, w := range d.words {
-		if d.corpusOnly[i] && len(w.Text) <= mixedShortWord && !strings.Contains(w.Text, "'") {
+		if shortCorpusWord(w.Text, d.corpusOnly[i]) {
 			if hidden == nil {
 				hidden = make([]bool, len(d.words))
 			}
@@ -144,7 +149,7 @@ func rankedTyped(s string) bool {
 // Prior 是詞的權重；不在字典裡是 0。
 func (d *Dictionary) Prior(word string) float64 {
 	if i, ok := d.lookup(word); ok {
-		return d.words[i].Weight
+		return d.weight(i)
 	}
 	return 0
 }
@@ -152,7 +157,7 @@ func (d *Dictionary) Prior(word string) float64 {
 // Protected 表示照打就好、不能自動修正的台灣常用英文（GG、XD、po、iPhone）。
 func (d *Dictionary) Protected(word string) bool {
 	i, ok := d.lookup(word)
-	return ok && d.protected != nil && d.protected[i]
+	return ok && d.isProtected(i)
 }
 
 // Display 是 word 該顯示的寫法（iphone → iPhone、i → I、ok → OK），套上打的大小寫；
@@ -169,6 +174,9 @@ func (d *Dictionary) Display(word string) string {
 }
 
 func (d *Dictionary) common(i int) string {
+	if d.col != nil {
+		return d.col.common(i)
+	}
 	if at, ok := slices.BinarySearch(d.displayAt, uint32(i)); ok {
 		return d.display[at]
 	}
@@ -197,7 +205,7 @@ func (d *Dictionary) cased(typed string, i int) string {
 		return strings.ToUpper(common)
 	case inner && len(typed) <= len(common) && strings.EqualFold(typed, common[:len(typed)]):
 		return typed + common[len(typed):]
-	case common != d.words[i].Text:
+	case common != d.text(i):
 		return common
 	case typed != "" && typed[0] >= 'A' && typed[0] <= 'Z':
 		return strings.ToUpper(common[:1]) + common[1:]
@@ -213,9 +221,9 @@ func (d *Dictionary) Contractions(typed string) []Candidate {
 		return nil
 	}
 	var out []Candidate
-	for _, i := range d.contraction[strings.ToLower(typed)] {
-		out = append(out, Candidate{Text: d.cased(typed, int(i)), Distance: 1, Weight: d.words[i].Weight})
-	}
+	d.contractions(strings.ToLower(typed), func(i uint32) {
+		out = append(out, Candidate{Text: d.cased(typed, int(i)), Distance: 1, Weight: d.weight(int(i))})
+	})
 	slices.SortFunc(out, func(a, b Candidate) int {
 		return cmp.Or(cmp.Compare(b.Weight, a.Weight), strings.Compare(a.Text, b.Text))
 	})
@@ -342,15 +350,15 @@ func (d *Dictionary) rankedCorrections(typed string, limit int, minimumPrior flo
 	limit = min(limit, MaxCandidates)
 	var out []Candidate
 	seen := map[uint32]bool{}
-	for _, i := range d.contraction[p] {
-		if d.words[i].Weight >= minimumPrior {
+	d.contractions(p, func(i uint32) {
+		if w := d.weight(int(i)); w >= minimumPrior {
 			seen[i] = true
-			out = append(out, Candidate{Text: d.cased(typed, int(i)), Distance: 1, Weight: d.words[i].Weight})
+			out = append(out, Candidate{Text: d.cased(typed, int(i)), Distance: 1, Weight: w})
 		}
-	}
+	})
 	if len(p) >= 3 {
 		d.within(p, maxEdits(p), func(word uint32, edits int) {
-			w := d.words[word]
+			w := d.word(int(word))
 			if seen[word] || w.Weight < minimumPrior {
 				return
 			}
@@ -379,16 +387,18 @@ func (d *Dictionary) T9(digits string, limit int) []Candidate {
 	var visit func(id uint32, depth int)
 	visit = func(id uint32, depth int) {
 		if depth == len(digits) {
-			if w := d.nodes[id-1].word; w != 0 && !d.noSuggest[w-1] && !d.isHidden(int(w-1)) {
+			if w := d.node(id).word; w != 0 && !d.unsuggested(int(w-1)) && !d.isHidden(int(w-1)) {
 				found = append(found, w-1)
 			}
 			return
 		}
 		keys := t9Keys[digits[depth]-'0']
-		for c := d.nodes[id-1].child; c != 0; c = d.nodes[c-1].next {
-			if strings.IndexByte(keys, d.nodes[c-1].letter) >= 0 {
+		for c := d.node(id).child; c != 0; {
+			child := d.node(c)
+			if strings.IndexByte(keys, child.letter) >= 0 {
 				visit(c, depth+1)
 			}
+			c = child.next
 		}
 	}
 	visit(1, 0)
@@ -398,11 +408,11 @@ func (d *Dictionary) T9(digits string, limit int) []Candidate {
 	sort.Slice(found, func(i, j int) bool { return d.better(found[i]+1, found[j]+1) })
 	out := make([]Candidate, 0, min(limit, len(found)))
 	for _, i := range found[:min(limit, len(found))] {
-		text := d.words[i].Text
+		text := d.text(int(i))
 		if d.ranked {
 			text = d.cased(strings.ToLower(text), int(i))
 		}
-		out = append(out, Candidate{Text: text, Weight: d.words[i].Weight})
+		out = append(out, Candidate{Text: text, Weight: d.weight(int(i))})
 	}
 	return out
 }

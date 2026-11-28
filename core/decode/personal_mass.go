@@ -168,15 +168,17 @@ func (d *Decoder) longerRemembered(lat input.Lattice, ids []uint32, at int) int 
 func (d *Decoder) prepareScale(lat input.Lattice) bool {
 	d.width = lat.Width()
 	d.longerEnd = nil
+	d.massLat = lat
 	a, ok := d.Score.(Adaptive)
 	if !ok || !a.HasAdaptation() {
-		d.massScale, d.homophones = nil, nil
+		d.massScale, d.homophones, d.majorMemo = nil, nil, nil
 		return false
 	}
 	v, ok := d.Score.(MassVersion)
 	if ok && !reflect.ValueOf(d.Score).Comparable() {
 		ok = false // 身分無法比較（!= 會 panic）：不保留
 	}
+	d.keepMajor(ok)
 	if !ok || d.FreshMass {
 		d.massScale, d.homophones = nil, nil // 來源不報版本（或測試要求每次重建）：照舊重建
 	} else if d.massScale != nil {
@@ -278,10 +280,124 @@ func (d *Decoder) HabitLift(lat input.Lattice, h Hypothesis, seg Seg, reading []
 }
 
 func (d *Decoder) arcProbability(start, end int, left string, e lexicon.Entry) float64 {
+	p := 0.0
 	if start >= 0 && start < len(d.longerEnd) && end < d.longerEnd[start] {
-		return d.languageProbability(left, e)
+		p = d.languageProbability(left, e)
+	} else {
+		p = d.Score.Prob(left, e.Surface)
 	}
-	return d.Score.Prob(left, e.Surface)
+	if minorReading(e) {
+		// 上限真的會壓低分數（這個字在這個前文有學到的計數）才查 typedAsMajor：沒有學習紀錄時不走這一段。
+		if limit := d.unlearnedMass(left, e.Surface); limit < p && !d.typedAsMajor(start, end, e) {
+			p = limit
+		}
+	}
+	return p
+}
+
+// typedAsMajor 回報 e（單字的次要讀音）在 start 這個沒打聲調的位置，是不是跟這個字的主讀音或通行音同一個音節、
+// 只差聲調（#373 的後續）。不打聲調打 ㄒㄧㄤ 時「鄉」同時有 ㄒㄧㄤ（主讀音）與 ㄒㄧㄤˋ（可考讀音）兩條弧，
+// 使用者打的鍵就是他平常打這個字的鍵，學到的計數本來就是這樣打出來的，次要讀音的上限（minorReading）不適用。
+// 兩條弧只在前綴保護下有差別：languageProbability 依帶聲調的讀音分組，ㄒㄧㄤ 那一組被學過的「鄉」佔滿而壓回
+// 系統的量，學過的「雲林縣｜鄉｜道」要靠 ㄒㄧㄤˋ 那條弧才贏得過跨過這裡的「想到」；封頂之後整句打不回來。
+// 打了聲調的位置（明確打 ㄒㄧㄤˋ）、簡拼展開，以及別的音節的次要讀音（喔 的 ㄨㄛˋ、鞥 的 ㄧˋ）不算，照舊封頂。
+func (d *Decoder) typedAsMajor(start, end int, e lexicon.Entry) bool {
+	if start < 0 || start >= len(d.massLat) {
+		return false
+	}
+	y := e.Reading[0]
+	typed := false
+	for _, h := range d.massLat[start] {
+		if h.Syl == y && h.Untoned && !h.Abbreviated && start+h.Width() == end {
+			typed = true
+			break
+		}
+	}
+	if !typed {
+		return false
+	}
+	base := y.Base()
+	for _, h := range d.massLat[start] {
+		if h.Syl == y || !h.Untoned || h.Abbreviated || start+h.Width() != end || h.Syl.Base() != base {
+			continue
+		}
+		if d.majorReading(e.Surface, h.Syl) {
+			return true
+		}
+	}
+	return false
+}
+
+// majorKey 是 majorMemo 的 key：字與單音節讀音。
+type majorKey struct {
+	word string
+	syl  zhuyin.Syllable
+}
+
+// majorReading 回報 word 有沒有讀音 y 的單字詞條，而且不是次要讀音（minorReading）。結果只跟詞庫有關
+// （個人化視圖把親手選過的讀音改成 1 時個人資料版本會變），所以跟 massScale 用同樣的條件跨搜尋保留。
+func (d *Decoder) majorReading(word string, y zhuyin.Syllable) bool {
+	k := majorKey{word, y}
+	if v, ok := d.majorMemo[k]; ok {
+		return v
+	}
+	v := false
+	for _, x := range d.Lex.Exact([]zhuyin.Syllable{y}) {
+		if x.Surface == word && !x.Correction && !minorReading(x) {
+			v = true
+			break
+		}
+	}
+	if d.majorMemo == nil || len(d.majorMemo) >= maxMassKeys {
+		d.majorMemo = map[majorKey]bool{}
+	}
+	d.majorMemo[k] = v
+	return v
+}
+
+// majorMemoKey 是 majorMemo 的失效條件：詞庫、評分源與個人資料版本。
+type majorMemoKey struct {
+	lex, scorer any
+	gen         int
+	time        int64
+}
+
+// keepMajor 在每次搜尋開始時決定 majorMemo 能不能沿用；versioned 是評分源報版本而且身分可以比較。
+func (d *Decoder) keepMajor(versioned bool) {
+	if !versioned || d.FreshMass || !reflect.ValueOf(d.Lex).Comparable() {
+		d.majorMemo, d.majorMemoKey = nil, majorMemoKey{}
+		return
+	}
+	k := majorMemoKey{lex: d.Lex, scorer: d.Score}
+	k.gen, k.time = d.Score.(MassVersion).MassVersion()
+	if d.majorMemoKey != k {
+		d.majorMemo, d.majorMemoKey = nil, k
+	}
+}
+
+// minorWeight 是單字次要讀音的讀音權重上限：詞庫的可考讀音（internal/compile 的 Attested 等級，#320 之後是
+// min(0.1, …)）。主讀音與通行音（1、0.5）、使用者親手用這個讀音選過的字與自訂詞（個人化視圖改成 1）都在這之上。
+const minorWeight = 0.1
+
+// minorReading 回報 e 是不是單字的次要讀音（#373）。學到的計數只記詞面、不記讀音：單獨送出過幾次「喔」（ㄛ）的人，
+// 「喔」在句首的個人機率是系統的幾百倍，乘上次要讀音的 0.1 仍然蓋過那個音真正常用的字——單打 ㄨ 變成「喔」
+// （本來是「烏」），不打聲調的 ㄨㄛ 變成「喔」（本來是「我」）；學過「鞥」（ㄥ）的人打 ㄧˋ 也是「鞥」。
+// 那些計數是用別的讀音打出來的，所以次要讀音不沾學到的計數，分數不超過沒學過這個字時的量（unlearnedMass）；
+// 次要讀音的用量本來就不跟著字頻成長，也不該跟著個人用量成長。使用者真的用這個讀音選過這個字時，
+// 個人化視圖已經把權重改成 1（personal 的 Readings），不在此限，照常學習。
+// 多字詞（破音字用常用音打的規則讀音）與自動修正不算：那些讀音就是使用者打這個詞的方式。
+func minorReading(e lexicon.Entry) bool {
+	return len(e.Reading) == 1 && !e.Correction && float32(e.PRW) <= float32(minorWeight)
+}
+
+// unlearnedMass 是 word 接在 left 後面、不算學到的計數時的機率（Adaptive.PriorMass，分母與 Prob 相同）；
+// 評分源沒有學到的計數時回傳 +Inf（不設上限）。沒學過的詞 Prob 本來就不超過它，取小之後數值不變。
+func (d *Decoder) unlearnedMass(left, word string) float64 {
+	a, ok := d.Score.(Adaptive)
+	if !ok || !a.HasAdaptation() {
+		return math.Inf(1)
+	}
+	return a.PriorMass(left, word)
 }
 
 // Adaptive identifies a scorer with ordinary learned counts. These counts may

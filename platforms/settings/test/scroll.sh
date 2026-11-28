@@ -6,8 +6,8 @@ new_home scroll
 rm "$(base_of scroll)/settings.json"   # 全新安裝：鍵盤頁最上面是「由風格決定」的提示與按鈕，接著是鍵盤排列
 launch scroll keyboard
 if window_up; then
-  sleep 2.5
-  wid=$(xdotool search --onlyvisible --name '靈犀注音設定' | head -1)
+  ready
+  wid=$(app_window "$APP_PID")
   tabs $((NAV + 2))   # 選用風格／複製成自訂 → 鍵盤排列「標準」
   sleep 0.5
   import -window root "$OUT/scroll-focused.png"

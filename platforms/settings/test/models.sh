@@ -2,11 +2,11 @@
 #
 # models status|download|cancel|remove 由假的 0c-update（fake-update.py，FAKE_MODELS）依契約回應；status、settings 等
 # 其他指令照舊轉給真的 0c-update。外部網址交給 PATH 上假的 xdg-open，記下收到的網址。
-# 截圖只截設定視窗（models-*.png）。Tab 順序：$NAV 個導覽按鈕（smoke.sh）之後是這一頁的按鈕，再來是每張模型卡的「複製」與 Hugging Face 連結。
+# 截圖只截設定視窗（models-*.png）。Tab 順序：側欄的 $NAV 個 Tab 站（搜尋框與導覽按鈕，smoke.sh）之後是這一頁的按鈕，再來是每張模型卡的「複製」與 Hugging Face 連結。
 
 MFAKE=/src/platforms/settings/test/fake-update.py
-mwin() { xdotool search --onlyvisible --name '靈犀注音設定' | head -1; }
-mshot() { import -window "$(mwin)" "$OUT/$1.png"; }
+mwin() { app_window; }
+mshot() { window_shot "$1"; }
 mtabs() { local keys=(); for _ in $(seq "$1"); do keys+=(Tab); done; xdotool key --delay 120 "${keys[@]}"; }
 models_home() { # 場景 初始狀態（bundled|none|downloading|user|redownload|redownload-unusable|runtime|distribution|dictionary）
   new_home "$1"
@@ -18,7 +18,7 @@ models_home() { # 場景 初始狀態（bundled|none|downloading|user|redownload
 }
 mlaunch() { # 場景 [額外環境]
   local name=$1
-  env HOME="$(home_of "$name")" PATH="$(home_of "$name")/fakebin:$PATH" ZC_UPDATER=$MFAKE REAL_UPDATER=$UPDATE_BIN \
+  env HOME="$(home_of "$name")" PATH="$(home_of "$name")/fakebin:$PATH" ZC_UPDATER=$MFAKE REAL_UPDATER=$UPDATE_BIN $(calls_env "$MFAKE") \
     FAKE_VOCAB="$(home_of "$name")/fake-vocab.json" FAKE_MODELS="$(home_of "$name")/fake-models.json" FAKE_LOG="$(home_of "$name")/fake.log" \
     "${@:2}" "$SETTINGS_BIN" --page models >"/tmp/app-$name-models.log" 2>&1 &
   APP_PID=$!
@@ -42,7 +42,7 @@ PY
 models_home mbundled bundled
 mlaunch mbundled
 if window_up; then
-  sleep 3; mshot models-bundled
+  ready; mshot models-bundled
   check "--page models 開到模型頁（讀了 models status）" mlog_has mbundled status
   # 內建的沒有按鈕：導覽之後第 1 個 Tab 是第一張卡的「複製」，第 2 個是它的 Hugging Face 連結（0.2.2 以前內建的模型與公開版
   # 權重相同，也附上游來源，卡片多一行小字）。按下去只開網址，不會送出任何 models 動作。
@@ -53,14 +53,14 @@ if window_up; then
 else bad "mbundled/models 視窗沒有出現"; cat /tmp/app-mbundled-models.log; fi
 stop_app
 mlaunch mbundled GTK_THEME=Adwaita:dark
-if window_up; then sleep 3; mshot models-bundled-dark; else bad "mbundled（深色）視窗沒有出現"; fi
+if window_up; then ready; mshot models-bundled-dark; else bad "mbundled（深色）視窗沒有出現"; fi
 stop_app
 
 # ---- 未安裝、可下載：按「下載模型」→ 進度 → 核對 → 配對 → 已安裝 ----
 models_home mnone none
 mlaunch mnone
 if window_up; then
-  sleep 3; mshot models-none
+  ready; mshot models-none
   mtabs $((NAV + 1)); xdotool key space              # 第一個按鈕是「下載模型」
   check "按「下載模型」送出 models download" mlog_has mnone download
   sleep 1.2; mshot models-downloading-live
@@ -69,14 +69,14 @@ if window_up; then
 else bad "mnone/models 視窗沒有出現"; cat /tmp/app-mnone-models.log; fi
 stop_app
 mlaunch mnone GTK_THEME=Adwaita:dark
-if window_up; then sleep 3; mshot models-user-dark; else bad "mnone（深色）視窗沒有出現"; fi
+if window_up; then ready; mshot models-user-dark; else bad "mnone（深色）視窗沒有出現"; fi
 stop_app
 
 # ---- 下載中：進度條與已下載大小，只能取消 ----
 models_home mdl downloading
 mlaunch mdl
 if window_up; then
-  sleep 3; mshot models-downloading
+  ready; mshot models-downloading
   mtabs $((NAV + 1)); xdotool key space              # 下載中唯一的按鈕是「取消」
   check "下載中按「取消」送出 models cancel" mlog_has mdl cancel
   check "取消後沒有進行中的作業" mstate mdl "s['operation'] is None and s['last_error']['code']=='canceled'"
@@ -88,7 +88,7 @@ stop_app
 models_home muser user
 mlaunch muser
 if window_up; then
-  sleep 3; mshot models-user
+  ready; mshot models-user
   mtabs $((NAV + 3)); xdotool key space             # 刪除 → 選字卡的「複製」→ 選字卡的 Hugging Face 連結
   check "Hugging Face 連結交給 xdg-open（系統瀏覽器）" bash -c "for i in \$(seq 20); do grep -qx 'https://huggingface.co/Funmula/0c-sequence-d512/tree/df4b9f04f8aee1dd34dcb246ac2b83c4ab3d14a9' '$(home_of muser)/opened-urls' 2>/dev/null && exit 0; sleep .2; done; exit 1"
   xdotool key shift+Tab shift+Tab space   # 回到「刪除」
@@ -109,7 +109,7 @@ stop_app
 for kind in redownload redownload-unusable runtime distribution dictionary; do
   models_home "m$kind" "$kind"
   mlaunch "m$kind"
-  if window_up; then sleep 3; mshot "models-$kind"; else bad "m$kind/models 視窗沒有出現"; cat "/tmp/app-m$kind-models.log"; fi
+  if window_up; then ready; mshot "models-$kind"; else bad "m$kind/models 視窗沒有出現"; cat "/tmp/app-m$kind-models.log"; fi
   stop_app
 done
 check "發行版關閉下載時沒有任何下載動作" mlog_lacks mdistribution download

@@ -61,8 +61,12 @@ func TestZhuyinErrorHintDefaultsOnAndPersists(t *testing.T) {
 	for _, it := range Default().Items() {
 		if it.Key == "zhuyin-error-hint" {
 			if it.Value != "on" || it.Default != "on" || it.Label != "打錯注音時提示" || it.Locked || it.Disabled ||
-				!strings.Contains(it.Description, "ㄅㄩˊ") || !strings.Contains(it.Description, "再按一次同一個聲調") {
+				!strings.Contains(it.Description, "不收聲調") {
 				t.Fatalf("設定程式的項目：%+v", it)
+			}
+			// #362：例子與故意打注音文的退路在設定參考文件。
+			if ref := settingsReference(t); !strings.Contains(ref, "ㄅㄩˊ") || !strings.Contains(ref, "再按一次同一個聲調") {
+				t.Fatal("設定參考文件要有例子與故意打注音的做法")
 			}
 			return
 		}

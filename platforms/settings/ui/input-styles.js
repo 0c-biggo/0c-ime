@@ -52,7 +52,7 @@
 
   window.ZcInputStylesLogic = { controlState, copyTarget, differences, validName, valueLabel };
 
-  window.ZcInputStyles = function ({ h, settings, render, mutate, valueLabel, showKeyboard }) {
+  window.ZcInputStyles = function ({ h, settings, render, mutate, valueLabel, showKeyboard, helpLink }) {
     let selected = null;
     let editing = null;
     let draft = '';
@@ -92,7 +92,7 @@
     function view(root) {
       const s = settings();
       root.append(h('h1', {}, '輸入習慣'), h('p', { class: 'lead' },
-        '選擇熟悉的操作習慣，查看差異後一次套用。想微調時，可複製成自己的自訂習慣。'));
+        '選一種熟悉的操作習慣，看過差異再套用；想微調可以複製成自訂。', helpLink ? helpLink() : null));
       const profiles = s?.profiles;
       if (!profiles) {
         root.append(h('p', { class: 'muted' }, '目前版本尚未提供輸入習慣選擇。'));
@@ -127,7 +127,7 @@
           : target.description ? h('p', {}, target.description) : null,
         (target.summary || []).length ? h('ul', { class: 'style-summary' }, ...target.summary.map((line) => h('li', {}, line))) : null,
         h('p', { class: 'muted small' }, target.builtin
-          ? '內建習慣的相關設定固定。複製成自訂後可微調；不相容的功能仍會停用。'
+          ? '內建習慣不能直接改，複製成自訂後可以微調。'
           : '不相容的功能仍會停用，各設定頁會顯示原因。'));
       if (unavailable) preview.append(h('p', { class: 'notice' }, target.reason || '目前的鍵盤排列不適用這個習慣。'));
       if (target.id !== profiles.active) {
@@ -159,7 +159,7 @@
         root.append(h('div', { class: 'card style-card' },
           h('label', { for: 'style-name', class: 'label' }, editing === 'copy' ? '自訂習慣名稱' : '新的名稱'), input,
           h('p', { id: 'style-name-help', class: 'muted small' }, '名稱最多 80 個字。'),
-          editing === 'copy' ? h('p', { class: 'muted small' }, '建立副本並套用後，可以到中英切換、選字或鍵盤與符號微調；不相容的功能仍會停用。') : null,
+          editing === 'copy' ? h('p', { class: 'muted small' }, '建立後會直接套用，之後可以到各設定頁微調。') : null,
           h('div', { class: 'actions' }, save, button('取消', () => { editing = null; render(); }, false, 'style-cancel'))));
       } else if (editing === 'delete') {
         root.append(h('div', { class: 'card style-card' }, h('p', {}, '刪除「' + target.name + '」？這個自訂習慣的設定將一併移除。'),

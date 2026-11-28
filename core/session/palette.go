@@ -251,6 +251,9 @@ func (s *Session) selectEmoji(id int) bool {
 	if c.kind == "kaomoji" && !c.direct {
 		s.paletteUndo = &literalSpan{start, s.cursor}
 	}
+	if c.kind == "phrases" {
+		s.verbatim = append(slices.Clip(s.verbatim), text) // #365：片語照原樣送出，自動加空格不改它的內部
+	}
 	if text != "=" && !s.paused && !s.private && !s.localBlocked && !s.NoLearning {
 		if c.kind != "phrases" {
 			s.model.RememberEmoji(text)

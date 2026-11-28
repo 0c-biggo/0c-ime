@@ -202,7 +202,8 @@ func TestCJKLatinSpaceKeepsLearningAndDocumentContext(t *testing.T) {
 	}
 }
 
-// 符號表直接送出的組字（含換行的片語連同前面的組字）跟 Enter 送出一樣補，同輸出簡體字；片語內部的換行旁不補。
+// 符號表直接送出的組字（含換行的片語連同前面的組字）跟 Enter 送出一樣補，同輸出簡體字；片語內部照原樣
+// （#365，cjk_space_phrase_test.go），前面的組字跟片語相接的地方照補。
 func TestCJKLatinSpaceWithPaletteDirectCommit(t *testing.T) {
 	s := paletteSession()
 	s.Preview02 = true

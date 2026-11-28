@@ -236,6 +236,11 @@ type Decoder struct {
 	bos, bosMemo map[string]float64
 	bosKey       searchKey
 	longerEnd    []int
+	// massLat 是目前搜尋的音節格（prepareScale 設定），typedAsMajor 用它看弧起點那個位置是不是沒打聲調；
+	// majorMemo 是「這個字在這個讀音是不是主讀音或通行音」的查表結果，依 majorMemoKey 跨搜尋保留。
+	massLat      input.Lattice
+	majorMemo    map[majorKey]bool
+	majorMemoKey majorMemoKey
 	// prepareMass 的 longerFrom 記在 longerMemo（依起點那一列的編號），rowIDs 是列的內容 → 編號。
 	longerMemo    map[uint32][]longerEntry
 	rowIDs        map[string]uint32
