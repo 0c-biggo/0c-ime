@@ -41,6 +41,10 @@ func TestPrintSettingsListsEveryItem(t *testing.T) {
 			t.Errorf("沒有列出 %s：\n%s", item.Key, text)
 		}
 	}
+	// #362：最後一行指向官網的設定說明。
+	if !strings.HasSuffix(text, "\n各項說明：https://0c.biggo.com/guide/settings/（網址後面加 #鍵名，例如 https://0c.biggo.com/guide/settings/#keyboard-layout）\n") {
+		t.Fatal(text)
+	}
 	if !strings.Contains(text, "\nstart-mode=english（") {
 		t.Fatal(text)
 	}

@@ -100,8 +100,12 @@ func TestShiftTapItem(t *testing.T) {
 	if tap.ValueLabels["200"] != "0.2 秒" || tap.ValueLabels["300"] != "0.3 秒" || tap.ValueLabels["600"] != "0.6 秒" {
 		t.Fatalf("選項名稱：%v", tap.ValueLabels)
 	}
-	if strings.Contains(toggle.Description, "0.3 秒") || !strings.Contains(toggle.Description, "「"+tap.Label+"」") {
-		t.Fatalf("中英切換鍵的說明要指向時限設定，不寫死秒數：%s", toggle.Description)
+	// #362：中英切換鍵的說明只有一句，仍然不寫死秒數；按住超過時限不算切換寫在設定參考文件，指向時限那一項。
+	if strings.Contains(toggle.Description, "秒") {
+		t.Fatalf("中英切換鍵的說明不寫死秒數：%s", toggle.Description)
+	}
+	if ref := settingsReference(t); !strings.Contains(ref, "按住 Shift 超過「"+tap.Label+"」") {
+		t.Fatal("設定參考文件的中英切換鍵要指向時限設定")
 	}
 	for _, key := range profileKeys {
 		if key == "shift-tap-ms" {

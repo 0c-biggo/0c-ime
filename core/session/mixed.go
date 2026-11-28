@@ -535,8 +535,9 @@ func (s *Session) finishMixedTone(key string) bool {
 	// 字母與數字鍵混打、順序顛倒的按鍵（#249）：真的在打注音時不會這樣打。數字開頭的是數字接注音（70億 的 70＋u4、30度 的 30＋2j4，不是 7彥、3段）；
 	// 其他的照字面（i14 不是播，比照 #175 的 813）。字母開頭而且緊接中文的（我＋u2,6）照舊組成反序的音節（#119）；
 	// 數字鍵聲母晚一鍵的兩鍵組成常用字的（k27 的、j14 不）不論前面是什麼都組字（lateDigitInitial）。
+	// 緊接中文、數字鍵韻母早一鍵的兩鍵（檢＋8t6）切得成「8持」也組得成「查」，比機率（lateLetterInitial，#364）。
 	if key != " " && s.mixed.choice == 0 && s.reversedAlnum(raw) {
-		if at, done, ok := s.numberThenSyllable(raw, sym); ok {
+		if at, done, ok := s.numberThenSyllable(raw, sym); ok && !s.lateLetterInitial(raw, sym, done) {
 			prefix := raw[:at]
 			s.clearMixed()
 			s.insertMixedLiteral(prefix, false, false)
@@ -1009,6 +1010,58 @@ func (s *Session) lateDigitInitial(raw string, tone rune) bool {
 	done, ok := s.mixedReading(raw, tone)
 	// 系統機率是下限（同 #55 的 rareDigitReading）：學了其他字讓個人機率變低，不該讓 k27 又變回照字面。
 	return ok && (s.mixedSyllableScore(done) >= mixedUnknownWordFloor || s.mixedSystemSyllableScore(done) >= mixedUnknownWordFloor)
+}
+
+// mixedLateLetterRatio（#364）：lateLetterInitial 的取捨。「數字＋字」的機率不到照位置組字的這個倍數就組字。
+// 0.2.13 資料包：我＋8t6 是 1.8（查）、檢＋8t6 是 0.002、我＋9y4 是 0.12（在）；第＋9h4 是 92（9次）、的＋9h4 是 17、我＋8g4 是 1,300（8是）、
+// 上午＋8g6 是 125（8時）。語料裡真的在打數字的 1,253 處，門檻 1、3、10 各有 60、69、79 處變成字（門檻 3 的 63 處是「9字頭」，跟「在」分不開），
+// 韻母先打的 2,768 個字各救回 86%、93%、96%；3 以後多救的大多是拿「9次」換的。
+const mixedLateLetterRatio = 3
+
+// lateLetterInitial（#364）：緊接中文的兩鍵，數字鍵上的韻母（8 ㄚ、9 ㄞ、0 ㄢ）比字母鍵上的聲母早一鍵（8t 是 ㄚㄔ），接明確的聲調鍵。
+// 快打時右手上排的韻母鍵常比左手的聲母鍵先到，跟 lateDigitInitial 是同一件事的另一個方向。緊接中文的反序兩鍵本來就照位置組字
+// （#119：我＋8x4 是我辣、我＋0b6 是我然），但聲母自己就成音節的（ㄔ ㄕ ㄖ ㄗ ㄘ ㄙ：t g b y h n）會先被 numberThenSyllable 切成
+// 「數字＋字」：檢＋8t6 是「檢8持」不是檢查，我＋9y4 是「我9字」不是我在。這兩種讀法都說得通（第＋9h4 的「第9次」、上午＋8g6 的
+// 「上午8時」是真的數字），所以比機率：照位置組的字接在前面那段中文後面的機率，對 alone（聲母自己的音節）接在數字後面的機率。
+// 後者不到前者的 mixedLateLetterRatio 倍就照位置組字，↓ 第二個是原按鍵（#274）。
+// 照舊的：句首、空白、英文、標點後面（數字開頭的多半真的是數字，8持、9次）；緊接字面數字的（30次 的 0h4）；輕聲找不到字改讀一聲的；
+// 接空白的一聲（緊接中文本來就照位置組字：我＋8t␣ 是我差）；聲母自己不成音節的（本來就不走這裡）。
+func (s *Session) lateLetterInitial(raw string, tone rune, alone zhuyin.Syllable) bool {
+	if len(raw) != 2 || !unicode.IsDigit(rune(raw[0])) || !unicode.IsLetter(rune(raw[1])) || !s.keyIsInitial(rune(raw[1])) || !s.mixedAfterChinese() {
+		return false
+	}
+	done, ok := s.mixedReading(raw, tone)
+	if !ok || tone == '˙' && done.ToneOf() != 5 {
+		return false
+	}
+	return s.mixedNumberScore(alone) < mixedLateLetterRatio*s.mixedFollowScore(done)
+}
+
+// mixedFollowScore：音節 syl 接在游標前面那段中文（至多 decode.MaxWordLen 個音節）後面的解碼機率，是連同 syl 的最佳路徑機率
+// 除以原來那段的（檢＋ㄔㄚˊ 是「檢查」對「檢」）。游標前面沒有中文音節時就是句首的單音節機率（mixedSyllableScore）。
+func (s *Session) mixedFollowScore(syl zhuyin.Syllable) float64 {
+	begin := s.cursor
+	for begin > 0 && !s.literals[begin-1] && s.cursor-begin < decode.MaxWordLen {
+		begin--
+	}
+	best := func(syls []zhuyin.Syllable) float64 {
+		if len(syls) == 0 {
+			return 0
+		}
+		dec := &decode.Decoder{Lex: s.model.Source(), Score: s.model}
+		_, score := dec.Best(input.Exact{}.Expand(syls), nil, true)
+		return score
+	}
+	run := s.syls[begin:s.cursor:s.cursor]
+	return math.Exp(best(append(run, syl)) - best(run))
+}
+
+// mixedNumberScore：單一音節緊接在阿拉伯數字後面的解碼機率，數字的語境同 numberScorer（以常見中文數詞當前詞的平均）：
+// 量詞與單位（次、時、日）比句首高，其他字（持、字）比句首低。
+func (s *Session) mixedNumberScore(syl zhuyin.Syllable) float64 {
+	dec := &decode.Decoder{Lex: s.model.Source(), Score: &numberScorer{Model: s.model}}
+	_, score := dec.Best(input.Exact{}.Expand([]zhuyin.Syllable{syl}), nil, true)
+	return math.Exp(score)
 }
 
 // reversedTone（#119）：t 只有字母與數字鍵順序顛倒的兩鍵接一個聲調鍵（p54、j23、i14），是照 #249 留下的英數寫法，不是帳號、編號：
@@ -1689,6 +1742,7 @@ func (s *Session) insertMixedLiteral(text string, assisted, explicit bool) {
 
 func (s *Session) shiftMixedOrigins(at, delta int) {
 	if len(s.mixedOrigins) == 0 {
+		s.mixedOrigins = nil // 同 shiftLiterals：空表不原地寫
 		return
 	}
 	next := map[int]mixedOrigin{}

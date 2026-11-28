@@ -367,6 +367,20 @@ unsafe extern "system" fn protected_proc(hwnd: HWND, msg: u32, wparam: WPARAM, l
     DefWindowProcW(hwnd, msg, wparam, lparam)
 }
 
+thread_local! {
+    /// 本執行緒的視窗收到幾個 WM_GETOBJECT（[`counting_proc`]）。
+    static GETOBJECT: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// 只數 WM_GETOBJECT、其他照預設的視窗：Qt 收到第一個 WM_GETOBJECT 就開啟無障礙功能（#367），
+/// 數到的次數就是輸入法有沒有去碰它的無障礙介面。
+unsafe extern "system" fn counting_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    if msg == WM_GETOBJECT {
+        GETOBJECT.with(|n| n.set(n.get() + 1));
+    }
+    DefWindowProcW(hwnd, msg, wparam, lparam)
+}
+
 fn register(class: PCWSTR, proc: windows::Win32::UI::WindowsAndMessaging::WNDPROC) {
     unsafe {
         let wc = WNDCLASSW {
@@ -455,6 +469,8 @@ fn init() {
     }
     register(w!("UnrealWindow"), Some(plain_proc));
     register(w!("ZcProtectedField"), Some(protected_proc));
+    register(w!("Qt6113QWindowIcon"), Some(counting_proc));
+    register(w!("ZcCountingWindow"), Some(counting_proc));
 }
 
 #[test]
@@ -518,6 +534,38 @@ fn missing_inputscope_still_blocks_readonly_unfocused_and_protected_fields() {
         let _ = DestroyWindow(protected);
         let _ = DestroyWindow(other);
         let _ = DestroyWindow(unreal);
+    }
+}
+
+#[test]
+fn qt_windows_compose_without_waking_their_accessibility() {
+    init();
+    // #367：Qt 6 Widgets 程式（qBittorrent 5.3／Qt 6.11.3）走系統相容層，讀 InputScope 回 E_FAIL；焦點是整個頂層視窗。
+    // 修正前每一鍵都對它送 WM_GETOBJECT（native_edit_allows 與 custom_field_allows 各一次），Qt 因此開啟整套無障礙功能。
+    let qt = window(w!("Qt6113QWindowIcon"), 0);
+    GETOBJECT.with(|n| n.set(0));
+    for flags in [TS_SS_TRANSITORY, TS_SS_NOHIDDENTEXT] {
+        let ctx = host(qt, qt, Scope::Fail(E_FAIL), flags, 0);
+        assert_eq!(field(Some(&ctx), 1, false), Field::Private, "{flags:#x}");
+        assert!(hotkey_allowed(Some(&ctx), 1, false));
+        assert!(!blocked_in_edit(&ctx, 1, false));
+    }
+    assert_eq!(GETOBJECT.with(|n| n.get()), 0, "對 Qt 視窗送了 WM_GETOBJECT");
+    // 不查 MSAA 也照舊擋下唯讀的 context。Qt 的密碼框（ImhHiddenText）由 Qt 以 ImmAssociateContext(NULL) 停用輸入法，
+    // TSF 的焦點文件變成 NULL，按鍵根本不經過輸入法（.14 以 PySide6 6.12 核對）。
+    let ctx = host(qt, qt, Scope::Fail(E_FAIL), TS_SS_TRANSITORY, TF_SD_READONLY);
+    assert_eq!(field(Some(&ctx), 1, false), Field::Blocked);
+    // 讀得到 InputScope 時照 InputScope。
+    let ctx = host(qt, qt, Scope::Scopes(vec![IS_PASSWORD]), TS_SS_TRANSITORY, 0);
+    assert_eq!(field(Some(&ctx), 1, false), Field::Blocked);
+    // 其他自訂視窗照舊以 MSAA 核對（自訂的密碼欄見上一個測試）。
+    let other = window(w!("ZcCountingWindow"), 0);
+    let ctx = host(other, other, Scope::Fail(E_FAIL), TS_SS_TRANSITORY, 0);
+    assert_eq!(field(Some(&ctx), 1, false), Field::Private);
+    assert!(GETOBJECT.with(|n| n.get()) > 0, "其他自訂視窗沒有以 MSAA 核對");
+    unsafe {
+        let _ = DestroyWindow(other);
+        let _ = DestroyWindow(qt);
     }
 }
 

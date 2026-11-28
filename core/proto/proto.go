@@ -1,4 +1,4 @@
-// Package proto 定義核心與平台外殼之間的訊息協定（docs/19）。
+// Package proto 定義核心與平台外殼之間的訊息協定。
 //
 // 請求是語義事件；回應一律是完整快照，外殼不需要保存狀態。v0 以 JSON 編碼。
 package proto
@@ -25,6 +25,7 @@ const (
 	Cancel     = "cancel"     // 放棄組字，不學習
 	Forget     = "forget"     // Word：撤銷與該詞有關的學習
 	Fix        = "fix"        // To、Length、Word：把從 To 起 Length 個音節直接固定成 Word，不必先開候選（觸控從句首清單點詞）
+	Literal    = "literal"    // Length、Word：把組字尾端最後 Length 個打的音節（原樣留下的注音算一個）連同未打完的注音換成字面文字 Word，不核對讀音；之後游標在這段文字後面時退格還原成原本的注音（觸控：點注音鍵拼出的英文字，APP#33）
 	Predict    = "predict"    // 沒在組字時，列出已確認前文之後最可能接的詞（觸控的聯想詞）；以 select 送出
 	Unlearn    = "unlearn"    // Word：撤銷與該詞有關的學習，不留 tombstone，之後照常可以再學（觸控：長按學過的候選）
 	UndoLearn  = "undo_learn" // 還原上一次提交（或點聯想詞）學到的內容，不留 tombstone（觸控：送出後立刻退格）；只能還原一次
@@ -220,6 +221,10 @@ const (
 	// CandidateCorrected：這個候選的讀音是把某個按鍵換成鄰鍵才得到的（觸控的相鄰鍵容錯）。外殼把它排在
 	// 打的音本身的候選後面，不當成一般候選的長短順序。
 	CandidateCorrected = "corrected"
+	// CandidateReading：這個候選是打的音本身照字面寫出來（單字清單結尾的原樣注音，例如 ㄏㄠˇ；拼音排列是拼音），
+	// 不是字。選了照字面留在組字裡、不學習。手機外殼靠它排候選，不必自己猜「整個都是注音符號」（#361）；
+	// 桌面外殼照舊把它當最後一項，不認得的標示略過。舊核心沒有這一項。
+	CandidateReading = "reading"
 )
 
 type CandidateList struct {
@@ -258,7 +263,7 @@ type ReadingHint struct {
 type Snapshot struct {
 	FullWidth           bool            `json:"full_width,omitempty"`
 	EnglishAutocomplete bool            `json:"english_autocomplete,omitempty"`
-	EnglishPending      bool            `json:"english_pending,omitempty"`
+	EnglishPending      bool            `json:"english_pending,omitempty"` // 組字只有英文自動補字的這個字；接在保留的中文組字裡時是 false，照一般組字（#372）
 	EnglishCanStart     bool            `json:"english_can_start,omitempty"`
 	PersonalChanged     bool            `json:"personal_changed,omitempty"` // confirmed palette ordering changed; host may save.
 	VocabChanged        bool            `json:"vocab_changed,omitempty"`    // 組字中加詞或反悔鍵改了自訂詞彙：宿主立即存 vocab.json（#123）

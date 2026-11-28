@@ -4,17 +4,58 @@
 # 由 scripts/test_settings_ui.py 在建置容器內執行；需要 SETTINGS_BIN、UPDATE_BIN、SERVER_BIN、DATA、OUT。
 set -u
 fail=0
+failures=0
 ok()   { echo "PASS: $1"; }
-bad()  { echo "FAIL: $1"; fail=1; }
+bad()  { echo "FAIL: $1"; fail=1; scene "$1"; }
 check() { local desc=$1; shift; if "$@"; then ok "$desc"; else bad "$desc"; fi }
 
 export LANG=C.UTF-8 LC_ALL=C.UTF-8   # xdotool 要在 UTF-8 locale 下才能比對中文視窗標題
 export XDG_RUNTIME_DIR=/tmp/xdg-runtime
 mkdir -p -m 700 "$XDG_RUNTIME_DIR" "$OUT"
-Xvfb :99 -screen 0 1100x800x24 >/tmp/xvfb.log 2>&1 &
+# -noreset：X 伺服器預設在最後一個用戶端離開時重設自己，重設期間不收新連線（#366）。場景之間設定程式結束、
+# 畫面上一個用戶端都不剩，下一個 xdotool 或設定程式剛好在重設時連線就「Can't open display」；機器忙時重設拖得久。
+Xvfb :99 -noreset -screen 0 1100x800x24 >/tmp/xvfb.log 2>&1 &
 export DISPLAY=:99
 for _ in $(seq 50); do xdpyinfo >/dev/null 2>&1 && break; sleep 0.2; done
 eval "$(dbus-launch --sh-syntax)"
+
+# 失敗當下的現場（#366）：視窗樹、行程、設定程式與 WebKit 的輸出（app log）、呼叫 0c-update 的紀錄、整個畫面。
+# 放在 $OUT/failures/<序號>/，主機上是 --out 底下的 shots/failures。
+scene() {
+  failures=$((failures + 1))
+  local dir="$OUT/failures/$failures"
+  mkdir -p "$dir"
+  printf '%s\n' "$1" > "$dir/what.txt"
+  xwininfo -root -tree > "$dir/xwininfo.txt" 2>&1
+  ps -eo pid,ppid,stat,etimes,time,args > "$dir/ps.txt" 2>&1
+  cat /proc/loadavg > "$dir/loadavg.txt" 2>&1
+  cp "$(ls -t /tmp/app-*.log 2>/dev/null | head -1)" /tmp/xvfb.log /tmp/server*.log "$dir/" 2>/dev/null
+  cp "$CALLS" "$dir/update-calls.log" 2>/dev/null
+  import -window root "$dir/screen.png" 2>/dev/null
+  echo "  現場：failures/$failures（$1）"
+}
+
+# 設定程式經 calls.sh 呼叫 0c-update，記下每次呼叫的開始與結束（#366），用來等「畫面讀完」「儲存完成」。
+CALLS=/tmp/update-calls.log
+CALLS_SH=/src/platforms/settings/test/calls.sh
+calls_mark() { wc -l < "$CALLS" 2>/dev/null || echo 0; }
+# ready：視窗出現後等畫面拿到設定並畫好；saved：按了會儲存的鍵之後等儲存完成、畫面重讀設定。上限 30 秒。
+# 等不到不算一項失敗（接著的 check 會核對結果），只印出紀錄並留下現場。
+calls_wait() { # ready|saved 起點
+  if ! python3 /src/platforms/settings/test/calls_wait.py "$CALLS" "$2" "$1" 30 "${APP_PID:-}"; then
+    echo "WAIT: 等不到 $1"; scene "等不到 $1"
+  fi
+}
+ready() { calls_wait ready 0; }
+wait_for() { # 上限秒數 指令…：每 0.1 秒試一次，直到指令成功
+  local deadline=$((SECONDS + $1)); shift
+  until "$@"; do [ $SECONDS -lt $deadline ] || return 1; sleep 0.1; done
+}
+press() { # 按鍵…：按下會儲存一項設定的鍵，等儲存完成
+  local mark; mark=$(calls_mark)
+  xdotool key --delay 150 "$@"
+  calls_wait saved "$mark"
+}
 
 home_of() { echo "/tmp/home-$1"; }
 base_of() { echo "/tmp/home-$1/.local/share/zuin"; }
@@ -32,28 +73,69 @@ state_json() { # 更新器狀態；排程標為已移除，狀態檢查就不會
 JSON
 }
 
+calls_env() { # [實際的 0c-update] → 給設定程式的環境變數：經 calls.sh 轉給它，並清空呼叫紀錄
+  : > "$CALLS"
+  echo "ZC_UPDATER=$CALLS_SH CALLS_TARGET=${1:-$UPDATE_BIN} UPDATE_CALLS=$CALLS"
+}
 launch() { # 場景 頁面 → 啟動設定程式（背景）；設定 APP_PID
   local name=$1 page=$2
-  HOME=$(home_of "$name") ZC_UPDATER=$UPDATE_BIN "$SETTINGS_BIN" --page "$page" >"/tmp/app-$name-$page.log" 2>&1 &
+  env HOME="$(home_of "$name")" $(calls_env) "$SETTINGS_BIN" --page "$page" >"/tmp/app-$name-$page.log" 2>&1 &
   APP_PID=$!
 }
-window_up() { timeout 30 xdotool search --sync --onlyvisible --name '靈犀注音設定' >/dev/null 2>&1; }
-stop_app() { kill "$APP_PID" 2>/dev/null; wait "$APP_PID" 2>/dev/null; }
+# 可見的設定視窗。這版 xdotool（3.20160805）搜尋時逐一查視窗樹，查到一半有視窗被摧毀就因 BadWindow 直接結束，
+# 連 --sync 也一起放棄（#366；xdotool issue #60）。上一個設定程式與它的 WebKitWebProcess 被結束後，X 視窗在 wait 回來之後
+# 才陸續消失，正好跟下一個場景找視窗重疊。BadWindow 只代表這一輪沒查完，重查即可。其他錯誤（例如連不上畫面）
+# 回傳空的，由呼叫的人照常重試或判失敗。每次出錯都記在 $OUT/xdotool-errors.log，看得出實際多常發生、在哪個場景。
+# 給了行程編號就只找那個行程的視窗（_NET_WM_PID），不會把還沒消失的上一個視窗當成新的。
+app_windows() { # [行程編號]
+  local out i
+  for i in $(seq 20); do
+    out=$(xdotool search --onlyvisible ${1:+--pid "$1"} --name '靈犀注音設定' 2>/tmp/xdotool.err)
+    if [ -s /tmp/xdotool.err ]; then
+      printf '%s %s %s\n' "$(date +%T.%N | cut -c1-12)" "$(ls -t /tmp/app-*.log 2>/dev/null | head -1)" "$(grep -m1 -E 'Major opcode|Error' /tmp/xdotool.err)" >> "$OUT/xdotool-errors.log"
+    fi
+    grep -q 'BadWindow' /tmp/xdotool.err || { [ -n "$out" ] && echo "$out"; return 0; }
+  done
+}
+app_window() { app_windows "${1:-}" | head -1; }
+# 只截設定視窗（檔名不含 .png）。找不到視窗時記一項失敗：import -window 拿到空的視窗編號會等人用滑鼠點選，整個測試卡住。
+window_shot() {
+  local id; id=$(app_window)
+  if [ -n "$id" ]; then import -window "$id" "$OUT/$1.png"; else bad "截圖 $1 時找不到設定視窗"; fi
+}
+# 等設定視窗出現（上限 30 秒）。預設等 launch 啟動的那個行程（APP_PID）的視窗，
+# 不會把還沒消失的上一個視窗當成新的；any：不限行程（0c-update open-settings 啟動的）。
+window_up() { # [any]
+  local pid=${APP_PID:-} deadline=$((SECONDS + 30))
+  [ "${1:-}" = any ] && pid=
+  while [ $SECONDS -lt $deadline ]; do
+    [ -n "$(app_windows "$pid")" ] && return 0
+    if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then break; fi
+    sleep 0.1
+  done
+  echo "  等了 30 秒沒有行程 ${pid:-（不限）} 的可見設定視窗；行程$(kill -0 "${pid:-1}" 2>/dev/null && echo 仍在執行 || echo 已結束)"
+  return 1
+}
+stop_app() { # 結束 launch 啟動的設定程式，等它的視窗從畫面上消失（下一張整個畫面的截圖不會拍到它）
+  kill "$APP_PID" 2>/dev/null; wait "$APP_PID" 2>/dev/null
+  for _ in $(seq 50); do [ -z "$(app_windows "$APP_PID")" ] && break; sleep 0.1; done
+}
 shoot() { # 場景 頁面
   local name=$1 page=$2
   launch "$name" "$page"
-  if window_up; then sleep 2.5; import -window root "$OUT/$name-$page.png"; ok "$name/$page 視窗出現並截圖"
+  if window_up; then ready; import -window root "$OUT/$name-$page.png"; ok "$name/$page 視窗出現並截圖"
   else bad "$name/$page 視窗沒有出現"; cat "/tmp/app-$name-$page.log"; fi
   if kill -0 "$APP_PID" 2>/dev/null; then ok "$name/$page 程式仍在執行"; else bad "$name/$page 程式提早結束"; cat "/tmp/app-$name-$page.log"; fi
   stop_app
 }
 run_update() { local name=$1; shift; HOME=$(home_of "$name") "$UPDATE_BIN" "$@"; }
-# 側欄的導覽按鈕數（總覽、輸入習慣、中英切換、選字、鍵盤與符號、輸出設定、我的詞彙、模型、更新、問題排解、關於；#207）。
-# 每一頁的第一個控制項是第 NAV+1 個 Tab；vocab.sh、models.sh 也用它。
-NAV=11
+# 側欄的 Tab 站數：最上面的搜尋框（#363，排在導覽之前；清除鈕不占 Tab 站），加上 11 個導覽按鈕
+# （總覽、輸入習慣、中英切換、選字、鍵盤與符號、輸出設定、我的詞彙、模型、更新、問題排解、關於；#207）。
+# 每一頁的第一個控制項是第 NAV+1 個 Tab；vocab.sh、models.sh 等也用它。
+NAV=12
 tabs() { local n=$1; local keys=(); for _ in $(seq "$n"); do keys+=(Tab); done; xdotool key --delay 120 "${keys[@]}"; }
 
-# SMOKE_ONLY=vocab／models／styles／scroll／personal／update：只跑「我的詞彙」（vocab.sh）、「模型」（models.sh）等其中一部分，開發時省時間。
+# SMOKE_ONLY=vocab／models／styles／scroll／personal／update／help／search：只跑「我的詞彙」（vocab.sh）、「模型」（models.sh）等其中一部分，開發時省時間。
 if [ -z "${SMOKE_ONLY:-}" ]; then
 
 # ---- 場景 A：全新安裝，沒有設定檔也沒有引擎 ----
@@ -65,10 +147,9 @@ for page in styles overview mode candidates keyboard output update troubleshoot 
 new_home alias
 launch alias input
 if window_up; then
-  sleep 2.5
+  ready
   import -window root "$OUT/alias-input.png"
-  tabs $((NAV + 1)); xdotool key Down
-  sleep 3
+  tabs $((NAV + 1)); press Down
   check "--page input 開在中英切換（第一項中英切換鍵可改成左右 Shift）" grep -q '"toggle_key": "both"' "$(settings_of alias)"
 else bad "alias/input 視窗沒有出現"; cat /tmp/app-alias-input.log; fi
 stop_app
@@ -78,12 +159,13 @@ new_home export
 mkdir -p "$(home_of export)/Downloads"
 launch export troubleshoot
 if window_up; then
-  sleep 2.5
-  # 導覽之後第一個是匯出按鈕。
+  ready
+  # 搜尋框與導覽之後第一個是匯出按鈕。
+  # 匯出只讀狀態、不改設定（沒有儲存可等）：等檔案出現。
   tabs $((NAV + 1)); xdotool key space
-  sleep 3
+  check "匯出的狀態摘要寫進「下載」資料夾" wait_for 30 bash -c "ls '$(home_of export)'/Downloads/0c-status-*.json >/dev/null 2>&1"
+  sleep 0.5   # 只為截圖：提示訊息
   import -window root "$OUT/export-troubleshoot.png"
-  check "匯出的狀態摘要寫進「下載」資料夾" bash -c "ls '$(home_of export)'/Downloads/0c-status-*.json >/dev/null 2>&1"
 else bad "export/troubleshoot 視窗沒有出現"; cat /tmp/app-export-troubleshoot.log; fi
 stop_app
 
@@ -133,13 +215,12 @@ check "引擎已啟動" test -S "$XDG_RUNTIME_DIR/0c/0c.sock"
 check "更新器看得到執行中的引擎" bash -c "'$UPDATE_BIN' settings -json | python3 -c \"import json,sys; sys.exit(0 if json.load(sys.stdin)['engine']['state']=='running' else 1)\""
 check "補標點 Beta 預設關閉且引擎未啟用" bash -c "'$UPDATE_BIN' settings -json | python3 -c \"import json,sys; it=next(x for x in json.load(sys.stdin)['items'] if x['key']=='punctuation'); sys.exit(0 if it['value']=='off' and it['running']=='off' and it['default']=='off' and 'Beta' in it['label'] else 1)\""
 check "補標點狀態為依設定關閉" bash -c "'$UPDATE_BIN' status -json | python3 -c \"import json,sys; sys.exit(0 if json.load(sys.stdin)['runtime']['punctuation_state']=='disabled_by_setting' else 1)\""
-# 鍵盤路徑：「鍵盤與符號」的鍵盤排列（一組單選）、Ctrl＋標點、Shift＋符號打半形（#258）、中英文之間自動加空格（#273）、中文與數字之間自動加空格 → 「提交時補標點（Beta）」開關，按空白鍵開啟。
+# 鍵盤路徑：「鍵盤與符號」的鍵盤排列（一組單選）、Ctrl＋標點、標點寬度（一組單選，#258）、自動加空格（一組單選，#273、#365）→ 「提交時補標點（Beta）」開關，按空白鍵開啟。
 launch live keyboard
 if window_up; then
-  sleep 2.5
+  ready
   import -window root "$OUT/live-keyboard-before.png"
-  tabs $((NAV + 6)); xdotool key space
-  sleep 6
+  tabs $((NAV + 5)); press space
   import -window root "$OUT/live-keyboard-after.png"
   check "自行開啟後新路徑 settings.json 的 punctuation 為 true" grep -q '"punctuation": true' "$(settings_of live)"
   check "套用後引擎已交接退出（下一個按鍵才以新設定重新啟動）" bash -c "! [ -S '$XDG_RUNTIME_DIR/0c/0c.sock' ] || ! python3 - <<'PY'
@@ -148,95 +229,77 @@ s=socket.socket(socket.AF_UNIX);
 try: s.connect('$XDG_RUNTIME_DIR/0c/0c.sock'); sys.exit(0)
 except OSError: sys.exit(1)
 PY"
-  xdotool key space
-  sleep 3
+  press space
   check "再按一次可關閉補標點" grep -q '"punctuation": false' "$(settings_of live)"
 else bad "live/keyboard 視窗沒有出現"; cat /tmp/app-live-keyboard.log; fi
 stop_app
 # 「中英切換」：中英切換鍵、單按 Shift 的時限、開始時的中英模式、切換視窗後的中英模式、中英混打、英文模式自動補字。
 launch live mode
 if window_up; then
-  sleep 2.5
+  ready
   # 第一個是中英切換鍵（一組單選，預設右 Shift，#117）：↓ 選「左右 Shift」，舊欄位 left_shift 跟著寫 true。
-  tabs $((NAV + 1)); xdotool key Down
-  sleep 3
+  tabs $((NAV + 1)); press Down
   check "中英切換鍵可保存左右 Shift" bash -c "grep -q '\"toggle_key\": \"both\"' '$(settings_of live)' && grep -q '\"left_shift\": true' '$(settings_of live)'"
   import -window root "$OUT/toggle-key-both.png"
-  xdotool key Up
-  sleep 3
+  press Up
   check "中英切換鍵可改回右 Shift" bash -c "grep -q '\"toggle_key\": \"right\"' '$(settings_of live)' && grep -q '\"left_shift\": false' '$(settings_of live)'"
   # 再下一個是單按 Shift 的時限（一組單選，預設 0.3 秒，#319）：↓ 選 0.4 秒，↑ 改回。
-  xdotool key Tab Down
-  sleep 3
+  press Tab Down
   check "單按 Shift 的時限可保存 400" grep -q '"shift_tap_ms": 400' "$(settings_of live)"
   import -window root "$OUT/shift-tap-400.png"
-  xdotool key Up
-  sleep 3
+  press Up
   check "單按 Shift 的時限可改回 300" grep -q '"shift_tap_ms": 300' "$(settings_of live)"
   # 再下一個是開始時的中英模式（一組單選，預設注音，#160）：↓ 選「英文」；Linux 的「切換視窗後」native 名稱跟著變成「每次回到英文」。
-  xdotool key Tab Down
-  sleep 3
+  press Tab Down
   check "開始時的中英模式可保存 english" grep -q '"start_mode": "english"' "$(settings_of live)"
   check "native 的名稱跟著開始時的模式" bash -c "'$UPDATE_BIN' settings -json | python3 -c \"import json,sys; it=next(x for x in json.load(sys.stdin)['items'] if x['key']=='mode-memory'); sys.exit(0 if it['value_labels']['native']=='每次回到英文' else 1)\""
   import -window root "$OUT/start-mode-english.png"
-  xdotool key Up
-  sleep 3
+  press Up
   check "開始時的中英模式可改回 zhuyin" grep -q '"start_mode": "zhuyin"' "$(settings_of live)"
   # 再下一個是切換視窗後的中英模式（一組單選，Linux 預設 native，#115）：↓ 選「全部共用同一個模式」。
-  xdotool key Tab Down
-  sleep 3
+  press Tab Down
   check "切換視窗後的中英模式可保存 shared" grep -q '"mode_memory": "shared"' "$(settings_of live)"
   import -window root "$OUT/mode-memory-shared.png"
-  xdotool key Up
-  sleep 3
+  press Up
   check "切換視窗後的中英模式可改回 native" grep -q '"mode_memory": "native"' "$(settings_of live)"
   # 混打之後是獨立的英文自動補字開關。
-  xdotool key --delay 150 Tab Tab space
-  sleep 3
+  press Tab Tab space
   check "英文自動補字開關可保存 on" grep -q '"english_autocomplete": true' "$(settings_of live)"
   import -window root "$OUT/english-autocomplete-on.png"
-  xdotool key space
-  sleep 3
+  press space
   check "英文自動補字開關可改回 off" grep -q '"english_autocomplete": false' "$(settings_of live)"
 else bad "live/mode 視窗沒有出現"; cat /tmp/app-live-mode.log; fi
 stop_app
 # 「選字」：選字方式（一組單選）、依前文選字 → 空白鍵選字、修改字詞的位置 → 選字後游標、選字排列、選字鍵 → Esc。
 launch live candidates
 if window_up; then
-  sleep 2.5
+  ready
   import -window root "$OUT/live-candidates.png"
   # 空白鍵選字，預設開啟（#107、#110）。
-  tabs $((NAV + 3)); xdotool key space
-  sleep 3
+  tabs $((NAV + 3)); press space
   check "空白鍵選字開關可保存 off" grep -q '"space_selects": false' "$(settings_of live)"
   import -window root "$OUT/space-selects-off.png"
-  xdotool key space
-  sleep 3
+  press space
   check "空白鍵選字開關可改回 on" grep -q '"space_selects": true' "$(settings_of live)"
   # 修改字詞的位置（一組單選）之後是選字後游標移到下一個字，預設關閉（#133）。
-  xdotool key --delay 150 Tab Tab space
-  sleep 3
+  press Tab Tab space
   check "選字後游標開關可保存 on" grep -q '"advance_after_select": true' "$(settings_of live)"
   import -window root "$OUT/advance-after-select-on.png"
-  xdotool key space
-  sleep 3
+  press space
   check "選字後游標開關可改回 off" grep -q '"advance_after_select": false' "$(settings_of live)"
   # 選字排列、選字鍵（兩組單選）之後是按 Esc 清除整段組字，預設開啟。
-  xdotool key --delay 150 Tab Tab Tab space
-  sleep 3
+  press Tab Tab Tab space
   check "Esc 清除整段組字開關可保存 off" grep -q '"esc_clear": false' "$(settings_of live)"
   import -window root "$OUT/esc-clear-off.png"
-  xdotool key space
-  sleep 3
+  press space
   check "Esc 清除整段組字開關可改回 on" grep -q '"esc_clear": true' "$(settings_of live)"
 else bad "live/candidates 視窗沒有出現"; cat /tmp/app-live-candidates.log; fi
 # 單一實例：再啟動一次，不該多出視窗，也不該卡住。
-sleep 1
 HOME=$live_home ZC_UPDATER=$UPDATE_BIN timeout 10 "$SETTINGS_BIN" --page update >/tmp/second.log 2>&1
 second=$?
 check "第二個實例很快結束（單一實例）" test "$second" -eq 0
-check "仍然只有一個視窗" test "$(xdotool search --onlyvisible --name '靈犀注音設定' | wc -l)" -eq 1
-sleep 1.5
+check "仍然只有一個視窗" test "$(app_windows | wc -l)" -eq 1
+sleep 1.5   # 只為截圖：既有視窗切到更新頁
 import -window root "$OUT/live-second-instance.png"
 stop_app
 unset HOME
@@ -244,21 +307,17 @@ unset HOME
 # 輸出設定是左側獨立一頁（#118）：導覽之後第一個是輸出簡體字開關，預設關閉。
 launch live output
 if window_up; then
-  sleep 2.5
-  tabs $((NAV + 1)); xdotool key space
-  sleep 3
+  ready
+  tabs $((NAV + 1)); press space
   check "輸出簡體字開關可保存 on" grep -q '"output_simplified": true' "$(settings_of live)"
   import -window root "$OUT/output-simplified-on.png"
-  xdotool key space
-  sleep 3
+  press space
   check "輸出簡體字開關可改回 off" grep -q '"output_simplified": false' "$(settings_of live)"
   # 下一個是「用快捷鍵切換簡體字」（#192），預設關閉，說明寫出快捷鍵。
-  xdotool key --delay 150 Tab space
-  sleep 3
+  press Tab space
   check "快捷鍵開關可保存 on" grep -q '"simplified_hotkey": true' "$(settings_of live)"
   import -window root "$OUT/simplified-hotkey-on.png"
-  xdotool key space
-  sleep 3
+  press space
   check "快捷鍵開關可改回 off" grep -q '"simplified_hotkey": false' "$(settings_of live)"
 else bad "live/output 視窗沒有出現"; cat /tmp/app-live-output.log; fi
 stop_app
@@ -319,27 +378,23 @@ live_runtime() { # 期望值 → 引擎回報能即時切換，而且目前的�
   run_update outputlive status -json | python3 -c "import json,sys; r=json.load(sys.stdin)['runtime']; sys.exit(0 if r.get('output_simplified_live') is True and r.get('output_simplified') is (sys.argv[1]=='on') else 1)" "$1"
 }
 if window_up; then
-  sleep 2.5
-  tabs $((NAV + 1)); xdotool key space
-  sleep 3
+  ready
+  tabs $((NAV + 1)); press space
   check "輸出簡體字：引擎在執行時開啟，寫入設定" grep -q '"output_simplified": true' "$(settings_of outputlive)"
   check "輸出簡體字：引擎沒有重啟（同一個行程）" kill -0 "$ENGINE_PID"
   check "輸出簡體字：引擎立即回報開啟" live_runtime on
   import -window root "$OUT/output-simplified-live-on.png"
-  xdotool key space
-  sleep 3
+  press space
   check "輸出簡體字：即時關閉，寫入設定" grep -q '"output_simplified": false' "$(settings_of outputlive)"
   check "輸出簡體字：關閉後引擎仍是同一個行程" kill -0 "$ENGINE_PID"
   check "輸出簡體字：引擎立即回報關閉" live_runtime off
   # #192：「用快捷鍵切換簡體字」要交接重啟引擎（外殼看新引擎回報的 simplified_hotkey），下一個按鍵起生效。
   # 引擎在執行時交接；之後引擎沒在執行（容器裡沒有常駐引擎），外殼下一個按鍵啟動引擎時讀新設定，提示一樣。
-  xdotool key --delay 150 Tab space
-  sleep 3
+  press Tab space
   check "快捷鍵：引擎在執行時開啟，寫入設定" grep -q '"simplified_hotkey": true' "$(settings_of outputlive)"
   check "快捷鍵：開啟時交接，舊引擎已結束" bash -c "! kill -0 $ENGINE_PID 2>/dev/null"
   import -window root "$OUT/simplified-hotkey-live-on.png"
-  xdotool key space
-  sleep 3
+  press space
   check "快捷鍵：引擎沒在執行時關閉，寫入設定" grep -q '"simplified_hotkey": false' "$(settings_of outputlive)"
   import -window root "$OUT/simplified-hotkey-stopped-off.png"
 else bad "outputlive/output 視窗沒有出現"; cat /tmp/app-outputlive-output.log; fi
@@ -380,29 +435,25 @@ for _ in range(80):
 sys.exit(1)
 PY
 }
-# Emoji 在「鍵盤與符號」：鍵盤排列（一組單選）、Ctrl＋標點、Shift＋符號打半形、中英文之間自動加空格、中文與數字之間自動加空格、補標點 → Emoji（導覽後第 7 個）→ 等號首項（子選項）。
+# Emoji 在「鍵盤與符號」：鍵盤排列（一組單選）、Ctrl＋標點、標點寬度（一組單選）、自動加空格（一組單選）、補標點 → Emoji（導覽後第 6 個）→ 等號首項（子選項）。
 launch toggles keyboard
 if window_up; then
-  sleep 2.5
+  ready
   import -window root "$OUT/toggles-before.png"
-  tabs $((NAV + 7)); xdotool key space
+  tabs $((NAV + 6)); press space
   check "預設啟用的 Emoji 開關可以關閉，保留未知設定" toggle_value emoji_off
-  sleep 1
-  xdotool key space
+  press space
   check "Emoji 開關可以重新啟用" toggle_value emoji_on
-  sleep 1
-  xdotool key Tab space
+  press Tab space
   check "可以取消第一項的等號，保留未知設定" toggle_value first_off
-  sleep 1
-  xdotool key space
+  press space
   check "可以恢復第一項的等號" toggle_value first_on
-  sleep 1
   import -window root "$OUT/toggles-on.png"
-  xdotool key shift+Tab space
+  press shift+Tab space
   check "Emoji 開關可以關閉" toggle_value emoji_off
-  sleep 1
   import -window root "$OUT/toggles-off.png"
-  # 子選項停用時不在 Tab 順序裡：Tab 跳到下一項符號習慣，不會改到等號首項。
+  # 子選項停用時不在 Tab 順序裡：Tab 跳到下一項標點操作（焦點在已選的那一個，空白鍵不改值、不儲存），不會改到等號首項。
+  # 這一步本來就不該儲存，沒有呼叫可等：留 1 秒給可能誤送的儲存，再核對值沒變。
   xdotool key Tab space
   sleep 1
   check "Emoji 關閉時 Tab 跳過停用的子選項，保留等號首項原值" toggle_value first_on
@@ -411,11 +462,10 @@ else bad "toggles/keyboard 視窗沒有出現"; cat /tmp/app-toggles-keyboard.lo
 stop_app
 launch toggles keyboard
 if window_up; then
-  sleep 2.5
-  tabs $((NAV + 7)); xdotool key space
+  ready
+  tabs $((NAV + 6)); press space
   check "停用子選項後仍可重新啟用 Emoji" toggle_value emoji_on
-  sleep 1
-  xdotool key Tab space
+  press Tab space
   check "Emoji 重新啟用後子選項可再次操作" toggle_value first_off
 else bad "toggles/keyboard 重新開啟失敗"; cat /tmp/app-toggles-keyboard.log; fi
 stop_app
@@ -424,26 +474,21 @@ stop_app
 # 模糊音在「選字」最後：原有 11 項＋7 項選字習慣規則之後（導覽後第 19 個）。
 launch toggles candidates
 if window_up; then
-  sleep 2.5
-  tabs $((NAV + 10)); xdotool key space
+  ready
+  tabs $((NAV + 10)); press space
   check "預設開啟的打錯注音時提示可以關閉，保留未知設定" toggle_value hint_off
-  sleep 1
   import -window root "$OUT/zhuyin-error-hint-off.png"
-  xdotool key space
+  press space
   check "打錯注音時提示可以重新開啟" toggle_value hint_on
-  sleep 1
-  xdotool key Tab space
+  press Tab space
   check "預設開啟的記住我選的字詞可以關閉，保留未知設定" toggle_value learning_off
-  sleep 1
   import -window root "$OUT/personal-learning-off.png"
-  xdotool key space
+  press space
   check "記住我選的字詞可以重新開啟" toggle_value learning_on
-  sleep 1
-  tabs 8; xdotool key space
+  tabs 8; press space
   check "預設開啟的模糊音總開關一次關閉四組，保留未知設定" toggle_value fuzzy_off
-  sleep 1
   import -window root "$OUT/toggles-fuzzy-off.png"
-  xdotool key space
+  press space
   check "單一模糊音開關一次恢復四組 select" toggle_value fuzzy_on
 else bad "toggles/candidates 視窗沒有出現"; cat /tmp/app-toggles-candidates.log; fi
 stop_app
@@ -477,19 +522,17 @@ PY_CURSOR
 # 「選字」：選字方式、前文、空白選字 → 修改字詞的位置（導覽後第 4 個）。
 launch cursor candidates
 if window_up; then
-  sleep 2.5
-  tabs $((NAV + 4)); xdotool key Left
+  ready
+  tabs $((NAV + 4)); press Left
   check "游標前方單選儲存 before，保留未知設定" cursor_value before
-  sleep 1
   import -window root "$OUT/cursor-before.png"
 else bad "cursor/candidates 視窗沒有出現"; fi
 stop_app
 launch cursor candidates
 if window_up; then
-  sleep 2.5
-  tabs $((NAV + 4)); xdotool key Right
+  ready
+  tabs $((NAV + 4)); press Right
   check "重新開啟設定後可改回游標後方，保留未知設定" cursor_value after
-  sleep 1
   import -window root "$OUT/cursor-after.png"
 else bad "cursor/candidates 重新開啟失敗"; fi
 stop_app
@@ -520,72 +563,64 @@ PY_LAYOUT
 # 是中英切換鍵、單按 Shift 的時限（#319）、開始時的中英模式、切換視窗後的中英模式之後的第 5 個；按了切到鍵盤與符號、焦點在選中的倚天，← 選標準。
 launch eten mode
 if window_up; then
-  sleep 2.5
+  ready
   import -window root "$OUT/eten-mode.png"
   tabs $((NAV + 5)); xdotool key space
   sleep 1.5
   import -window root "$OUT/eten-goto-keyboard.png"
-  xdotool key Left
+  press Left
   check "從混打的說明跳到鍵盤排列，切回標準排列，保留混打原值與未知設定" layout_value standard
-  sleep 2
   import -window root "$OUT/eten-back-to-standard.png"
   # 鍵盤排列之後是「Ctrl＋標點打全形」（#168），預設開啟；空白鍵關閉。
-  xdotool key Tab space
-  sleep 3
+  press Tab space
   check "Ctrl＋標點開關可關閉" grep -q '"ctrl_punctuation": false' "$(settings_of eten)"
   import -window root "$OUT/ctrl-punctuation-off.png"
   # 再下一項是「標點寬度」（#258、#282），三選一的單選，預設「全形標點」；→ 依序選 Shift＋符號打半形、所有符號鍵打半形，
   # ← 兩次回到全形標點。所有符號鍵打半形時上面的 Ctrl＋標點顯示停用（固定開啟），設定檔裡的 false 不動。
-  xdotool key Tab Right
-  sleep 3
+  press Tab Right
   check "標點寬度可選 Shift＋符號打半形" grep -q '"shift_symbol_halfwidth": true' "$(settings_of eten)"
   check "Shift＋符號打半形不是所有符號鍵" grep -q '"all_symbols_halfwidth": false' "$(settings_of eten)"
   import -window root "$OUT/shift-symbol-halfwidth-on.png"
-  xdotool key Right
-  sleep 3
+  press Right
   check "標點寬度可選所有符號鍵打半形" grep -q '"all_symbols_halfwidth": true' "$(settings_of eten)"
   check "所有符號鍵打半形不改設定檔的 Ctrl＋標點" grep -q '"ctrl_punctuation": false' "$(settings_of eten)"
   import -window root "$OUT/all-symbols-halfwidth.png"
-  xdotool key Left
-  sleep 3
-  xdotool key Left
-  sleep 3
+  press Left
+  press Left
   check "標點寬度可選回全形標點" grep -q '"shift_symbol_halfwidth": false' "$(settings_of eten)"
   check "全形標點時所有符號鍵也關" grep -q '"all_symbols_halfwidth": false' "$(settings_of eten)"
-  # 再下一項是「中英文之間自動加空格」（#273），預設關閉；空白鍵開啟，再按一次關閉。
-  xdotool key Tab space
-  sleep 3
-  check "中英文之間自動加空格開關可開啟" grep -q '"cjk_latin_space": true' "$(settings_of eten)"
+  # 再下一項是「自動加空格」（#273、#365），三選一的單選，預設「關閉」；→ 依序選中英文之間、中英文與數字之間，
+  # ← 兩次回到關閉。Tab 只占一站，跟上面的標點寬度一樣。
+  press Tab Right
+  check "自動加空格可選中英文之間" grep -q '"cjk_latin_space": true' "$(settings_of eten)"
+  check "中英文之間不補數字" grep -q '"cjk_digit_space": false' "$(settings_of eten)"
   import -window root "$OUT/cjk-latin-space-on.png"
-  xdotool key space
-  sleep 3
-  check "中英文之間自動加空格開關可關閉" grep -q '"cjk_latin_space": false' "$(settings_of eten)"
-  # 再下一項是「中文與數字之間自動加空格」，預設關閉；空白鍵開啟，再按一次關閉。
-  xdotool key Tab space
-  sleep 3
-  check "中文與數字之間自動加空格開關可開啟" grep -q '"cjk_digit_space": true' "$(settings_of eten)"
-  import -window root "$OUT/cjk-digit-space-on.png"
-  xdotool key space
-  sleep 3
-  check "中文與數字之間自動加空格開關可關閉" grep -q '"cjk_digit_space": false' "$(settings_of eten)"
+  press Right
+  check "自動加空格可選中英文與數字之間" bash -c "grep -q '\"cjk_latin_space\": true' '$(settings_of eten)' && grep -q '\"cjk_digit_space\": true' '$(settings_of eten)'"
+  import -window root "$OUT/cjk-latin-space-all.png"
+  press Left
+  check "← 回到中英文之間，數字那一欄跟著關" bash -c "grep -q '\"cjk_latin_space\": true' '$(settings_of eten)' && grep -q '\"cjk_digit_space\": false' '$(settings_of eten)'"
+  press Left
+  check "自動加空格可選回關閉" bash -c "grep -q '\"cjk_latin_space\": false' '$(settings_of eten)' && grep -q '\"cjk_digit_space\": false' '$(settings_of eten)'"
+  # 再 Tab 就是下一項（提交時補標點）：單選只占一站。空白鍵開啟。
+  press Tab space
+  check "自動加空格之後一個 Tab 就到補標點" grep -q '"punctuation": true' "$(settings_of eten)"
+  press space
+  check "補標點關回去" grep -q '"punctuation": false' "$(settings_of eten)"
 else bad "eten/mode 視窗沒有出現"; cat /tmp/app-eten-mode.log; fi
 stop_app
 # 選字鍵在「選字」（一組單選，預設 1234567890，#112）：選字方式、前文、空白選字、修改位置、選字後游標、排列之後第 7 個。
 # ↓ 選 1234qweras，再 ↓ 選 asdfghjkl;，按兩次 ↑ 改回。
 launch eten candidates
 if window_up; then
-  sleep 2.5
-  tabs $((NAV + 7)); xdotool key Down
-  sleep 3
+  ready
+  tabs $((NAV + 7)); press Down
   check "選字鍵可保存 1234qweras，保留未知設定" bash -c "grep -q '\"selection_keys\": \"1234qweras\"' '$(settings_of eten)' && grep -q '\"future\"' '$(settings_of eten)'"
   import -window root "$OUT/selection-keys-qwer.png"
-  xdotool key Down
-  sleep 3
+  press Down
   check "選字鍵可保存 asdfghjkl;" grep -q '"selection_keys": "asdfghjkl;"' "$(settings_of eten)"
-  xdotool key Up
-  sleep 3
-  xdotool key Up
-  sleep 3
+  press Up
+  press Up
   check "選字鍵可改回 1234567890" grep -q '"selection_keys": "1234567890"' "$(settings_of eten)"
 else bad "eten/candidates 視窗沒有出現"; cat /tmp/app-eten-candidates.log; fi
 stop_app
@@ -593,9 +628,8 @@ stop_app
 # 前面是中英切換鍵、單按 Shift 的時限（#319）、開始模式、切換視窗後、混打、英文補字，第 7 個；空白鍵開啟。
 launch eten mode
 if window_up; then
-  sleep 2.5
-  tabs $((NAV + 7)); xdotool key space
-  sleep 3
+  ready
+  tabs $((NAV + 7)); press space
   check "Caps Lock 英文開關可開啟" grep -q '"caps_lock_english": true' "$(settings_of eten)"
   import -window root "$OUT/caps-lock-english-on.png"
 else bad "eten/mode 重新開啟失敗"; cat /tmp/app-eten-mode.log; fi
@@ -617,7 +651,7 @@ sys.exit(0 if ok else 1)
 PY_HSU
 launch hsu mode
 if window_up; then
-  sleep 2.5
+  ready
   import -window root "$OUT/hsu-mode.png"
   # 混打反灰、寫「許氏排列時關閉」，下面的「到「鍵盤與符號」修改「鍵盤排列」」切過去，鍵盤排列選中「許氏」。
   # 前面是中英切換鍵、單按 Shift 的時限（#319）、開始模式、切換視窗後。
@@ -645,6 +679,23 @@ PY_PINYIN
 shoot pinyin keyboard
 shoot pinyin mode
 
+# ---- 小鶴雙拼（#370）：同漢語拼音，只有中英混打反灰並提示原因，不打聲調照常；選項提示寫 nihc ----
+new_home xiaohe
+printf '{"schema":1,"keyboard_layout":"xiaohe","mixed_input":true,"toneless":true}\n' > "$(base_of xiaohe)/settings.json"
+run_update xiaohe settings -json > "$OUT/xiaohe-settings.json"
+check "小鶴雙拼時契約只標示混打停用並附原因，值保留，不打聲調照常" python3 - "$OUT/xiaohe-settings.json" <<'PY_XIAOHE'
+import json,sys
+items={x['key']:x for x in json.load(open(sys.argv[1]))['items']}
+disabled=[k for k,x in items.items() if x.get('disabled') and k!='start-mode']
+ok=disabled==['mixed-input'] and items['mixed-input'].get('disabled_reason')=='小鶴雙拼時關閉' and items['mixed-input']['value']=='on'
+ok=ok and items['toneless']['value']=='on' and not items['toneless'].get('disabled')
+kl=items['keyboard-layout']
+ok=ok and kl['value']=='xiaohe' and kl.get('value_labels',{}).get('xiaohe')=='小鶴雙拼' and 'nihc' in kl.get('value_hints',{}).get('xiaohe','')
+sys.exit(0 if ok else 1)
+PY_XIAOHE
+shoot xiaohe keyboard
+shoot xiaohe mode
+
 # ---- 不打聲調（#150）：中英混打反灰並附原因，設定檔的 mixed_input 保留 ----
 new_home toneless
 printf '{"schema":1,"toneless":true,"mixed_input":true}\n' > "$(base_of toneless)/settings.json"
@@ -660,10 +711,9 @@ shoot toneless mode
 # 「選字」頁：不打聲調排在其他選字項目之後、模糊音之前（導覽後第 9 個）；空白鍵關閉，混打的原值不動。
 launch toneless candidates
 if window_up; then
-  sleep 2.5
+  ready
   import -window root "$OUT/toneless-candidates.png"
-  tabs $((NAV + 9)); xdotool key space
-  sleep 3
+  tabs $((NAV + 9)); press space
   check "不打聲調開關可關閉，保留混打原值" bash -c "grep -q '\"toneless\": false' '$(settings_of toneless)' && grep -q '\"mixed_input\": true' '$(settings_of toneless)'"
   import -window root "$OUT/toneless-off.png"
 else bad "toneless/candidates 視窗沒有出現"; cat /tmp/app-toneless-candidates.log; fi
@@ -685,13 +735,12 @@ PY_MIXED
 # 按了切到中英切換頁、焦點在混打開關，空白把混打關掉。
 launch mixed candidates
 if window_up; then
-  sleep 2.5
+  ready
   import -window root "$OUT/mixed-candidates.png"
   tabs $((NAV + 3)); xdotool key Return
   sleep 1.5
   import -window root "$OUT/mixed-goto-mode.png"
-  xdotool key space
-  sleep 3
+  press space
   check "從空白鍵選字跳到混打並關閉，空白鍵選字原值不動" bash -c "grep -q '\"mixed_input\": false' '$(settings_of mixed)' && grep -q '\"space_selects\": true' '$(settings_of mixed)'"
 else bad "mixed/candidates 視窗沒有出現"; cat /tmp/app-mixed-candidates.log; fi
 stop_app
@@ -725,22 +774,19 @@ start_mode_shown() { # 期望畫面：disabled／enabled → 契約與畫面用�
 }
 launch noshift mode
 if window_up; then
-  sleep 2.5
+  ready
   import -window root "$OUT/noshift-mode.png"
   # 第一個是中英切換鍵（焦點在「不用 Shift」），↑ 選左 Shift。
-  tabs $((NAV + 1)); xdotool key Up
+  tabs $((NAV + 1)); press Up
   check "改成左 Shift，開始時的英文照舊保留" noshift_value left
-  sleep 2
   check "有 Shift 可以切換時開始模式恢復可改、是英文" start_mode_shown enabled
   import -window root "$OUT/noshift-left-shift.png"
-  xdotool key Down
+  press Down
   check "再改回不用 Shift" noshift_value none
-  sleep 2
   check "不用 Shift 時開始模式又固定為注音" start_mode_shown disabled
   import -window root "$OUT/noshift-again.png"
   # 原因（中英切換鍵）就在同一頁，開始模式下面不另外放連結：停用的開始模式跳過，下一個就是切換視窗後的中英模式。
-  xdotool key Tab Down
-  sleep 3
+  press Tab Down
   check "同一頁的停用原因不多一個連結，Tab 直接到切換視窗後的中英模式" grep -q '"mode_memory": "shared"' "$(settings_of noshift)"
 else bad "noshift/mode 視窗沒有出現"; cat /tmp/app-noshift-mode.log; fi
 stop_app
@@ -754,9 +800,8 @@ check "背景更新忙碌時，檢查回 in_progress 而非設定 busy" python3 
 check "背景更新期間仍可儲存輸入設定" run_update checking set punctuation off -json
 launch checking update
 if window_up; then
-  sleep 2.5
-  tabs $((NAV + 1)); xdotool key space
-  sleep 3
+  ready
+  tabs $((NAV + 1)); press space
   import -window root "$OUT/checking-in-progress.png"
   check "背景更新忙碌時設定視窗仍正常執行" kill -0 "$APP_PID"
 else bad "checking/update 視窗沒有出現"; cat /tmp/app-checking-update.log; fi
@@ -767,7 +812,10 @@ rm "$(base_of checking)/update/coordinator.lock"
 sha() { sha256sum "$1" | cut -d' ' -f1; }
 # 用行程名稱精確比對（-f 會比對到執行檢查的 bash 自己的命令列）
 app_exe() { readlink "/proc/$(pgrep -n -x 0c-settings)/exe" 2>/dev/null; }
-kill_apps() { pkill -x 0c-settings 2>/dev/null; sleep 1; }
+kill_apps() { # 結束所有設定程式，等行程與視窗都消失
+  pkill -x 0c-settings 2>/dev/null
+  for _ in $(seq 50); do pgrep -x 0c-settings >/dev/null || [ -n "$(app_windows)" ] || break; sleep 0.1; done
+}
 
 new_home entry
 eh=$(home_of entry); eb=$(base_of entry)
@@ -781,7 +829,7 @@ HOME=$eh "$eh/.local/bin/0c-update" open-settings update >/tmp/open1.log 2>&1; c
 elapsed_ms=$(( ($(date +%s%N) - start) / 1000000 ))
 check "open-settings（完整安裝的副本）結束碼 0" test "$code" -eq 0
 check "open-settings 在 5 秒內返回，不等設定程式結束（實際 ${elapsed_ms} 毫秒）" test "$elapsed_ms" -lt 5000
-check "設定視窗出現" window_up
+check "設定視窗出現" window_up any
 sleep 2; import -window root "$OUT/open-settings-install-update.png"
 check "啟動的是完整安裝的副本" test "$(app_exe update)" = "$eh/.local/bin/0c-settings"
 check "應用程式選單項目已建立並指向穩定的 0c-update" grep -q "Exec=\"$eh/.local/bin/0c-update\" open-settings" "$eh/.local/share/applications/0c-settings.desktop"
@@ -798,7 +846,7 @@ printf '{"schema":1,"files":{"0c-settings":"%s"}}\n' "$(sha "$eb/$dir/0c-setting
 printf '{"schema":1,"directory":"%s","version":"0.1.0-dev.43"}\n' "$dir" > "$eb/engine.json"
 HOME=$eh "$eh/.local/bin/0c-update" open-settings candidates >/tmp/open2.log 2>&1; code=$?
 check "open-settings candidates（核心版本目錄）結束碼 0" test "$code" -eq 0
-window_up; sleep 1
+window_up any
 check "啟動的是核心版本目錄的較新版本" test "$(app_exe candidates)" = "$eb/$dir/0c-settings"
 kill_apps
 
@@ -806,7 +854,7 @@ kill_apps
 echo "tampered" >> "$eb/$dir/0c-settings"
 HOME=$eh "$eh/.local/bin/0c-update" open-settings input >/tmp/open3.log 2>&1; code=$?
 check "核心目錄被竄改時退回安裝的副本而不是啟動它（舊的頁名 input 照樣接受）" test "$code" -eq 0
-window_up; sleep 1
+window_up any
 check "啟動的是安裝副本，不是被竄改的檔案" test "$(app_exe input)" = "$eh/.local/bin/0c-settings"
 kill_apps
 
@@ -838,5 +886,12 @@ if [ "${SMOKE_ONLY:-update}" = update ]; then . "$(dirname "$0")/update-mode.sh"
 # ---- 清除學習紀錄（#301）----
 if [ "${SMOKE_ONLY:-personal}" = personal ]; then . "$(dirname "$0")/personal.sh"; fi
 
+# ---- 選項提示與「說明」連結（#362）----
+if [ "${SMOKE_ONLY:-help}" = help ]; then . "$(dirname "$0")/help.sh"; fi
+
+# ---- 設定搜尋（#363）----
+if [ "${SMOKE_ONLY:-search}" = search ]; then . "$(dirname "$0")/search.sh"; fi
+
+[ -s "$OUT/xdotool-errors.log" ] && echo "NOTE: 找視窗時 xdotool 出錯 $(wc -l < "$OUT/xdotool-errors.log") 次（BadWindow 已重查；明細在 xdotool-errors.log）"
 echo "SMOKE_RESULT=$([ $fail -eq 0 ] && echo PASS || echo FAIL)"
 exit $fail

@@ -200,17 +200,12 @@ func (s Settings) Profiles() ProfileView {
 }
 func (s Settings) profileItem(p Profile) ProfileItem {
 	available, reason := s.profileAvailability(p)
-	description := "固定操作習慣；需要微調時可複製成自訂"
+	// 一句話（#362）；各參考風格參考了哪些操作寫在設定參考文件（官網 /guide/settings/）。
+	description := "固定的操作習慣，要微調請複製成自訂。"
 	if !p.Builtin {
-		description = "自訂操作習慣，可在各設定頁微調"
+		description = "你自己的操作習慣，可以在各設定頁微調。"
 	} else if p.ID != "0c" {
-		description = "參考常用操作的相近風格；字詞排序、候選視窗與未列出的功能仍使用靈犀注音"
-		if p.ID == "microsoft" {
-			description += "。此版參考全半形、反引號前導與選字鍵；反斜線、引號、角括號與問號已對照 Windows 11 注音實測，其餘操作依靈犀規則"
-		}
-		if p.ID == "macos" {
-			description += "。此版參考選字位置、空白選字與退回聲調；系統輸入來源切換仍由 macOS 管理"
-		}
+		description = "參考這個輸入法的常用操作；選字、候選窗和其他功能仍是靈犀注音。"
 	}
 	shift := map[string]string{"disabled": "Shift＋空白不切換字寬", "fullwidth": "Shift＋空白切換全半形（含英數）", "space": "Shift＋空白插入空白"}[p.Rules.ShiftSpace]
 	tab := map[string]string{"0c": "Tab 使用靈犀候選操作", "cycle": "Tab／Shift＋Tab 輪換字詞", "segment": "Tab 調整斷詞"}[p.Rules.Tab]

@@ -12,6 +12,14 @@
   --warn-bg: #fff3dc;
   --err: #9b1c1c;
   --err-bg: #fde8e8;
+  /* 搜尋（#363）：輸入框與可點的小標籤的邊線、有焦點的輸入框與選取列上的值標籤的底、命中的字（<mark>）、
+     選取列與標出的那一項上的次要文字。 */
+  --line-strong: #c3cdd2;
+  --field: #ffffff;
+  --mark-bg: #ffe08a;
+  --mark-text: #1b2428;
+  --soft-muted: #5a666d;
+  --hit-muted: #3f4a50;
   --radius: 10px;
   color-scheme: light dark;
 }
@@ -30,6 +38,12 @@
     --warn-bg: #3a2c10;
     --err: #f59a9a;
     --err-bg: #3d1818;
+    --line-strong: #3b484e;
+    --field: #12181b;
+    --mark-bg: #6a5200;
+    --mark-text: #fff2c2;
+    --soft-muted: #b4c0c5;
+    --hit-muted: #b4c0c5;
   }
 }
 * { box-sizing: border-box; }
@@ -46,11 +60,14 @@ body {
   display: flex; flex-direction: column; gap: 4px;
   padding: 20px 12px; background: var(--panel); border-right: 1px solid var(--line);
 }
-.brand { display: flex; align-items: center; gap: 10px; padding: 4px 10px 18px; font-weight: 650; font-size: 17px; }
+.brand { display: flex; align-items: center; gap: 10px; padding: 4px 10px 12px; font-weight: 650; font-size: 17px; }
+.navlist { display: flex; flex-direction: column; gap: 4px; }
 .nav {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
   text-align: left; border: 0; background: transparent; color: var(--text);
   padding: 9px 12px; border-radius: 8px; font: inherit; cursor: pointer;
 }
+.nav[hidden] { display: none; }
 .nav:hover { background: var(--accent-soft); }
 .nav[aria-current="page"] { background: var(--accent); color: var(--accent-text); font-weight: 600; }
 :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
@@ -133,8 +150,9 @@ code, .mono { font-family: ui-monospace, "SF Mono", "Cascadia Mono", "Noto Sans 
 pre.cmd { background: var(--accent-soft); padding: 10px 14px; border-radius: 8px; overflow-x: auto; margin: 6px 0; }
 @media (max-width: 720px) {
   .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
-  .side { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--line); padding: 10px; }
+  .side { flex-direction: row; flex-wrap: wrap; align-items: center; border-right: 0; border-bottom: 1px solid var(--line); padding: 10px; }
   .brand { padding: 4px 10px; }
+  .navlist { flex: 1 1 100%; flex-direction: row; flex-wrap: wrap; }
   main { padding: 20px 16px 40px; }
   .toast { left: 16px; right: 16px; }
 }
@@ -201,6 +219,14 @@ button.link {
 button.link:hover { background: var(--accent-soft); }
 /* 停用原因在另一頁時的「到「鍵盤與符號」修改…」（#207）：跟說明文字對齊。 */
 .row .desc button.link.goto { padding: 2px 4px; margin-left: -4px; }
+/* 說明後面的「說明」連結與選中選項的提示（#362）。連結接在句子後面、不換行拆開；提示用左邊一條線跟說明分開。
+   輸入習慣、更新、我的詞彙三頁的頁首也有一個，接在頁首那一句後面。 */
+.row .desc button.link.help, .lead button.link.help { padding: 0 4px; margin-left: 2px; white-space: nowrap; }
+.row .hint {
+  margin-top: 6px; padding: 3px 10px; font-size: 13px; color: var(--text);
+  border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 6px 6px 0;
+}
+.row .hint strong { font-weight: 600; }
 button.primary.small, button.secondary.small { font-size: 13px; padding: 3px 12px; }
 button.icon {
   font: inherit; width: 28px; height: 28px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: var(--text); cursor: pointer;
@@ -321,3 +347,104 @@ input.port { width: 8em; }
 .style-diff li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 20px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .style-diff li:last-child { border-bottom: 0; }
 .side { overflow-y: auto; }
+
+/* ---- 搜尋（#363）：側邊欄最上面的搜尋框、取代右邊內容的結果頁、跳到那一項之後的標示 ---- */
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.search { position: relative; flex: none; margin: 0 2px 10px; }
+.search-icon { position: absolute; left: 10px; top: 10px; color: var(--muted); pointer-events: none; }
+.search:focus-within .search-icon { color: var(--accent); }
+/* type=search 在 WebKit（WKWebView、WebKitGTK）與 Chromium（WebView2）有自帶的外觀、放大鏡與清除鈕：全部關掉，
+   清除鈕只用自己的那一個（.search-clear）。 */
+.search-input {
+  display: block; width: 100%; height: 36px; margin: 0; padding: 0 56px 0 32px;
+  border: 1px solid var(--line-strong); border-radius: 8px; background: var(--bg); color: var(--text);
+  font: inherit; font-size: 14px; -webkit-appearance: none; appearance: none; outline-offset: 0;
+}
+.search-input::-webkit-search-cancel-button, .search-input::-webkit-search-decoration,
+.search-input::-webkit-search-results-button, .search-input::-webkit-search-results-decoration { -webkit-appearance: none; appearance: none; display: none; }
+.search-input::placeholder { color: var(--muted); opacity: 1; }
+.search.has-query .search-input { padding-right: 34px; }
+/* 有焦點時邊線加粗成 2px：用內側陰影補 1px，文字不會跟著移動。 */
+.search-input:focus, .search-input:focus-visible { outline: none; border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: var(--field); }
+.search-key {
+  position: absolute; right: 8px; top: 8px; padding: 0 5px; border: 1px solid var(--line); border-radius: 4px;
+  background: var(--panel); color: var(--muted); font-family: inherit; font-size: 11px; line-height: 18px; pointer-events: none;
+}
+.search.has-query .search-key { display: none; }
+.search-clear {
+  position: absolute; right: 6px; top: 6px; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%;
+  background: var(--accent-soft); color: var(--accent); display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.search-clear[hidden] { display: none; }
+/* 搜尋中：側邊欄沒有「目前頁面」，命中的頁面標筆數，沒命中的變淡。 */
+.nav-count { flex: none; min-width: 20px; padding: 0 4px; text-align: center; border-radius: 10px; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 600; }
+.nav[aria-current="page"] .nav-count { background: var(--accent-text); }
+.nav.nav-dim { color: var(--muted); }
+
+/* 結果頁。頁尾的按鍵提示貼在視窗底部（內容短的時候）：這一頁撐滿 main 的高度，main 下方的留白從 48px 縮成 20px。 */
+main.searching { padding-bottom: 20px; }
+.page.search-page { display: flex; flex-direction: column; min-height: 100%; }
+.page.search-page[hidden] { display: none; }
+.page.search-page .lead { margin-bottom: 16px; }
+.search-group { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.search-card { padding: 4px 6px; }
+.result { display: flex; align-items: center; gap: 14px; padding: 10px 12px; border-radius: 8px; cursor: pointer; }
+.result:hover { background: var(--bg); }
+.result[aria-selected="true"] { background: var(--accent-soft); outline: 2px solid var(--accent); }
+.result-text { flex: 1 1 auto; min-width: 0; }
+.result-name { display: block; font-weight: 600; overflow-wrap: anywhere; }
+.result-line { display: block; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.result[aria-selected="true"] .result-line { color: var(--soft-muted); }
+.result.is-disabled .result-name { color: var(--muted); }
+.result-reason { display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 10px; background: var(--warn-bg); color: var(--warn); font-size: 12px; font-weight: 500; }
+.result-value {
+  flex: none; max-width: 42%; padding: 2px 10px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg);
+  font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.result[aria-selected="true"] .result-value { background: var(--field); }
+.result.is-disabled .result-value { color: var(--muted); }
+.result-go { flex: none; color: var(--muted); }
+.result[aria-selected="true"] .result-go { color: var(--accent); }
+.page.search-page mark { background: var(--mark-bg); color: var(--mark-text); border-radius: 2px; padding: 0 1px; }
+/* 找不到的時候 */
+.search-empty { padding: 20px 22px; display: flex; flex-direction: column; gap: 16px; }
+.search-empty[hidden] { display: none; }
+.search-empty-title { font-weight: 600; margin-bottom: 8px; }
+.search-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.search-chip { padding: 5px 14px; border: 1px solid var(--line-strong); border-radius: 16px; background: var(--bg); color: var(--text); font: inherit; font-size: 14px; cursor: pointer; }
+.search-chip:hover { background: var(--accent-soft); }
+.search-more { border-top: 1px solid var(--line); padding-top: 14px; }
+.search-more .search-empty-title { margin-bottom: 4px; }
+.search-more p { margin: 0; color: var(--muted); font-size: 14px; }
+.search-more button.link { font-size: 14px; padding: 0 4px; white-space: nowrap; }
+.search-keys { margin-top: auto; padding-top: 14px; display: flex; flex-wrap: wrap; gap: 4px 18px; color: var(--muted); font-size: 12px; }
+.search-keys kbd { padding: 0 5px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); font-family: inherit; }
+/* 跳到某一項之後：頁首上方的「回到搜尋結果」（往上吃掉 8px，頁首的位置跟設計稿一樣），以及標出那一項。
+   外框與底色不改這一列的高度與文字位置，淡掉時畫面不會跳動。 */
+.search-back {
+  display: flex; width: fit-content; max-width: 100%; align-items: center; gap: 6px; margin: -8px 0 10px; padding: 3px 12px 3px 8px; border: 0; border-radius: 14px;
+  background: var(--accent-soft); color: var(--accent); font: inherit; font-size: 13px; text-align: left; cursor: pointer;
+  /* 那一項在頁面下方、畫面捲下去時，連結留在上緣（離視窗頂 10px），隨時可以回結果頁。
+     sticky 的位置從 main 的內距（28px）裡面算起，所以是負的。 */
+  position: sticky; top: -18px; z-index: 2;
+}
+.search-back[hidden] { display: none; }
+.row.search-hit {
+  margin-left: -12px; margin-right: -12px; padding-left: 12px; padding-right: 12px; border-radius: 8px;
+  background: var(--accent-soft); outline: 2px solid var(--accent); outline-offset: 0; border-bottom-color: transparent;
+  transition: background-color .6s ease-out, outline-color .6s ease-out, border-color .6s ease-out;
+}
+.setting-group > .suboption.search-hit { padding-inline-start: 36px; }
+.row.search-hit .desc { color: var(--hit-muted); }
+.row.search-hit .hint { background: var(--panel); }
+.row.search-hit.search-hit-fade { background: transparent; outline-color: transparent; border-bottom-color: var(--line); }
+/* 跳到一整頁（不是某一項）時焦點放在頁首標題上，讓下一個 Tab 從這一頁開始；標題不畫焦點框。 */
+h1:focus, h1:focus-visible { outline: none; }
+.page.search-page h1 { overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) { .row.search-hit { transition: none; } }
+/* 視窗很窄時側邊欄橫放在上面：搜尋框接在品牌列右邊，導覽另起一行。 */
+@media (max-width: 720px) {
+  .search { flex: 1 1 180px; margin: 0; }
+  .search-back { margin-top: 0; top: -10px; }
+  .page.search-page { min-height: 0; }
+}

@@ -217,14 +217,11 @@ func runningValues(info map[string]string) map[string]string {
 	switch info["cjk_latin_space"] { // #273
 	case "true":
 		out["cjk-latin-space"] = "on"
+		if info["cjk_digit_space"] == "true" { // #365；舊引擎沒有這一項時是 on，選 all 的人看到待套用
+			out["cjk-latin-space"] = "all"
+		}
 	case "false":
 		out["cjk-latin-space"] = "off"
-	}
-	switch info["cjk_digit_space"] {
-	case "true":
-		out["cjk-digit-space"] = "on"
-	case "false":
-		out["cjk-digit-space"] = "off"
 	}
 	switch info["personal_learning"] { // #297
 	case "true":
@@ -350,7 +347,7 @@ type setOptions struct {
 	repair bool // 設定檔壞掉時改名保留，從預設值重新開始
 }
 
-const setUsage = "用法：0c-update set selection neural|statistical、set punctuation on|off、set document-context on|off、set mixed-input on|off、set english-autocomplete on|off、set left-shift on|off、set shift-tap-ms 200|300|400|500|600、set esc-clear on|off、set space-selects on|off、set candidate-cursor before|after、set advance-after-select on|off、set output-simplified on|off、set simplified-hotkey on|off、set ctrl-punctuation on|off、set shift-symbol-halfwidth off|on|all、set cjk-latin-space on|off、set zhuyin-error-hint on|off、set personal-learning on|off、set caps-lock-english on|off（Windows、Linux）、set toneless on|off、set keyboard-layout standard|eten|hsu|pinyin|xiaohe、set fuzzy-z-zh|fuzzy-c-ch|fuzzy-s-sh|fuzzy-en-eng off|select|auto [鍵 值 ...] [-apply] [-notify] [-json] [-repair]"
+const setUsage = "用法：0c-update set selection neural|statistical、set punctuation on|off、set document-context on|off、set mixed-input on|off、set english-autocomplete on|off、set left-shift on|off、set shift-tap-ms 200|300|400|500|600、set esc-clear on|off、set space-selects on|off、set candidate-cursor before|after、set advance-after-select on|off、set output-simplified on|off、set simplified-hotkey on|off、set ctrl-punctuation on|off、set shift-symbol-halfwidth off|on|all、set cjk-latin-space off|on|all、set zhuyin-error-hint on|off、set personal-learning on|off、set caps-lock-english on|off（Windows、Linux）、set toneless on|off、set keyboard-layout standard|eten|hsu|pinyin|xiaohe、set fuzzy-z-zh|fuzzy-c-ch|fuzzy-s-sh|fuzzy-en-eng off|select|auto [鍵 值 ...] [-apply] [-notify] [-json] [-repair]"
 
 func parseSetArgs(args []string) (setOptions, error) {
 	var o setOptions

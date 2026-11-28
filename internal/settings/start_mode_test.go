@@ -83,8 +83,9 @@ func TestStartModeItem(t *testing.T) {
 			t.Fatalf("%+v", item)
 		}
 	}
-	if !strings.Contains(startModeDescription("windows"), "新開的程式") || !strings.Contains(startModeDescription("linux"), "輸入框") {
-		t.Fatal("說明依平台")
+	// #362：說明各平台同一句；Windows 是新開的程式、macOS／Linux 是換到輸入框，寫在設定參考文件。
+	if ref := settingsReference(t); !strings.Contains(ref, "每個新開的程式從這個模式開始") || !strings.Contains(ref, "每次換到輸入框，都回到這個模式") {
+		t.Fatal("設定參考文件要寫出各平台什麼時候回到開始時的模式")
 	}
 }
 

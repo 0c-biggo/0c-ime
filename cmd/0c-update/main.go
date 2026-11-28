@@ -94,8 +94,8 @@ func listSettings(w io.Writer, r settings.Report, path string) {
 	fmt.Fprintf(w, "ctrl-punctuation=%s（注音模式按 Ctrl＋, . ' ; 與 Ctrl＋Shift＋/ 1 ; 9 0 打全形標點；關閉時交給應用程式）\n", onOff(s.CtrlPunctuation))
 	symbolWidth, _ := s.Value("shift-symbol-halfwidth")
 	fmt.Fprintf(w, "shift-symbol-halfwidth=%s（標點寬度：off 全形標點；on Shift＋符號打半形，例如 Shift＋, 打 ,、Shift＋9 打 (，[ ] 照舊打「」；all 所有符號鍵打按鍵上的字，例如 Shift＋- 打 _、[ 打 [，這時 Ctrl＋標點固定開、聲調選填暫停。全形改按 Ctrl＋符號或 ↓）\n", symbolWidth)
-	fmt.Fprintf(w, "cjk-latin-space=%s（送出時在中文字和英文字母相連處補半形空格，例如「用Python寫」送出「用 Python 寫」；已有空格、標點與數字旁不補，也不跟前面已送出的字補）\n", onOff(s.CJKLatinSpace))
-	fmt.Fprintf(w, "cjk-digit-space=%s（送出時在中文字和半形數字相連處補半形空格，例如「第2版」送出「第 2 版」；已有空格與標點旁不補，也不跟前面已送出的字補）\n", onOff(s.CJKDigitSpace))
+	cjkSpace, _ := s.Value("cjk-latin-space")
+	fmt.Fprintf(w, "cjk-latin-space=%s（自動加空格：off 不補；on 送出時在中文字和英文字母相連處補半形空格，例如「用Python寫」送出「用 Python 寫」，數字旁不補；all 數字旁也補，例如「第2版」送出「第 2 版」、「有50%%的人」送出「有 50%% 的人」。已有空格與標點旁不補，也不跟前面已送出的字補；數字要在組字裡打才補得到；「我的片語」照原樣送出）\n", cjkSpace)
 	fmt.Fprintf(w, "zhuyin-error-hint=%s（打錯注音時提示：按了聲調但讀音沒有字時不收聲調、注音留著修改並提示；緊接著再按同一個聲調照舊留下注音；中英混打與不打聲調時不作用）\n", onOff(s.ZhuyinErrorHint))
 	fmt.Fprintf(w, "personal-learning=%s（記住我選的字詞：關閉時照常選字、神經選字與已學到的照常使用，只是不再記下新的選擇、英文單字和最近用過的符號；我的詞彙不受影響）\n", onOff(s.PersonalLearning))
 	if settings.CapsLockEnglishSetting(runtime.GOOS) {
@@ -112,6 +112,8 @@ func listSettings(w io.Writer, r settings.Report, path string) {
 	for _, p := range fuzzy.Pairs() {
 		fmt.Fprintf(w, "fuzzy-%s=%s（%s 模糊音：off 關閉；select 開候選時合併近音；auto 另在語境明顯支持近音時自動改字，實驗）\n", p.ID(), fuzzyConfig.Mode(p), p.Symbols())
 	}
+	// #362：每一行只是值的對照；完整的說明在官網，錨點就是鍵名。
+	fmt.Fprintf(w, "各項說明：%s（網址後面加 #鍵名，例如 %s）\n", settings.HelpBase, settings.HelpURL("keyboard-layout"))
 }
 
 func isJSONFlag(arg string) bool { return arg == "-json" || arg == "--json" }

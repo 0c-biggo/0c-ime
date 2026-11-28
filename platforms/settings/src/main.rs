@@ -213,7 +213,8 @@ async fn set_update_mode(mode: String) -> Result<Value, String> {
     call(updater::update_mode_args(&mode)?, 20).await
 }
 
-/// 用系統瀏覽器開外部網址（「模型」頁的 Hugging Face 連結）。設定視窗本身不離開本機頁面，只放行 Hugging Face。
+/// 用系統瀏覽器開外部網址：「模型」頁的 Hugging Face 連結、設定項目的「說明」連結（官網的設定說明頁，#362）。
+/// 設定視窗本身不離開本機頁面；放行的網址見 updater::browser_url。
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
     let url = updater::browser_url(&url)?;

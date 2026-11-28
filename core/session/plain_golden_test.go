@@ -122,6 +122,27 @@ func goldenSessionModel() (*personal.Model, []lexicon.Entry) {
 	return personal.NewModel(lex, sys), words
 }
 
+// withoutReadingLabel 拿掉原樣注音候選的 proto.CandidateReading 標示（#361 加的，dee4f8ed 還沒有）再算雜湊：
+// 基準仍是 dee4f8ed 的快照，其餘欄位與候選順序都要逐一相同。
+func withoutReadingLabel(snap proto.Snapshot) proto.Snapshot {
+	snap.Candidates = listWithoutReadingLabel(snap.Candidates)
+	return snap
+}
+
+func listWithoutReadingLabel(c *proto.CandidateList) *proto.CandidateList {
+	if c == nil {
+		return nil
+	}
+	list := *c
+	list.Items = slices.Clone(list.Items)
+	for i := range list.Items {
+		if list.Items[i].Label == proto.CandidateReading {
+			list.Items[i].Label = ""
+		}
+	}
+	return &list
+}
+
 func plainSessionGolden() []string {
 	var out []string
 	for config := range 3 {
@@ -140,9 +161,9 @@ func plainSessionGolden() []string {
 			var snap proto.Snapshot
 			do := func(r proto.Request) {
 				snap = s.Handle(r)
-				log = append(log, r, snap)
+				log = append(log, r, withoutReadingLabel(snap))
 				if config > 0 {
-					log = append(log, s.PreviewPending())
+					log = append(log, listWithoutReadingLabel(s.PreviewPending()))
 				}
 			}
 			for range 1 + rng.Intn(3) {

@@ -531,7 +531,8 @@ func (s *Session) pathReadings() map[int]zhuyin.Syllable {
 }
 
 // labelSpatial 標出開著的候選裡、讀音要靠鄰鍵替換、補上一鍵或合併弧才得到的那些（proto.CandidateCorrected）。
-func (s *Session) labelSpatial(pos int) {
+// 每項照自己替換的範圍（candState.span）找讀音的位置：混合清單（#161）接在後面的單字從游標那個字算。
+func (s *Session) labelSpatial() {
 	if len(s.spatial) == 0 && len(s.merges) == 0 && (!s.Spatial.on() || s.Spatial.Missed <= 0) || s.cand == nil {
 		return
 	}
@@ -540,6 +541,7 @@ func (s *Session) labelSpatial(pos int) {
 		if i >= len(s.cand.labels) {
 			break
 		}
+		pos, _ := s.cand.span(i)
 		for k, y := range c.Entry.Reading {
 			at := pos + k
 			if _, ok := s.mergedAt(at); ok {

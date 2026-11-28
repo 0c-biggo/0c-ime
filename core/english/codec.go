@@ -52,6 +52,14 @@ func Decode(data []byte) (*Dictionary, error) {
 	if bytes.HasPrefix(data, magicRanked) {
 		return decodeRanked(data)
 	}
+	if bytes.HasPrefix(data, magicMapped) {
+		// 格式 3 本來是給宿主 Map 的；這裡複製一份，呼叫端之後改 data 也不影響字典。先擋大小，
+		// 不先複製一份過大的資料。
+		if len(data) > MaxPackBytes {
+			return nil, fmt.Errorf("英文資料包標頭或大小不合法")
+		}
+		return Map(bytes.Clone(data), nil)
+	}
 	if len(data) > MaxPackBytes || len(data) < len(magic)+4 || !bytes.HasPrefix(data, magic) {
 		return nil, fmt.Errorf("英文資料包標頭或大小不合法")
 	}
@@ -98,20 +106,13 @@ func (d *Dictionary) encodeRanked() []byte {
 	var out bytes.Buffer
 	out.Write(magicRanked)
 	binary.Write(&out, binary.LittleEndian, uint32(d.Len()))
-	for i, w := range d.words {
+	// 經過存取函式：格式 3 的字典（Map）也寫得回格式 2，逐位元組相同。
+	for i := range d.Len() {
+		w := d.word(i)
 		out.WriteByte(byte(len(w.Text)))
 		out.WriteString(w.Text)
 		binary.Write(&out, binary.LittleEndian, w.Weight)
-		flag := byte(0)
-		if d.noSuggest[i] {
-			flag |= flagNoSuggest
-		}
-		if d.protected[i] {
-			flag |= flagProtected
-		}
-		if d.corpusOnly[i] {
-			flag |= flagCorpusOnly
-		}
+		flag := d.flagsAt(i)
 		common := d.common(i)
 		if common != w.Text {
 			flag |= flagDisplay

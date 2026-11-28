@@ -220,6 +220,7 @@ func (s *Session) insertPendingLiteral() {
 
 func (s *Session) shiftLiterals(at, delta int) {
 	if len(s.literals) == 0 {
+		s.literals = nil // 接著的插入另開新表：外殼複製整個 session 試查候選（APP 的 frontStep）時，空表是共用的
 		return
 	}
 	next := map[int]bool{}

@@ -486,7 +486,8 @@ func (s *Session) remerge() {
 	s.dec.PrefixCacheKeys = s.Opt.PrefixCacheKeys
 	evidence, penalty := s.dec.Evidence, s.dec.CorrectionPenalty
 	defer func() { s.dec.Evidence, s.dec.CorrectionPenalty = evidence, penalty }()
-	s.configureDocumentContext(begin)
+	// 比的是合與不合兩種音節數，評分器要一樣：不套用單獨一個音節的規則（#360）
+	s.configureContext(begin, false)
 	s.dec.Evidence, s.dec.CorrectionPenalty = nil, nil // 同 resegment：依位置的證據以目前的音節為單位，合法只看詞庫與語言模型
 	search := searchCopy(s.mergeSearch)
 	s.mergeSearch = search

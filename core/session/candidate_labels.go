@@ -49,6 +49,10 @@ func (s *Session) candidateLabels(c *candState) []string {
 		return n
 	}
 	for i, candidate := range c.items {
+		if c.raw && i == len(c.items)-1 {
+			labels[i] = proto.CandidateReading // 單字清單結尾的原樣注音（openAt）；混合清單的也在結尾（appendSingles）
+			continue
+		}
 		if len(candidate.Entry.Reading) == 0 || i < len(c.matched) && c.matched[i] != "" {
 			continue // 原樣注音、符號及近音候選保留原提示
 		}

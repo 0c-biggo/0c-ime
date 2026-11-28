@@ -118,19 +118,32 @@ func (m *documentScorer) HasContext(left string) bool {
 	return m.Model.HasContext(left)
 }
 func (m *documentScorer) DocumentContext() (string, float64) { return m.left, m.weight }
-func (s *Session) configureDocumentContext(start int) {
+
+// configureDocumentContext 設定從 start 開始的那一段組字（s.syls 目前的樣子）的前詞與評分器。
+func (s *Session) configureDocumentContext(start int) { s.configureContext(start, true) }
+
+// configureContext 是 configureDocumentContext；lone 為 false 時不套用「單獨一個不打聲調的音節」
+// （untoned_lone.go）：呼叫端解的不是 s.syls 目前的那一段（漢語拼音還沒收的字母、觸控的合併弧在比較別的切法）。
+func (s *Session) configureContext(start int, lone bool) {
 	s.dec.Left = lm.BOS
 	s.dec.Score = s.model
 	if s.afterNumber(start) {
 		s.dec.Score = &numberScorer{Model: s.model} // 數字後面的一段以數字為語境（只有 start > 0 會走到）
 		return
 	}
-	weight := s.Opt.DocumentContextWeight
-	// 無效設定安全回退；零完全等於沒有前文，不改變個人頻率保護的分母。
-	if !(weight > 0 && weight <= 1) {
+	if word := s.englishLeft(start); word != "" {
+		s.dec.Left = word // 字面英文詞後面的一段以那個英文詞為前詞（english_context.go）
 		return
 	}
-	if left := s.contextLeft(start); left != lm.BOS {
-		s.dec.Score = &documentScorer{Model: s.model, left: left, weight: weight}
+	// 無效設定安全回退；零完全等於沒有前文，不改變個人頻率保護的分母。
+	if weight := s.Opt.DocumentContextWeight; weight > 0 && weight <= 1 {
+		if left := s.contextLeft(start); left != lm.BOS {
+			s.dec.Score = &documentScorer{Model: s.model, left: left, weight: weight}
+			return
+		}
+	}
+	// 沒有任何前文，這一段又只有一個不打聲調的音節：句首只照詞頻（#360）。游標前是數字時照舊（#337）。
+	if lone && s.loneUntoned(start) && !(start == 0 && s.digitBefore()) {
+		s.dec.Score = &loneScorer{Model: s.model}
 	}
 }

@@ -111,6 +111,27 @@ thread_local! {
     static THEME: RefCell<Option<(u32, Rc<Theme>)>> = const { RefCell::new(None) };
 }
 
+/// 釋放本執行緒快取的字型、筆刷與彩色 Emoji 的 Direct2D render target（連同它的 D2D factory 與 DXGI 物件，#371）。
+/// 不能留給執行緒結束時的 thread_local 解構：0c-ui 結束時那是在 ExitProcess 裡，其他執行緒已被終止、
+/// 載入器鎖握著，DXGI 釋放 factory 時丟出例外（WER 紀錄）；DLL 裡則是在宿主執行緒的 DLL_THREAD_DETACH。
+/// 候選窗銷毀（WM_NCDESTROY）與 0c-ui 的訊息迴圈結束時呼叫；之後還要畫時 [`theme`] 照常重建。
+/// 可重複呼叫；thread_local 已在解構、或正被借用中（不會發生）時什麼都不做，不 panic。
+pub fn release_theme() {
+    let released = THEME
+        .try_with(|cell| cell.try_borrow_mut().ok().and_then(|mut cached| cached.take()))
+        .ok()
+        .flatten();
+    // 借用結束後才釋放：Theme 的 Drop 先刪 GDI 物件，接著 ColorText 先放 render target（最後一個參照放掉 D2D
+    // factory，factory 再放 DXGI），DirectWrite 的文字格式最後。
+    drop(released);
+}
+
+/// 本執行緒現在有沒有快取的主題（測試用）。
+#[cfg(test)]
+fn theme_cached() -> bool {
+    THEME.with(|cell| cell.borrow().is_some())
+}
+
 /// 字型與筆刷依 DPI 與系統主題快取；系統變更訊息會清除快取。
 fn theme(dpi: u32) -> Rc<Theme> {
     THEME.with(|cell| {
@@ -815,6 +836,9 @@ pub fn handle(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> Option<LR
                 if !ptr.is_null() {
                     drop(Box::from_raw(ptr));
                 }
+                // 每個執行緒只有一個候選窗：視窗沒了就趁執行緒與 DXGI 都還正常時釋放 D2D 物件（#371）。
+                // 同一執行緒還有別的候選窗時，它下一次繪製會重建。
+                release_theme();
                 None
             }
             _ => None,
@@ -1052,5 +1076,50 @@ mod tests {
         let completion = UiCandidate { id: 0, text: "hello".into(), key: Some(String::new()), ..Default::default() };
         assert_eq!(candidate_line(0, &completion), "hello", "英文補字不畫鍵標");
     }
-}
 
+    // #371：D2D／DXGI 物件不能留到 thread_local 解構（0c-ui 是 ExitProcess 裡）才釋放。
+    #[test]
+    fn released_theme_is_rebuilt_on_next_use() {
+        let t = theme(96);
+        assert!(theme_cached());
+        // 彩色 Emoji 開著時，快取裡真的有 render target（系統主題關掉彩色字型時只有 GDI 物件）。
+        let had_color = t.color_emoji.is_some();
+        release_theme();
+        assert!(!theme_cached(), "收尾後快取是空的");
+        // 還拿著舊主題的呼叫端照常用到它放掉為止；快取不再持有。
+        assert_eq!(t.row, 28);
+        drop(t);
+        release_theme(); // 重複呼叫不 panic
+        // 收尾後還有訊息進來：照常重建，不 panic。
+        let again = theme(96);
+        assert!(theme_cached());
+        assert_eq!(again.color_emoji.is_some(), had_color);
+        drop(again);
+        release_theme();
+    }
+
+    #[test]
+    fn destroying_the_window_releases_the_theme() {
+        use windows::Win32::UI::WindowsAndMessaging::{DefWindowProcW, DestroyWindow, UnregisterClassW};
+        unsafe extern "system" fn test_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+            handle(hwnd, msg, wparam, lparam).unwrap_or_else(|| DefWindowProcW(hwnd, msg, wparam, lparam))
+        }
+        unsafe {
+            let instance: HINSTANCE = windows::Win32::System::LibraryLoader::GetModuleHandleW(None)
+                .unwrap_or_default()
+                .into();
+            let class = w!("0cCandidateTest371");
+            register_class(instance, class, Some(test_proc));
+            let hwnd = create(instance, class, None).expect("建立測試候選窗");
+            // 繪製路徑（WM_PRINTCLIENT 同 WM_PAINT）建立主題與彩色 Emoji 的 render target。
+            let hdc = GetDC(Some(hwnd));
+            draw(hwnd, hdc);
+            ReleaseDC(Some(hwnd), hdc);
+            assert!(theme_cached());
+            // 0c-ui 結束（WM_CLOSE → DestroyWindow）與 DLL 的 service 結束都走這裡。
+            DestroyWindow(hwnd).expect("銷毀測試候選窗");
+            assert!(!theme_cached(), "WM_NCDESTROY 就釋放，不等執行緒結束");
+            let _ = UnregisterClassW(class, Some(instance));
+        }
+    }
+}

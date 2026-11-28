@@ -70,12 +70,15 @@ func TestSimplifiedHotkeyDefaultsOffAndPersists(t *testing.T) {
 	t.Fatal("設定程式看不到快捷鍵的開關")
 }
 
-// 說明寫出這個平台的鍵：Mac 用 ⌃⇧ 符號並提醒 fn，Windows／Linux 用 Ctrl＋Shift。
+// 說明寫出這個平台的鍵：Mac 用 ⌃⇧ 符號，Windows／Linux 用 Ctrl＋Shift；F11 是媒體鍵時加按 Fn 寫在設定參考文件（#362）。
 func TestSimplifiedHotkeyDescriptionNamesThePlatformKey(t *testing.T) {
 	for goos, want := range map[string]string{"windows": "Ctrl＋Shift＋", "linux": "Ctrl＋Shift＋", "darwin": "⌃⇧"} {
 		d := simplifiedHotkeyDescription(goos)
-		if !strings.Contains(d, want) || !strings.Contains(d, SimplifiedHotkeyLabel(goos)) || strings.Contains(d, "fn") != (goos == "darwin") {
+		if !strings.Contains(d, want) || !strings.Contains(d, SimplifiedHotkeyLabel(goos)) || !strings.Contains(d, "不再交給") {
 			t.Fatalf("%s：%s", goos, d)
 		}
+	}
+	if ref := settingsReference(t); !strings.Contains(ref, "要加按 Fn") || !strings.Contains(ref, "要加按 fn") {
+		t.Fatal("設定參考文件要提醒 F11 是媒體鍵時加按 Fn／fn")
 	}
 }

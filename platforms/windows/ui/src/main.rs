@@ -83,6 +83,10 @@ fn main() {
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
+        // 正常結束（更新換版的 WM_CLOSE）在 DestroyWindow 的 WM_NCDESTROY 已經釋放過；登出（WM_ENDSESSION）不銷毀視窗
+        // 就離開迴圈，這裡補上。D2D／DXGI 物件不能等 main 回傳後 ExitProcess 裡的 thread_local 解構（#371）。
+        // 0c-ui 不使用 COM 套間（D2D、DirectWrite 不需要 CoInitialize），沒有 CoUninitialize 要排。
+        candidate::release_theme();
     }
 }
 

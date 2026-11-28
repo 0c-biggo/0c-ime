@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -151,6 +152,43 @@ func TestPinyinDisablesOnlyMixedInput(t *testing.T) {
 	}
 	if strings.Join(disabled, "、") != "mixed-input：漢語拼音時關閉（keyboard-layout）" {
 		t.Fatalf("漢語拼音只停用混打：%v", disabled)
+	}
+	if err := s.Set("keyboard-layout", "standard"); err != nil {
+		t.Fatal(err)
+	}
+	if !s.MixedInput || !s.Toneless {
+		t.Fatalf("切回標準排列值照舊：%+v", s)
+	}
+}
+
+// #370：小鶴雙拼同漢語拼音，只停用中英混打，原因指向鍵盤排列；不打聲調照常可設（開啟時每兩鍵就換成字），
+// 打錯注音時提示也照常。值存得回 settings.json，切回標準排列照舊。
+func TestXiaoheDisablesOnlyMixedInput(t *testing.T) {
+	s := Default()
+	s.MixedInput, s.Toneless = true, true
+	s.Set("toggle-key", ToggleRight)
+	if err := s.Set("keyboard-layout", LayoutXiaohe); err != nil {
+		t.Fatal(err)
+	}
+	var disabled []string
+	for _, it := range s.Items() {
+		if it.Disabled {
+			disabled = append(disabled, it.Key+"："+it.DisabledReason+"（"+it.DisabledBy+"）")
+		}
+		if it.Key == "keyboard-layout" && it.ValueLabels[LayoutXiaohe] != "小鶴雙拼" {
+			t.Fatalf("排列的顯示名稱：%+v", it.ValueLabels)
+		}
+	}
+	if strings.Join(disabled, "、") != "mixed-input：小鶴雙拼時關閉（keyboard-layout）" {
+		t.Fatalf("小鶴雙拼只停用混打：%v", disabled)
+	}
+	b, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back Settings
+	if err := json.Unmarshal(b, &back); err != nil || back.KeyboardLayout != LayoutXiaohe {
+		t.Fatalf("settings.json 存回 xiaohe：%v %q", err, back.KeyboardLayout)
 	}
 	if err := s.Set("keyboard-layout", "standard"); err != nil {
 		t.Fatal(err)

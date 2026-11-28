@@ -59,10 +59,17 @@ func TestShiftSymbolHalfwidthDefaultsOffAndPersists(t *testing.T) {
 		t.Fatal("不認得的值應拒絕")
 	}
 	for _, goos := range []string{"windows", "linux", "darwin"} {
-		d := shiftSymbolHalfwidthDescription(goos)
+		// #362：說明只有一句，各選項打什麼在選中那一項的提示；[ ] 不變、微軟參考照風格（#272）等細節在設定參考文件。
+		hints := valueHints(goos, "shift-symbol-halfwidth")
 		ctrl := map[bool]string{true: "⌃", false: "Ctrl＋"}[goos == "darwin"]
-		if !strings.Contains(d, "Shift＋, 打半形逗號") || !strings.Contains(d, "Shift＋9 打 (") || !strings.Contains(d, "< >") || !strings.Contains(d, ctrl+", 打「，」") || !strings.Contains(d, "[ ] 照舊打「」") || !strings.Contains(d, "微軟參考時，< > ? \" 照舊打按鍵上的字") {
-			t.Fatalf("%s 的說明要寫出打什麼、全形怎麼打、[ ] 不變、微軟參考照風格（#272）：%s", goos, d)
+		if on := hints["on"]; !strings.Contains(on, "Shift＋, 打半形逗號") || !strings.Contains(on, "Shift＋9 打 (") || !strings.Contains(on, ctrl+"符號") || !strings.Contains(on, "↓") {
+			t.Fatalf("%s「Shift＋符號打半形」的提示要寫出打什麼、全形怎麼打：%s", goos, on)
+		}
+		if all := hints["all"]; !strings.Contains(all, ctrl+"標點固定開啟") || !strings.Contains(all, "不打聲調") {
+			t.Fatalf("%s「所有符號鍵打半形」的提示要寫出連帶改變的兩項：%s", goos, all)
+		}
+		if _, ok := hints["off"]; ok {
+			t.Fatalf("%s 預設的全形標點不需要提示：%v", goos, hints)
 		}
 	}
 	for _, it := range Default().Items() {

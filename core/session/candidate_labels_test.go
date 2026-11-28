@@ -36,10 +36,14 @@ func TestCandidateLabelsDoNotFollowRankOrHighlight(t *testing.T) {
 	if snapshot.Candidates.Items[0].Text != "景" {
 		t.Fatal("fixture must put the rare word first")
 	}
-	for _, item := range snapshot.Candidates.Items {
+	items := snapshot.Candidates.Items
+	for _, item := range items[:len(items)-1] {
 		if item.Label != "" {
-			t.Fatalf("rare first candidate or raw Zhuyin mislabeled: %+v", item)
+			t.Fatalf("rare first candidate mislabeled: %+v", item)
 		}
+	}
+	if raw := items[len(items)-1]; raw.Text != "ㄐㄧㄥˇ" || raw.Label != proto.CandidateReading {
+		t.Fatalf("raw Zhuyin must be labelled only as the reading: %+v", raw)
 	}
 	s = newSession()
 	typeSyl(s, "ㄐㄧㄥˇ")
@@ -48,8 +52,8 @@ func TestCandidateLabelsDoNotFollowRankOrHighlight(t *testing.T) {
 	if !slices.Equal(before, after) || after[0].Label != proto.CandidateCommon {
 		t.Fatal("moving the highlight must preserve labels and candidate IDs/order")
 	}
-	if after[len(after)-1].Label != "" {
-		t.Fatal("raw Zhuyin must not receive a label")
+	if after[len(after)-1].Label != proto.CandidateReading {
+		t.Fatal("raw Zhuyin must not receive a usage label")
 	}
 }
 
@@ -179,6 +183,46 @@ func TestLabelsPreserveNearNotesAndOmitSymbols(t *testing.T) {
 	for _, item := range s.snapshot().Candidates.Items {
 		if item.Label != "" {
 			t.Fatal("symbols must not have usage labels")
+		}
+	}
+}
+
+// #361：單字清單結尾照字面的讀音（原樣注音；拼音排列是拼音）標 proto.CandidateReading，只標那一項；
+// 混合清單（#161）接在後面的單字也一樣在結尾。私密請求重算標示後還在。
+func TestRawReadingIsLabelled(t *testing.T) {
+	check := func(name string, snap proto.Snapshot, raw string) {
+		t.Helper()
+		items := snap.Candidates.Items
+		for i, item := range items {
+			last := i == len(items)-1
+			if last && (item.Text != raw || item.Label != proto.CandidateReading) || !last && item.Label == proto.CandidateReading {
+				t.Errorf("%s: item %d %+v (raw %q)", name, i, item, raw)
+			}
+		}
+	}
+	for _, private := range []bool{false, true} {
+		s := newSession()
+		typeSyl(s, "ㄐㄧㄥˇ")
+		s.Handle(proto.Request{Type: proto.Cursor, To: 0, Private: private})
+		check("zhuyin", s.Handle(proto.Request{Type: proto.Candidates, Length: 1, Private: private}), "ㄐㄧㄥˇ")
+
+		s = pinyinSession(t)
+		typeKeys(s, "ni3hao3")
+		s.Handle(proto.Request{Type: proto.Cursor, To: 0, Private: private})
+		snap := s.Handle(proto.Request{Type: proto.Candidates, Length: 2, Private: private})
+		if s.cand.split == 0 {
+			t.Fatalf("fixture must open words and singles in one list: %+v", snap.Candidates)
+		}
+		check("pinyin words and singles", snap, "ni3")
+	}
+	s := newSession() // 多字的詞清單沒有原樣注音
+	typeSyl(s, "ㄈㄥ")
+	typeSyl(s, "ㄐㄧㄥˇ")
+	s.Handle(proto.Request{Type: proto.Cursor, To: 0})
+	snap := s.Handle(proto.Request{Type: proto.Candidates, Length: 2})
+	for i, item := range snap.Candidates.Items {
+		if item.Label == proto.CandidateReading && (s.cand.split == 0 || i != len(snap.Candidates.Items)-1) {
+			t.Errorf("only the singles' raw reading is labelled: %+v", snap.Candidates.Items)
 		}
 	}
 }

@@ -42,6 +42,17 @@
     return node;
   }
   const clear = (node) => { while (node.firstChild) node.removeChild(node.firstChild); return node; };
+  // 8×14 的箭頭（結果列右邊的 ›、「回到搜尋結果」的 ‹）。CSP 不允許行內樣式，大小與顏色由屬性與 class 決定。
+  function chevron(d, width, height, cls) {
+    const SVG = 'http://www.w3.org/2000/svg';
+    const node = document.createElementNS(SVG, 'svg');
+    const attrs = { 'aria-hidden': 'true', width, height, viewBox: '0 0 8 14', fill: 'none', stroke: 'currentColor', 'stroke-width': '1.8', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', class: cls };
+    for (const [key, value] of Object.entries(attrs)) if (value != null) node.setAttribute(key, String(value));
+    const path = document.createElementNS(SVG, 'path');
+    path.setAttribute('d', d);
+    node.append(path);
+    return node;
+  }
   const row = (left, right) => h('div', { class: 'row' }, left, right);
   const labelBlock = (label, desc, id) => h('div', {}, h('div', { class: 'label', id }, label), desc ? h('div', { class: 'desc' }, desc) : null);
 
@@ -496,19 +507,53 @@
     if (item.locked) name.append(h('span', { class: 'badge muted-badge', title: LOCKED_TITLE }, profileLockLabel()));
     if (item.disabled && item.disabled_reason) name.append(h('span', { class: 'badge muted-badge' }, item.disabled_reason));
     else if (item.pending) name.append(h('span', { class: 'badge' }, '已儲存，尚未套用'));
-    return row(
-      h('div', {}, h('div', { class: 'label', id: 'label-' + item.key }, name), item.description ? h('div', { class: 'desc' }, item.description) : null,
-        causeLink(item)),
-      control(item, locked));
+    const view = window.ZcInputStylesLogic.controlState(item, false);
+    const hint = hintLine(item, view.toggle ? (view.checked ? (item.values || []).find((v) => v !== 'off') : 'off') : view.value);
+    const help = window.ZcItemHelp.url(item);
+    const input = control(item, locked);
+    if (hint) input.setAttribute('aria-describedby', hint.id);
+    const node = row(
+      h('div', {}, h('div', { class: 'label', id: 'label-' + item.key }, name),
+        item.description || help ? h('div', { class: 'desc' }, item.description || '', helpLink(help, item.label || item.key, item.key)) : null,
+        hint, causeLink(item)),
+      input);
+    // 「說明」連結不在 Tab 順序裡（每頁十幾項，逐項多一站太慢）；鍵盤在這一項上按 F1 開同一個網址。
+    if (help) node.addEventListener('keydown', (event) => { if (event.key === 'F1') { event.preventDefault(); openHelp(help); } });
+    return node;
+  }
+
+  // ---- 選項提示與「說明」連結（#362） ----
+  // 多選一只顯示目前選中那個選項的提示（契約的 value_hints），換選項後跟著換；沒有提示的選項不顯示。
+  function hintLine(item, shown) {
+    const hint = window.ZcItemHelp.hint(item, shown, VALUE);
+    if (!hint) return null;
+    return h('div', { class: 'hint', id: 'hint-' + item.key }, hint.label ? h('strong', {}, hint.label + '：') : null, hint.text);
+  }
+  // 官網的設定說明頁用系統瀏覽器開（Rust 的 open_url；設定視窗本身不離開本機頁面）。
+  function openHelp(url) {
+    invoke('open_url', { url }).catch((error) => toast('無法開啟瀏覽器：' + error + '。網址：' + url, 'error'));
+  }
+  function helpLink(url, label, key) {
+    if (!url) return null;
+    return h('button', {
+      type: 'button', class: 'link help', tabindex: '-1', title: url, 'data-help': key,
+      'aria-label': '「' + label + '」的詳細說明（在瀏覽器開啟）', 'aria-keyshortcuts': 'F1', onclick: () => openHelp(url),
+    }, '說明', h('span', { 'aria-hidden': 'true' }, ' ↗'));
+  }
+  // 頁首的「說明」連結：只有輸入習慣、更新、我的詞彙三頁有（ZcItemHelp.pageUrl），接在頁首那一句後面，
+  // 樣式與行為同逐項的連結。data-help 是設定說明頁的錨點。
+  function pageHelpLink(name, title) {
+    const url = window.ZcItemHelp.pageUrl(name);
+    return helpLink(url, title, url ? url.slice(url.indexOf('#') + 1) : '');
   }
 
   // ---- 中英切換、選字、鍵盤與符號（#207：原本的「輸入設定」一頁 19 項，拆成三頁、不摺疊） ----
   // 各頁依這裡的順序畫（也是 Tab 順序）。不在任何一頁的新項目（較新的 0c-update 才有的設定）放在「選字」最後，
   // 所以契約新增設定時畫面不必先改；要放別頁再加進 keys。輸出設定的兩項在 output()。
-  const SAVE_NOTE = '改動會立即儲存，並在沒有組字時讓輸入法套用。';
+  const SAVE_NOTE = '改動會立即儲存。';
   const INPUT_PAGES = {
     mode: {
-      title: '中英切換', lead: '用哪個鍵切換注音和英文、換程式後回到哪個模式，以及在注音中直接打英文。',
+      title: '中英切換', lead: '用哪個鍵切換注音和英文，以及在注音中直接打英文。',
       // shift-tap-ms（#319，單按 Shift 的時限）是中英切換鍵的細節，接在它下面。
       keys: ['toggle-key', 'shift-tap-ms', 'start-mode', 'mode-memory', 'mixed-input', 'english-autocomplete', 'caps-lock-english', 'style-shift-letter', 'style-caps-letter'],
     },
@@ -522,17 +567,30 @@
       title: '鍵盤與符號', lead: '注音的鍵盤排列，以及標點符號和 Emoji 怎麼打。',
       // emoji-equals-first 是 Emoji 選單的子選項，畫在它下面。
       // shift-symbol-halfwidth（標點寬度，#258、#282 三選一）跟 Ctrl＋標點是一對（半形與全形），排在它下面；
-      // cjk-latin-space（#273，中英文之間自動加空格）也是半形排版，接在後面；cjk-digit-space（中文與數字之間）再接著。
-      keys: ['keyboard-layout', 'ctrl-punctuation', 'shift-symbol-halfwidth', 'cjk-latin-space', 'cjk-digit-space', 'punctuation', 'emoji-shortcut', 'emoji-equals-first', 'style-punctuation', 'style-shift-space', 'style-shift-delete'],
+      // cjk-latin-space（自動加空格，#273；#365 擴成三選一：關閉／中英文之間／中英文與數字之間）也是半形排版，接在後面。
+      keys: ['keyboard-layout', 'ctrl-punctuation', 'shift-symbol-halfwidth', 'cjk-latin-space', 'punctuation', 'emoji-shortcut', 'emoji-equals-first', 'style-punctuation', 'style-shift-space', 'style-shift-delete'],
     },
   };
   const OUTPUT_KEYS = ['output-simplified', 'simplified-hotkey'];
+  const OUTPUT_LEAD = '送出的文字要不要轉成簡體字；也可以從輸入法選單的「輸出簡體字」切換。';
+  // 四組模糊音合成一個開關時的說明（設定頁與搜尋結果共用）。
+  const FUZZY_DESCRIPTION = '候選多列出 ㄗ／ㄓ、ㄘ／ㄔ、ㄙ／ㄕ、ㄣ／ㄥ 的近音字，原音排在前面。';
   const pageTitle = (name) => (INPUT_PAGES[name] ? INPUT_PAGES[name].title : '輸入設定');
   function pageOfKey(key) {
     if (OUTPUT_KEYS.includes(key)) return 'output';
     if (key.startsWith('fuzzy-')) return 'candidates';
     for (const [name, spec] of Object.entries(INPUT_PAGES)) if (spec.keys.includes(key)) return name;
     return 'candidates';
+  }
+
+  // 某一頁由上到下的設定項目（不含合成一個開關的四組模糊音）：設定頁照它畫，搜尋結果（#363）在同一頁裡也照它排。
+  function itemsOnPage(name, items) {
+    if (name === 'output') return OUTPUT_KEYS.map((key) => items.find((item) => item.key === key)).filter(Boolean);
+    const spec = INPUT_PAGES[name];
+    if (!spec) return [];
+    const order = (item) => (spec.keys.includes(item.key) ? spec.keys.indexOf(item.key) : spec.keys.length);
+    return items.filter((item) => pageOfKey(item.key) === name && !item.key.startsWith('fuzzy-'))
+      .map((item, i) => [order(item), i, item]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map(([, , item]) => item);
   }
 
   // 停用的原因在另一頁時（許氏時的中英混打在「中英切換」、鍵盤排列在「鍵盤與符號」），說明要去哪裡改，按了就過去。
@@ -566,14 +624,12 @@
     const locked = settings.file.read_only;
     const items = settings.items || [];
     if (items.some((item) => item.locked && pageOfKey(item.key) === name)) {
-      root.append(h('div', { class: 'notice info' }, h('p', {}, '部分設定' + profileLockLabel() + '。直接修改這些項目時，會自動複製一份成為你自己的輸入習慣再修改，其他設定維持原樣；不相容的功能仍會停用。'),
+      root.append(h('div', { class: 'notice info' }, h('p', {}, '部分設定' + profileLockLabel() + '；改這些項目時，會先複製成你自己的輸入習慣再改。'),
         h('button', { type: 'button', class: 'secondary', 'data-focus': 'style-settings', onclick: () => show('styles') }, '選用風格／複製成自訂')));
     }
     const emoji = items.find((item) => item.key === 'emoji-shortcut');
     const equalsFirst = items.find((item) => item.key === 'emoji-equals-first');
-    const order = (item) => (spec.keys.includes(item.key) ? spec.keys.indexOf(item.key) : spec.keys.length);
-    const mine = items.filter((item) => pageOfKey(item.key) === name && !item.key.startsWith('fuzzy-') && !(emoji && item === equalsFirst))
-      .map((item, i) => [order(item), i, item]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map(([, , item]) => item);
+    const mine = itemsOnPage(name, items).filter((item) => !(emoji && item === equalsFirst));
     const rows = mine.map((item) => {
       const parent = itemRow(item, locked ||
         (item.key === 'emoji-shortcut' && state.busy.has('emoji-equals-first')));
@@ -588,14 +644,18 @@
       const enabled = fuzzy.some((item) => item.value !== 'off');
       const label = h('span', {}, '模糊音');
       if (fuzzy.some((item) => item.pending)) label.append(h('span', { class: 'badge' }, '已儲存，尚未套用'));
-      root.append(h('div', { class: 'card' }, row(
+      // 四組合成一個開關；「說明」連到第一組的那一節（設定說明頁把四個錨點放在同一節）。
+      const fuzzyHelp = window.ZcItemHelp.url(fuzzy[0]);
+      const fuzzyRow = row(
         h('div', {}, h('div', { class: 'label', id: 'label-fuzzy' }, label),
-          h('div', { class: 'desc' }, '開啟時一起加入 ㄗ／ㄓ、ㄘ／ㄔ、ㄙ／ㄕ、ㄣ／ㄥ 的近音候選，原音仍排在前面')),
+          h('div', { class: 'desc' }, FUZZY_DESCRIPTION, helpLink(fuzzyHelp, '模糊音', 'fuzzy'))),
         h('button', {
           type: 'button', class: 'switch', role: 'switch', 'aria-checked': String(enabled), 'aria-labelledby': 'label-fuzzy',
           'data-focus': 'fuzzy', disabled: locked || fuzzy.some((item) => state.busy.has(item.key)),
           onclick: () => changePairs(fuzzy.map((item) => [item.key, enabled ? 'off' : 'select'])),
-        }))));
+        }));
+      if (fuzzyHelp) fuzzyRow.addEventListener('keydown', (event) => { if (event.key === 'F1') { event.preventDefault(); openHelp(fuzzyHelp); } });
+      root.append(h('div', { class: 'card' }, fuzzyRow));
     }
     if ((settings.file.notes || []).length) {
       root.append(h('h2', {}, '注意'), h('div', { class: 'notice' }, ...settings.file.notes.map((note) => h('p', {}, note))));
@@ -607,7 +667,7 @@
     if (problem(root)) return;
     const status = state.status;
     if (packageManaged()) {
-      root.append(h('p', { class: 'lead' }, '目前版本 ' + (status.installed || '未知')),
+      root.append(h('p', { class: 'lead' }, '目前版本 ' + (status.installed || '未知'), pageHelpLink('update', '更新')),
         h('div', { class: 'notice info' },
           h('p', {}, PACKAGE_MANAGED + '。'),
           h('p', {}, '這份靈犀注音是用系統的套件管理員（例如 apt）安裝的，更新與移除也請用套件管理員；這裡不會檢查、下載或安裝更新。')));
@@ -617,7 +677,7 @@
     const op = view.operation;
     const blocked = view.blocked || status.blocked;
     const summary = updateSummary(view);
-    root.append(h('p', { class: 'lead' }, '目前版本 ' + (window.ZcEngineState(status, state.info?.platform).expected || '未知')));
+    root.append(h('p', { class: 'lead' }, '目前版本 ' + (window.ZcEngineState(status, state.info?.platform).expected || '未知'), pageHelpLink('update', '更新')));
     // 進行中的作業由下面的進度列顯示同一句話，狀態框就不再出現（#330）。
     if (!op) root.append(h('div', { class: 'notice' + (summary.tone === 'warn' ? '' : ' info') },
       h('p', {}, summary.text),
@@ -671,8 +731,8 @@
     if (!selectable) facts.push(['更新方式', mode.label]);
     root.append(h('h2', {}, '詳細資訊'), h('div', { class: 'card' }, h('dl', { class: 'facts' }, ...facts.flatMap(([k, v]) => [h('dt', {}, k), h('dd', {}, v)]))));
     if (!selectable && mode.note) root.append(h('p', { class: 'muted', id: 'update-mode-note' }, mode.label + '：' + mode.note));
-    const elevation = isWindows() ? '，可能要求系統管理員確認；裝好不必登出，已經開著的應用程式要重新開啟才會換成新版' : '';
-    root.append(h('p', { class: 'muted' }, '「檢查更新」查詢新版；「立即下載」現在下載並核對套件。完成後可按「立即安裝」' + elevation + '。'));
+    // 按鈕的名稱就說明了用途，底下只留 Windows 安裝前要知道的事（#362）；完整說明在設定說明頁的「更新」。
+    if (isWindows()) root.append(h('p', { class: 'muted' }, '安裝時可能要求系統管理員確認；已經開著的應用程式要重新開啟才會換成新版。'));
   }
 
   // 設定視窗不開外部網址（main.rs 的 local_origin），所以信箱只寫成文字，點一下整段選取方便複製（#152）。
@@ -683,7 +743,7 @@
     root.append(h('h1', {}, '問題排解'),
       h('p', { class: 'lead' }, '遇到問題，寫信到 ', email(), '，描述發生了什麼（在哪個程式、打了什麼、結果怎樣），並附上這裡匯出的檔案。'));
     root.append(h('div', { class: 'card' }, h('div', { class: 'row' },
-      labelBlock('匯出狀態摘要', '包含版本、平台、引擎與設定的狀態、更新狀態。不含你輸入的文字、個人詞庫與使用者名稱。'),
+      labelBlock('匯出狀態摘要', '內容是版本、平台、設定與更新狀態；不含你打的字、個人詞庫和使用者名稱。'),
       h('button', { type: 'button', class: 'primary', disabled: state.exporting, 'data-focus': 'export', onclick: exportSummary }, state.exporting ? '匯出中…' : '匯出'))));
     if (state.summary) {
       root.append(h('div', { class: 'notice info' },
@@ -732,13 +792,413 @@
 
   // 輸出設定：送出的文字怎麼轉換（#118 簡體字），跟打字、選字分開，左側獨立一頁。
   function output(root) {
-    root.append(h('h1', {}, '輸出設定'), h('p', { class: 'lead' }, '決定送到應用程式的文字；組字和候選照常顯示繁體。改動會立即儲存並馬上套用，正在組字的字送出時也照新的設定；也可以從輸入法選單的「輸出簡體字」切換。'));
+    root.append(h('h1', {}, '輸出設定'), h('p', { class: 'lead' }, OUTPUT_LEAD));
     if (problem(root)) return;
     const settings = state.settings;
     root.append(...fileNotices(settings));
     // 「用快捷鍵切換簡體字」（#192）排在「輸出簡體字」下面；說明由 0c-update 依平台寫出快捷鍵。
-    const items = ['output-simplified', 'simplified-hotkey'].map((key) => (settings.items || []).find((item) => item.key === key)).filter(Boolean);
+    const items = itemsOnPage('output', settings.items || []);
     if (items.length) root.append(h('div', { class: 'card' }, ...items.map((item) => itemRow(item, settings.file.read_only))));
+  }
+
+  // ---- 搜尋（#363） ----
+  // 側邊欄最上面的搜尋框打字就找設定；有字時右邊換成結果頁（蓋在目前的頁面上，page 不變，所以清除搜尋就回到原本那一頁）。
+  // 比對、分組與標示在 search.js（ZcSearch，不碰畫面）；這裡是要搜哪些東西、結果頁怎麼畫、鍵盤怎麼操作。
+  // 資料只用已經讀到的 settings／status，搜尋不呼叫後端。
+  //   query：搜尋框裡的字。open：結果頁是否蓋在頁面上。back：頁首上方是否有「回到搜尋結果」（從結果跳過來時）。
+  //   index：選取的是第幾個結果；fresh：查詢剛變，下一次畫結果時重新挑預設選取的那一筆（第一筆沒有停用的）。
+  //   hit：跳過去之後要標出的那一項。focus：進搜尋框之前焦點在哪裡（Esc 還回去）。
+  const find = { query: '', open: false, back: false, index: 0, fresh: false, results: [], scroll: 0, focus: null, hit: null, hitTimer: null, heading: null, composing: false, dom: null, titles: {} };
+  const SEARCH_SUGGESTIONS = ['候選', '標點', 'Shift', '聲調', '簡體', '英文', '更新'];
+  const SEARCH_GUIDE = 'https://0c.biggo.com/guide/settings/';
+  const HIT_MS = 2500; // 標出那一項多久
+  const HIT_FADE_MS = 600; // 淡掉的時間（app.css 的 .row.search-hit 的 transition）
+  // 沒有設定項的頁面，頁面本身是一筆結果：名稱、一句話，加上幾個使用者會打的詞。這幾頁的文字本來就寫在畫面這一側，
+  // 所以關鍵字也放這裡；設定項的關鍵字由 0c-update 的契約（keywords）提供。
+  const PAGE_ENTRIES = {
+    overview: { description: '已安裝的版本、輸入引擎與更新的狀態。', keywords: ['首頁', '概況', '狀況'] },
+    styles: { description: '選一種熟悉的操作習慣，看過差異再套用；想微調可以複製成自訂。', keywords: ['風格', '微軟注音', 'Apple'] },
+    vocab: { description: '加進來的人名、術語打得出來，也看得到靈犀自己學到了什麼。', keywords: ['加詞', '詞庫', '片語', '學到的', '匯入匯出', '清除學習紀錄'] },
+    models: { description: '神經選字與補標點使用的模型。', keywords: ['下載模型', '刪除模型', 'AI', 'Hugging Face'] },
+    update: { description: '檢查有沒有新版，下載並安裝。', keywords: ['版本', '自動更新', '升級'] },
+    troubleshoot: { description: '匯出狀態摘要，寫信回報問題。', keywords: ['客服', '信箱', '故障', '命令列'] },
+    about: { description: '設定程式與輸入法的版本、平台與設定檔的位置。', keywords: ['資訊', 'About'] },
+  };
+  // 四個設定頁（中英切換、選字、鍵盤與符號、輸出設定）本身也是一筆結果，排在那一頁的分組最前面，前往就是切到那一頁。
+  // 只比對頁名：頁首那一句（note）只顯示、不比對，不然搜「標點」「候選」這類的字每次都多出一筆。
+  const SETTINGS_PAGE_NOTES = { mode: INPUT_PAGES.mode.lead, candidates: INPUT_PAGES.candidates.lead, keyboard: INPUT_PAGES.keyboard.lead, output: OUTPUT_LEAD };
+  const isMac = () => (state.info ? /^macos\//.test(state.info.platform || '') : /Mac/i.test(navigator.platform || ''));
+  const searchInput = () => document.getElementById('search-input');
+  const mainPane = () => document.querySelector('main');
+  const reducedMotion = () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+
+  // 所有搜得到的東西，照側邊欄的頁面順序、每一頁由上到下的順序。
+  function searchEntries() {
+    const items = state.settings?.items || [];
+    const out = [];
+    for (const name of PAGES) {
+      if (name === 'vocab' && !vocabEnabled()) continue;
+      const spec = PAGE_ENTRIES[name];
+      const note = SETTINGS_PAGE_NOTES[name];
+      if (spec || note) {
+        const entry = { id: 'page:' + name, kind: 'page', page: name, label: find.titles[name] || name, description: spec ? spec.description : '', note: note || '',
+          keywords: spec ? spec.keywords : [], options: [], value: '' };
+        // 輸入習慣：有哪些風格、目前選用哪一個也搜得到。
+        const profiles = name === 'styles' ? state.settings?.profiles : null;
+        if (profiles) {
+          entry.options = (profiles.items || []).map((profile) => ({ value: profile.id, name: profile.name, label: profile.name, hint: '' }));
+          entry.value = (profiles.items || []).find((profile) => profile.id === profiles.active)?.name || '';
+        }
+        out.push(entry);
+      }
+      for (const item of itemsOnPage(name, items)) out.push(window.ZcSearch.itemEntry(item, name, VALUE));
+      const fuzzy = name === 'candidates' ? items.filter((item) => item.key.startsWith('fuzzy-')) : [];
+      if (fuzzy.length) {
+        // 四組模糊音在「選字」頁合成一個開關，搜尋也只列一筆；四組的關鍵字合在一起。
+        const keywords = [];
+        for (const item of fuzzy) for (const word of (Array.isArray(item.keywords) ? item.keywords : [])) if (typeof word === 'string' && word && !keywords.includes(word)) keywords.push(word);
+        out.push({ id: 'fuzzy', kind: 'item', page: name, key: 'fuzzy', label: '模糊音', description: FUZZY_DESCRIPTION, options: [], keywords,
+          value: fuzzy.some((item) => item.value !== 'off') ? '開啟' : '關閉', disabled: false, reason: '' });
+      }
+      if (name === 'update' && updateModeSelect() && !packageManaged()) {
+        // 更新頁的「更新方式」下拉選單不是 settings 的項目（0c-update mode），照一般項目列出：選項是三種方式，提示是各自的說明。
+        const current = updateMode();
+        const platform = state.info?.platform;
+        out.push({ id: 'update-mode', kind: 'item', page: name, key: 'update-mode', label: '更新方式',
+          description: current.note || '目前的更新方式是「' + current.label + '」。',
+          options: current.options.map((option) => ({ value: option.value, name: option.label, label: option.label,
+            hint: option.value === state.status.mode ? '' : window.ZcUpdateMode(option.value, platform, true).note })),
+          keywords: [], value: current.label, disabled: false, reason: '' });
+      }
+    }
+    return out;
+  }
+
+  // 結果頁的骨架只建一次：報讀筆數的那一行（aria-live）要是同一個節點，換掉就不會唸。
+  function searchDom() {
+    if (find.dom) return find.dom;
+    const kbd = (text) => h('kbd', {}, text);
+    const dom = {
+      section: document.getElementById('page-search'),
+      title: h('h1', { id: 'search-title' }),
+      count: h('p', { class: 'lead', id: 'search-count', role: 'status', 'aria-live': 'polite' }),
+      list: h('div', { id: 'search-results', role: 'listbox', 'aria-labelledby': 'search-title' }),
+      empty: h('div', { class: 'card search-empty', hidden: true },
+        h('div', {}, h('div', { class: 'search-empty-title' }, '換個說法試試'),
+          h('div', { class: 'search-chips' }, ...SEARCH_SUGGESTIONS.map((word) => h('button', {
+            type: 'button', class: 'search-chip', 'data-suggest': word, onclick: () => setQuery(word),
+          }, word)))),
+        h('div', { class: 'search-more' }, h('div', { class: 'search-empty-title' }, '還是找不到？'),
+          h('p', {}, '靈犀注音可能還沒有這個設定。每一項設定的例子和細節都在官網：', h('button', {
+            type: 'button', class: 'link', 'data-focus': 'search-guide', title: SEARCH_GUIDE, 'aria-label': '設定說明（在瀏覽器開啟）',
+            onclick: () => openHelp(SEARCH_GUIDE),
+          }, '設定說明', h('span', { 'aria-hidden': 'true' }, ' ↗'))))),
+      keys: h('div', { class: 'search-keys' }),
+      keysFull: [h('span', {}, kbd('↑'), ' ', kbd('↓'), ' 選擇'), h('span', {}, kbd('Enter'), ' 前往'), h('span', {}, kbd('Esc'), ' 清除，回到原本那一頁')],
+      keysEmpty: [h('span', {}, kbd('Esc'), ' 清除，回到原本那一頁')],
+    };
+    dom.section.append(dom.title, dom.count, dom.list, dom.empty, dom.keys);
+    find.dom = dom;
+    return dom;
+  }
+
+  // 命中的字包成 <mark>。
+  const marked = (text, words) => window.ZcSearch.pieces(text, words).map((piece) => (piece.hit ? h('mark', {}, piece.text) : piece.text));
+  const joined = (parts) => parts.flatMap((part, i) => (i ? ['、', ...part] : part));
+
+  function resultRow(result, index, words) {
+    const { entry, match } = result;
+    const name = h('span', { class: 'result-name' }, marked(entry.label, words));
+    if (entry.reason) name.append(' ', h('span', { class: 'result-reason' }, entry.reason));
+    const lines = [];
+    if (entry.description) lines.push(h('span', { class: 'result-line' }, marked(entry.description, words)));
+    else if (entry.note) lines.push(h('span', { class: 'result-line', 'data-line': 'note' }, entry.note)); // 設定頁的頁首那一句：只顯示，不比對也不標
+    if (match.options.length) lines.push(h('span', { class: 'result-line', 'data-line': 'options' }, '選項：', joined(match.options.map((option) => marked(option.name, words)))));
+    for (const option of match.hints) lines.push(h('span', { class: 'result-line', 'data-line': 'hint' }, '選項「' + option.name + '」：', marked(option.hint, words)));
+    if (match.keywords.length) lines.push(h('span', { class: 'result-line', 'data-line': 'keywords' }, '也可以找：', joined(match.keywords.map((word) => marked(word, words)))));
+    return h('div', {
+      class: 'result' + (entry.disabled ? ' is-disabled' : ''), role: 'option', id: 'search-result-' + index, 'data-result': entry.id,
+      'aria-selected': String(index === find.index), onclick: () => go(index),
+    }, h('span', { class: 'result-text' }, name, lines),
+    // 值的小標籤；報讀軟體唸成「目前：開啟」，跟前面的說明分得開。
+    entry.value ? h('span', { class: 'result-value' }, h('span', { class: 'sr-only' }, '目前：'), entry.value) : null,
+    chevron('M1 1l6 6-6 6', 8, 14, 'result-go'));
+  }
+
+  function setText(node, text) { if (node.textContent !== text) node.textContent = text; }
+
+  function renderResults(found) {
+    const dom = searchDom();
+    const count = found.results.length;
+    find.results = found.results;
+    if (find.fresh) find.index = window.ZcSearch.firstEnabled(found.results);
+    else find.index = count ? Math.min(Math.max(find.index, 0), count - 1) : -1;
+    find.fresh = false;
+    setText(dom.title, '搜尋「' + find.query.trim() + '」');
+    setText(dom.count, count ? '找到 ' + count + ' 個設定。' : '沒有符合的設定。');
+    // 內容沒變就不重建清單：背景更新（更新頁每秒一次）換掉節點的話，滑鼠按下到放開之間那一列不見了，會點不到。
+    const signature = JSON.stringify([found.terms, found.results.map(({ entry, match }) => [entry.id, entry.label, entry.description, entry.value, entry.reason, match])]);
+    if (signature !== dom.signature) {
+      dom.signature = signature;
+      clear(dom.list);
+      let index = 0;
+      for (const group of found.groups) {
+        const id = 'search-group-' + group.page;
+        dom.list.append(h('div', { role: 'group', 'aria-labelledby': id },
+          h('div', { class: 'search-group', id, role: 'presentation' }, find.titles[group.page] || group.page),
+          h('div', { class: 'card search-card', role: 'presentation' }, ...group.results.map((result) => resultRow(result, index++, found.terms)))));
+      }
+    } else {
+      for (const node of dom.list.querySelectorAll('[role="option"]')) node.setAttribute('aria-selected', String(node.id === 'search-result-' + find.index));
+    }
+    dom.list.hidden = !count;
+    dom.empty.hidden = !!count;
+    const keys = count ? dom.keysFull : dom.keysEmpty;
+    if (dom.keys.firstChild !== keys[0]) clear(dom.keys).append(...keys);
+    const input = searchInput();
+    if (count) input.setAttribute('aria-activedescendant', 'search-result-' + find.index);
+    else input.removeAttribute('aria-activedescendant');
+  }
+
+  // 側邊欄：搜尋中各頁旁標出命中的筆數，沒命中的頁面變淡；count 為 null 表示不在搜尋。
+  function navBadge(button, count) {
+    let badge = button.querySelector('.nav-count');
+    if (!count) { if (badge) badge.remove(); } else {
+      if (!badge) { badge = h('span', { class: 'nav-count' }, h('span', { 'aria-hidden': 'true' }), h('span', { class: 'sr-only' })); button.append(badge); }
+      setText(badge.firstChild, String(count));
+      setText(badge.lastChild, '，' + count + ' 個符合');
+    }
+    button.classList.toggle('nav-dim', count === 0);
+  }
+
+  // 頁首上方的「回到「…」的搜尋結果」：從結果跳到某一頁之後才有，換頁或清除搜尋就消失。
+  function renderBack() {
+    const node = document.getElementById('search-back');
+    const shown = !find.open && find.back && !!find.query.trim();
+    node.hidden = !shown;
+    const text = '回到「' + find.query.trim() + '」的搜尋結果';
+    if (shown && node.dataset.text !== text) {
+      node.dataset.text = text;
+      clear(node).append(chevron('M7 1L1 7l6 6', 7, 12), text);
+    }
+  }
+
+  function syncSearchBox() {
+    const input = searchInput();
+    const has = input.value !== '';
+    input.parentElement.classList.toggle('has-query', has);
+    document.getElementById('search-clear').hidden = !has;
+  }
+
+  // 顯示結果頁。記下原本那一頁捲到哪裡，清除搜尋時還原。
+  function openSearch() {
+    if (find.open || !find.query.trim()) return;
+    const main = mainPane();
+    find.scroll = main.scrollTop;
+    find.open = true;
+    find.back = false;
+    find.heading = null;
+    clearHit();
+    render();
+    main.scrollTop = 0;
+    selectResult(find.index);
+  }
+
+  function closeSearch() {
+    if (!find.open) return;
+    find.open = false;
+    render();
+    mainPane().scrollTop = find.scroll;
+  }
+
+  // 搜尋框的內容變了（打字、貼上、刪除）。輸入法組字中先不搜，組完（compositionend）再搜：不然注音打到一半就會閃出「沒有符合的設定」。
+  function onSearchInput() {
+    if (find.composing) return;
+    find.query = searchInput().value;
+    syncSearchBox();
+    if (!find.query.trim()) {
+      find.back = false;
+      if (find.open) closeSearch(); else render();
+      return;
+    }
+    find.index = 0;
+    find.fresh = true;
+    if (!find.open) { openSearch(); return; }
+    render();
+    mainPane().scrollTop = 0;
+    selectResult(find.index);
+  }
+
+  // 直接搜某個詞（找不到時的建議關鍵字）。
+  function setQuery(word) {
+    const input = searchInput();
+    input.value = word;
+    find.composing = false;
+    input.focus();
+    onSearchInput();
+  }
+
+  function clearSearch() {
+    searchInput().value = '';
+    find.composing = false;
+    onSearchInput();
+  }
+
+  // ↑↓ 只換選取的那一列，不重畫整頁。
+  function selectResult(index) {
+    if (!find.open || !find.results.length) return;
+    find.index = Math.min(Math.max(index, 0), find.results.length - 1);
+    const dom = searchDom();
+    for (const node of dom.list.querySelectorAll('[role="option"]')) node.setAttribute('aria-selected', String(node.id === 'search-result-' + find.index));
+    searchInput().setAttribute('aria-activedescendant', 'search-result-' + find.index);
+    const node = document.getElementById('search-result-' + find.index);
+    if (!node) return;
+    // 第一個結果連同上面的標題一起露出來。
+    if (find.index === 0) mainPane().scrollTop = 0; else node.scrollIntoView({ block: 'nearest' });
+  }
+
+  // 搜尋框有焦點時的按鍵：↑↓ 移動選取、Enter 前往、Esc 清除（已經是空的就把焦點還給原本的位置）。
+  // 輸入法組字中這些鍵是輸入法的（選字、送出、取消），不處理。其他按鍵都不碰。
+  function onSearchKey(event) {
+    if (event.isComposing || event.keyCode === 229 || find.composing || event.altKey || event.ctrlKey || event.metaKey) return;
+    if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && !event.shiftKey) {
+      if (!find.open) return;
+      event.preventDefault();
+      selectResult(window.ZcSearch.step(find.index, event.key === 'ArrowDown' ? 1 : -1, find.results.length));
+    } else if (event.key === 'Enter') {
+      if (!find.open || !find.results.length) return;
+      event.preventDefault();
+      go(find.index);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      if (searchInput().value !== '') clearSearch(); else returnFocus();
+    }
+  }
+
+  // Ctrl＋F（macOS 是 ⌘F）：聚焦搜尋框並全選。記下原本的焦點，Esc 還回去。
+  function focusSearch() {
+    const input = searchInput();
+    const active = document.activeElement;
+    if (active && active !== input && active !== document.body) find.focus = { node: active, key: active.dataset ? active.dataset.focus || null : null };
+    input.focus();
+    input.select();
+  }
+
+  function returnFocus() {
+    const before = find.focus;
+    find.focus = null;
+    const usable = (node) => node && node.isConnected && !node.disabled && node.getClientRects().length > 0;
+    let node = before && usable(before.node) ? before.node : null;
+    if (!node && before && before.key) node = Array.from(document.querySelectorAll('[data-focus]')).find((other) => other.dataset.focus === before.key && usable(other));
+    if (node) node.focus(); else searchInput().blur();
+  }
+
+  // 結果對應到頁面上的哪一列、哪個控制項。
+  function hitTarget(hit) {
+    const section = document.getElementById('page-' + hit.page);
+    if (!section || hit.kind !== 'item') return {};
+    const key = hit.key;
+    const control = section.querySelector('input[name="' + CSS.escape(key) + '"]:checked') || section.querySelector('input[name="' + CSS.escape(key) + '"]') ||
+      Array.from(section.querySelectorAll('[data-focus]')).find((node) => node.dataset.focus === key);
+    const label = document.getElementById('label-' + key);
+    const row = (control && control.closest('.row')) || (label && section.contains(label) ? label.closest('.row') : null);
+    return { row, control };
+  }
+
+  function clearHit() {
+    clearTimeout(find.hitTimer);
+    find.hit = null;
+    document.querySelectorAll('.search-hit').forEach((node) => node.classList.remove('search-hit', 'search-hit-fade'));
+  }
+
+  // 重畫之後把標示加回去（每次重畫那一列都是新的節點）。fading 之後是淡掉的階段。
+  function applyHit() {
+    const hit = find.hit;
+    if (!hit || find.open || hit.page !== page) return;
+    const { row } = hitTarget(hit);
+    if (!row) return;
+    row.classList.add('search-hit');
+    row.classList.toggle('search-hit-fade', !!hit.fading);
+  }
+
+  // 前往某個結果：切到那一頁、捲到那一項並標出來（約 2.5 秒後淡掉），焦點移到它的控制項，鍵盤可以直接改。
+  function go(index) {
+    const result = find.results[index];
+    if (!result) return;
+    const entry = result.entry;
+    clearHit();
+    find.index = index;
+    find.open = false;
+    find.back = true;
+    find.heading = entry.kind === 'page' ? entry.page : null;
+    find.hit = entry.kind === 'item' ? { kind: 'item', page: entry.page, key: entry.key, fading: false } : null;
+    page = entry.page;
+    if (page === 'overview' && vocabEnabled()) vocab.refreshOverview().then(() => { if (page === 'overview') render(); });
+    if (page === 'models') models.refresh().then(() => { if (page === 'models') render(); });
+    const main = mainPane();
+    main.scrollTop = 0;
+    render();
+    const section = document.getElementById('page-' + page);
+    const { row, control } = find.hit ? hitTarget(find.hit) : {};
+    if (row) {
+      // 這一項本來就在畫面裡就不捲（頁首與「回到搜尋結果」留在原位）；在下面看不到的才捲到中間。
+      const box = row.getBoundingClientRect();
+      const view = main.getBoundingClientRect();
+      if (box.top < view.top + 56 || box.bottom > view.bottom - 16) row.scrollIntoView({ block: 'center' });
+    }
+    // 停用的項目沒有能按的控制項：有「到某頁修改」的連結就給它，否則把焦點放在那一列上（報讀軟體會唸出名稱與原因）。
+    let target = control && !control.matches(':disabled') ? control : null;
+    if (!target && row) target = row.querySelector('button.link.goto');
+    if (!target && row) { row.tabIndex = -1; target = row; }
+    if (!target) target = section.querySelector('h1[tabindex]');
+    if (target) target.focus({ preventScroll: true }); else searchInput().blur();
+    if (find.hit) {
+      const hit = find.hit;
+      find.hitTimer = setTimeout(() => {
+        if (find.hit !== hit) return;
+        // 減少動態效果：不做漸變，時間到直接移除。
+        if (reducedMotion()) { clearHit(); return; }
+        hit.fading = true;
+        applyHit();
+        find.hitTimer = setTimeout(() => { if (find.hit === hit) clearHit(); }, HIT_FADE_MS);
+      }, HIT_MS);
+    }
+  }
+
+  function initSearch() {
+    const input = searchInput();
+    document.querySelectorAll('.nav').forEach((button) => { find.titles[button.dataset.page] = button.textContent; });
+    input.maxLength = 60;
+    input.addEventListener('input', onSearchInput);
+    input.addEventListener('compositionstart', () => { find.composing = true; });
+    input.addEventListener('compositionend', () => { find.composing = false; onSearchInput(); });
+    input.addEventListener('keydown', onSearchKey);
+    // 回到搜尋框（點它、Tab、Ctrl＋F）而且裡面有字：回到結果頁。焦點從頁面上的控制項來時記下來，Esc 還回去。
+    input.addEventListener('focus', (event) => {
+      const from = event.relatedTarget;
+      if (from && from !== input && from.id !== 'search-back' && !input.parentElement.contains(from)) find.focus = { node: from, key: from.dataset ? from.dataset.focus || null : null };
+      openSearch();
+    });
+    document.getElementById('search-clear').addEventListener('click', () => { clearSearch(); input.focus(); });
+    document.getElementById('search-back').addEventListener('click', () => { input.focus(); input.select(); });
+    // 只攔 Ctrl＋F（macOS 是 ⌘F；Mac 的 Ctrl＋F 是文字框裡游標往前一格，不能搶）。其他鍵都不在這裡處理，
+    // 「我的詞彙」等輸入框的按鍵照舊。
+    document.addEventListener('keydown', (event) => {
+      if (event.isComposing || event.altKey || event.shiftKey) return;
+      // 輸入法開著時 key 可能不是字母（注音符號、Process）：這時看實體鍵位。
+      const key = event.key || '';
+      const letter = key.length === 1 && /[a-z]/i.test(key) ? key.toLowerCase() : (event.code === 'KeyF' ? 'f' : '');
+      if (letter !== 'f' || (isMac() ? !(event.metaKey && !event.ctrlKey) : !(event.ctrlKey && !event.metaKey))) return;
+      event.preventDefault();
+      focusSearch();
+    });
+    searchPlatform();
+  }
+
+  // 快捷鍵提示照平台：macOS 是 ⌘F，其他是 Ctrl F。平台要等 app_info；之前先看瀏覽器回報的。
+  function searchPlatform() {
+    setText(document.getElementById('search-key'), isMac() ? '⌘F' : 'Ctrl F');
+    searchInput().setAttribute('aria-keyshortcuts', isMac() ? 'Meta+F' : 'Control+F');
   }
 
   const RENDER = {
@@ -752,10 +1212,12 @@
   const holdingUpdateMode = () => page === 'update' && !state.modeBusy && document.activeElement?.dataset?.focus === 'update-mode';
   function render() {
     // 名稱輸入仍在組字時保留原欄位；背景 refresh 的結果等 compositionend 再畫。
-    if (page === 'styles' && styles?.composing()) return;
+    if (!find.open && page === 'styles' && styles?.composing()) return;
     if (holdingUpdateMode()) { renderLater = true; return; }
     renderLater = false;
     const main = document.querySelector('main');
+    // 搜尋中（#363）：結果頁蓋在目前的頁面上，頁面本身先不畫；側邊欄沒有「目前頁面」，改標各頁命中的筆數。
+    const found = find.open ? window.ZcSearch.search(searchEntries(), find.query, PAGES) : null;
     const scroll = { top: main.scrollTop, left: main.scrollLeft };
     const focused = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.focus : null;
     const selection = focused === 'style-name' ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
@@ -763,14 +1225,25 @@
     if (page === 'vocab' && vocabOn === false) { page = 'overview'; vocab.setActive(false); }
     document.querySelectorAll('.nav').forEach((button) => {
       if (button.dataset.page === 'vocab') button.hidden = !vocabOn;
-      if (button.dataset.page === page) button.setAttribute('aria-current', 'page');
+      if (!found && button.dataset.page === page) button.setAttribute('aria-current', 'page');
       else button.removeAttribute('aria-current');
+      navBadge(button, found ? found.counts[button.dataset.page] || 0 : null);
     });
     for (const name of PAGES) {
       const section = document.getElementById('page-' + name);
-      section.hidden = name !== page;
-      if (name === page) RENDER[name](name === 'vocab' ? section : clear(section));
+      section.hidden = !!found || name !== page;
+      if (!found && name === page) {
+        RENDER[name](name === 'vocab' ? section : clear(section));
+        // 從搜尋結果跳到一整頁時，焦點放在頁首標題上（go()）；背景重畫後還原焦點要找得到它。
+        const heading = find.heading === name ? section.querySelector('h1') : null;
+        if (heading) { heading.tabIndex = -1; heading.dataset.focus = 'heading'; }
+      }
     }
+    document.getElementById('page-search').hidden = !found;
+    main.classList.toggle('searching', !!found);
+    if (found) renderResults(found);
+    renderBack();
+    applyHit();
     if (page === 'vocab' && vocabOn && !vocabActive) { vocabActive = true; vocab.setActive(true); }
     else if (page !== 'vocab' && vocabActive) { vocabActive = false; vocab.setActive(false); }
     // 背景更新（每 15 秒、視窗重新取得焦點）會重建控制項。區段暫時清空時被歸零的捲動位置要還原，
@@ -792,6 +1265,11 @@
   let vocabActive = false;
   function show(name) {
     const next = pageName(name);
+    // 換頁（側邊欄、頁面上的連結、外部的 --page）就離開搜尋結果；搜尋框裡的字留著，回到搜尋框就回到結果頁（#363）。
+    if (find.open) { find.open = false; document.querySelector('main').scrollTop = 0; }
+    find.back = false;
+    find.heading = null;
+    clearHit();
     if (next !== page) document.querySelector('main').scrollTop = 0;
     page = next;
     if (page === 'overview' && vocabEnabled()) vocab.refreshOverview().then(() => { if (page === 'overview') render(); });
@@ -812,9 +1290,10 @@
       engineRunning: () => (state.status && state.status.runtime ? state.status.runtime.state === 'running' : null),
       personalReset,
       personalResetEnabled: () => !!(state.settings && state.settings.features && state.settings.features.personal_reset),
+      helpLink: () => pageHelpLink('vocab', '我的詞彙'),
     });
     styles = window.ZcInputStyles({
-      h, render, settings: () => state.settings, showKeyboard: () => show('keyboard'),
+      h, render, settings: () => state.settings, showKeyboard: () => show('keyboard'), helpLink: () => pageHelpLink('styles', '輸入習慣'),
       valueLabel: (item, value) => window.ZcInputStylesLogic.valueLabel(item, value, VALUE),
       mutate: async (action, id, name) => {
         state.profileBusy = true;
@@ -832,7 +1311,15 @@
       visible: () => page === 'models' && !document.hidden,
     });
     document.querySelectorAll('.nav').forEach((button) => button.addEventListener('click', () => show(button.dataset.page)));
+    initSearch();
+    // 頁首有「說明」連結的頁面（#362），F1 開那一頁的說明；焦點在某一項上時那一項自己處理了（preventDefault），這裡不再開一次。
+    document.addEventListener('keydown', (event) => {
+      if (event.key !== 'F1' || event.defaultPrevented || find.open) return;
+      const help = window.ZcItemHelp.pageUrl(page);
+      if (help) { event.preventDefault(); openHelp(help); }
+    });
     try { state.info = await invoke('app_info'); } catch (_) { /* 關於頁顯示未知 */ }
+    searchPlatform();
     // 要開的頁面由網址參數帶進來（?page=update）；舊的 input 導到中英切換，不認得的開總覽。
     page = pageName(new URLSearchParams(window.location.search).get('page'));
     if (tauri.event) {

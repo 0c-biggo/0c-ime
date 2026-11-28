@@ -60,14 +60,14 @@ func TestCJKLatinSpaceDefaultsOffAndPersists(t *testing.T) {
 	}
 	for _, it := range Default().Items() {
 		if it.Key == "cjk-latin-space" {
-			if it.Value != "off" || it.Default != "off" || it.Label != "中英文之間自動加空格" || it.Locked ||
-				!strings.Contains(it.Description, "「用Python寫」送出「用 Python 寫」") || !strings.Contains(it.Description, "數字旁不補") {
+			if it.Value != "off" || it.Default != "off" || it.Label != "自動加空格" || it.Locked || // #365 改名、擴成三選一
+				!strings.Contains(it.ValueHints["on"], "「用 Python 寫」") || !strings.Contains(settingsReference(t), "數字旁邊不補") { // 細節在設定參考文件（#362）
 				t.Fatalf("設定程式的項目：%+v", it)
 			}
 			return
 		}
 	}
-	t.Fatal("設定程式看不到中英文之間自動加空格的開關")
+	t.Fatal("設定程式看不到自動加空格")
 }
 
 // 不屬於輸入習慣風格：選用內建風格時照樣可以單獨開關，換風格不改這個開關。

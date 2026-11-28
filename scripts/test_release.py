@@ -3017,7 +3017,7 @@ Successfully verified: 0c-update.exe
         node = shutil.which("node")
         if not node:
             self.skipTest("沒有 node")
-        for name in ("app.js", "models.js", "vocab.js", "vocab-text.js", "personal-reset.js"):
+        for name in ("app.js", "models.js", "vocab.js", "vocab-text.js", "personal-reset.js", "search.js"):
             app = Path(__file__).resolve().parents[1] / "platforms/settings/ui" / name
             result = subprocess.run([node, "--check", str(app)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, name + "：" + result.stderr)
@@ -3076,6 +3076,84 @@ Successfully verified: 0c-update.exe
         test = Path(__file__).resolve().parents[1] / "platforms/settings/test/update_mode_test.js"
         result = subprocess.run([node, "--test", str(test)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_settings_ui_item_help(self):
+        # #362 選項提示只顯示選中那一項、「說明」連結只認官網說明文件；舊版 0c-update 沒有這兩個欄位時不顯示。
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("沒有 node")
+        test = Path(__file__).resolve().parents[1] / "platforms/settings/test/item_help_test.js"
+        result = subprocess.run([node, "--test", str(test)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_settings_ui_search(self):
+        # #363 設定搜尋的比對與排序：名稱、說明、選項名稱、選項提示與關鍵字；不分大小寫與全半形、多個詞都要命中；
+        # 分組照側邊欄的頁面順序、組內照頁面由上到下；停用的項目帶原因與實際使用的值；舊版 0c-update 沒有 keywords 照樣能搜。
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("沒有 node")
+        test = Path(__file__).resolve().parents[1] / "platforms/settings/test/search_test.js"
+        result = subprocess.run([node, "--test", str(test)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_settings_ui_waits_on_updater_calls(self):
+        # #366：畫面測試等「讀完設定」「儲存完成、畫面重讀設定」，看 calls.sh 記下的 0c-update 呼叫，不靠固定秒數。
+        import importlib.util
+        path = Path(__file__).resolve().parents[1] / "platforms/settings/test/calls_wait.py"
+        spec = importlib.util.spec_from_file_location("calls_wait", path)
+        calls = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(calls)
+        ev = lambda text: [line.split() for line in text.strip().splitlines()]  # noqa: E731
+        # 開窗：讀完設定、沒有進行中的呼叫才算畫好；status 還沒回來不算。
+        self.assertFalse(calls.met(ev("start 1 status\nstart 2 settings"), "ready"))
+        self.assertFalse(calls.met(ev("start 1 status\nstart 2 settings\nend 2 settings 0"), "ready"))
+        self.assertTrue(calls.met(ev("start 1 status\nstart 2 settings\nend 2 settings 0\nend 1 status 0"), "ready"))
+        # 儲存：set 還在跑、set 剛結束還沒重讀、重讀到一半都不算；之前就開始的 settings 不算重讀。
+        self.assertFalse(calls.met(ev("start 3 set"), "saved"))
+        self.assertFalse(calls.met(ev("start 3 set\nend 3 set 0"), "saved"))
+        self.assertFalse(calls.met(ev("start 3 set\nend 3 set 0\nstart 4 status\nstart 5 settings\nend 5 settings 0"), "saved"))
+        self.assertFalse(calls.met(ev("start 3 set\nstart 9 settings\nend 3 set 0\nend 9 settings 0"), "saved"))
+        self.assertTrue(calls.met(ev("start 3 set\nend 3 set 0\nstart 4 status\nstart 5 settings\nend 5 settings 0\nend 4 status 0"), "saved"))
+        # 複製成自訂再改一項：最後一個動作（set）之後的重讀才算。
+        self.assertFalse(calls.met(ev("start 1 profile\nend 1 profile 0\nstart 2 settings\nend 2 settings 0\nstart 3 set"), "saved"))
+        # 更新頁每秒查一次 status：讀取不算動作，只有讀取時一直等不到 saved。
+        self.assertFalse(calls.met(ev("start 1 status\nend 1 status 0\nstart 2 settings\nend 2 settings 0"), "saved"))
+        # 上一個設定程式（100）被結束時還沒跑完的 settings，在新的（200）啟動、紀錄清空後才寫下結束：不算新的讀完設定。
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "calls.log"
+            log.write_text("end 7 settings 100 0\n")
+            self.assertTrue(calls.met(calls.parse(str(log), 0), "ready"))  # 不分是誰的會誤判
+            self.assertFalse(calls.met(calls.parse(str(log), 0, "200"), "ready"))
+            log.write_text(log.read_text() + "start 8 status 200\nstart 9 settings 200\nend 9 settings 200 0\nend 8 status 200 0\n")
+            self.assertTrue(calls.met(calls.parse(str(log), 0, "200"), "ready"))
+
+    def test_settings_ui_window_search_survives_vanishing_windows(self):
+        # #366：Ubuntu 22.04 的 xdotool 3.20160805 搜尋到一半有視窗被摧毀就因 BadWindow 結束（--sync 也一起放棄），
+        # 畫面測試「視窗沒有出現」的偶發失敗就是這個。視窗一律經 smoke.sh 的 app_windows 找（遇到 BadWindow 重查）。
+        test = Path(__file__).resolve().parents[1] / "platforms/settings/test"
+        for script in sorted(test.glob("*.sh")):
+            for number, line in enumerate(script.read_text(encoding="utf-8").splitlines(), 1):
+                if "xdotool search" in line and not line.lstrip().startswith("#"):
+                    self.assertTrue(script.name == "smoke.sh" and "2>/tmp/xdotool.err" in line,
+                                    f"{script.name}:{number} 直接用 xdotool search；改用 app_windows／app_window")
+                    self.assertNotIn("--sync", line, f"{script.name}:{number}")
+        # Xvfb 預設在最後一個用戶端離開時重設、重設期間不收連線：場景之間正好一個用戶端都不剩，要 -noreset。
+        xvfb = [line for line in (test / "smoke.sh").read_text(encoding="utf-8").splitlines() if line.startswith("Xvfb ")]
+        self.assertEqual(len(xvfb), 1)
+        self.assertIn(" -noreset ", xvfb[0])
+
+    def test_settings_ui_refuses_a_second_run_on_the_same_output(self):
+        # #366：同一個 --out 同時跑兩份會互相蓋掉截圖與 bin（0.2.14 的紀錄）；第二份要拒絕並說明，不同的 --out 可以並行。
+        import test_settings_ui
+        with tempfile.TemporaryDirectory() as tmp:
+            first = test_settings_ui.lock_out(Path(tmp))
+            script = f"import sys; sys.path.insert(0, {str(Path(__file__).resolve().parent)!r}); import test_settings_ui, pathlib; test_settings_ui.lock_out(pathlib.Path({tmp!r}))"
+            result = subprocess.run([shutil.which("python3") or "python3", "-c", script], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("不同的 --out", result.stderr)
+            first.close()
+            result = subprocess.run([shutil.which("python3") or "python3", "-c", script], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_system_install_puts_ibus_component_where_ibus_daemon_reads(self):
         # #181：ibus-daemon 只讀它自己的元件目錄（IBus 1.5.34 實測不讀 /usr/local/share/ibus/component），

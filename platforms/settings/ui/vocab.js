@@ -203,7 +203,7 @@ window.ZcVocab = function (ctx) {
     el.io = h('div', {});
     el.root = h('div', { class: 'vocab' },
       h('div', { class: 'vtitle' }, h('h1', {}, '我的詞彙'), h('div', { class: 'vio' }, el.exportButton, el.importButton, el.fileInput)),
-      h('p', { class: 'lead' }, '加進來的人名、術語打得出來，也看得到靈犀自己學到了什麼。'),
+      h('p', { class: 'lead' }, '加進來的人名、術語打得出來，也看得到靈犀自己學到了什麼。', ctx.helpLink ? ctx.helpLink() : null),
       el.io, tabBar, el.notices, el.panels.words, el.panels.learned, el.panels.phrases,
       h('h2', {}, '最近變更'), el.batches, el.ai, el.undo);
     section.append(el.root);
@@ -523,7 +523,7 @@ window.ZcVocab = function (ctx) {
     if (d.problem) { el.draft.append(h('p', { class: 'status-warn small' }, d.problem)); return; }
     if (d.pending) { el.draft.append(h('p', { class: 'muted small' }, '查讀音中…')); return; }
     if (d.english) {
-      el.draft.append(h('p', { class: 'muted small' }, '英文詞不需要讀音：中英混打時打「' + d.text + '」就照英文送出，不會變成注音（大小寫要相同）；開了英文模式自動補字，打前幾個字母就會建議（不分大小寫）。按 Enter 加入。'));
+      el.draft.append(h('p', { class: 'muted small' }, '英文詞不需要讀音，中英混打時打「' + d.text + '」會照英文送出（大小寫要相同）。按 Enter 加入。'));
       return;
     }
     const chars = charsOf(d.text, d.ann);

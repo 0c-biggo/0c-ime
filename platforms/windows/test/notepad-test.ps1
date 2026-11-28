@@ -18,6 +18,9 @@ public static class NoteProbe {
  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
  [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hwnd,uint msg,IntPtr wp,IntPtr lp);
  [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hwnd,uint msg,IntPtr wp,IntPtr lp);
+ [StructLayout(LayoutKind.Sequential)] public struct RECT {public int Left,Top,Right,Bottom;}
+ [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd,out RECT r);
+ [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
  public static void Shift(bool down){keybd_event(0xA1,0x36,down?0u:2u,UIntPtr.Zero);}
  [DllImport("user32.dll")] static extern void keybd_event(byte key,byte scan,uint flags,UIntPtr extra);
  public static void Type(string s){foreach(char c in s){byte k=(byte)char.ToUpperInvariant(c);keybd_event(k,0,0,UIntPtr.Zero);System.Threading.Thread.Sleep(30);keybd_event(k,0,2,UIntPtr.Zero);}}
@@ -107,6 +110,45 @@ public static class NoteProbe {
  if([NoteProbe]::GetForegroundWindow() -ne $own.MainWindowHandle){throw 'Notepad test window lost focus'}
  [NoteProbe]::Type('su3cl3su3cl3');Pump 1000
  Send '{ENTER}';SaveExpect '你好你好' 'notepad_fast_typing_commit'
+ # #369：單按 Shift 切英文後保留的組字，↓ 照樣開候選、回頭改前面的字（以前 ↓ 交給記事本，插入點跑到下一行，組字留在原處）。
+ # 先留一個空的第二行，↓ 交給記事本時插入點會離開組字所在的這一行。先打一次不改字的當基準，再打一次回頭改「自」。
+ Add-Type -AssemblyName System.Drawing
+ [NoteProbe]::SetProcessDPIAware()|Out-Null
+ function CandidateShown {$c=[NoteProbe]::FindWindow('ZuinCandidateWindow','Zuin');return $c -ne [IntPtr]::Zero -and [NoteProbe]::IsWindowVisible($c)}
+ function Shot([string]$name){
+  $r=New-Object NoteProbe+RECT;[NoteProbe]::GetWindowRect($own.MainWindowHandle,[ref]$r)|Out-Null
+  $c=[NoteProbe]::FindWindow('ZuinCandidateWindow','Zuin')
+  if(CandidateShown){$q=New-Object NoteProbe+RECT;[NoteProbe]::GetWindowRect($c,[ref]$q)|Out-Null
+   $r.Left=[Math]::Min($r.Left,$q.Left);$r.Top=[Math]::Min($r.Top,$q.Top);$r.Right=[Math]::Max($r.Right,$q.Right);$r.Bottom=[Math]::Max($r.Bottom,$q.Bottom)}
+  $w=[Math]::Min($r.Right-$r.Left,1400);$h=[Math]::Min($r.Bottom-$r.Top,700)
+  $bmp=New-Object Drawing.Bitmap $w,$h;$g=[Drawing.Graphics]::FromImage($bmp)
+  $g.CopyFromScreen($r.Left,$r.Top,0,0,(New-Object Drawing.Size $w,$h));$g.Dispose()
+  $bmp.Save((Join-Path $ResultDir $name),[Drawing.Imaging.ImageFormat]::Png);$bmp.Dispose()
+ }
+ Send '^a';Send '{BACKSPACE}';Send '{ENTER}';Send '^{HOME}'
+ Latin 'ji3ul4283u 2j04y4';Shift $true;Shift $false;Latin 'test';Send '{ENTER}'
+ Shift $true;Shift $false # 回到注音
+ Send '^s';Pump 500
+ $baseline=[IO.File]::ReadAllText($file);$report.english_down_baseline=$baseline
+ if($baseline -notmatch '^我要打一段(.)test\r\n$'){throw "english-mode baseline unexpected: $baseline"}
+ $kept=$Matches[1]
+ Send '^a';Send '{BACKSPACE}';Send '{ENTER}';Send '^{HOME}'
+ Latin 'ji3ul4283u 2j04y4';Shift $true;Shift $false;Latin 'test'
+ 1..5|ForEach-Object{Send '{LEFT}'}
+ Send '{DOWN}'
+ $deadline=(Get-Date).AddSeconds(3);while(-not (CandidateShown) -and (Get-Date) -lt $deadline){Pump 100}
+ Pump 400;Shot 'notepad-english-down.png'
+ if(-not (CandidateShown)){
+  # 先清掉留下的組字並存檔，關記事本時才不會跳出「要儲存嗎」。
+  Send '{ESC}';Send '{ESC}';Send '^s';Pump 500
+  throw 'english-mode Down did not open candidates for the kept composition (#369)'
+ }
+ Latin '2';Send '{END}';Latin 'ok';Send '{ENTER}'
+ Shift $true;Shift $false # 回到注音
+ Send '^s';Pump 500
+ $after=[IO.File]::ReadAllText($file);$report.english_down_result=$after
+ if($after -notmatch '^我要打一段(.)testok\r\n$' -or $Matches[1] -eq $kept){throw "english-mode Down selection not applied: $after"}
+ $report.checks+='notepad_english_mode_down_selects'
  $report.dll=($own.Modules | Where-Object ModuleName -eq '0c_tsf.dll' | Select-Object -First 1).FileName
  if($report.dll -ne $ExpectedDLL){throw 'unexpected Notepad DLL'}
  $report.checks+='notepad_new_dll_loaded'

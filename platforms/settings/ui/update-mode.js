@@ -16,7 +16,7 @@ window.ZcUpdateMode = function (mode, platform, current = true) {
   ];
   const NOTES = {
     auto: windows
-      ? '在背景下載，大部分更新會在閒置時完成。少數要改輸入法註冊的更新，背景沒有系統管理員權限，下載好會通知你，確認系統管理員權限後才安裝。'
+      ? '在背景下載，閒置時完成更新；少數更新要你確認系統管理員權限才安裝。'
       : '在背景下載與核對，在閒置或離開電腦時完成更新。',
     ask: '在背景下載與核對，有新版本時通知你，按「立即安裝」才更新。',
     manual: current

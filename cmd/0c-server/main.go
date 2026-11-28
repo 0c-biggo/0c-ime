@@ -1,6 +1,6 @@
 //go:debug default=go1.26
 
-// 0c-server 是行程外的輸入法引擎（docs/19）：在 unix socket（Linux／macOS）或 named pipe（Windows）上
+// 0c-server 是行程外的輸入法引擎：在 unix socket（Linux／macOS）或 named pipe（Windows）上
 // 為平台薄殼（Fcitx 5 addon、TSF DLL 等）提供服務。每位使用者一個實例；它是個人化資料唯一的寫入者。
 package main
 
@@ -163,9 +163,9 @@ func serve() string {
 	eng.ShiftSymbolHalfwidth = config.ShiftSymbolHalfwidth // #258
 	eng.AllSymbolsHalfwidth = config.AllSymbolsHalfwidth   // #282
 	eng.CJKLatinSpace = config.CJKLatinSpace               // #273
-	eng.CJKDigitSpace = config.CJKDigitSpace
-	eng.ZhuyinErrorHint = config.ZhuyinErrorHint // #300
-	eng.NoLearning = !config.PersonalLearning    // #297
+	eng.CJKDigitSpace = config.CJKDigitSpace               // #365：只在 CJKLatinSpace 也開著時是 true（settings 讀取時取 AND）
+	eng.ZhuyinErrorHint = config.ZhuyinErrorHint           // #300
+	eng.NoLearning = !config.PersonalLearning              // #297
 	// #173：Windows、Linux 的設定；macOS 開 Caps Lock 一律切到英文（#84），不看設定檔的值。
 	capsSetting := config.CapsLockEnglish && (settings.CapsLockEnglishSetting(runtime.GOOS) || config.ProfileRules().CapsLetter == "lower")
 	eng.CapsLockEnglish = capsLockRequests(runtime.GOOS, capsSetting)
@@ -480,7 +480,8 @@ func serve() string {
 		"all_symbols_halfwidth": fmt.Sprint(eng.AllSymbolsHalfwidth),
 		// #273：中英文之間自動加空格；外殼不用看（送出的 Commit 已補好），0c-update 拿它跟設定檔比較。
 		"cjk_latin_space": fmt.Sprint(eng.CJKLatinSpace),
-		// 中文與數字之間自動加空格；同上，外殼不用看，0c-update 拿它跟設定檔比較。舊引擎沒有這一項時不猜。
+		// #365：「自動加空格」選「中英文與數字之間」；同上，外殼不用看，0c-update 把兩項合成 off／on／all 跟設定檔比較。
+		// 舊引擎沒有這一項時 0c-update 當成 on，選 all 的人看到待套用。
 		"cjk_digit_space": fmt.Sprint(eng.CJKDigitSpace),
 		// #300：打錯注音時提示；外殼不用看（快照的 bell 說這一鍵要提示），0c-update 拿它跟設定檔比較。
 		"zhuyin_error_hint": fmt.Sprint(eng.ZhuyinErrorHint),
